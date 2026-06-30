@@ -15,6 +15,7 @@ export default function SettingsPage() {
   const [form, setForm] = useState({ businessName: '', city: '', deliveryEmail: '', googleDriveFolder: '' })
   const [saving, setSaving] = useState(false)
   const [portalLoading, setPortalLoading] = useState(false)
+  const [checkoutLoading, setCheckoutLoading] = useState(false)
   const [message, setMessage] = useState('')
 
   useEffect(() => {
@@ -67,6 +68,14 @@ export default function SettingsPage() {
     const data = await res.json()
     if (data.url) window.location.href = data.url
     else setPortalLoading(false)
+  }
+
+  async function handleCheckout() {
+    setCheckoutLoading(true)
+    const res = await fetch('/api/stripe/checkout', { method: 'POST' })
+    const data = await res.json()
+    if (data.url) window.location.href = data.url
+    else setCheckoutLoading(false)
   }
 
   return (
@@ -156,6 +165,11 @@ export default function SettingsPage() {
             <span className="text-sm text-gray-700">Montant</span>
             <span className="text-sm font-medium">149€/mois HT</span>
           </div>
+          {!profile?.stripe_customer_id && (
+            <Button onClick={handleCheckout} disabled={checkoutLoading} className="w-full">
+              {checkoutLoading ? 'Redirection...' : 'Commencer mon abonnement (149€/mois)'}
+            </Button>
+          )}
           <Button
             variant="outline"
             onClick={handlePortal}
