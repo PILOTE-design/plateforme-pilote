@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx create-next-app@14 *)",
+      "Bash(sudo chmod -R 755 /Users/theonouvion/.npm/_cacache)",
+      "Bash(npm cache *)",
+      "Bash(rm -rf /Users/theonouvion/.npm/_cacache)",
+      "Bash(pnpm --version)",
+      "Bash(bun --version)",
+      "Bash(yarn --version)",
+      "Bash(npm install *)",
+      "Bash(wait)",
+      "Bash(cp *)",
+      "Bash(npm run *)",
+      "Bash(node /Users/theonouvion/plateforme-pilote/node_modules/next/dist/bin/next build)",
+      "Bash(pbcopy)",
+      "Bash(node *)",
+      "Bash(jobs -l)",
+      "Bash(curl *)",
+      "Bash(git init *)",
+      "Bash(git add *)"
+    ]
+  }
+}
