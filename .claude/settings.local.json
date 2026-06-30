@@ -18,7 +18,13 @@
       "Bash(jobs -l)",
       "Bash(curl *)",
       "Bash(git init *)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(gh repo *)",
+      "Bash(git --version)",
+      "Read(//usr/local/bin/**)",
+      "Bash(brew install *)",
+      "Bash(git push *)"
     ]
   }
 }

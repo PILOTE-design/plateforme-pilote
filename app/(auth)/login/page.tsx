@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { Suspense, useState } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const message = searchParams.get('message')
@@ -37,6 +37,39 @@ export default function LoginPage() {
   }
 
   return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div className="space-y-2">
+        <Label htmlFor="email">Email</Label>
+        <Input
+          id="email"
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="vous@exemple.fr"
+          required
+        />
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="password">Mot de passe</Label>
+        <Input
+          id="password"
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          required
+        />
+      </div>
+      {message && <p className="text-sm text-blue-600">{message}</p>}
+      {error && <p className="text-sm text-red-600">{error}</p>}
+      <Button type="submit" className="w-full" disabled={loading}>
+        {loading ? 'Connexion...' : 'Se connecter'}
+      </Button>
+    </form>
+  )
+}
+
+export default function LoginPage() {
+  return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
@@ -48,34 +81,9 @@ export default function LoginPage() {
             <CardDescription>Accédez à votre espace client</CardDescription>
           </CardHeader>
           <CardContent>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="vous@exemple.fr"
-                  required
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="password">Mot de passe</Label>
-                <Input
-                  id="password"
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                />
-              </div>
-              {message && <p className="text-sm text-blue-600">{message}</p>}
-              {error && <p className="text-sm text-red-600">{error}</p>}
-              <Button type="submit" className="w-full" disabled={loading}>
-                {loading ? 'Connexion...' : 'Se connecter'}
-              </Button>
-            </form>
+            <Suspense fallback={<div className="h-48" />}>
+              <LoginForm />
+            </Suspense>
             <p className="mt-4 text-center text-sm text-gray-500">
               Pas encore client ?{' '}
               <Link href="/signup" className="text-blue-600 hover:underline">
