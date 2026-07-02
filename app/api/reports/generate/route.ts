@@ -29,7 +29,12 @@ return data.text
 
 async function extractData(texts: { fin_n: string; fin_n1: string; ventes_n: string; ventes_n1: string }): Promise<ReportData> {
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' })
-const prompt = `Tu es un extracteur de donnees de caisse CRISALID. Extrais les donnees des 4 rapports et retourne UNIQUEMENT un JSON valide.
+const prompt = `Tu es un extracteur de donnees de caisse CRISALID. Extrais les donnees des 4 rapports et retourne UNIQUEMENT un JSON valide, sans aucun texte avant ou apres.
+
+REGLES IMPORTANTES:
+- Inclus MAXIMUM 15 produits par famille (les 15 avec le plus grand montant)
+- Le JSON doit etre COMPLET et syntaxiquement valide
+- Ne tronque jamais le JSON
 
 Structure JSON attendue :
 {
@@ -48,17 +53,20 @@ ${texts.fin_n.slice(0, 2500)}
 === FINANCIER N-1 ===
 ${texts.fin_n1.slice(0, 2500)}
 === VENTES N ===
-${texts.ventes_n.slice(0, 7000)}
+${texts.ventes_n.slice(0, 5000)}
 === VENTES N-1 ===
-${texts.ventes_n1.slice(0, 7000)}`
+${texts.ventes_n1.slice(0, 5000)}`
 
 const response = await client.messages.create({
 model: 'claude-haiku-4-5-20251001',
-max_tokens: 8000,
+max_tokens: 4096,
 messages: [{ role: 'user', content: prompt }],
 })
 const text = response.content[0].type === 'text' ? response.content[0].text : ''
-return JSON.parse(text.replace(/```json\n?|\n?```/g, '').trim())
+const clean = text.replace(/```json\n?|\n?```/g, '').trim()
+const jsonMatch = clean.match(/\{[\s\S]*\}/)
+if (!jsonMatch) throw new Error('Reponse IA invalide: aucun JSON trouve. Reponse: ' + clean.slice(0, 200))
+return JSON.parse(jsonMatch[0])
 }
 
 async function generateExcel(data: ReportData): Promise<Buffer> {
