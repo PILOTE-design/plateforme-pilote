@@ -21,7 +21,7 @@ interface ReportData {
 async function parsePDF(file: File): Promise<string> {
   const buffer = Buffer.from(await file.arrayBuffer())
   // eslint-disable-next-line
-  const pdfParse = require('pdf-parse') as (b: Buffer) => Promise<{text: string}>
+  const _m = require('pdf-parse'); const pdfParse = typeof _m === 'function' ? _m : typeof _m.default === 'function' ? _m.default : (() => { throw new Error('pdf-parse type=' + typeof _m) })()
   const data = await pdfParse(buffer)
   return data.text
 }
@@ -215,6 +215,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: true, title, file_url: fileUrl })
   } catch (err: unknown) {
     console.error(err)
-    return NextResponse.json({ error: err instanceof Error ? err.message : 'Erreur interne' }, { status: 500 })
+    const _e = err instanceof Error ? err : new Error(String(err))
+    return NextResponse.json({ error: _e.message + ' || STACK: ' + (_e.stack||'').replace(/\n/g,' > ').slice(0,600) }, { status: 500 })
   }
 }
