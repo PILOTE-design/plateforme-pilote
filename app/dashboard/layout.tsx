@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-import { BarChart3, FileText, Settings, LogOut } from 'lucide-react'
+import { BarChart3, FileText, Settings, LogOut, Users } from 'lucide-react'
 
 async function signOut() {
   'use server'
