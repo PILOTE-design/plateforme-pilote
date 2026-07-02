@@ -508,22 +508,46 @@ async function extractFinancials(fin_n: string, fin_n1: string): Promise<{
   return JSON.parse(extractJSONObject(text))
 }
 
+function parseNum(s: string): number {
+  // Handles both French (3 081,17 or 3081,17) and standard (3081.17) formats
+  return parseFloat(s.trim().replace(/\s/g, '').replace(',', '.')) || 0
+}
+
 async function extractVentesData(ventes_text: string): Promise<{ total: number; familles: Famille[] }> {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' })
   const response = await client.messages.create({
     model: 'claude-haiku-4-5-20251001',
     max_tokens: 2048,
-    messages: [{ role: 'user', content: "Extrais uniquement les familles et leurs totaux du fichier CRISALID. Retourne UNIQUEMENT ce JSON sans texte:\n{\"total\":20742.43,\"f\":[[\"VIANDE DE BOEUF\",\"1\",3081.17],[\"BOEUF ELABORE\",\"2\",425.00]]}\n\nFormat: {\"total\":X,\"f\":[[\"NOM_FAMILLE\",\"ID\",total_montant],...]}\nN'inclus PAS les articles individuels, uniquement les totaux par famille.\n\n" + ventes_text.slice(0, 6000) }],
+    messages: [{ role: 'user', content: `Extrais les totaux par famille du fichier CRISALID.
+Retourne UNIQUEMENT ces lignes (une par ligne), sans texte avant ou après:
+TOTAL|20742.43
+VIANDE DE BOEUF|1|3081.17
+CHARCUTERIE|2|2500.00
+PORC|3|1800.50
+
+Format:
+- 1ère ligne: TOTAL|montant_total
+- Puis une ligne par famille: NOM_FAMILLE|ID|montant_famille
+Utilise le point (.) comme séparateur décimal. N'inclus PAS les articles individuels.
+
+${ventes_text.slice(0, 6000)}` }],
   })
-  const text = response.content[0].type === 'text' ? response.content[0].text : ''
-  type C = { total: number; f: [string, string, number][] }
-  const compact: C = JSON.parse(extractJSONObject(text))
-  return {
-    total: compact.total,
-    familles: compact.f.map(([nom, id, total_montant]) => ({
-      id, nom, total_montant, produits: [],
-    })),
+  const text = response.content[0].type === 'text' ? response.content[0].text.trim() : ''
+  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0)
+  let total = 0
+  const familles: Famille[] = []
+  for (const line of lines) {
+    const parts = line.split('|')
+    if (parts[0].toUpperCase() === 'TOTAL' && parts[1]) {
+      total = parseNum(parts[1])
+    } else if (parts.length >= 3) {
+      const montant = parseNum(parts[2])
+      if (montant > 0) {
+        familles.push({ id: parts[1]?.trim() || String(familles.length + 1), nom: parts[0].trim(), total_montant: montant, produits: [] })
+      }
+    }
   }
+  return { total, familles }
 }
 
 async function extractTopFlop(textN: string, textN1: string): Promise<{
