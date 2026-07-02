@@ -27,6 +27,8 @@ interface ReportData {
   financier_n: FinancierData; financier_n1: FinancierData
   ventes_n: { total: number; familles: Famille[] }
   ventes_n1: { total: number; familles: Famille[] }
+  tops: { designation: string; n: number; ecart: number }[]
+  flops: { designation: string; n: number; ecart: number }[]
 }
 interface Insights { insights: string[]; recommendations: string[] }
 interface ComputedReport {
@@ -510,34 +512,68 @@ async function extractVentesData(ventes_text: string): Promise<{ total: number; 
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' })
   const response = await client.messages.create({
     model: 'claude-haiku-4-5-20251001',
-    max_tokens: 8192,
-    messages: [{ role: 'user', content: "Extrais les ventes CRISALID en format compact. Retourne UNIQUEMENT ce JSON (pas d'autre texte):\n{\"total\":20742.43,\"f\":[[\"VIANDE DE BOEUF\",\"1\",3081.17,[[\"112\",\"STEAK HACHE\",31.798,634.37],[\"113\",\"BAVETTE\",5.234,156.75]]],[\"BOEUF ELABORE\",\"2\",425.00,[[\"201\",\"BOURGUIGNON\",8.5,425.00]]]]}\n\nFormat: {\"total\":X,\"f\":[[\"NOM_FAMILLE\",\"ID\",total_montant,[[\"PLU\",\"DESIGNATION\",ventes,montant],...]],...]}\nIMPORTANT: Inclus TOUTES les familles et TOUS les articles sans exception. Ne tronque pas.\n\n" + ventes_text }],
+    max_tokens: 2048,
+    messages: [{ role: 'user', content: "Extrais uniquement les familles et leurs totaux du fichier CRISALID. Retourne UNIQUEMENT ce JSON sans texte:\n{\"total\":20742.43,\"f\":[[\"VIANDE DE BOEUF\",\"1\",3081.17],[\"BOEUF ELABORE\",\"2\",425.00]]}\n\nFormat: {\"total\":X,\"f\":[[\"NOM_FAMILLE\",\"ID\",total_montant],...]}\nN'inclus PAS les articles individuels, uniquement les totaux par famille.\n\n" + ventes_text.slice(0, 6000) }],
   })
   const text = response.content[0].type === 'text' ? response.content[0].text : ''
-  type C = { total: number; f: [string, string, number, [string, string, number, number][]][] }
+  type C = { total: number; f: [string, string, number][] }
   const compact: C = JSON.parse(extractJSONObject(text))
   return {
     total: compact.total,
-    familles: compact.f.map(([nom, id, total_montant, produits]) => ({
-      id, nom, total_montant,
-      produits: (produits || []).map(([plu, designation, ventes, montant]) => ({ plu, designation, ventes, montant })),
+    familles: compact.f.map(([nom, id, total_montant]) => ({
+      id, nom, total_montant, produits: [],
     })),
+  }
+}
+
+async function extractTopFlop(textN: string, textN1: string): Promise<{
+  tops: { designation: string; n: number; ecart: number }[]
+  flops: { designation: string; n: number; ecart: number }[]
+}> {
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' })
+  const response = await client.messages.create({
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: 2048,
+    messages: [{ role: 'user', content: `Compare les ventes produit par produit entre N et N-1. Identifie les 10 articles avec la plus forte progression et les 10 avec la plus forte baisse en euros.
+Retourne UNIQUEMENT ce JSON:
+{"tops":[{"d":"NOM PRODUIT","n":634.37,"e":150.00}],"flops":[{"d":"NOM PRODUIT","n":100.00,"e":-80.00}]}
+Format: {"tops":[{"d":"designation","n":montant_N,"e":ecart_positif},...x10],"flops":[{"d":"designation","n":montant_N,"e":ecart_negatif},...x10]}
+
+=== VENTES N ===
+${textN.slice(0, 3000)}
+
+=== VENTES N-1 ===
+${textN1.slice(0, 3000)}` }],
+  })
+  const text = response.content[0].type === 'text' ? response.content[0].text : ''
+  try {
+    type R = { tops: { d: string; n: number; e: number }[]; flops: { d: string; n: number; e: number }[] }
+    const r: R = JSON.parse(extractJSONObject(text))
+    return {
+      tops:  (r.tops  || []).slice(0, 10).map(x => ({ designation: x.d, n: x.n, ecart: x.e })),
+      flops: (r.flops || []).slice(0, 10).map(x => ({ designation: x.d, n: x.n, ecart: x.e })),
+    }
+  } catch {
+    return { tops: [], flops: [] }
   }
 }
 
 async function extractData(texts: {
   fin_n: string; fin_n1: string; ventes_n: string; ventes_n1: string
 }): Promise<ReportData> {
-  const [financials, ventes_n, ventes_n1] = await Promise.all([
+  const [financials, ventes_n, ventes_n1, topFlop] = await Promise.all([
     extractFinancials(texts.fin_n, texts.fin_n1),
     extractVentesData(texts.ventes_n),
     extractVentesData(texts.ventes_n1),
+    extractTopFlop(texts.ventes_n, texts.ventes_n1),
   ])
   return {
     period_n: financials.period_n, period_n1: financials.period_n1,
     week_number: financials.week_number, year: financials.year,
     financier_n: financials.financier_n, financier_n1: financials.financier_n1,
     ventes_n, ventes_n1,
+    tops: topFlop.tops,
+    flops: topFlop.flops,
   }
 }
 
@@ -706,18 +742,8 @@ export async function POST(req: NextRequest) {
     // 4. Pre-compute derived data
     const famMap = new Map<string, Famille>()
     for (const f of data.ventes_n1.familles) famMap.set(f.nom.toUpperCase(), f)
-    const prodMap = new Map<string, Produit>()
-    for (const f of data.ventes_n1.familles) for (const p of f.produits) prodMap.set(p.plu, p)
-
-    const comps: { designation: string; n: number; ecart: number }[] = []
-    for (const fam of data.ventes_n.familles) {
-      for (const p of fam.produits) {
-        const p1 = prodMap.get(p.plu)
-        if (p1) comps.push({ designation: p.designation, n: p.montant, ecart: p.montant - p1.montant })
-      }
-    }
-    const tops  = [...comps].sort((a, b) => b.ecart - a.ecart).slice(0, 10)
-    const flops = [...comps].sort((a, b) => a.ecart - b.ecart).slice(0, 10)
+    const tops  = data.tops
+    const flops = data.flops
     const caVar = data.financier_n1.ca_net
       ? (data.financier_n.ca_net - data.financier_n1.ca_net) / data.financier_n1.ca_net
       : 0
