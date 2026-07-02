@@ -20,7 +20,8 @@ interface ReportData {
 
 async function parsePDF(file: File): Promise<string> {
   const buffer = Buffer.from(await file.arrayBuffer())
-  const pdfParse = (await import('pdf-parse')).default
+  // eslint-disable-next-line
+  const pdfParse = require('pdf-parse') as (b: Buffer) => Promise<{text: string}>
   const data = await pdfParse(buffer)
   return data.text
 }
