@@ -27,6 +27,17 @@ const data = await fn(buffer)
 return data.text
 }
 
+function extractJSONObject(text: string): string {
+const start = text.indexOf('{')
+if (start === -1) throw new Error('No JSON object found in response')
+let depth = 0
+for (let i = start; i < text.length; i++) {
+if (text[i] === '{') depth++
+else if (text[i] === '}') { depth--; if (depth === 0) return text.slice(start, i + 1) }
+}
+throw new Error('Unclosed JSON object in response: ' + text.slice(0, 200))
+}
+
 async function extractFinancials(fin_n: string, fin_n1: string): Promise<{
 period_n: string; period_n1: string; week_number: number; year: number
 financier_n: FinancierData; financier_n1: FinancierData
@@ -38,9 +49,7 @@ max_tokens: 512,
 messages: [{ role: 'user', content: 'Extrais les donnees financieres CRISALID. Retourne UNIQUEMENT ce JSON sans texte avant/apres:\n{"period_n":"15-21 juin 2026","period_n1":"16-22 juin 2025","week_number":25,"year":2026,"financier_n":{"ca_net":20742.43,"nb_tickets":496,"moyenne_ticket":41.82},"financier_n1":{"ca_net":19316.76,"nb_tickets":453,"moyenne_ticket":42.64}}\n\n=== FINANCIER N ===\n' + fin_n.slice(0, 3000) + '\n=== FINANCIER N-1 ===\n' + fin_n1.slice(0, 3000) }]
 })
 const text = response.content[0].type === 'text' ? response.content[0].text : ''
-const m = text.match(/\{[\s\S]*\}/)
-if (!m) throw new Error('Financials extraction failed: ' + text.slice(0, 200))
-return JSON.parse(m[0])
+return JSON.parse(extractJSONObject(text))
 }
 
 async function extractVentesData(ventes_text: string): Promise<{ total: number; familles: Famille[] }> {
@@ -51,10 +60,8 @@ max_tokens: 8192,
 messages: [{ role: 'user', content: 'Extrais les ventes CRISALID en format compact. Retourne UNIQUEMENT ce JSON (pas d\'autre texte):\n{"total":20742.43,"f":[["VIANDE DE BOEUF","1",3081.17,[["112","STEAK HACHE",31.798,634.37],["113","BAVETTE",5.234,156.75]]],["BOEUF ELABORE","2",425.00,[["201","BOURGUIGNON",8.5,425.00]]]]}\n\nFormat: {"total":X,"f":[["NOM_FAMILLE","ID",total_montant,[["PLU","DESIGNATION",ventes,montant],...]],...]}\nIMPORTANT: Inclus TOUTES les familles et TOUS les articles sans exception. Ne tronque pas.\n\n' + ventes_text }]
 })
 const text = response.content[0].type === 'text' ? response.content[0].text : ''
-const m = text.match(/\{[\s\S]*\}/)
-if (!m) throw new Error('Ventes extraction failed: ' + text.slice(0, 200))
 type C = { total: number; f: [string, string, number, [string, string, number, number][]][] }
-const compact: C = JSON.parse(m[0])
+const compact: C = JSON.parse(extractJSONObject(text))
 return {
 total: compact.total,
 familles: compact.f.map(([nom, id, total_montant, produits]) => ({
