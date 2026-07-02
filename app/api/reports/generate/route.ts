@@ -20,10 +20,16 @@ interface ReportData {
 
 async function parsePDF(file: File): Promise<string> {
   const buffer = Buffer.from(await file.arrayBuffer())
-  // eslint-disable-next-line
-  const _m = require('pdf-parse'); const pdfParse = typeof _m === 'function' ? _m : typeof _m.default === 'function' ? _m.default : (() => { throw new Error('pdf-parse type=' + typeof _m) })()
-  const data = await pdfParse(buffer)
-  return data.text
+  const _m = await import('pdf-parse') as any
+  const fn = typeof _m.default === 'function' ? _m.default
+           : typeof _m === 'function' ? _m
+           : null
+  if (fn) {
+    const data = await fn(buffer)
+    return data.text
+  }
+  const info = Object.entries(_m || {}).map(([k, v]) => k + ':' + typeof v).join(', ')
+  throw new Error('pdf-parse no callable export. Keys: ' + info)
 }
 
 async function extractData(texts: { fin_n: string; fin_n1: string; ventes_n: string; ventes_n1: string }): Promise<ReportData> {
