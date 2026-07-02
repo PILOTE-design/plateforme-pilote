@@ -1,25 +1,35 @@
 'use client'
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useState, useEffect, Suspense } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Upload, CheckCircle, Loader2 } from 'lucide-react'
 
 const FILE_INPUTS = [
-  { key: 'financier_n',  label: 'Releve Financier - Semaine N (actuelle)' },
+  { key: 'financier_n', label: 'Releve Financier - Semaine N (actuelle)' },
   { key: 'financier_n1', label: 'Releve Financier - Semaine N-1 (meme semaine an passe)' },
-  { key: 'ventes_n',     label: 'Ventes par Familles - Semaine N' },
-  { key: 'ventes_n1',    label: 'Ventes par Familles - Semaine N-1' },
+  { key: 'ventes_n', label: 'Ventes par Familles - Semaine N' },
+  { key: 'ventes_n1', label: 'Ventes par Familles - Semaine N-1' },
 ]
 
 type FileMap = Record<string, File | null>
+type Client = { id: string; name: string; email: string }
 
-export default function NouveauRapportPage() {
+function NouveauRapportForm() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [files, setFiles] = useState<FileMap>({ financier_n: null, financier_n1: null, ventes_n: null, ventes_n1: null })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [clients, setClients] = useState<Client[]>([])
+  const [clientId, setClientId] = useState(searchParams.get('client') || '')
   const allSelected = Object.values(files).every(Boolean)
+
+  useEffect(() => {
+    fetch('/api/clients').then(r => r.json()).then(data => {
+      if (Array.isArray(data)) setClients(data)
+    })
+  }, [])
 
   async function handleSubmit() {
     if (!allSelected || loading) return
@@ -29,6 +39,7 @@ export default function NouveauRapportPage() {
       const f = files[key]
       if (f) formData.append(key, f)
     }
+    if (clientId) formData.append('clientId', clientId)
     try {
       const res = await fetch('/api/reports/generate', { method: 'POST', body: formData })
       const data = await res.json()
@@ -46,6 +57,19 @@ export default function NouveauRapportPage() {
       <Card>
         <CardHeader><CardTitle>Fichiers CRISALID</CardTitle><CardDescription>Format PDF uniquement</CardDescription></CardHeader>
         <CardContent className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Client (optionnel)</label>
+            <select
+              value={clientId}
+              onChange={e => setClientId(e.target.value)}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-white"
+            >
+              <option value="">— Selectionner un client —</option>
+              {clients.map(c => (
+                <option key={c.id} value={c.id}>{c.name} ({c.email})</option>
+              ))}
+            </select>
+          </div>
           {FILE_INPUTS.map(({ key, label }) => (
             <div key={key}>
               <label className="block text-sm font-medium text-gray-700 mb-1">{label}</label>
@@ -67,5 +91,13 @@ export default function NouveauRapportPage() {
         </CardContent>
       </Card>
     </div>
+  )
+}
+
+export default function NouveauRapportPage() {
+  return (
+    <Suspense>
+      <NouveauRapportForm />
+    </Suspense>
   )
 }
