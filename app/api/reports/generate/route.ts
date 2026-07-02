@@ -35,6 +35,7 @@ REGLES IMPORTANTES:
 - Inclus TOUS les produits de TOUTES les familles sans exception
 - Le JSON doit etre COMPLET et syntaxiquement valide
 - Ne tronque jamais le JSON
+- Sois concis dans les designations (pas de padding inutile)
 
 Structure JSON attendue :
 {
@@ -53,13 +54,13 @@ ${texts.fin_n.slice(0, 3000)}
 === FINANCIER N-1 ===
 ${texts.fin_n1.slice(0, 3000)}
 === VENTES N ===
-${texts.ventes_n.slice(0, 12000)}
+${texts.ventes_n.slice(0, 8000)}
 === VENTES N-1 ===
-${texts.ventes_n1.slice(0, 12000)}`
+${texts.ventes_n1.slice(0, 8000)}`
 
 const response = await client.messages.create({
 model: 'claude-sonnet-4-6',
-max_tokens: 16000,
+max_tokens: 6000,
 messages: [{ role: 'user', content: prompt }],
 })
 const text = response.content[0].type === 'text' ? response.content[0].text : ''
