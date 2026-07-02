@@ -21,14 +21,9 @@ interface ReportData {
 async function parsePDF(file: File): Promise<string> {
   const buffer = Buffer.from(await file.arrayBuffer())
   const _m = await import('pdf-parse') as any
-  const PDFParseLib = _m.PDFParse ?? _m.default ?? _m
-  if (typeof PDFParseLib !== 'function') {
-    throw new Error('No callable in pdf-parse. Keys: ' + Object.keys(_m).join(','))
-  }
-  const data = await PDFParseLib(buffer)
-  if (!data || typeof data.text === 'undefined') {
-    throw new Error('Unexpected result: ' + JSON.stringify(Object.keys(data || {})))
-  }
+  const fn = typeof _m.default === 'function' ? _m.default : _m
+  if (typeof fn !== 'function') throw new Error('pdf-parse not callable: ' + typeof _m.default)
+  const data = await fn(buffer)
   return data.text
 }
 
