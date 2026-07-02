@@ -32,7 +32,7 @@ const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' })
 const prompt = `Tu es un extracteur de donnees de caisse CRISALID. Extrais les donnees des 4 rapports et retourne UNIQUEMENT un JSON valide, sans aucun texte avant ou apres.
 
 REGLES IMPORTANTES:
-- Inclus MAXIMUM 15 produits par famille (les 15 avec le plus grand montant)
+- Inclus TOUS les produits de TOUTES les familles sans exception
 - Le JSON doit etre COMPLET et syntaxiquement valide
 - Ne tronque jamais le JSON
 
@@ -49,17 +49,17 @@ Structure JSON attendue :
 }
 
 === FINANCIER N ===
-${texts.fin_n.slice(0, 2500)}
+${texts.fin_n.slice(0, 3000)}
 === FINANCIER N-1 ===
-${texts.fin_n1.slice(0, 2500)}
+${texts.fin_n1.slice(0, 3000)}
 === VENTES N ===
-${texts.ventes_n.slice(0, 5000)}
+${texts.ventes_n.slice(0, 12000)}
 === VENTES N-1 ===
-${texts.ventes_n1.slice(0, 5000)}`
+${texts.ventes_n1.slice(0, 12000)}`
 
 const response = await client.messages.create({
-model: 'claude-haiku-4-5-20251001',
-max_tokens: 4096,
+model: 'claude-sonnet-4-6',
+max_tokens: 16000,
 messages: [{ role: 'user', content: prompt }],
 })
 const text = response.content[0].type === 'text' ? response.content[0].text : ''
