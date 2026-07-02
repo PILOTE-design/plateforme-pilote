@@ -35,8 +35,8 @@ interface ComputedReport {
   data: ReportData
   clientName: string | null
   insights: Insights
-  pieDataUrl: string
-  barDataUrl: string
+  pieBuffer: Buffer
+  barBuffer: Buffer
   tops: { designation: string; n: number; ecart: number }[]
   flops: { designation: string; n: number; ecart: number }[]
   famMap: Map<string, Famille>
@@ -177,7 +177,7 @@ const KpiBox = ({
 // ─── PDF Document ─────────────────────────────────────────────────────────────
 
 const PiloteReport = ({ r }: { r: ComputedReport }) => {
-  const { data, clientName, insights, pieDataUrl, barDataUrl, tops, flops, famMap, caVar } = r
+  const { data, clientName, insights, pieBuffer, barBuffer, tops, flops, famMap, caVar } = r
   const { financier_n: fn, financier_n1: fn1, ventes_n: vn, ventes_n1: vn1 } = data
   const generatedOn = new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' })
 
@@ -299,7 +299,7 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
       <Page size="A4" style={S.page}>
         <SecHeader title="RÉPARTITION DU CA PAR FAMILLE" />
         <View style={S.chartWrap}>
-          <Image src={pieDataUrl} style={{ width: 490, height: 300 }} />
+          <Image src={{ data: pieBuffer, format: 'png' }} style={{ width: 490, height: 300 }} />
         </View>
         <Text style={S.chartCaption}>
           Poids de chaque famille dans le chiffre d'affaires total — Semaine {data.week_number} {data.year}
@@ -342,7 +342,7 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
       <Page size="A4" style={S.page}>
         <SecHeader title={`ÉVOLUTION PAR FAMILLE — ${data.year} vs ${data.year - 1}`} />
         <View style={S.chartWrap}>
-          <Image src={barDataUrl} style={{ width: 490, height: 360 }} />
+          <Image src={{ data: barBuffer, format: 'png' }} style={{ width: 490, height: 360 }} />
         </View>
         <Text style={S.chartCaption}>
           Comparaison du chiffre d'affaires par famille — Semaine {data.week_number} {data.year} vs Semaine {data.week_number} {data.year - 1}
@@ -759,8 +759,8 @@ export async function POST(req: NextRequest) {
     // 6. Build ComputedReport + generate PDF
     const report: ComputedReport = {
       data, clientName, insights: insightsResult,
-      pieDataUrl: `data:image/png;base64,${chartsResult.pieBuffer.toString('base64')}`,
-      barDataUrl: `data:image/png;base64,${chartsResult.barBuffer.toString('base64')}`,
+      pieBuffer: chartsResult.pieBuffer,
+      barBuffer: chartsResult.barBuffer,
       tops, flops, famMap, caVar,
     }
     const pdfBuffer = await generatePDF(report)
