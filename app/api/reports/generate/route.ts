@@ -1,7 +1,7 @@
 if (typeof globalThis.DOMMatrix === "undefined") { (globalThis as Record<string, unknown>).DOMMatrix = class DOMMatrix { a=1;b=0;c=0;d=1;e=0;f=0 } }
 
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createServiceClient } from '@/lib/supabase/server'
 import Anthropic from '@anthropic-ai/sdk'
 import ExcelJS from 'exceljs'
 import { Resend } from 'resend'
@@ -205,6 +205,7 @@ const { data: { user } } = await supabase.auth.getUser()
 if (!user) return NextResponse.json({ error: 'Non authentifie' }, { status: 401 })
 const { data: profile } = await supabase.from('profiles').select('*').eq('user_id', user.id).single()
 if (!profile) return NextResponse.json({ error: 'Profil introuvable' }, { status: 404 })
+const serviceSupabase = createServiceClient()
 const formData = await req.formData()
 const clientId = (formData.get('clientId') as string) || null
 const finN = formData.get('financier_n') as File
@@ -217,20 +218,20 @@ const [tFN, tFN1, tVN, tVN1] = await Promise.all([parsePDF(finN), parsePDF(finN1
 const data = await extractData({ fin_n: tFN, fin_n1: tFN1, ventes_n: tVN, ventes_n1: tVN1 })
 const excelBuffer = await generateExcel(data)
 const fileName = 'rapport-s' + data.week_number + '-' + data.year + '-' + Date.now() + '.xlsx'
-const { error: uploadError } = await supabase.storage.from('reports').upload(fileName, excelBuffer, {
+const { error: uploadError } = await serviceSupabase.storage.from('reports').upload(fileName, excelBuffer, {
 contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', upsert: false,
 })
 if (uploadError) return NextResponse.json({ error: 'Upload: ' + uploadError.message }, { status: 500 })
-const { data: urlData } = supabase.storage.from('reports').getPublicUrl(fileName)
+const { data: urlData } = serviceSupabase.storage.from('reports').getPublicUrl(fileName)
 const fileUrl = urlData.publicUrl
 let clientEmail: string | null = null
 let clientName: string | null = null
 if (clientId) {
-const { data: client } = await supabase.from('clients').select('email, name').eq('id', clientId).single()
+const { data: client } = await serviceSupabase.from('clients').select('email, name').eq('id', clientId).single()
 if (client) { clientEmail = client.email; clientName = client.name }
 }
 const title = 'Analyse S' + data.week_number + ' - ' + data.period_n + (clientName ? ' â ' + clientName : '')
-const { error: dbError } = await supabase.from('reports').insert({
+const { error: dbError } = await serviceSupabase.from('reports').insert({
 profile_id: profile.id, title, week_number: data.week_number, year: data.year, file_url: fileUrl,
 ...(clientId ? { client_id: clientId } : {}),
 })
