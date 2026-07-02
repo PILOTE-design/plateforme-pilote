@@ -3,6 +3,8 @@ import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { BarChart3, FileText, Settings, LogOut, Users } from 'lucide-react'
 
+const ADMIN_EMAIL = 'nouvion.theo51@gmail.com'
+
 async function signOut() {
   'use server'
   const supabase = createClient()
@@ -26,6 +28,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
     redirect('/onboarding')
   }
 
+  const isAdmin = user.email === ADMIN_EMAIL
+
   return (
     <div className="min-h-screen bg-gray-50 flex">
       {/* Sidebar */}
@@ -48,13 +52,15 @@ export default async function DashboardLayout({ children }: { children: React.Re
             <FileText className="w-4 h-4" />
             Mes rapports
           </Link>
-          <Link
-            href="/dashboard/clients"
-            className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-100 transition-colors"
-          >
-            <Users className="w-4 h-4" />
-            Clients
-          </Link>
+          {isAdmin && (
+            <Link
+              href="/dashboard/clients"
+              className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+            >
+              <Users className="w-4 h-4" />
+              Clients
+            </Link>
+          )}
           <Link
             href="/dashboard/settings"
             className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-100 transition-colors"
