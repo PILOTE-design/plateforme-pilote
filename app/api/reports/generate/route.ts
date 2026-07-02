@@ -97,7 +97,7 @@ async function generateExcel(data: ReportData): Promise<Buffer> {
   }
   ws1.getRow(3).height = 32
   const hr = ws1.addRow([`Famille`, `CA N ${data.year}`, `CA N-1 ${data.year - 1}`, `Ecart`, `Ecart %`, `Poids N`, `Poids N-1`, `Tendance`])
-  hr.eachCell(c => { c.fill = sFill; c.font = wb2; c.alignment = { horizontal: 'center' } })
+  hr.eachCell((c: any) => { c.fill = sFill; c.font = wb2; c.alignment = { horizontal: 'center' } })
   let ri = 0
   for (const fam of vn.familles) {
     const f1m = famMap.get(fam.nom.toUpperCase())
@@ -109,13 +109,13 @@ async function generateExcel(data: ReportData): Promise<Buffer> {
     row.getCell(5).numFmt = pf; row.getCell(6).numFmt = '0.0%'; row.getCell(7).numFmt = '0.0%'
     row.getCell(8).font = { bold: true, color: { argb: ec >= 0 ? 'FF2E7D32' : 'FFC62828' } }
     row.getCell(8).alignment = { horizontal: 'center' }
-    if (ri % 2 === 0) row.eachCell(c => { c.fill = aFill })
+    if (ri % 2 === 0) row.eachCell((c: any) => { c.fill = aFill })
     if (ec > 0) row.getCell(4).fill = gFill
     if (ec < 0) row.getCell(4).fill = rFill
     ri++
   }
   const tr = ws1.addRow(['TOTAL GENERAL', vn.total, vn1.total, vn.total - vn1.total, vn1.total ? (vn.total - vn1.total) / vn1.total : 0, 1, 1, vn.total >= vn1.total ? 'HAUSSE' : 'BAISSE'])
-  tr.eachCell(c => { c.fill = tFill; c.font = wb2 })
+  tr.eachCell((c: any) => { c.fill = tFill; c.font = wb2 })
   tr.getCell(2).numFmt = ef; tr.getCell(3).numFmt = ef; tr.getCell(4).numFmt = ef; tr.getCell(5).numFmt = pf
 
   const ws2 = wb.addWorksheet('Detail Produits')
@@ -127,7 +127,7 @@ async function generateExcel(data: ReportData): Promise<Buffer> {
     const fr = ws2.addRow([`${fam.id} - ${fam.nom}`, '', '', '', '', ''])
     ws2.mergeCells(`A${fr.number}:F${fr.number}`)
     fr.getCell(1).fill = sFill; fr.getCell(1).font = wb2
-    ws2.addRow(['PLU', 'Designation', 'Ventes', 'Montant N', 'Montant N-1', 'Ecart']).eachCell(c => {
+    ws2.addRow(['PLU', 'Designation', 'Ventes', 'Montant N', 'Montant N-1', 'Ecart']).eachCell((c: any) => {
       c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8F0FE' } }; c.font = { bold: true }
     })
     let i = 0
@@ -160,7 +160,7 @@ async function generateExcel(data: ReportData): Promise<Buffer> {
   ws3.mergeCells(`A${hrow.number}:D${hrow.number}`); ws3.mergeCells(`F${hrow.number}:I${hrow.number}`)
   hrow.getCell(1).fill = gFill; hrow.getCell(1).font = { bold: true }
   hrow.getCell(6).fill = rFill; hrow.getCell(6).font = { bold: true }
-  ws3.addRow(['Produit', 'N', 'N-1', 'Ecart', '', 'Produit', 'N', 'N-1', 'Ecart']).eachCell(c => { c.font = { bold: true }; c.fill = aFill })
+  ws3.addRow(['Produit', 'N', 'N-1', 'Ecart', '', 'Produit', 'N', 'N-1', 'Ecart']).eachCell((c: any) => { c.font = { bold: true }; c.fill = aFill })
   for (let i = 0; i < Math.max(tops.length, flops.length); i++) {
     const t = tops[i], fl = flops[i]
     const row = ws3.addRow([
