@@ -24,7 +24,17 @@ export default async function DashboardLayout({ children }: { children: React.Re
     .eq('user_id', user.id)
     .single()
 
-  if (profile && !profile.onboarding_completed && process.env.NODE_ENV !== 'development') {
+  // Check if this user is a client (invited via the clients system)
+  const { data: clientRecord } = await supabase
+    .from('clients')
+    .select('id')
+    .eq('email', user.email)
+    .single()
+
+  const isClientUser = !!clientRecord
+
+  // Skip onboarding for client users — they don't need to complete it
+  if (!isClientUser && profile && !profile.onboarding_completed && process.env.NODE_ENV !== 'development') {
     redirect('/onboarding')
   }
 
