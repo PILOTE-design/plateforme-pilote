@@ -1,5 +1,4 @@
-import { createServerComponentClient } from '@supabase/auth-helpers-nextjs'
-import { cookies } from 'next/headers'
+import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { Plus } from 'lucide-react'
@@ -8,7 +7,7 @@ import ClientsList from './ClientsList'
 const ADMIN_EMAIL = 'nouvion.theo51@gmail.com'
 
 export default async function ClientsPage() {
-  const supabase = createServerComponentClient({ cookies })
+  const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
   if (!user || user.email !== ADMIN_EMAIL) {
