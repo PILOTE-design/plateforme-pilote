@@ -21,15 +21,15 @@ interface ReportData {
 async function parsePDF(file: File): Promise<string> {
   const buffer = Buffer.from(await file.arrayBuffer())
   const _m = await import('pdf-parse') as any
-  const fn = typeof _m.default === 'function' ? _m.default
-           : typeof _m === 'function' ? _m
-           : null
-  if (fn) {
-    const data = await fn(buffer)
-    return data.text
+  const PDFParseLib = _m.PDFParse ?? _m.default ?? _m
+  if (typeof PDFParseLib !== 'function') {
+    throw new Error('No callable in pdf-parse. Keys: ' + Object.keys(_m).join(','))
   }
-  const info = Object.entries(_m || {}).map(([k, v]) => k + ':' + typeof v).join(', ')
-  throw new Error('pdf-parse no callable export. Keys: ' + info)
+  const data = await PDFParseLib(buffer)
+  if (!data || typeof data.text === 'undefined') {
+    throw new Error('Unexpected result: ' + JSON.stringify(Object.keys(data || {})))
+  }
+  return data.text
 }
 
 async function extractData(texts: { fin_n: string; fin_n1: string; ventes_n: string; ventes_n1: string }): Promise<ReportData> {
