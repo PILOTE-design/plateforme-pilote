@@ -815,11 +815,14 @@ async function generatePDF(report: ComputedReport): Promise<Buffer> {
 
 // ─── POST Handler ─────────────────────────────────────────────────────────────
 
+const ADMIN_EMAIL = 'nouvion.theo51@gmail.com'
+
 export async function POST(req: NextRequest) {
   try {
     const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'Non authentifie' }, { status: 401 })
+    if (user.email !== ADMIN_EMAIL) return NextResponse.json({ error: 'Acces refuse — reservé à l\'administrateur' }, { status: 403 })
     const { data: profile } = await supabase.from('profiles').select('*').eq('user_id', user.id).single()
     if (!profile) return NextResponse.json({ error: 'Profil introuvable' }, { status: 404 })
 
@@ -874,9 +877,10 @@ export async function POST(req: NextRequest) {
     const pdfBuffer = await generatePDF(report)
 
     // 7. Upload to Supabase storage
-    const fileName = `rapport-s${data.week_number}-${data.year}-${Date.now()}.pdf`
+    const sanitized = (clientName || 'Rapport').replace(/[^a-zA-Z0-9À-ž\s-]/g, '').trim()
+    const fileName = `Semaine ${data.week_number} ${data.year} - ${sanitized}.pdf`
     const { error: uploadError } = await serviceSupabase.storage.from('reports').upload(
-      fileName, pdfBuffer, { contentType: 'application/pdf', upsert: false },
+      fileName, pdfBuffer, { contentType: 'application/pdf', upsert: true },
     )
     if (uploadError) return NextResponse.json({ error: 'Upload: ' + uploadError.message }, { status: 500 })
 

@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-import { BarChart3, FileText, Settings, LogOut, Users } from 'lucide-react'
+import { BarChart3, FileText, Settings, LogOut, ShieldCheck } from 'lucide-react'
 
 const ADMIN_EMAIL = 'nouvion.theo51@gmail.com'
 
@@ -64,11 +64,11 @@ export default async function DashboardLayout({ children }: { children: React.Re
           </Link>
           {isAdmin && (
             <Link
-              href="/dashboard/clients"
-              className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+              href="/admin"
+              className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-orange-600 font-medium hover:bg-orange-50 transition-colors"
             >
-              <Users className="w-4 h-4" />
-              Clients
+              <ShieldCheck className="w-4 h-4" />
+              Espace Admin
             </Link>
           )}
           <Link

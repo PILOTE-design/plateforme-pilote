@@ -1,14 +1,45 @@
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { FileText, Plus, Download } from 'lucide-react'
 import Link from 'next/link'
 
+const ADMIN_EMAIL = 'nouvion.theo51@gmail.com'
+
 export default async function ReportsPage() {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  const { data: profile } = await supabase.from('profiles').select('id').eq('user_id', user?.id ?? '').single()
-  const { data: reports } = await supabase.from('reports').select('*').eq('profile_id', profile?.id ?? '').order('created_at', { ascending: false })
+  const isAdmin = user?.email === ADMIN_EMAIL
+
+  // Check if this user is a client (has a client record)
+  const { data: clientRecord } = await supabase
+    .from('clients')
+    .select('id')
+    .eq('email', user?.email ?? '')
+    .single()
+  const isClientUser = !!clientRecord
+
+  // Fetch reports — service client needed for client users (bypasses RLS on reports table)
+  const serviceSupabase = createServiceClient()
+  let reports: { id: string; title: string; file_url: string; created_at: string }[] | null = null
+
+  if (isClientUser && clientRecord) {
+    const { data } = await serviceSupabase
+      .from('reports')
+      .select('id, title, file_url, created_at')
+      .eq('client_id', clientRecord.id)
+      .order('created_at', { ascending: false })
+    reports = data
+  } else {
+    const { data: profile } = await supabase.from('profiles').select('id').eq('user_id', user?.id ?? '').single()
+    const { data } = await supabase
+      .from('reports')
+      .select('id, title, file_url, created_at')
+      .eq('profile_id', profile?.id ?? '')
+      .order('created_at', { ascending: false })
+    reports = data
+  }
+
   return (
     <div className="p-8">
       <div className="flex items-center justify-between mb-8">
@@ -16,16 +47,27 @@ export default async function ReportsPage() {
           <h1 className="text-2xl font-bold text-gray-900">Rapports</h1>
           <p className="text-gray-500 mt-1">Vos analyses comparatives hebdomadaires</p>
         </div>
-        <Link href="/dashboard/reports/nouveau"><Button><Plus className="w-4 h-4 mr-2" />Nouveau rapport</Button></Link>
+        {isAdmin && (
+          <Link href="/admin/reports/nouveau">
+            <Button><Plus className="w-4 h-4 mr-2" />Nouveau rapport</Button>
+          </Link>
+        )}
       </div>
       <Card>
-        <CardHeader><CardTitle>Historique</CardTitle><CardDescription>Cliquez sur Telecharger pour ouvrir le fichier Excel</CardDescription></CardHeader>
+        <CardHeader>
+          <CardTitle>Historique</CardTitle>
+          <CardDescription>Cliquez sur Télécharger pour ouvrir le rapport PDF</CardDescription>
+        </CardHeader>
         <CardContent className="p-0">
           {!reports || reports.length === 0 ? (
             <div className="text-center py-16">
               <FileText className="w-10 h-10 text-gray-300 mx-auto mb-3" />
               <p className="text-gray-500 mb-4">Aucun rapport encore</p>
-              <Link href="/dashboard/reports/nouveau"><Button variant="outline">Generer votre premier rapport</Button></Link>
+              {isAdmin && (
+                <Link href="/admin/reports/nouveau">
+                  <Button variant="outline">Générer votre premier rapport</Button>
+                </Link>
+              )}
             </div>
           ) : (
             <div className="divide-y">
@@ -39,7 +81,7 @@ export default async function ReportsPage() {
                     </div>
                   </div>
                   <a href={report.file_url} target="_blank" rel="noopener noreferrer">
-                    <Button variant="outline" size="sm"><Download className="w-4 h-4 mr-2" />Telecharger</Button>
+                    <Button variant="outline" size="sm"><Download className="w-4 h-4 mr-2" />Télécharger</Button>
                   </a>
                 </div>
               ))}
