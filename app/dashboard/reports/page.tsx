@@ -8,19 +8,18 @@ const ADMIN_EMAIL = 'nouvion.theo51@gmail.com'
 
 export default async function ReportsPage() {
   const supabase = createClient()
+  const serviceSupabase = createServiceClient()
   const { data: { user } } = await supabase.auth.getUser()
   const isAdmin = user?.email === ADMIN_EMAIL
 
-  // Check if this user is a client (has a client record)
-  const { data: clientRecord } = await supabase
+  // Use serviceSupabase to bypass RLS — clients can't read their own record otherwise
+  const { data: clientRecord } = await serviceSupabase
     .from('clients')
     .select('id')
-    .eq('email', user?.email ?? '')
-    .single()
+    .eq('client_user_id', user?.id ?? '')
+    .maybeSingle()
   const isClientUser = !!clientRecord
 
-  // Fetch reports — service client needed for client users (bypasses RLS on reports table)
-  const serviceSupabase = createServiceClient()
   let reports: { id: string; title: string; file_url: string; created_at: string }[] | null = null
 
   if (isClientUser && clientRecord) {
