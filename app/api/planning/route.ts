@@ -1,6 +1,30 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 
+async function resolveClientId(serviceSupabase: ReturnType<typeof createServiceClient>, userId: string, userEmail: string | undefined): Promise<string | null> {
+  const { data: byId } = await serviceSupabase
+    .from('clients')
+    .select('id')
+    .eq('client_user_id', userId)
+    .maybeSingle()
+  if (byId) return byId.id
+
+  if (!userEmail) return null
+  const { data: byEmail } = await serviceSupabase
+    .from('clients')
+    .select('id')
+    .eq('email', userEmail)
+    .maybeSingle()
+  if (!byEmail) return null
+
+  await serviceSupabase
+    .from('clients')
+    .update({ client_user_id: userId })
+    .eq('id', byEmail.id)
+
+  return byEmail.id
+}
+
 export async function GET(req: NextRequest) {
   const supabase = createClient()
   const serviceSupabase = createServiceClient()
@@ -11,30 +35,22 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const week = parseInt(searchParams.get('week') || '0')
   const year = parseInt(searchParams.get('year') || '0')
-
   if (!week || !year) return NextResponse.json([])
 
-  const { data: clientRecord } = await serviceSupabase
-    .from('clients')
-    .select('id')
-    .eq('client_user_id', user.id)
-    .maybeSingle()
-
-  if (!clientRecord) return NextResponse.json([])
+  const clientId = await resolveClientId(serviceSupabase, user.id, user.email)
+  if (!clientId) return NextResponse.json([])
 
   const { data: empList } = await serviceSupabase
     .from('employees')
     .select('id')
-    .eq('client_id', clientRecord.id)
+    .eq('client_id', clientId)
 
   if (!empList || empList.length === 0) return NextResponse.json([])
-
-  const employeeIds = empList.map(e => e.id)
 
   const { data: entries } = await serviceSupabase
     .from('planning_entries')
     .select('*')
-    .in('employee_id', employeeIds)
+    .in('employee_id', empList.map(e => e.id))
     .eq('week_number', week)
     .eq('year', year)
 

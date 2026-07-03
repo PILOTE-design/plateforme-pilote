@@ -11,12 +11,21 @@ export async function DELETE(
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Non autorisé' }, { status: 401 })
 
-  // Security: verify the employee belongs to this user's client
-  const { data: clientRecord } = await serviceSupabase
+  // Resolve client by user_id OR email
+  let { data: clientRecord } = await serviceSupabase
     .from('clients')
     .select('id')
     .eq('client_user_id', user.id)
     .maybeSingle()
+
+  if (!clientRecord && user.email) {
+    const { data: byEmail } = await serviceSupabase
+      .from('clients')
+      .select('id')
+      .eq('email', user.email)
+      .maybeSingle()
+    clientRecord = byEmail
+  }
 
   if (!clientRecord) return NextResponse.json({ error: 'Client introuvable' }, { status: 404 })
 
