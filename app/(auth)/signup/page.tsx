@@ -36,21 +36,12 @@ export default function SignupPage() {
       return
     }
 
-    // Si pas de session (confirmation email en attente), rediriger vers login
     if (!signUpData.session) {
       router.push('/login?message=Vérifiez+votre+email+pour+confirmer+votre+compte')
       return
     }
 
-    // Session active → Stripe Checkout
-    const res = await fetch('/api/stripe/checkout', { method: 'POST' })
-    const data = await res.json()
-
-    if (data.url) {
-      window.location.href = data.url
-    } else {
-      router.push('/dashboard')
-    }
+    router.push('/onboarding')
   }
 
   return (
@@ -63,7 +54,7 @@ export default function SignupPage() {
           <CardHeader>
             <CardTitle>Créer votre compte</CardTitle>
             <CardDescription>
-              Ensuite vous serez redirigé vers le paiement sécurisé (149€/mois)
+              Renseignez vos informations pour accéder à la plateforme
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -92,7 +83,7 @@ export default function SignupPage() {
               </div>
               {error && <p className="text-sm text-red-600">{error}</p>}
               <Button type="submit" className="w-full" disabled={loading}>
-                {loading ? 'Création du compte...' : 'Créer mon compte et payer'}
+                {loading ? 'Création du compte...' : 'Créer mon compte'}
               </Button>
             </form>
             <p className="mt-4 text-center text-sm text-gray-500">
