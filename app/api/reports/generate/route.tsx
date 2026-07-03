@@ -44,12 +44,16 @@ interface ComputedReport {
 }
 
 // ─── Formatters ───────────────────────────────────────────────────────────────
-const eur = (n: number) =>
-  n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'
+const eur = (n: number) => {
+  const abs = Math.abs(n)
+  const [int, dec] = abs.toFixed(2).split('.')
+  const intFmt = int.replace(/\B(?=(\d{3})+(?!\d))/g, ' ')
+  return (n < 0 ? '-' : '') + intFmt + ',' + dec + ' EUR'
+}
 const signEur = (n: number) => (n >= 0 ? '+' : '') + eur(n)
 const signPct = (n: number) => (n >= 0 ? '+' : '') + (n * 100).toFixed(1) + '%'
 const pctStr = (n: number) => (n * 100).toFixed(1) + '%'
-const trunc = (s: string, len: number) => (s.length > len ? s.slice(0, len - 1) + '…' : s)
+const trunc = (s: string, len: number) => (s.length > len ? s.slice(0, len - 1) + '...' : s)
 
 // ─── Palette ──────────────────────────────────────────────────────────────────
 const C = {
@@ -275,7 +279,7 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
                 <Text style={[ec >= 0 ? S.tCellGreen : S.tCellRed, { flex: 2 }]}>{signEur(ec)}</Text>
                 <Text style={[S.tCellRB, { flex: 1.2 }]}>{pctStr(w)}</Text>
                 <Text style={[ec >= 0 ? S.tCellGreen : S.tCellRed, { flex: 1, textAlign: 'center' }]}>
-                  {ec >= 0 ? '▲' : '▼'}
+                  {ec >= 0 ? '+' : '-'}
                 </Text>
               </View>
             )
@@ -287,7 +291,7 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
             <Text style={[S.tTotalCell, { flex: 2 }]}>{signEur(vn.total - vn1.total)}</Text>
             <Text style={[S.tTotalCell, { flex: 1.2 }]}>100%</Text>
             <Text style={[S.tTotalCell, { flex: 1, textAlign: 'center' }]}>
-              {vn.total >= vn1.total ? '▲' : '▼'}
+              {vn.total >= vn1.total ? '+' : '-'}
             </Text>
           </View>
         </View>
@@ -546,7 +550,7 @@ Format:
 - Puis une ligne par famille: NOM_FAMILLE|ID|montant_famille
 Utilise le point (.) comme séparateur décimal. N'inclus PAS les articles individuels.
 
-${ventes_text.slice(0, 6000)}` }],
+${ventes_text.slice(0, 12000)}` }],
   })
   const text = response.content[0].type === 'text' ? response.content[0].text.trim() : ''
   const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0)
@@ -580,10 +584,10 @@ Retourne UNIQUEMENT ce JSON:
 Format: {"tops":[{"d":"designation","n":montant_N,"e":ecart_positif},...x10],"flops":[{"d":"designation","n":montant_N,"e":ecart_negatif},...x10]}
 
 === VENTES N ===
-${textN.slice(0, 3000)}
+${textN.slice(0, 8000)}
 
 === VENTES N-1 ===
-${textN1.slice(0, 3000)}` }],
+${textN1.slice(0, 8000)}` }],
   })
   const text = response.content[0].type === 'text' ? response.content[0].text : ''
   try {
