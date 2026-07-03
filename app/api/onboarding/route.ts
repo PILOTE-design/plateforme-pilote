@@ -44,18 +44,23 @@ export async function POST(request: NextRequest) {
     const { data: adminUsers } = await serviceSupabase.auth.admin.listUsers()
     const adminUser = adminUsers?.users?.find((u: { email?: string }) => u.email === ADMIN_EMAIL)
 
-    // Insert client record (skip if email already exists)
-    await serviceSupabase
+    // Check if client already exists for this user
+    const { data: existing } = await serviceSupabase
       .from('clients')
-      .upsert(
-        {
+      .select('id')
+      .eq('client_user_id', user.id)
+      .maybeSingle()
+
+    if (!existing) {
+      await serviceSupabase
+        .from('clients')
+        .insert({
           user_id: adminUser?.id ?? null,
           name: businessName,
           email: deliveryEmail,
           client_user_id: user.id,
-        },
-        { onConflict: 'email', ignoreDuplicates: true }
-      )
+        })
+    }
   } catch (clientErr) {
     console.error('Auto client creation failed:', clientErr)
   }
