@@ -384,47 +384,63 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
         <Footer page={4} week={data.week_number} year={data.year} />
       </Page>
 
-      {/* ══ PAGE 5 — TOP 10 / FLOP 10 ════════════════════════════════════════ */}
+      {/* ══ PAGE 5 — CE QUI PROGRESSE / CE QUI DÉCROCHE ════════════════════ */}
       <Page size="A4" style={S.page}>
-        <SecHeader title="TOP 10 / FLOP 10 PRODUITS" />
+        <SecHeader title="CE QUI PROGRESSE — CE QUI DÉCROCHE" />
 
         <View style={S.topFlopWrap}>
           {/* TOP 10 */}
           <View style={S.topFlopLeft}>
-            <View style={S.colLabelGreen}>
-              <Text style={S.colLabelTextG}>▲  MEILLEURES PROGRESSIONS</Text>
+            <View style={{ backgroundColor: C.green, paddingVertical: 9, paddingHorizontal: 8 }}>
+              <Text style={{ color: C.white, fontFamily: 'Helvetica-Bold', fontSize: 9, letterSpacing: 0.5 }}>
+                CE QUI PROGRESSE
+              </Text>
             </View>
-            <View style={[S.tHead, { backgroundColor: C.green }]}>
+            <View style={{ flexDirection: 'row', backgroundColor: '#F1F5F9', paddingVertical: 5, paddingHorizontal: 8, borderBottomColor: '#CBD5E1', borderBottomWidth: 1 }}>
+              <Text style={[S.tHeadCell, { flex: 0.4, color: C.textLight }]}>#</Text>
               <Text style={[S.tHeadCell, { flex: 3 }]}>PRODUIT</Text>
-              <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N</Text>
-              <Text style={[S.tHeadCell, { flex: 1.5, textAlign: 'right' }]}>ÉCART</Text>
+              <Text style={[S.tHeadCell, { flex: 1.8, textAlign: 'right' }]}>CA N</Text>
+              <Text style={[S.tHeadCell, { flex: 1.2, textAlign: 'right' }]}>ÉVOL.</Text>
             </View>
-            {tops.map((t, i) => (
-              <View key={i} style={i % 2 === 0 ? S.tRow : S.tRowAlt}>
-                <Text style={[S.tCell, { flex: 3, fontSize: 8 }]}>{trunc(t.designation, 24)}</Text>
-                <Text style={[S.tCellR, { flex: 2, fontSize: 8 }]}>{eur(t.n)}</Text>
-                <Text style={[S.tCellGreen, { flex: 1.5, fontSize: 8 }]}>{signEur(t.ecart)}</Text>
-              </View>
-            ))}
+            {tops.map((t, i) => {
+              const n1 = t.n - t.ecart
+              const pct = n1 > 0 ? (t.ecart / n1 * 100) : 100
+              return (
+                <View key={i} style={[i % 2 === 0 ? S.tRow : S.tRowAlt, { paddingHorizontal: 8, borderBottomColor: '#EEF2F7', borderBottomWidth: 0.6 }]}>
+                  <Text style={[S.tCell, { flex: 0.4, fontSize: 7.5, color: C.textLight }]}>{i + 1}</Text>
+                  <Text style={[S.tCell, { flex: 3, fontSize: 7.5 }]}>{trunc(t.designation, 24)}</Text>
+                  <Text style={[S.tCellR, { flex: 1.8, fontSize: 7.5 }]}>{eur(t.n)}</Text>
+                  <Text style={[S.tCellGreen, { flex: 1.2, fontSize: 8, textAlign: 'right' }]}>+{pct.toFixed(0)}%</Text>
+                </View>
+              )
+            })}
           </View>
 
           {/* FLOP 10 */}
           <View style={S.topFlopRight}>
-            <View style={S.colLabelRed}>
-              <Text style={S.colLabelTextR}>▼  PLUS FORTES BAISSES</Text>
+            <View style={{ backgroundColor: C.red, paddingVertical: 9, paddingHorizontal: 8 }}>
+              <Text style={{ color: C.white, fontFamily: 'Helvetica-Bold', fontSize: 9, letterSpacing: 0.5 }}>
+                CE QUI DÉCROCHE
+              </Text>
             </View>
-            <View style={[S.tHead, { backgroundColor: C.red }]}>
+            <View style={{ flexDirection: 'row', backgroundColor: '#F1F5F9', paddingVertical: 5, paddingHorizontal: 8, borderBottomColor: '#CBD5E1', borderBottomWidth: 1 }}>
+              <Text style={[S.tHeadCell, { flex: 0.4, color: C.textLight }]}>#</Text>
               <Text style={[S.tHeadCell, { flex: 3 }]}>PRODUIT</Text>
-              <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N</Text>
-              <Text style={[S.tHeadCell, { flex: 1.5, textAlign: 'right' }]}>ÉCART</Text>
+              <Text style={[S.tHeadCell, { flex: 1.8, textAlign: 'right' }]}>CA N</Text>
+              <Text style={[S.tHeadCell, { flex: 1.2, textAlign: 'right' }]}>ÉVOL.</Text>
             </View>
-            {flops.map((f, i) => (
-              <View key={i} style={i % 2 === 0 ? S.tRow : S.tRowAlt}>
-                <Text style={[S.tCell, { flex: 3, fontSize: 8 }]}>{trunc(f.designation, 24)}</Text>
-                <Text style={[S.tCellR, { flex: 2, fontSize: 8 }]}>{eur(f.n)}</Text>
-                <Text style={[S.tCellRed, { flex: 1.5, fontSize: 8 }]}>{signEur(f.ecart)}</Text>
-              </View>
-            ))}
+            {flops.map((f, i) => {
+              const n1 = f.n - f.ecart
+              const pct = n1 > 0 ? Math.abs(f.ecart / n1 * 100) : 100
+              return (
+                <View key={i} style={[i % 2 === 0 ? S.tRow : S.tRowAlt, { paddingHorizontal: 8, borderBottomColor: '#EEF2F7', borderBottomWidth: 0.6 }]}>
+                  <Text style={[S.tCell, { flex: 0.4, fontSize: 7.5, color: C.textLight }]}>{i + 1}</Text>
+                  <Text style={[S.tCell, { flex: 3, fontSize: 7.5 }]}>{trunc(f.designation, 24)}</Text>
+                  <Text style={[S.tCellR, { flex: 1.8, fontSize: 7.5 }]}>{eur(f.n)}</Text>
+                  <Text style={[S.tCellRed, { flex: 1.2, fontSize: 8, textAlign: 'right' }]}>-{pct.toFixed(0)}%</Text>
+                </View>
+              )
+            })}
           </View>
         </View>
 
@@ -656,50 +672,115 @@ Règles :
 async function getChartBuffers(data: ReportData): Promise<{ pieBuffer: Buffer; barBuffer: Buffer }> {
   const famMapC = new Map<string, Famille>()
   for (const f of data.ventes_n1.familles) famMapC.set(f.nom.toUpperCase(), f)
-  const famNames  = data.ventes_n.familles.map(f => trunc(f.nom, 22))
-  const famCA     = data.ventes_n.familles.map(f => +f.total_montant.toFixed(2))
-  const famCA1    = data.ventes_n.familles.map(f => +(famMapC.get(f.nom.toUpperCase())?.total_montant ?? 0).toFixed(2))
-  const bgColors  = CHART_COLORS.slice(0, famNames.length)
+  const famNames = data.ventes_n.familles.map(f => trunc(f.nom, 18))
+  const famCA    = data.ventes_n.familles.map(f => +f.total_montant.toFixed(2))
+  const famCA1   = data.ventes_n.familles.map(f => +(famMapC.get(f.nom.toUpperCase())?.total_montant ?? 0).toFixed(2))
+
+  // ── G2 : Donut — D'où vient votre CA ? ─────────────────────────────────────
+  const donutPalette = ['#1E40AF','#2563EB','#3B82F6','#60A5FA','#93C5FD','#BFDBFE','#DBEAFE','#EFF6FF','#172554','#1D4ED8']
+    .slice(0, famNames.length)
 
   const pieConfig = {
     type: 'doughnut',
     data: {
       labels: famNames,
-      datasets: [{ data: famCA, backgroundColor: bgColors, borderWidth: 2, borderColor: '#FFFFFF' }],
+      datasets: [{
+        data: famCA,
+        backgroundColor: donutPalette,
+        borderWidth: 3,
+        borderColor: '#FFFFFF',
+      }],
     },
     options: {
-      legend: { position: 'right', labels: { fontSize: 11, padding: 14, boxWidth: 14 } },
+      cutoutPercentage: 55,
+      legend: {
+        position: 'right',
+        labels: {
+          fontSize: 11,
+          padding: 14,
+          boxWidth: 14,
+          fontColor: '#1E293B',
+        },
+      },
       title: {
         display: true,
-        text: `Répartition CA par famille — S${data.week_number} ${data.year}`,
-        fontSize: 13, fontColor: '#1E3A5F', padding: 16,
+        text: "D'où vient votre CA ?",
+        fontSize: 14,
+        fontColor: '#1E293B',
+        fontStyle: 'bold',
+        padding: 18,
       },
-      cutoutPercentage: 50,
+      plugins: {
+        datalabels: {
+          display: true,
+          formatter: 'function(value,ctx){var d=ctx.chart.data.datasets[0].data;var t=d.reduce(function(a,b){return a+b;},0);var p=value/t*100;return p<5?"":p.toFixed(0)+"%";}',
+          color: 'white',
+          font: { size: 11, weight: 'bold' },
+        },
+      },
     },
   }
 
+  // ── G1 : Barres groupées verticales N vs N-1 ────────────────────────────────
   const barConfig = {
-    type: 'horizontalBar',
+    type: 'bar',
     data: {
       labels: famNames,
       datasets: [
-        { label: `N (${data.year})`,     data: famCA,  backgroundColor: '#1E3A5F', barThickness: 13 },
-        { label: `N-1 (${data.year-1})`, data: famCA1, backgroundColor: '#90CAF9', barThickness: 13 },
+        {
+          label: `Année préc. (${data.year - 1})`,
+          data: famCA1,
+          backgroundColor: '#94A3B8',
+          barThickness: 24,
+        },
+        {
+          label: `Cette année (${data.year})`,
+          data: famCA,
+          backgroundColor: '#2563EB',
+          barThickness: 24,
+        },
       ],
     },
     options: {
       title: {
         display: true,
-        text: `CA par famille — N vs N-1`,
-        fontSize: 13, fontColor: '#1E3A5F', padding: 14,
+        text: [`Comparatif des ventes par rayon`, `Semaine ${data.week_number} · ${data.year} vs ${data.year - 1}`],
+        fontSize: 14,
+        fontColor: '#1E293B',
+        fontStyle: 'bold',
+        padding: 18,
       },
-      legend: { position: 'top', labels: { fontSize: 11 } },
+      legend: {
+        position: 'top',
+        labels: { fontSize: 11, padding: 18, boxWidth: 14, fontColor: '#1E293B' },
+      },
+      layout: { padding: { top: 24, bottom: 10, left: 10, right: 10 } },
       scales: {
         xAxes: [{
-          ticks: { fontSize: 10 },
-          gridLines: { color: '#E0E0E0' },
+          ticks: { fontSize: 11, fontColor: '#1E293B', fontStyle: 'bold' },
+          gridLines: { display: false },
         }],
-        yAxes: [{ ticks: { fontSize: 10 } }],
+        yAxes: [{
+          ticks: {
+            beginAtZero: true,
+            fontSize: 9,
+            fontColor: '#64748B',
+            callback: "function(v){if(v===0)return '';return v>=1000?(v/1000).toFixed(0)+'k €':v+' €';}",
+          },
+          gridLines: { color: '#E8EDF3', drawBorder: false, lineWidth: 0.8 },
+        }],
+      },
+      plugins: {
+        datalabels: {
+          display: true,
+          anchor: 'start',
+          align: 'end',
+          offset: 2,
+          clamp: true,
+          formatter: "function(v){if(v<100)return '';return v>=1000?(v/1000).toFixed(1)+'k':String(Math.round(v));}",
+          font: { size: 8, weight: 'bold' },
+          color: 'white',
+        },
       },
     },
   }
@@ -709,7 +790,7 @@ async function getChartBuffers(data: ReportData): Promise<{ pieBuffer: Buffer; b
     fetch(QC, { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ chart: pieConfig, width: 720, height: 370, backgroundColor: 'white', version: '2.9.4' }) }),
     fetch(QC, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chart: barConfig, width: 720, height: 480, backgroundColor: 'white', version: '2.9.4' }) }),
+      body: JSON.stringify({ chart: barConfig, width: 720, height: 470, backgroundColor: 'white', version: '2.9.4' }) }),
   ])
 
   if (!pieRes.ok) throw new Error('QuickChart pie: ' + await pieRes.text())
