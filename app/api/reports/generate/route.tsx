@@ -299,7 +299,7 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
       <Page size="A4" style={S.page}>
         <SecHeader title="RÉPARTITION DU CA PAR FAMILLE" />
         <View style={S.chartWrap}>
-          <Image src={{ data: pieBuffer, format: 'png' }} style={{ width: 490, height: 300 }} />
+          <Image src={`data:image/png;base64,${pieBuffer.toString('base64')}`} style={{ width: 490, height: 300 }} />
         </View>
         <Text style={S.chartCaption}>
           Poids de chaque famille dans le chiffre d'affaires total — Semaine {data.week_number} {data.year}
@@ -342,7 +342,7 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
       <Page size="A4" style={S.page}>
         <SecHeader title={`ÉVOLUTION PAR FAMILLE — ${data.year} vs ${data.year - 1}`} />
         <View style={S.chartWrap}>
-          <Image src={{ data: barBuffer, format: 'png' }} style={{ width: 490, height: 360 }} />
+          <Image src={`data:image/png;base64,${barBuffer.toString('base64')}`} style={{ width: 490, height: 360 }} />
         </View>
         <Text style={S.chartCaption}>
           Comparaison du chiffre d'affaires par famille — Semaine {data.week_number} {data.year} vs Semaine {data.week_number} {data.year - 1}
@@ -765,7 +765,6 @@ async function getChartBuffers(data: ReportData): Promise<{ pieBuffer: Buffer; b
             beginAtZero: true,
             fontSize: 9,
             fontColor: '#64748B',
-            callback: "function(v){if(v===0)return '';return v>=1000?(v/1000).toFixed(0)+'k €':v+' €';}",
           },
           gridLines: { color: '#E8EDF3', drawBorder: false, lineWidth: 0.8 },
         }],
