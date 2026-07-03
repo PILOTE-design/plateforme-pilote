@@ -3,13 +3,12 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Plus, ChevronLeft, ChevronRight, Trash2, CalendarDays } from 'lucide-react'
+import { Plus, ChevronLeft, ChevronRight, Trash2, CalendarDays, FileDown } from 'lucide-react'
 
 const JOURS_SHORT = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim']
 const JOURS_DB = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche'] as const
 type JourDB = typeof JOURS_DB[number]
 
-// Palette de couleurs pour les lignes employés (style agenda pro)
 const ROW_COLORS = [
   { bg: 'bg-violet-50', border: 'border-l-4 border-l-violet-400', badge: 'bg-violet-400', text: 'text-violet-700' },
   { bg: 'bg-pink-50',   border: 'border-l-4 border-l-pink-400',   badge: 'bg-pink-400',   text: 'text-pink-700'   },
@@ -19,6 +18,10 @@ const ROW_COLORS = [
   { bg: 'bg-rose-50',   border: 'border-l-4 border-l-rose-400',   badge: 'bg-rose-400',   text: 'text-rose-700'   },
   { bg: 'bg-amber-50',  border: 'border-l-4 border-l-amber-400',  badge: 'bg-amber-400',  text: 'text-amber-700'  },
   { bg: 'bg-indigo-50', border: 'border-l-4 border-l-indigo-400', badge: 'bg-indigo-400', text: 'text-indigo-700' },
+]
+
+const BADGE_COLORS = [
+  '#8b5cf6','#ec4899','#0ea5e9','#f97316','#14b8a6','#f43f5e','#f59e0b','#6366f1'
 ]
 
 type Employee = { id: string; name: string; hourly_rate: number; client_id: string; created_at: string }
@@ -39,6 +42,12 @@ function getWeekDates(week: number, year: number): Date[] {
   const monday = new Date(jan4)
   monday.setUTCDate(jan4.getUTCDate() - dayOfWeek + 1 + (week - 1) * 7)
   return Array.from({ length: 7 }, (_, i) => { const d = new Date(monday); d.setUTCDate(monday.getUTCDate() + i); return d })
+}
+
+function getWeekLabel(week: number, year: number): string {
+  const dates = getWeekDates(week, year)
+  const fmt = (d: Date) => d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', timeZone: 'UTC' })
+  return `${fmt(dates[0])} – ${fmt(dates[6])} ${year}`
 }
 
 function calcCost(totalHours: number, rate: number): number {
@@ -160,6 +169,117 @@ export default function PlanningPage() {
   const grandTotalH = rowStats.reduce((s, r) => s + r.totalH, 0)
   const grandTotalCost = rowStats.reduce((s, r) => s + r.cost, 0)
 
+  // ── PDF export ──────────────────────────────────────────────────────────────
+  function exportPDF() {
+    const dates = getWeekDates(week, year)
+    const fmtDate = (d: Date) => d.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' })
+
+    const dayHeaders = dates.map((d, i) => {
+      const isWeekend = i >= 5
+      return `<th style="background:${isWeekend ? '#94a3b8' : '#1E3A5F'};color:white;padding:8px 6px;font-size:10px;font-weight:600;text-align:center;">${fmtDate(d)}</th>`
+    }).join('')
+
+    const empRows = employees.map((emp, i) => {
+      const color = BADGE_COLORS[i % BADGE_COLORS.length]
+      const entry = getEntry(emp.id)
+      const totalH = JOURS_DB.reduce((s, j) => s + (entry[j] || 0), 0)
+      const cost = calcCost(totalH, Number(emp.hourly_rate))
+      const hasOT = totalH > 35
+
+      const dayCells = JOURS_DB.map((jour, idx) => {
+        const h = entry[jour] || 0
+        const isWeekend = idx >= 5
+        return `<td style="padding:8px 6px;text-align:center;background:${isWeekend ? '#f8fafc' : '#ffffff'};border-bottom:1px solid #e2e8f0;font-size:12px;font-weight:${h > 0 ? '600' : '400'};color:${h > 0 ? '#1e293b' : '#cbd5e1'}">${h > 0 ? h + 'h' : '—'}</td>`
+      }).join('')
+
+      return `
+        <tr>
+          <td style="padding:8px 10px;border-bottom:1px solid #e2e8f0;border-left:4px solid ${color};background:#fafafa;">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <div style="width:28px;height:28px;border-radius:50%;background:${color};display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                <span style="color:white;font-size:10px;font-weight:700;">${initials(emp.name)}</span>
+              </div>
+              <div>
+                <div style="font-weight:700;font-size:12px;color:#0f172a;">${emp.name}</div>
+                <div style="font-size:10px;color:#94a3b8;">${Number(emp.hourly_rate).toFixed(2)} €/h</div>
+              </div>
+            </div>
+          </td>
+          ${dayCells}
+          <td style="padding:8px 6px;text-align:center;border-bottom:1px solid #e2e8f0;font-weight:700;font-size:12px;color:${hasOT ? '#ea580c' : '#1e293b'};">
+            ${totalH.toFixed(1)}h${hasOT ? '<br><span style="font-size:9px;color:#f97316;">+' + (totalH - 35).toFixed(1) + 'h sup</span>' : ''}
+          </td>
+          <td style="padding:8px 6px;text-align:center;border-bottom:1px solid #e2e8f0;font-weight:700;font-size:12px;color:#15803d;">${cost.toFixed(2)} €</td>
+        </tr>`
+    }).join('')
+
+    const dayTotals = JOURS_DB.map((jour, idx) => {
+      const t = employees.reduce((s, emp) => s + (getEntry(emp.id)[jour] || 0), 0)
+      const isWeekend = idx >= 5
+      return `<td style="padding:8px 6px;text-align:center;color:${t > 0 ? 'white' : '#475569'};font-size:11px;font-weight:600;background:${isWeekend ? '#334155' : '#0f172a'}">${t > 0 ? t.toFixed(1) + 'h' : '—'}</td>`
+    }).join('')
+
+    const html = `<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <title>Planning – Semaine ${week} – ${year}</title>
+  <style>
+    @page { size: A4 landscape; margin: 1.2cm 1.5cm; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Arial, Helvetica, sans-serif; background: white; color: #1e293b; }
+    .header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 16px; padding-bottom: 10px; border-bottom: 2px solid #1E3A5F; }
+    .header-left h1 { font-size: 18px; font-weight: 800; color: #1E3A5F; }
+    .header-left p  { font-size: 11px; color: #64748b; margin-top: 2px; }
+    .header-right   { font-size: 11px; color: #64748b; text-align: right; }
+    .header-right strong { display: block; font-size: 14px; color: #15803d; }
+    table { width: 100%; border-collapse: collapse; margin-top: 0; }
+    .footer { margin-top: 14px; font-size: 9px; color: #94a3b8; text-align: center; }
+    @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="header-left">
+      <h1>Planning — Semaine ${week}</h1>
+      <p>${getWeekLabel(week, year)}</p>
+    </div>
+    <div class="header-right">
+      Coût main d’œuvre total
+      <strong>${grandTotalCost.toFixed(2)} €</strong>
+    </div>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th style="background:#1E3A5F;color:white;padding:8px 10px;font-size:10px;font-weight:600;text-align:left;width:160px;">Employé</th>
+        ${dayHeaders}
+        <th style="background:#1E3A5F;color:white;padding:8px 6px;font-size:10px;font-weight:600;text-align:center;">Total</th>
+        <th style="background:#1E3A5F;color:white;padding:8px 6px;font-size:10px;font-weight:600;text-align:center;">Coût brut</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${empRows}
+      <tr>
+        <td style="padding:8px 10px;background:#0f172a;color:#94a3b8;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;">Total / jour</td>
+        ${dayTotals}
+        <td style="padding:8px 6px;text-align:center;background:#0f172a;color:white;font-weight:700;font-size:12px;">${grandTotalH.toFixed(1)}h</td>
+        <td style="padding:8px 6px;text-align:center;background:#0f172a;color:#fb923c;font-weight:700;font-size:12px;">${grandTotalCost.toFixed(2)} €</td>
+      </tr>
+    </tbody>
+  </table>
+  <p class="footer">Calcul droit français : taux normal ≤ 35h · +25 % de 36h à 43h · +50 % au-delà de 43h · Généré via PILOTE</p>
+</body>
+</html>`
+
+    const win = window.open('', '_blank', 'width=1000,height=700')
+    if (!win) return
+    win.document.write(html)
+    win.document.close()
+    win.focus()
+    setTimeout(() => { win.print() }, 600)
+  }
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
@@ -168,13 +288,25 @@ export default function PlanningPage() {
           <CalendarDays className="w-5 h-5 text-[#1E3A5F]" />
           <h1 className="text-lg font-bold text-gray-900">Planning des équipes</h1>
         </div>
-        <Button onClick={() => setShowAdd(true)} className="bg-[#1E3A5F] hover:bg-[#2a4f7c] text-white h-8 text-sm px-3">
-          <Plus className="w-3.5 h-3.5 mr-1.5" />
-          Ajouter un employé
-        </Button>
+        <div className="flex items-center gap-2">
+          {employees.length > 0 && (
+            <Button
+              onClick={exportPDF}
+              variant="outline"
+              className="h-8 text-sm px-3 border-[#1E3A5F] text-[#1E3A5F] hover:bg-blue-50"
+            >
+              <FileDown className="w-3.5 h-3.5 mr-1.5" />
+              Enregistrer en PDF
+            </Button>
+          )}
+          <Button onClick={() => setShowAdd(true)} className="bg-[#1E3A5F] hover:bg-[#2a4f7c] text-white h-8 text-sm px-3">
+            <Plus className="w-3.5 h-3.5 mr-1.5" />
+            Ajouter un employé
+          </Button>
+        </div>
       </div>
 
-      {/* Week nav bar */}
+      {/* Week nav */}
       <div className="bg-white border-b border-gray-100 px-6 py-2.5 flex items-center gap-3">
         <button onClick={prevWeek} className="p-1.5 rounded hover:bg-gray-100 transition-colors">
           <ChevronLeft className="w-4 h-4 text-gray-500" />
@@ -201,10 +333,9 @@ export default function PlanningPage() {
         <div className="mx-6 mt-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">{pageError}</div>
       )}
 
-      {/* Planning grid */}
+      {/* Grid */}
       <div className="overflow-x-auto">
         <table className="w-full min-w-[900px]">
-          {/* Column headers: days */}
           <thead>
             <tr className="bg-white border-b border-gray-200">
               <th className="w-48 px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider sticky left-0 bg-white z-10">
@@ -236,12 +367,9 @@ export default function PlanningPage() {
               <th className="w-10 bg-white"></th>
             </tr>
           </thead>
-
           <tbody className="divide-y divide-gray-100">
             {loadingEmployees ? (
-              <tr>
-                <td colSpan={11} className="px-6 py-12 text-center text-sm text-gray-400">Chargement...</td>
-              </tr>
+              <tr><td colSpan={11} className="px-6 py-12 text-center text-sm text-gray-400">Chargement...</td></tr>
             ) : employees.length === 0 && !pageError ? (
               <tr>
                 <td colSpan={11} className="px-6 py-16 text-center">
@@ -259,13 +387,8 @@ export default function PlanningPage() {
                 const { totalH, cost } = rowStats.find(r => r.empId === emp.id) || { totalH: 0, cost: 0 }
                 const hasOvertime = totalH > 35
                 const isSaved = savedRows.has(emp.id)
-
-                // Day totals
-                const dayTotals = JOURS_DB.map(j => employees.reduce((s, e2) => s + (getEntry(e2.id)[j] || 0), 0))
-
                 return (
                   <tr key={emp.id} className={`${color.bg} hover:brightness-[0.98] transition-all`}>
-                    {/* Employee cell */}
                     <td className={`px-3 py-3 sticky left-0 z-10 ${color.bg} ${color.border}`}>
                       <div className="flex items-center gap-2">
                         <div className={`w-7 h-7 rounded-full ${color.badge} flex items-center justify-center flex-shrink-0`}>
@@ -277,8 +400,6 @@ export default function PlanningPage() {
                         </div>
                       </div>
                     </td>
-
-                    {/* Hour inputs */}
                     {JOURS_DB.map((jour, idx) => {
                       const val = entry[jour] || 0
                       const isWeekend = idx >= 5
@@ -286,10 +407,7 @@ export default function PlanningPage() {
                         <td key={jour} className={`px-2 py-3 text-center ${isWeekend ? 'opacity-70' : ''}`}>
                           <div className="relative inline-block">
                             <input
-                              type="number"
-                              min="0"
-                              max="24"
-                              step="0.5"
+                              type="number" min="0" max="24" step="0.5"
                               value={val > 0 ? val : ''}
                               onChange={e => updateHours(emp.id, jour, e.target.value)}
                               onBlur={() => saveEntry(emp.id)}
@@ -298,17 +416,11 @@ export default function PlanningPage() {
                               }`}
                               placeholder="—"
                             />
-                            {val > 0 && (
-                              <span className="absolute -top-1.5 -right-1.5 text-[9px] font-bold bg-white text-gray-400 rounded px-0.5 leading-tight border border-gray-100">
-                                h
-                              </span>
-                            )}
+                            {val > 0 && <span className="absolute -top-1.5 -right-1.5 text-[9px] font-bold bg-white text-gray-400 rounded px-0.5 leading-tight border border-gray-100">h</span>}
                           </div>
                         </td>
                       )
                     })}
-
-                    {/* Total hours */}
                     <td className="px-3 py-3 text-center">
                       <div className={`inline-flex flex-col items-center px-2.5 py-1 rounded-lg ${
                         hasOvertime ? 'bg-orange-100' : totalH > 0 ? 'bg-white shadow-sm' : ''
@@ -316,28 +428,17 @@ export default function PlanningPage() {
                         <span className={`font-bold text-sm ${
                           hasOvertime ? 'text-orange-600' : totalH > 0 ? 'text-gray-800' : 'text-gray-300'
                         }`}>{totalH.toFixed(1)}h</span>
-                        {hasOvertime && (
-                          <span className="text-[9px] text-orange-400 font-medium">+{(totalH-35).toFixed(1)} sup</span>
-                        )}
+                        {hasOvertime && <span className="text-[9px] text-orange-400 font-medium">+{(totalH-35).toFixed(1)} sup</span>}
                       </div>
                     </td>
-
-                    {/* Cost */}
                     <td className="px-3 py-3 text-center">
-                      <span className={`font-bold text-sm ${
-                        cost > 0 ? 'text-green-700' : 'text-gray-300'
-                      }`}>
+                      <span className={`font-bold text-sm ${cost > 0 ? 'text-green-700' : 'text-gray-300'}`}>
                         {cost > 0 ? `${cost.toFixed(0)} €` : '—'}
                       </span>
                       {isSaved && <span className="block text-[9px] text-green-500">✓ enregistré</span>}
                     </td>
-
-                    {/* Delete */}
                     <td className="px-2 py-3 text-center">
-                      <button
-                        onClick={() => deleteEmployee(emp.id)}
-                        className="p-1.5 rounded hover:bg-red-50 text-gray-200 hover:text-red-400 transition-colors"
-                      >
+                      <button onClick={() => deleteEmployee(emp.id)} className="p-1.5 rounded hover:bg-red-50 text-gray-200 hover:text-red-400 transition-colors">
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     </td>
@@ -345,8 +446,6 @@ export default function PlanningPage() {
                 )
               })
             )}
-
-            {/* Footer: daily totals */}
             {employees.length > 0 && (
               <tr className="bg-gray-900 text-white">
                 <td className="px-3 py-3 sticky left-0 bg-gray-900 z-10">
@@ -365,12 +464,8 @@ export default function PlanningPage() {
                     </td>
                   )
                 })}
-                <td className="px-3 py-3 text-center">
-                  <span className="font-bold text-white">{grandTotalH.toFixed(1)}h</span>
-                </td>
-                <td className="px-3 py-3 text-center">
-                  <span className="font-bold text-orange-400">{grandTotalCost.toFixed(0)} €</span>
-                </td>
+                <td className="px-3 py-3 text-center"><span className="font-bold text-white">{grandTotalH.toFixed(1)}h</span></td>
+                <td className="px-3 py-3 text-center"><span className="font-bold text-orange-400">{grandTotalCost.toFixed(0)} €</span></td>
                 <td></td>
               </tr>
             )}
@@ -378,7 +473,6 @@ export default function PlanningPage() {
         </table>
       </div>
 
-      {/* Overtime legend */}
       {employees.length > 0 && (
         <div className="px-6 py-2.5 bg-amber-50 border-t border-amber-100">
           <p className="text-xs text-amber-700">
@@ -387,7 +481,7 @@ export default function PlanningPage() {
         </div>
       )}
 
-      {/* Modal */}
+      {/* Modal ajout */}
       {showAdd && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 backdrop-blur-sm" onClick={() => setShowAdd(false)}>
           <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
