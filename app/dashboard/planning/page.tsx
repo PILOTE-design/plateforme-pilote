@@ -14,10 +14,10 @@ type JourDB = typeof JOURS_DB[number]
 const TYPE_CONFIG: Record<DayType, {
   label: string; bg: string; text: string; dot: string; defaultHours: number; pdfColor: string; display: string
 }> = {
-  travail: { label: 'Travail',       bg: '',             text: '',              dot: '',           defaultHours: 0, pdfColor: '',       display: '' },
-  conges:  { label: 'Congé payé',    bg: 'bg-sky-100',   text: 'text-sky-800',  dot: 'bg-sky-400', defaultHours: 7, pdfColor: '#bae6fd', display: '7h' },
-  maladie: { label: 'Arrêt maladie', bg: 'bg-red-100',   text: 'text-red-800',  dot: 'bg-red-400', defaultHours: 0, pdfColor: '#fecaca', display: 'AM' },
-  repos:   { label: 'Repos',         bg: 'bg-gray-100',  text: 'text-gray-400', dot: 'bg-gray-300', defaultHours: 0, pdfColor: '#f3f4f6', display: '—' },
+  travail: { label: 'Travail',       bg: '',            text: '',              dot: '',           defaultHours: 0, pdfColor: '',       display: '' },
+  conges:  { label: 'Congé payé',   bg: 'bg-sky-100',  text: 'text-sky-800',  dot: 'bg-sky-400', defaultHours: 7, pdfColor: '#bae6fd', display: '7h' },
+  maladie: { label: 'Arrêt maladie',bg: 'bg-red-100',  text: 'text-red-800',  dot: 'bg-red-400', defaultHours: 0, pdfColor: '#fecaca', display: 'AM' },
+  repos:   { label: 'Repos',         bg: 'bg-gray-100', text: 'text-gray-400', dot: 'bg-gray-300', defaultHours: 0, pdfColor: '#f3f4f6', display: '—' },
 }
 
 const EMP_PALETTES = [
@@ -66,11 +66,6 @@ function getWeekLabel(week: number, year: number) {
   return `${f(d[0])} – ${f(d[6])} ${year}`
 }
 
-/** Calcul coût selon seuils du contrat.
- *  contractH = heures normales du contrat (35 ou 39)
- *  Seuil +25 % : contractH+1 → contractH+8
- *  Seuil +50 % : au-delà de contractH+8
- */
 function calcCost(entry: PlanningEntry, rate: number, contractH: number) {
   const totalH = calcTotalH(entry)
   const t2 = contractH + 8
@@ -109,6 +104,7 @@ export default function PlanningPage() {
   const entriesRef = useRef<EntriesMap>({})
   const [selectedCell, setSelectedCell] = useState<{ empId: string; jour: JourDB } | null>(null)
   const [editingCell, setEditingCell] = useState<{ empId: string; jour: JourDB } | null>(null)
+  const [contractPopover, setContractPopover] = useState<string | null>(null)
   const [loadingEmployees, setLoadingEmployees] = useState(true)
   const [showAdd, setShowAdd] = useState(false)
   const [newName, setNewName] = useState('')
@@ -130,14 +126,12 @@ export default function PlanningPage() {
     })
   }
 
+  // Fermer les popovers sur clic extérieur
   useEffect(() => {
-    if (!selectedCell) return
-    const close = (e: MouseEvent) => {
-      if (!(e.target as Element).closest('[data-cell]')) setSelectedCell(null)
-    }
-    document.addEventListener('mousedown', close)
-    return () => document.removeEventListener('mousedown', close)
-  }, [selectedCell])
+    const close = () => { setSelectedCell(null); setContractPopover(null) }
+    document.addEventListener('click', close)
+    return () => document.removeEventListener('click', close)
+  }, [])
 
   useEffect(() => {
     fetch('/api/employees').then(r => r.json()).then(data => {
@@ -166,6 +160,15 @@ export default function PlanningPage() {
     await fetch('/api/planning', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...entry, employee_id: empId, week_number: week, year }),
+    })
+  }
+
+  async function updateContractHours(empId: string, hours: 35 | 39) {
+    setEmployees(prev => prev.map(e => e.id === empId ? { ...e, contract_hours: hours } : e))
+    setContractPopover(null)
+    await fetch(`/api/employees/${empId}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contract_hours: hours }),
     })
   }
 
@@ -249,10 +252,7 @@ export default function PlanningPage() {
         <td style="padding:7px 10px;border-bottom:1px solid #e2e8f0;border-left:3px solid ${pal.hex};background:#fafafa;">
           <div style="display:flex;align-items:center;gap:7px;">
             <div style="width:26px;height:26px;border-radius:50%;background:${pal.hex};display:flex;align-items:center;justify-content:center;"><span style="color:white;font-size:9px;font-weight:700;">${initials(emp.name)}</span></div>
-            <div>
-              <div style="font-weight:700;font-size:12px;">${emp.name}</div>
-              <div style="font-size:9px;color:#94a3b8;">${ch}h · ${Number(emp.hourly_rate).toFixed(2)} €/h</div>
-            </div>
+            <div><div style="font-weight:700;font-size:12px;">${emp.name}</div><div style="font-size:9px;color:#94a3b8;">${ch}h · ${Number(emp.hourly_rate).toFixed(2)} €/h</div></div>
           </div>
         </td>${cells}
         <td style="padding:6px;text-align:center;font-weight:700;font-size:12px;color:${totalH > ch ? '#ea580c' : '#1e293b'};background:#f8fafc;border-bottom:1px solid #e2e8f0;">${totalH.toFixed(1)}h</td>
@@ -266,7 +266,7 @@ export default function PlanningPage() {
   <div style="text-align:right;"><div style="font-size:10px;color:#64748b;">Coût main d'œuvre</div><div style="font-size:16px;font-weight:800;color:#15803d;">${grandCost.toFixed(2)} €</div></div>
 </div>
 <table><thead><tr><th style="background:#1E3A5F;color:white;padding:7px 10px;font-size:10px;text-align:left;width:160px;">Employé</th>${dayHeaders}<th style="background:#1E3A5F;color:white;padding:7px 5px;font-size:10px;text-align:center;">Total</th><th style="background:#1E3A5F;color:white;padding:7px 5px;font-size:10px;text-align:center;">Coût</th></tr></thead><tbody>${empRows}</tbody></table>
-<p style="margin-top:10px;font-size:9px;color:#94a3b8;">Seuils par contrat : 35h → maj. +25 % de 36–43h, +50 % au-delà · 39h → maj. +25 % de 40–47h, +50 % au-delà · CP = 7h/jour · Généré via PILOTE</p>
+<p style="margin-top:10px;font-size:9px;color:#94a3b8;">Seuils : 35h → +25 % de 36–43h, +50 % au-delà · 39h → +25 % de 40–47h, +50 % au-delà · CP = 7h/jour · Généré via PILOTE</p>
 </body></html>`
     const win = window.open('', '_blank', 'width=1100,height=750')
     if (!win) return
@@ -275,7 +275,7 @@ export default function PlanningPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50" onClick={() => { setSelectedCell(null); setEditingCell(null) }}>
+    <div className="min-h-screen bg-gray-50">
       <style>{`
         input[type=number]::-webkit-inner-spin-button,
         input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
@@ -331,16 +331,12 @@ export default function PlanningPage() {
             <span className="text-xs text-gray-600">{t.label}</span>
           </div>
         ))}
-        <div className="ml-auto flex items-center gap-3 text-[10px] text-gray-400">
-          <span className="bg-gray-100 px-2 py-0.5 rounded font-mono">35h → maj. +25% après 35h</span>
-          <span className="bg-gray-100 px-2 py-0.5 rounded font-mono">39h → maj. +25% après 39h</span>
-        </div>
       </div>
 
       {pageError && <div className="mx-6 mt-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">{pageError}</div>}
 
       {/* Grid */}
-      <div className="overflow-x-auto" onClick={e => e.stopPropagation()}>
+      <div className="overflow-x-auto">
         <table className="w-full min-w-[860px] border-collapse">
           <thead>
             <tr className="bg-white">
@@ -389,26 +385,55 @@ export default function PlanningPage() {
                 const ch = emp.contract_hours || 35
                 const { totalH, cost } = rowStats.find(r => r.empId === emp.id) || { totalH: 0, cost: 0 }
                 const hasOT = totalH > ch
+                const showContractPop = contractPopover === emp.id
 
                 return (
                   <tr key={emp.id}>
-                    {/* Employee name */}
+                    {/* Cellule employé */}
                     <td className={`px-3 py-0 sticky left-0 bg-white z-10 border-b border-r border-gray-200 ${pal.lborder}`}>
                       <div className="flex items-center gap-2 py-3">
                         <div className={`w-7 h-7 rounded-full ${pal.bg} flex items-center justify-center flex-shrink-0`}>
                           <span className={`text-[10px] font-bold ${pal.text}`}>{initials(emp.name)}</span>
                         </div>
-                        <div>
-                          <p className="text-sm font-semibold text-gray-900 leading-tight">{emp.name}</p>
-                          <p className="text-[10px] text-gray-400">
-                            <span className="font-semibold text-gray-500">{ch}h</span>
-                            {' · '}{Number(emp.hourly_rate).toFixed(2)} €/h
-                          </p>
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-gray-900 leading-tight truncate">{emp.name}</p>
+                          <div className="flex items-center gap-1 mt-0.5">
+                            {/* Badge contrat cliquable */}
+                            <div className="relative">
+                              <button
+                                onClick={e => { e.stopPropagation(); setContractPopover(showContractPop ? null : emp.id) }}
+                                className="text-[10px] font-bold bg-[#1E3A5F] text-white px-1.5 py-0.5 rounded cursor-pointer hover:bg-[#2a4f7c] transition-colors"
+                              >
+                                {ch}h
+                              </button>
+                              {showContractPop && (
+                                <div
+                                  className="absolute top-full left-0 mt-1 z-50 bg-white rounded-xl shadow-2xl border border-gray-100 p-1.5 w-36"
+                                  onClick={e => e.stopPropagation()}
+                                >
+                                  <p className="text-[10px] text-gray-400 px-2 pb-1 font-medium">Type de contrat</p>
+                                  {([35, 39] as const).map(h => (
+                                    <button
+                                      key={h}
+                                      onClick={() => updateContractHours(emp.id, h)}
+                                      className={`w-full flex items-center justify-between px-2 py-1.5 rounded-lg text-left text-xs transition-colors ${
+                                        ch === h ? 'bg-[#1E3A5F] text-white font-bold' : 'hover:bg-gray-50 text-gray-700'
+                                      }`}
+                                    >
+                                      <span>{h}h / semaine</span>
+                                      {ch === h && <span className="text-[10px]">✓</span>}
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                            <span className="text-[10px] text-gray-400">{Number(emp.hourly_rate).toFixed(2)} €/h</span>
+                          </div>
                         </div>
                       </div>
                     </td>
 
-                    {/* Day cells */}
+                    {/* Cases jours */}
                     {JOURS_DB.map((jour, idx) => {
                       const typeKey = `${jour}_type` as keyof PlanningEntry
                       const type = (entry[typeKey] as DayType) || (idx >= 5 ? 'repos' : 'travail')
@@ -423,10 +448,17 @@ export default function PlanningPage() {
 
                       return (
                         <td key={jour} className="p-0 border-b border-r border-gray-200 align-stretch">
-                          <div className="relative h-full" data-cell="true" onClick={e => e.stopPropagation()}>
+                          <div
+                            className="relative h-full"
+                            data-cell="true"
+                            onClick={e => e.stopPropagation()}
+                          >
                             <div
                               className={`cursor-pointer transition-colors ${cellBg} w-full h-full min-h-[76px] px-2.5 pt-2 pb-2 flex flex-col justify-between select-none hover:brightness-95`}
-                              onClick={() => setSelectedCell(isSelected ? null : { empId: emp.id, jour })}
+                              onClick={() => {
+                                setContractPopover(null)
+                                setSelectedCell(isSelected ? null : { empId: emp.id, jour })
+                              }}
                             >
                               <div className="flex items-center justify-between gap-1">
                                 <div className="flex items-center gap-1 min-w-0">
@@ -465,6 +497,7 @@ export default function PlanningPage() {
                               </div>
                             </div>
 
+                            {/* Dropdown type */}
                             {isSelected && (
                               <div
                                 className="absolute top-full left-0 z-40 mt-1 bg-white rounded-xl shadow-2xl border border-gray-100 p-1.5 min-w-[168px]"
@@ -563,8 +596,8 @@ export default function PlanningPage() {
         <div className="px-6 py-2.5 bg-amber-50 border-t border-amber-100">
           <p className="text-xs text-amber-700">
             <span className="font-semibold">Majoration heures sup :</span>
-            {' '}contrat 35h → +25 % de 36–43h, +50 % au-delà
-            {' · '}contrat 39h → +25 % de 40–47h, +50 % au-delà
+            {' '}35h → +25 % de 36–43h, +50 % au-delà
+            {' · '}39h → +25 % de 40–47h, +50 % au-delà
             {' · '}CP = 7h/jour
           </p>
         </div>
@@ -599,9 +632,7 @@ export default function PlanningPage() {
                   ))}
                 </div>
                 <p className="text-[10px] text-gray-400 mt-1.5">
-                  {newContractH === 35
-                    ? 'Majoration +25 % dès la 36e heure'
-                    : 'Majoration +25 % dès la 40e heure'}
+                  {newContractH === 35 ? 'Majoration +25 % dès la 36e heure' : 'Majoration +25 % dès la 40e heure'}
                 </p>
               </div>
               <div>
