@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Plus, ChevronLeft, ChevronRight, ChevronDown, Trash2, CalendarDays, FileDown } from 'lucide-react'
+import { Plus, ChevronLeft, ChevronRight, ChevronDown, Trash2, CalendarDays, FileDown, Copy, BarChart2, X } from 'lucide-react'
 
 type DayType = 'travail' | 'conges' | 'maladie' | 'repos'
 
@@ -14,13 +14,12 @@ type JourDB = typeof JOURS_DB[number]
 const TYPE_CONFIG: Record<DayType, {
   label: string; bg: string; text: string; dot: string; defaultHours: number; pdfColor: string; display: string
 }> = {
-  travail: { label: 'Travail',       bg: '',            text: '',              dot: '',           defaultHours: 0, pdfColor: '',       display: '' },
-  conges:  { label: 'Congé payé',   bg: 'bg-sky-100',  text: 'text-sky-800',  dot: 'bg-sky-400', defaultHours: 7, pdfColor: '#bae6fd', display: '7h' },
-  maladie: { label: 'Arrêt maladie',bg: 'bg-red-100',  text: 'text-red-800',  dot: 'bg-red-400', defaultHours: 0, pdfColor: '#fecaca', display: 'AM' },
-  repos:   { label: 'Repos',         bg: 'bg-gray-100', text: 'text-gray-400', dot: 'bg-gray-300', defaultHours: 0, pdfColor: '#f3f4f6', display: '—' },
+  travail: { label: 'Travail',        bg: '',            text: '',              dot: '',           defaultHours: 0, pdfColor: '',        display: '' },
+  conges:  { label: 'Congé payé',    bg: 'bg-sky-100',  text: 'text-sky-800',  dot: 'bg-sky-400', defaultHours: 7, pdfColor: '#bae6fd', display: '7h' },
+  maladie: { label: 'Arrêt maladie', bg: 'bg-red-100',  text: 'text-red-800',  dot: 'bg-red-400', defaultHours: 0, pdfColor: '#fecaca', display: 'AM' },
+  repos:   { label: 'Repos',          bg: 'bg-gray-100', text: 'text-gray-400', dot: 'bg-gray-300', defaultHours: 0, pdfColor: '#f3f4f6', display: '—' },
 }
 
-// Types de contrat français
 const CONTRACT_TYPES = [
   { key: 'CDI_35', label: 'CDI · 35h', short: 'CDI 35h', hours: 35, desc: '+25 % dès 36h' },
   { key: 'CDI_39', label: 'CDI · 39h', short: 'CDI 39h', hours: 39, desc: '+25 % dès 40h' },
@@ -40,7 +39,11 @@ const EMP_PALETTES = [
   { bg: 'bg-indigo-100', lborder: 'border-l-4 border-l-indigo-400', text: 'text-indigo-900', dot: 'bg-indigo-500', hex: '#6366f1', lightHex: '#e0e7ff' },
 ]
 
-type Employee = { id: string; name: string; hourly_rate: number; contract_hours: number; contract_type: string; created_at: string }
+type Employee = {
+  id: string; name: string; hourly_rate: number
+  contract_hours: number; contract_type: string
+  cp_initial?: number; created_at: string
+}
 type PlanningEntry = {
   id?: string; employee_id: string; week_number: number; year: number
   lundi: number; lundi_type: DayType
@@ -52,6 +55,11 @@ type PlanningEntry = {
   dimanche: number; dimanche_type: DayType
 }
 type EntriesMap = Record<string, PlanningEntry>
+type MonthlyStat = {
+  emp: Employee; hours: number; cost: number; worked: number; cp: number; sick: number
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function getISOWeek(date: Date) {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
@@ -75,8 +83,63 @@ function getWeekLabel(week: number, year: number) {
   return `${f(d[0])} – ${f(d[6])} ${year}`
 }
 
+function getEaster(year: number): Date {
+  const a = year % 19, b = Math.floor(year / 100), c = year % 100
+  const d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25)
+  const g = Math.floor((b - f + 1) / 3)
+  const h = (19 * a + b - d - g + 15) % 30
+  const i = Math.floor(c / 4), k = c % 4
+  const l = (32 + 2 * e + 2 * i - h - k) % 7
+  const m = Math.floor((a + 11 * h + 22 * l) / 451)
+  const month = Math.floor((h + l - 7 * m + 114) / 31)
+  const day = ((h + l - 7 * m + 114) % 31) + 1
+  return new Date(Date.UTC(year, month - 1, day))
+}
+
+/** Returns a Map of ISO date string → holiday name for all 11 French public holidays */
+function getFrenchHolidays(year: number): Map<string, string> {
+  const easter = getEaster(year)
+  const add = (d: Date, n: number) => { const r = new Date(d); r.setUTCDate(d.getUTCDate() + n); return r }
+  const fmt = (d: Date) => d.toISOString().slice(0, 10)
+  return new Map([
+    [fmt(new Date(Date.UTC(year, 0, 1))),   "Jour de l'An"],
+    [fmt(add(easter, 1)),                    'Lundi de Pâques'],
+    [fmt(new Date(Date.UTC(year, 4, 1))),   'Fête du Travail'],
+    [fmt(new Date(Date.UTC(year, 4, 8))),   'Victoire 1945'],
+    [fmt(add(easter, 39)),                   'Ascension'],
+    [fmt(add(easter, 50)),                   'Lundi de Pentecôte'],
+    [fmt(new Date(Date.UTC(year, 6, 14))),  'Fête Nationale'],
+    [fmt(new Date(Date.UTC(year, 7, 15))),  'Assomption'],
+    [fmt(new Date(Date.UTC(year, 10, 1))),  'Toussaint'],
+    [fmt(new Date(Date.UTC(year, 10, 11))), 'Armistice'],
+    [fmt(new Date(Date.UTC(year, 11, 25))), 'Noël'],
+  ])
+}
+
+function getWeeksInMonth(year: number, month: number): { week: number; year: number }[] {
+  const firstDay = new Date(Date.UTC(year, month - 1, 1))
+  const lastDay  = new Date(Date.UTC(year, month, 0))
+  const weeks: { week: number; year: number }[] = []
+  const seen = new Set<string>()
+  let d = new Date(firstDay)
+  while (d <= lastDay) {
+    const { week: w, year: y } = getISOWeek(d)
+    const key = `${y}-${w}`
+    if (!seen.has(key)) { seen.add(key); weeks.push({ week: w, year: y }) }
+    d.setUTCDate(d.getUTCDate() + 7)
+  }
+  return weeks
+}
+
 function contractLabel(ct: string | undefined) {
   return CONTRACT_TYPES.find(c => c.key === ct)?.short ?? (ct ?? 'CDI 35h')
+}
+
+function calcTotalH(entry: PlanningEntry) {
+  return JOURS_DB.reduce((s, j) => {
+    const t = (entry[`${j}_type` as keyof PlanningEntry] as DayType) || 'travail'
+    return s + (t === 'travail' ? (entry[j] || 0) : t === 'conges' ? 7 : 0)
+  }, 0)
 }
 
 function calcCost(entry: PlanningEntry, rate: number, contractH: number) {
@@ -85,13 +148,6 @@ function calcCost(entry: PlanningEntry, rate: number, contractH: number) {
   if (totalH <= contractH) return totalH * rate
   if (totalH <= t2) return contractH * rate + (totalH - contractH) * rate * 1.25
   return contractH * rate + (t2 - contractH) * rate * 1.25 + (totalH - t2) * rate * 1.5
-}
-
-function calcTotalH(entry: PlanningEntry) {
-  return JOURS_DB.reduce((s, j) => {
-    const t = (entry[`${j}_type` as keyof PlanningEntry] as DayType) || 'travail'
-    return s + (t === 'travail' ? (entry[j] || 0) : t === 'conges' ? 7 : 0)
-  }, 0)
 }
 
 function emptyEntry(empId: string, week: number, year: number): PlanningEntry {
@@ -108,28 +164,40 @@ function initials(name: string) {
   return name.split(' ').map(p => p[0]).join('').toUpperCase().slice(0, 2)
 }
 
+// ─── Component ────────────────────────────────────────────────────────────────
+
 export default function PlanningPage() {
   const now = getISOWeek(new Date())
-  const [week, setWeek] = useState(now.week)
-  const [year, setYear] = useState(now.year)
+  const [week, setWeek]   = useState(now.week)
+  const [year, setYear]   = useState(now.year)
   const [employees, setEmployees] = useState<Employee[]>([])
-  const [entries, setEntries] = useState<EntriesMap>({})
+  const [entries, setEntries]     = useState<EntriesMap>({})
   const entriesRef = useRef<EntriesMap>({})
-  const [selectedCell, setSelectedCell] = useState<{ empId: string; jour: JourDB } | null>(null)
-  const [editingCell, setEditingCell] = useState<{ empId: string; jour: JourDB } | null>(null)
-  const [contractPopover, setContractPopover] = useState<string | null>(null)
+  const [selectedCell,   setSelectedCell]   = useState<{ empId: string; jour: JourDB } | null>(null)
+  const [editingCell,    setEditingCell]     = useState<{ empId: string; jour: JourDB } | null>(null)
+  const [contractPopover,setContractPopover] = useState<string | null>(null)
   const [loadingEmployees, setLoadingEmployees] = useState(true)
-  const [showAdd, setShowAdd] = useState(false)
-  const [newName, setNewName] = useState('')
-  const [newRate, setNewRate] = useState('')
+  const [showAdd,      setShowAdd]      = useState(false)
+  const [newName,      setNewName]      = useState('')
+  const [newRate,      setNewRate]      = useState('')
   const [newContractKey, setNewContractKey] = useState<ContractKey>('CDI_35')
-  const [adding, setAdding] = useState(false)
-  const [pageError, setPageError] = useState<string | null>(null)
+  const [adding,       setAdding]       = useState(false)
+  const [pageError,    setPageError]    = useState<string | null>(null)
+  // New
+  const [copying,        setCopying]        = useState(false)
+  const [cpUsed,         setCpUsed]         = useState<Record<string, number>>({})
+  const [showMonthly,    setShowMonthly]    = useState(false)
+  const [monthlyData,    setMonthlyData]    = useState<MonthlyStat[] | null>(null)
+  const [loadingMonthly, setLoadingMonthly] = useState(false)
 
   const { week: cw, year: cy } = getISOWeek(new Date())
   const isCurrentWeek = week === cw && year === cy
-  const weekDates = getWeekDates(week, year)
-  const today = new Date()
+  const weekDates     = getWeekDates(week, year)
+  const today         = new Date()
+
+  // Jours fériés pour l'année affichée
+  const holidays     = getFrenchHolidays(year)
+  const weekHolidays = weekDates.map(d => holidays.get(d.toISOString().slice(0, 10)) ?? null)
 
   const setEntriesSync = (updater: (prev: EntriesMap) => EntriesMap) => {
     setEntries(prev => {
@@ -153,6 +221,22 @@ export default function PlanningPage() {
     }).catch(() => { setPageError('Erreur réseau'); setLoadingEmployees(false) })
   }, [])
 
+  // Solde CP : rechargé à chaque changement d'année
+  const refreshCpUsed = useCallback(() => {
+    fetch(`/api/planning/stats?year=${year}`)
+      .then(r => r.json())
+      .then(data => {
+        if (Array.isArray(data)) {
+          const map: Record<string, number> = {}
+          for (const { employee_id, cp_used } of data) map[employee_id] = cp_used
+          setCpUsed(map)
+        }
+      })
+      .catch(() => {})
+  }, [year])
+
+  useEffect(() => { refreshCpUsed() }, [refreshCpUsed])
+
   const loadEntries = useCallback(() => {
     fetch(`/api/planning?week=${week}&year=${year}`).then(r => r.json()).then(data => {
       if (Array.isArray(data)) {
@@ -165,7 +249,7 @@ export default function PlanningPage() {
 
   useEffect(() => { loadEntries() }, [loadEntries])
 
-  function getEntry(empId: string) { return entriesRef.current[empId] ?? emptyEntry(empId, week, year) }
+  function getEntry(empId: string)      { return entriesRef.current[empId] ?? emptyEntry(empId, week, year) }
   function getEntryState(empId: string) { return entries[empId] ?? emptyEntry(empId, week, year) }
 
   async function saveEntryValues(empId: string, entry: PlanningEntry) {
@@ -187,7 +271,7 @@ export default function PlanningPage() {
     })
   }
 
-  function changeType(empId: string, jour: JourDB, newType: DayType) {
+  async function changeType(empId: string, jour: JourDB, newType: DayType) {
     const typeKey = `${jour}_type` as keyof PlanningEntry
     const currentH = getEntry(empId)[jour] || 0
     const updated: PlanningEntry = {
@@ -196,7 +280,8 @@ export default function PlanningPage() {
     }
     setEntriesSync(prev => ({ ...prev, [empId]: updated }))
     setSelectedCell(null); setEditingCell(null)
-    saveEntryValues(empId, updated)
+    await saveEntryValues(empId, updated)
+    refreshCpUsed()
   }
 
   function updateHours(empId: string, jour: JourDB, value: string) {
@@ -235,32 +320,97 @@ export default function PlanningPage() {
   function prevWeek() { if (week === 1) { setYear(y => y - 1); setWeek(52) } else setWeek(w => w - 1) }
   function nextWeek() { if (week === 52) { setYear(y => y + 1); setWeek(1) } else setWeek(w => w + 1) }
 
-  const rowStats = employees.map(emp => {
-    const e = getEntryState(emp.id)
+  async function copyPrevWeek() {
+    if (copying) return
+    const prevW = week === 1 ? 52 : week - 1
+    const prevY = week === 1 ? year - 1 : year
+    setCopying(true)
+    try {
+      const res  = await fetch(`/api/planning?week=${prevW}&year=${prevY}`)
+      const data = await res.json()
+      if (!Array.isArray(data) || data.length === 0) return
+      for (const entry of data) {
+        const entryData = { ...entry }
+        delete entryData.id
+        await fetch('/api/planning', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...entryData, week_number: week, year }),
+        })
+      }
+      loadEntries()
+    } finally {
+      setCopying(false)
+    }
+  }
+
+  async function openMonthly() {
+    setShowMonthly(true)
+    setLoadingMonthly(true)
+    setMonthlyData(null)
+    const monthYear = weekDates[0].getUTCFullYear()
+    const month     = weekDates[0].getUTCMonth() + 1
+    const weeks     = getWeeksInMonth(monthYear, month)
+    try {
+      const allResults = await Promise.all(
+        weeks.map(({ week: w, year: y }) =>
+          fetch(`/api/planning?week=${w}&year=${y}`).then(r => r.json()).catch(() => [])
+        )
+      )
+      const stats: Record<string, { hours: number; cost: number; worked: number; cp: number; sick: number }> = {}
+      for (const weekEntries of allResults) {
+        if (!Array.isArray(weekEntries)) continue
+        for (const entry of weekEntries) {
+          if (!stats[entry.employee_id]) stats[entry.employee_id] = { hours: 0, cost: 0, worked: 0, cp: 0, sick: 0 }
+          const emp = employees.find(e => e.id === entry.employee_id)
+          if (!emp) continue
+          stats[entry.employee_id].hours += calcTotalH(entry)
+          stats[entry.employee_id].cost  += calcCost(entry, Number(emp.hourly_rate), emp.contract_hours || 35)
+          for (const jour of JOURS_DB) {
+            const t = (entry[`${jour}_type`] as DayType) || 'travail'
+            const h = (entry[jour] as number) || 0
+            if (t === 'conges') stats[entry.employee_id].cp++
+            else if (t === 'maladie') stats[entry.employee_id].sick++
+            else if (t === 'travail' && h > 0) stats[entry.employee_id].worked++
+          }
+        }
+      }
+      setMonthlyData(employees.map(emp => ({ emp, ...(stats[emp.id] || { hours: 0, cost: 0, worked: 0, cp: 0, sick: 0 }) })))
+    } finally {
+      setLoadingMonthly(false)
+    }
+  }
+
+  const rowStats  = employees.map(emp => {
+    const e  = getEntryState(emp.id)
     const ch = emp.contract_hours || 35
     return { empId: emp.id, totalH: calcTotalH(e), cost: calcCost(e, Number(emp.hourly_rate), ch) }
   })
-  const grandH = rowStats.reduce((s, r) => s + r.totalH, 0)
+  const grandH    = rowStats.reduce((s, r) => s + r.totalH, 0)
   const grandCost = rowStats.reduce((s, r) => s + r.cost, 0)
 
   function exportPDF() {
     const dates = getWeekDates(week, year)
-    const fmtD = (d: Date) => d.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' })
-    const dayHeaders = dates.map((d, i) =>
-      `<th style="background:${i >= 5 ? '#94a3b8' : '#1E3A5F'};color:white;padding:7px 5px;font-size:10px;text-align:center;">${fmtD(d)}</th>`
-    ).join('')
+    const fmtD  = (d: Date) => d.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' })
+    const dayHeaders = dates.map((d, i) => {
+      const fName = holidays.get(d.toISOString().slice(0, 10))
+      const bg    = fName ? '#d97706' : i >= 5 ? '#94a3b8' : '#1E3A5F'
+      return `<th style="background:${bg};color:white;padding:7px 5px;font-size:10px;text-align:center;">${fmtD(d)}${fName ? `<br><span style="font-size:8px;opacity:.9;">✦ ${fName}</span>` : ''}</th>`
+    }).join('')
     const empRows = employees.map((emp, i) => {
-      const pal = EMP_PALETTES[i % EMP_PALETTES.length]
-      const entry = getEntryState(emp.id)
-      const ch = emp.contract_hours || 35
+      const pal    = EMP_PALETTES[i % EMP_PALETTES.length]
+      const entry  = getEntryState(emp.id)
+      const ch     = emp.contract_hours || 35
       const totalH = calcTotalH(entry)
-      const cost = calcCost(entry, Number(emp.hourly_rate), ch)
-      const cells = JOURS_DB.map((j, idx) => {
-        const type = (entry[`${j}_type` as keyof PlanningEntry] as DayType) || (idx >= 5 ? 'repos' : 'travail')
-        const h = entry[j] || 0
-        const bg = type === 'travail' ? pal.lightHex : TYPE_CONFIG[type].pdfColor
-        const label = type === 'travail' ? (h > 0 ? `<strong>${h}h</strong>` : '—') : `<span style="font-size:9px;">${TYPE_CONFIG[type].label}</span>`
-        return `<td style="padding:6px 4px;text-align:center;background:${bg};border-bottom:1px solid #e2e8f0;border-right:1px solid #e2e8f0;">${label}</td>`
+      const cost   = calcCost(entry, Number(emp.hourly_rate), ch)
+      const cells  = JOURS_DB.map((j, idx) => {
+        const type   = (entry[`${j}_type` as keyof PlanningEntry] as DayType) || (idx >= 5 ? 'repos' : 'travail')
+        const h      = entry[j] || 0
+        const fName  = weekHolidays[idx]
+        const bg     = fName ? '#fef3c7' : type === 'travail' ? pal.lightHex : TYPE_CONFIG[type].pdfColor
+        const label  = type === 'travail'
+          ? (h > 0 ? `<strong>${h}h</strong>` : '—')
+          : `<span style="font-size:9px;">${TYPE_CONFIG[type].label}</span>`
+        return `<td style="padding:6px 4px;text-align:center;background:${bg};border-bottom:1px solid #e2e8f0;border-right:1px solid #e2e8f0;">${label}${fName ? `<br><span style="font-size:8px;color:#92400e;">Férié</span>` : ''}</td>`
       }).join('')
       return `<tr>
         <td style="padding:7px 10px;border-bottom:1px solid #e2e8f0;border-left:3px solid ${pal.hex};background:#fafafa;">
@@ -280,7 +430,7 @@ export default function PlanningPage() {
   <div style="text-align:right;"><div style="font-size:10px;color:#64748b;">Coût main d'œuvre</div><div style="font-size:16px;font-weight:800;color:#15803d;">${grandCost.toFixed(2)} €</div></div>
 </div>
 <table><thead><tr><th style="background:#1E3A5F;color:white;padding:7px 10px;font-size:10px;text-align:left;width:160px;">Employé</th>${dayHeaders}<th style="background:#1E3A5F;color:white;padding:7px 5px;font-size:10px;text-align:center;">Total</th><th style="background:#1E3A5F;color:white;padding:7px 5px;font-size:10px;text-align:center;">Coût</th></tr></thead><tbody>${empRows}</tbody></table>
-<p style="margin-top:10px;font-size:9px;color:#94a3b8;">Seuils : 35h → +25 % de 36–43h · 39h → +25 % de 40–47h · +50 % au-delà dans les deux cas · CP = 7h/jour · Généré via PILOTE</p>
+<p style="margin-top:10px;font-size:9px;color:#94a3b8;">Seuils : 35h → +25 % de 36–43h · 39h → +25 % de 40–47h · +50 % au-delà · CP = 7h/jour · Généré via PILOTE</p>
 </body></html>`
     const win = window.open('', '_blank', 'width=1100,height=750')
     if (!win) return
@@ -296,7 +446,7 @@ export default function PlanningPage() {
         input[type=number] { -moz-appearance: textfield; }
       `}</style>
 
-      {/* Header */}
+      {/* ── Header ── */}
       <div className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-2.5">
           <CalendarDays className="w-5 h-5 text-[#1E3A5F]" />
@@ -304,9 +454,14 @@ export default function PlanningPage() {
         </div>
         <div className="flex items-center gap-2">
           {employees.length > 0 && (
-            <Button onClick={exportPDF} variant="outline" className="h-8 text-sm px-3 border-[#1E3A5F] text-[#1E3A5F] hover:bg-blue-50">
-              <FileDown className="w-3.5 h-3.5 mr-1.5" />Enregistrer en PDF
-            </Button>
+            <>
+              <Button onClick={openMonthly} variant="outline" className="h-8 text-sm px-3 border-gray-300 text-gray-600 hover:bg-gray-50">
+                <BarChart2 className="w-3.5 h-3.5 mr-1.5" />Récap du mois
+              </Button>
+              <Button onClick={exportPDF} variant="outline" className="h-8 text-sm px-3 border-[#1E3A5F] text-[#1E3A5F] hover:bg-blue-50">
+                <FileDown className="w-3.5 h-3.5 mr-1.5" />Enregistrer en PDF
+              </Button>
+            </>
           )}
           <Button onClick={() => setShowAdd(true)} className="bg-[#1E3A5F] hover:bg-[#2a4f7c] text-white h-8 text-sm px-3">
             <Plus className="w-3.5 h-3.5 mr-1.5" />Ajouter un employé
@@ -314,7 +469,7 @@ export default function PlanningPage() {
         </div>
       </div>
 
-      {/* Week nav */}
+      {/* ── Week nav ── */}
       <div className="bg-white border-b border-gray-100 px-6 py-2.5 flex items-center gap-3">
         <button onClick={prevWeek} className="p-1.5 rounded hover:bg-gray-100"><ChevronLeft className="w-4 h-4 text-gray-500" /></button>
         <div className="flex items-center gap-2">
@@ -325,22 +480,31 @@ export default function PlanningPage() {
         {!isCurrentWeek && (
           <button onClick={() => { setWeek(cw); setYear(cy) }} className="text-xs text-[#1E3A5F] hover:underline">← Semaine actuelle</button>
         )}
+        <button
+          onClick={copyPrevWeek}
+          disabled={copying}
+          className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-800 border border-gray-200 rounded-md px-2.5 py-1 hover:bg-gray-50 transition-colors disabled:opacity-40"
+        >
+          <Copy className="w-3 h-3" />
+          {copying ? 'Copie...' : `Copier S${week === 1 ? 52 : week - 1}`}
+        </button>
         <div className="ml-auto flex items-center gap-4 text-xs text-gray-400">
           <span><span className="font-semibold text-gray-700">{grandH.toFixed(1)}h</span> total</span>
           <span><span className="font-semibold text-green-700">{grandCost.toFixed(2)} €</span> coût</span>
         </div>
       </div>
 
-      {/* Legend */}
+      {/* ── Legend ── */}
       <div className="bg-white border-b border-gray-100 px-6 py-2 flex items-center gap-5">
         <span className="text-xs font-medium text-gray-400">Types :</span>
         {([
-          { key: 'travail', label: 'Travail',       dot: 'bg-violet-400' },
-          { key: 'conges',  label: 'Congé payé',    dot: 'bg-sky-400'    },
-          { key: 'maladie', label: 'Arrêt maladie', dot: 'bg-red-400'    },
-          { key: 'repos',   label: 'Repos',         dot: 'bg-gray-300'   },
-        ] as const).map(t => (
-          <div key={t.key} className="flex items-center gap-1.5">
+          { label: 'Travail',       dot: 'bg-violet-400' },
+          { label: 'Congé payé',   dot: 'bg-sky-400'    },
+          { label: 'Arrêt maladie',dot: 'bg-red-400'    },
+          { label: 'Repos',        dot: 'bg-gray-300'   },
+          { label: 'Jour férié',   dot: 'bg-amber-400'  },
+        ]).map(t => (
+          <div key={t.label} className="flex items-center gap-1.5">
             <div className={`w-2.5 h-2.5 rounded-sm ${t.dot}`} />
             <span className="text-xs text-gray-600">{t.label}</span>
           </div>
@@ -349,7 +513,7 @@ export default function PlanningPage() {
 
       {pageError && <div className="mx-6 mt-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">{pageError}</div>}
 
-      {/* Grid */}
+      {/* ── Grid ── */}
       <div className="overflow-x-auto">
         <table className="w-full min-w-[860px] border-collapse">
           <thead>
@@ -357,20 +521,26 @@ export default function PlanningPage() {
               <th className="w-52 px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider sticky left-0 bg-white z-10 border-b border-r border-gray-200">Employé</th>
               {weekDates.map((date, i) => {
                 const isToday = date.getUTCDate() === today.getDate() && date.getUTCMonth() === today.getMonth() && date.getUTCFullYear() === today.getFullYear()
-                const isWE = i >= 5
+                const isWE    = i >= 5
+                const fName   = weekHolidays[i]
                 return (
-                  <th key={i} className={`px-2 py-3 text-center min-w-[110px] border-b border-r border-gray-200 ${
-                    isToday ? 'bg-[#1E3A5F]' : isWE ? 'bg-gray-50' : 'bg-white'
+                  <th key={i} className={`px-2 py-2 text-center min-w-[110px] border-b border-r border-gray-200 ${
+                    isToday ? 'bg-[#1E3A5F]' : fName ? 'bg-amber-50' : isWE ? 'bg-gray-50' : 'bg-white'
                   }`}>
                     <div className={`text-xs font-bold uppercase tracking-wide ${
-                      isToday ? 'text-white' : isWE ? 'text-gray-400' : 'text-gray-500'
+                      isToday ? 'text-white' : fName ? 'text-amber-700' : isWE ? 'text-gray-400' : 'text-gray-500'
                     }`}>{JOURS_SHORT[i]}</div>
                     <div className={`text-lg font-bold ${
-                      isToday ? 'text-white' : isWE ? 'text-gray-300' : 'text-gray-800'
+                      isToday ? 'text-white' : fName ? 'text-amber-800' : isWE ? 'text-gray-300' : 'text-gray-800'
                     }`}>{date.getUTCDate()}</div>
-                    <div className={`text-[10px] ${
-                      isToday ? 'text-blue-200' : 'text-gray-400'
-                    }`}>{date.toLocaleDateString('fr-FR', { month: 'short', timeZone: 'UTC' })}</div>
+                    <div className={`text-[10px] ${isToday ? 'text-blue-200' : 'text-gray-400'}`}>
+                      {date.toLocaleDateString('fr-FR', { month: 'short', timeZone: 'UTC' })}
+                    </div>
+                    {fName && (
+                      <div className="text-[8px] font-semibold text-amber-700 bg-amber-100 px-1 py-0.5 rounded mt-0.5 leading-tight truncate" title={fName}>
+                        ✦ {fName}
+                      </div>
+                    )}
                   </th>
                 )
               })}
@@ -393,25 +563,27 @@ export default function PlanningPage() {
               </tr>
             ) : (
               employees.map((emp, empIdx) => {
-                const pal = EMP_PALETTES[empIdx % EMP_PALETTES.length]
-                const entry = getEntryState(emp.id)
-                const ch = emp.contract_hours || 35
+                const pal    = EMP_PALETTES[empIdx % EMP_PALETTES.length]
+                const entry  = getEntryState(emp.id)
+                const ch     = emp.contract_hours || 35
                 const { totalH, cost } = rowStats.find(r => r.empId === emp.id) || { totalH: 0, cost: 0 }
-                const hasOT = totalH > ch
+                const hasOT  = totalH > ch
                 const showContractPop = contractPopover === emp.id
+                const cpInitial   = emp.cp_initial ?? 25
+                const cpUsedCount = cpUsed[emp.id] || 0
+                const cpRemaining = cpInitial - cpUsedCount
 
                 return (
                   <tr key={emp.id} className="group">
-                    {/* Cellule employé — poubelle visible au hover */}
+                    {/* Employee cell */}
                     <td className={`px-3 py-0 sticky left-0 bg-white z-10 border-b border-r border-gray-200 ${pal.lborder}`}>
-                      <div className="flex items-center gap-2 py-2.5">
+                      <div className="flex items-center gap-2 py-2">
                         <div className={`w-7 h-7 rounded-full ${pal.bg} flex items-center justify-center flex-shrink-0`}>
                           <span className={`text-[10px] font-bold ${pal.text}`}>{initials(emp.name)}</span>
                         </div>
                         <div className="min-w-0 flex-1">
                           <p className="text-sm font-semibold text-gray-900 leading-tight truncate">{emp.name}</p>
                           <div className="flex items-center gap-1 mt-0.5 flex-wrap">
-                            {/* Badge contrat cliquable */}
                             <div className="relative">
                               <button
                                 onClick={e => { e.stopPropagation(); setContractPopover(showContractPop ? null : emp.id) }}
@@ -420,26 +592,17 @@ export default function PlanningPage() {
                                 {contractLabel(emp.contract_type)}
                               </button>
                               {showContractPop && (
-                                <div
-                                  className="absolute top-full left-0 mt-1 z-50 bg-white rounded-xl shadow-2xl border border-gray-100 p-1.5 w-40"
-                                  onClick={e => e.stopPropagation()}
-                                >
+                                <div className="absolute top-full left-0 mt-1 z-50 bg-white rounded-xl shadow-2xl border border-gray-100 p-1.5 w-40" onClick={e => e.stopPropagation()}>
                                   <p className="text-[10px] text-gray-400 px-2 pb-1 font-medium">Type de contrat</p>
                                   {CONTRACT_TYPES.map(ct => (
-                                    <button
-                                      key={ct.key}
-                                      onClick={() => updateContract(emp.id, ct.key)}
+                                    <button key={ct.key} onClick={() => updateContract(emp.id, ct.key)}
                                       className={`w-full flex items-center justify-between px-2 py-1.5 rounded-lg text-left transition-colors ${
-                                        emp.contract_type === ct.key
-                                          ? 'bg-[#1E3A5F] text-white'
-                                          : 'hover:bg-gray-50 text-gray-700'
+                                        emp.contract_type === ct.key ? 'bg-[#1E3A5F] text-white' : 'hover:bg-gray-50 text-gray-700'
                                       }`}
                                     >
                                       <div>
                                         <div className="text-xs font-semibold">{ct.short}</div>
-                                        <div className={`text-[9px] ${
-                                          emp.contract_type === ct.key ? 'text-blue-200' : 'text-gray-400'
-                                        }`}>{ct.desc}</div>
+                                        <div className={`text-[9px] ${emp.contract_type === ct.key ? 'text-blue-200' : 'text-gray-400'}`}>{ct.desc}</div>
                                       </div>
                                       {emp.contract_type === ct.key && <span className="text-[10px]">✓</span>}
                                     </button>
@@ -448,59 +611,57 @@ export default function PlanningPage() {
                               )}
                             </div>
                             <span className="text-[10px] text-gray-400">{Number(emp.hourly_rate).toFixed(2)} €/h</span>
-                            {/* Poubelle inline — visible au hover sans scroll */}
-                            <button
-                              onClick={() => deleteEmployee(emp.id)}
+                            <button onClick={() => deleteEmployee(emp.id)}
                               className="ml-auto opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-red-50 text-gray-300 hover:text-red-400 transition-all"
                             >
                               <Trash2 className="w-3 h-3" />
                             </button>
                           </div>
+                          {/* CP balance */}
+                          <div className="flex items-center gap-1 mt-1">
+                            <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                              cpRemaining < 0 ? 'bg-red-400' : cpRemaining <= 3 ? 'bg-orange-400' : 'bg-sky-300'
+                            }`} />
+                            <span className={`text-[9px] ${
+                              cpRemaining < 0 ? 'text-red-500 font-semibold' : cpRemaining <= 3 ? 'text-orange-500' : 'text-gray-400'
+                            }`}>{cpRemaining}j CP restants</span>
+                          </div>
                         </div>
                       </div>
                     </td>
 
-                    {/* Cases jours */}
+                    {/* Day cells */}
                     {JOURS_DB.map((jour, idx) => {
                       const typeKey = `${jour}_type` as keyof PlanningEntry
-                      const type = (entry[typeKey] as DayType) || (idx >= 5 ? 'repos' : 'travail')
-                      const hours = entry[jour] || 0
+                      const type    = (entry[typeKey] as DayType) || (idx >= 5 ? 'repos' : 'travail')
+                      const hours   = entry[jour] || 0
                       const isSelected = selectedCell?.empId === emp.id && selectedCell?.jour === jour
-                      const isEditing = editingCell?.empId === emp.id && editingCell?.jour === jour
+                      const isEditing  = editingCell?.empId  === emp.id && editingCell?.jour  === jour
+                      const fName   = weekHolidays[idx]
 
-                      const cellBg  = type === 'travail' ? pal.bg : TYPE_CONFIG[type].bg
-                      const cellTxt = type === 'travail' ? pal.text : TYPE_CONFIG[type].text
-                      const cellDot = type === 'travail' ? pal.dot  : TYPE_CONFIG[type].dot
-                      const typeLabel = type === 'travail' ? 'Travail' : TYPE_CONFIG[type].label
+                      const cellBg  = fName ? 'bg-amber-50'    : type === 'travail' ? pal.bg    : TYPE_CONFIG[type].bg
+                      const cellTxt = fName ? 'text-amber-800' : type === 'travail' ? pal.text  : TYPE_CONFIG[type].text
+                      const cellDot = fName ? 'bg-amber-400'   : type === 'travail' ? pal.dot   : TYPE_CONFIG[type].dot
+                      const typeLabel = fName ? 'Férié' : type === 'travail' ? 'Travail' : TYPE_CONFIG[type].label
 
                       return (
                         <td key={jour} className="p-0 border-b border-r border-gray-200 align-stretch">
-                          <div
-                            className="relative h-full"
-                            data-cell="true"
-                            onClick={e => e.stopPropagation()}
-                          >
+                          <div className="relative h-full" data-cell="true" onClick={e => e.stopPropagation()}>
                             <div
-                              className={`cursor-pointer transition-colors ${cellBg} w-full h-full min-h-[76px] px-2.5 pt-2 pb-2 flex flex-col justify-between select-none hover:brightness-95`}
-                              onClick={() => {
-                                setContractPopover(null)
-                                setSelectedCell(isSelected ? null : { empId: emp.id, jour })
-                              }}
+                              className={`cursor-pointer transition-colors ${cellBg} w-full h-full min-h-[80px] px-2.5 pt-2 pb-2 flex flex-col justify-between select-none hover:brightness-95`}
+                              onClick={() => { setContractPopover(null); setSelectedCell(isSelected ? null : { empId: emp.id, jour }) }}
                             >
                               <div className="flex items-center justify-between gap-1">
                                 <div className="flex items-center gap-1 min-w-0">
                                   <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cellDot}`} />
                                   <span className={`text-[10px] font-semibold truncate ${cellTxt}`}>{typeLabel}</span>
                                 </div>
-                                <ChevronDown className={`w-3 h-3 flex-shrink-0 opacity-30 ${cellTxt}`} />
+                                {!fName && <ChevronDown className={`w-3 h-3 flex-shrink-0 opacity-30 ${cellTxt}`} />}
                               </div>
-
                               <div className="flex-1 flex items-center justify-center">
-                                {type === 'travail' ? (
+                                {!fName && type === 'travail' ? (
                                   isEditing ? (
-                                    <input
-                                      autoFocus
-                                      type="number" min="0" max="24" step="0.5"
+                                    <input autoFocus type="number" min="0" max="24" step="0.5"
                                       value={hours || ''}
                                       onChange={e => updateHours(emp.id, jour, e.target.value)}
                                       onBlur={() => handleBlur(emp.id)}
@@ -509,8 +670,7 @@ export default function PlanningPage() {
                                       placeholder="0"
                                     />
                                   ) : (
-                                    <span
-                                      onClick={e => { e.stopPropagation(); setEditingCell({ empId: emp.id, jour }) }}
+                                    <span onClick={e => { e.stopPropagation(); setEditingCell({ empId: emp.id, jour }) }}
                                       className={`font-bold text-2xl ${pal.text} cursor-text`}
                                     >
                                       {hours > 0 ? `${hours}h` : '—'}
@@ -518,27 +678,21 @@ export default function PlanningPage() {
                                   )
                                 ) : (
                                   <span className={`font-bold text-2xl ${cellTxt}`}>
-                                    {TYPE_CONFIG[type].display}
+                                    {fName ? '✦' : TYPE_CONFIG[type].display}
                                   </span>
                                 )}
                               </div>
                             </div>
 
                             {isSelected && (
-                              <div
-                                className="absolute top-full left-0 z-40 mt-1 bg-white rounded-xl shadow-2xl border border-gray-100 p-1.5 min-w-[168px]"
-                                data-cell="true"
-                                onClick={e => e.stopPropagation()}
-                              >
+                              <div className="absolute top-full left-0 z-40 mt-1 bg-white rounded-xl shadow-2xl border border-gray-100 p-1.5 min-w-[168px]" data-cell="true" onClick={e => e.stopPropagation()}>
                                 {([
                                   { key: 'travail' as DayType, label: 'Travail',       dot: pal.dot         },
                                   { key: 'conges'  as DayType, label: 'Congé payé',    dot: 'bg-sky-400'    },
                                   { key: 'maladie' as DayType, label: 'Arrêt maladie', dot: 'bg-red-400'    },
                                   { key: 'repos'   as DayType, label: 'Repos',         dot: 'bg-gray-300'   },
                                 ]).map(opt => (
-                                  <button
-                                    key={opt.key}
-                                    onClick={() => changeType(emp.id, jour, opt.key)}
+                                  <button key={opt.key} onClick={() => changeType(emp.id, jour, opt.key)}
                                     className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-left text-sm transition-colors ${
                                       type === opt.key ? 'bg-gray-100 font-semibold text-gray-900' : 'hover:bg-gray-50 text-gray-600'
                                     }`}
@@ -578,13 +732,13 @@ export default function PlanningPage() {
               })
             )}
 
-            {/* Footer */}
+            {/* Footer row */}
             {employees.length > 0 && (
               <tr className="bg-gray-900">
                 <td className="px-3 py-3 sticky left-0 bg-gray-900 z-10 border-r border-gray-700">
                   <span className="text-xs font-bold uppercase tracking-wider text-gray-400">Total / jour</span>
                 </td>
-                {JOURS_DB.map(jour => {
+                {JOURS_DB.map((jour, idx) => {
                   const dayH = employees.reduce((s, emp) => {
                     const e = getEntryState(emp.id)
                     const t = (e[`${jour}_type` as keyof PlanningEntry] as DayType) || 'travail'
@@ -594,8 +748,9 @@ export default function PlanningPage() {
                     const t = (getEntryState(emp.id)[`${jour}_type` as keyof PlanningEntry] as DayType) || 'travail'
                     return t !== 'repos'
                   }).length
+                  const isFerie = weekHolidays[idx] !== null
                   return (
-                    <td key={jour} className="px-2 py-3 text-center border-r border-gray-700">
+                    <td key={jour} className={`px-2 py-3 text-center border-r border-gray-700 ${isFerie ? 'bg-amber-950/30' : ''}`}>
                       {dayH > 0
                         ? <><div className="text-sm font-bold text-white">{dayH.toFixed(1)}h</div><div className="text-[10px] text-gray-500">{present} pers.</div></>
                         : <span className="text-gray-700">—</span>}
@@ -621,12 +776,91 @@ export default function PlanningPage() {
         </div>
       )}
 
-      {/* Modal ajout employé */}
+      {/* ── Récap mensuel modal ── */}
+      {showMonthly && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 backdrop-blur-sm" onClick={() => setShowMonthly(false)}>
+          <div className="bg-white rounded-2xl p-6 w-full max-w-2xl shadow-2xl max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-5">
+              <div>
+                <h2 className="text-base font-bold text-gray-900">Récapitulatif mensuel</h2>
+                <p className="text-sm text-gray-500 mt-0.5">
+                  {weekDates[0].toLocaleDateString('fr-FR', { month: 'long', year: 'numeric', timeZone: 'UTC' })}
+                </p>
+              </div>
+              <button onClick={() => setShowMonthly(false)} className="p-1.5 rounded-lg hover:bg-gray-100">
+                <X className="w-4 h-4 text-gray-500" />
+              </button>
+            </div>
+
+            {loadingMonthly ? (
+              <div className="py-12 text-center text-sm text-gray-400">Chargement des données...</div>
+            ) : monthlyData ? (
+              <table className="w-full border-collapse text-sm">
+                <thead>
+                  <tr className="border-b-2 border-gray-200">
+                    <th className="text-left py-2.5 font-semibold text-gray-500 text-xs uppercase">Employé</th>
+                    <th className="text-center py-2.5 font-semibold text-gray-500 text-xs uppercase">Heures</th>
+                    <th className="text-center py-2.5 font-semibold text-gray-500 text-xs uppercase">Jours trav.</th>
+                    <th className="text-center py-2.5 font-semibold text-sky-600 text-xs uppercase">CP</th>
+                    <th className="text-center py-2.5 font-semibold text-red-500 text-xs uppercase">Arrêt</th>
+                    <th className="text-center py-2.5 font-semibold text-green-700 text-xs uppercase">Coût</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {monthlyData.map(({ emp, hours, cost, worked, cp, sick }, i) => {
+                    const pal  = EMP_PALETTES[i % EMP_PALETTES.length]
+                    const ch   = emp.contract_hours || 35
+                    const hasOT = hours > ch * 4
+                    return (
+                      <tr key={emp.id} className="border-b border-gray-100 hover:bg-gray-50">
+                        <td className="py-3">
+                          <div className="flex items-center gap-2">
+                            <div className={`w-6 h-6 rounded-full ${pal.bg} flex items-center justify-center flex-shrink-0`}>
+                              <span className={`text-[9px] font-bold ${pal.text}`}>{initials(emp.name)}</span>
+                            </div>
+                            <div>
+                              <div className="font-semibold text-gray-900">{emp.name}</div>
+                              <div className="text-[10px] text-gray-400">{contractLabel(emp.contract_type)}</div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="text-center py-3">
+                          <span className={`font-bold ${hasOT ? 'text-orange-600' : 'text-gray-800'}`}>{hours.toFixed(1)}h</span>
+                        </td>
+                        <td className="text-center py-3 text-gray-600">{worked > 0 ? `${worked}j` : '—'}</td>
+                        <td className="text-center py-3">
+                          {cp > 0 ? <span className="text-sky-700 font-medium">{cp}j</span> : <span className="text-gray-300">—</span>}
+                        </td>
+                        <td className="text-center py-3">
+                          {sick > 0 ? <span className="text-red-600 font-medium">{sick}j</span> : <span className="text-gray-300">—</span>}
+                        </td>
+                        <td className="text-center py-3 font-bold text-green-700">{cost.toFixed(0)} €</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr className="bg-gray-900">
+                    <td className="py-2.5 px-2 text-xs font-bold uppercase text-gray-400">Total mois</td>
+                    <td className="text-center py-2.5 font-bold text-white">{monthlyData.reduce((s, r) => s + r.hours, 0).toFixed(1)}h</td>
+                    <td className="text-center py-2.5 text-gray-400">{monthlyData.reduce((s, r) => s + r.worked, 0)}j</td>
+                    <td className="text-center py-2.5 text-sky-400">{monthlyData.reduce((s, r) => s + r.cp, 0)}j</td>
+                    <td className="text-center py-2.5 text-red-400">{monthlyData.reduce((s, r) => s + r.sick, 0)}j</td>
+                    <td className="text-center py-2.5 font-bold text-orange-400">{monthlyData.reduce((s, r) => s + r.cost, 0).toFixed(0)} €</td>
+                  </tr>
+                </tfoot>
+              </table>
+            ) : null}
+          </div>
+        </div>
+      )}
+
+      {/* ── Ajout employé modal ── */}
       {showAdd && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 backdrop-blur-sm" onClick={() => setShowAdd(false)}>
           <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
             <h2 className="text-base font-bold text-gray-900 mb-1">Nouvel employé</h2>
-            <p className="text-sm text-gray-500 mb-5">Renseignez les informations de l’employé.</p>
+            <p className="text-sm text-gray-500 mb-5">Renseignez les informations de l'employé.</p>
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1.5">Prénom et nom</label>
@@ -640,30 +874,20 @@ export default function PlanningPage() {
                 <label className="block text-sm font-medium text-gray-700 mb-2">Type de contrat</label>
                 <div className="grid grid-cols-2 gap-2">
                   {CONTRACT_TYPES.map(ct => (
-                    <button
-                      key={ct.key}
-                      onClick={() => setNewContractKey(ct.key)}
+                    <button key={ct.key} onClick={() => setNewContractKey(ct.key)}
                       className={`py-2.5 px-3 rounded-lg border-2 text-left transition-all ${
-                        newContractKey === ct.key
-                          ? 'border-[#1E3A5F] bg-[#1E3A5F] text-white'
-                          : 'border-gray-200 text-gray-700 hover:border-gray-300 bg-white'
+                        newContractKey === ct.key ? 'border-[#1E3A5F] bg-[#1E3A5F] text-white' : 'border-gray-200 text-gray-700 hover:border-gray-300 bg-white'
                       }`}
                     >
                       <div className="text-sm font-bold">{ct.short}</div>
-                      <div className={`text-[10px] mt-0.5 ${
-                        newContractKey === ct.key ? 'text-blue-200' : 'text-gray-400'
-                      }`}>{ct.desc}</div>
+                      <div className={`text-[10px] mt-0.5 ${newContractKey === ct.key ? 'text-blue-200' : 'text-gray-400'}`}>{ct.desc}</div>
                     </button>
                   ))}
                 </div>
               </div>
               <div className="flex gap-3 pt-1">
                 <Button variant="outline" className="flex-1" onClick={() => setShowAdd(false)}>Annuler</Button>
-                <Button
-                  className="flex-1 bg-[#1E3A5F] hover:bg-[#2a4f7c] text-white"
-                  onClick={addEmployee}
-                  disabled={!newName.trim() || !newRate || adding}
-                >
+                <Button className="flex-1 bg-[#1E3A5F] hover:bg-[#2a4f7c] text-white" onClick={addEmployee} disabled={!newName.trim() || !newRate || adding}>
                   {adding ? 'Ajout...' : 'Ajouter'}
                 </Button>
               </div>
