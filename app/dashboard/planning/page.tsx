@@ -183,7 +183,6 @@ export default function PlanningPage() {
   const [newContractKey, setNewContractKey] = useState<ContractKey>('CDI_35')
   const [adding,       setAdding]       = useState(false)
   const [pageError,    setPageError]    = useState<string | null>(null)
-  // New
   const [copying,        setCopying]        = useState(false)
   const [cpUsed,         setCpUsed]         = useState<Record<string, number>>({})
   const [showMonthly,    setShowMonthly]    = useState(false)
@@ -195,7 +194,6 @@ export default function PlanningPage() {
   const weekDates     = getWeekDates(week, year)
   const today         = new Date()
 
-  // Jours fériés pour l'année affichée
   const holidays     = getFrenchHolidays(year)
   const weekHolidays = weekDates.map(d => holidays.get(d.toISOString().slice(0, 10)) ?? null)
 
@@ -221,7 +219,6 @@ export default function PlanningPage() {
     }).catch(() => { setPageError('Erreur réseau'); setLoadingEmployees(false) })
   }, [])
 
-  // Solde CP : rechargé à chaque changement d'année
   const refreshCpUsed = useCallback(() => {
     fetch(`/api/planning/stats?year=${year}`)
       .then(r => r.json())
@@ -271,7 +268,7 @@ export default function PlanningPage() {
     })
   }
 
-  async function changeType(empId: string, jour: JourDB, newType: DayType) {
+  function changeType(empId: string, jour: JourDB, newType: DayType) {
     const typeKey = `${jour}_type` as keyof PlanningEntry
     const currentH = getEntry(empId)[jour] || 0
     const updated: PlanningEntry = {
@@ -280,8 +277,7 @@ export default function PlanningPage() {
     }
     setEntriesSync(prev => ({ ...prev, [empId]: updated }))
     setSelectedCell(null); setEditingCell(null)
-    await saveEntryValues(empId, updated)
-    refreshCpUsed()
+    saveEntryValues(empId, updated).then(() => refreshCpUsed())
   }
 
   function updateHours(empId: string, jour: JourDB, value: string) {
