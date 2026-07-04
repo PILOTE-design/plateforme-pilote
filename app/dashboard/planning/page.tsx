@@ -31,7 +31,7 @@ const EMP_PALETTES = [
   { bg: 'bg-indigo-100', lborder: 'border-l-4 border-l-indigo-400', text: 'text-indigo-900', dot: 'bg-indigo-500', hex: '#6366f1', lightHex: '#e0e7ff' },
 ]
 
-type Employee = { id: string; name: string; hourly_rate: number; created_at: string }
+type Employee = { id: string; name: string; hourly_rate: number; contract_hours: number; created_at: string }
 type PlanningEntry = {
   id?: string; employee_id: string; week_number: number; year: number
   lundi: number; lundi_type: DayType
@@ -66,14 +66,17 @@ function getWeekLabel(week: number, year: number) {
   return `${f(d[0])} – ${f(d[6])} ${year}`
 }
 
-function calcCost(entry: PlanningEntry, rate: number) {
-  const totalH = JOURS_DB.reduce((s, j) => {
-    const t = (entry[`${j}_type` as keyof PlanningEntry] as DayType) || 'travail'
-    return s + (t === 'travail' ? (entry[j] || 0) : t === 'conges' ? 7 : 0)
-  }, 0)
-  if (totalH <= 35) return totalH * rate
-  if (totalH <= 43) return 35 * rate + (totalH - 35) * rate * 1.25
-  return 35 * rate + 8 * rate * 1.25 + (totalH - 43) * rate * 1.5
+/** Calcul coût selon seuils du contrat.
+ *  contractH = heures normales du contrat (35 ou 39)
+ *  Seuil +25 % : contractH+1 → contractH+8
+ *  Seuil +50 % : au-delà de contractH+8
+ */
+function calcCost(entry: PlanningEntry, rate: number, contractH: number) {
+  const totalH = calcTotalH(entry)
+  const t2 = contractH + 8
+  if (totalH <= contractH) return totalH * rate
+  if (totalH <= t2) return contractH * rate + (totalH - contractH) * rate * 1.25
+  return contractH * rate + (t2 - contractH) * rate * 1.25 + (totalH - t2) * rate * 1.5
 }
 
 function calcTotalH(entry: PlanningEntry) {
@@ -110,6 +113,7 @@ export default function PlanningPage() {
   const [showAdd, setShowAdd] = useState(false)
   const [newName, setNewName] = useState('')
   const [newRate, setNewRate] = useState('')
+  const [newContractH, setNewContractH] = useState<35 | 39>(35)
   const [adding, setAdding] = useState(false)
   const [pageError, setPageError] = useState<string | null>(null)
 
@@ -194,10 +198,13 @@ export default function PlanningPage() {
     setAdding(true)
     const res = await fetch('/api/employees', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: newName.trim(), hourly_rate: parseFloat(newRate) }),
+      body: JSON.stringify({ name: newName.trim(), hourly_rate: parseFloat(newRate), contract_hours: newContractH }),
     })
     const data = await res.json()
-    if (data.id) { setEmployees(p => [...p, data]); setNewName(''); setNewRate(''); setShowAdd(false) }
+    if (data.id) {
+      setEmployees(p => [...p, data])
+      setNewName(''); setNewRate(''); setNewContractH(35); setShowAdd(false)
+    }
     setAdding(false)
   }
 
@@ -213,7 +220,8 @@ export default function PlanningPage() {
 
   const rowStats = employees.map(emp => {
     const e = getEntryState(emp.id)
-    return { empId: emp.id, totalH: calcTotalH(e), cost: calcCost(e, Number(emp.hourly_rate)) }
+    const ch = emp.contract_hours || 35
+    return { empId: emp.id, totalH: calcTotalH(e), cost: calcCost(e, Number(emp.hourly_rate), ch) }
   })
   const grandH = rowStats.reduce((s, r) => s + r.totalH, 0)
   const grandCost = rowStats.reduce((s, r) => s + r.cost, 0)
@@ -227,7 +235,9 @@ export default function PlanningPage() {
     const empRows = employees.map((emp, i) => {
       const pal = EMP_PALETTES[i % EMP_PALETTES.length]
       const entry = getEntryState(emp.id)
-      const totalH = calcTotalH(entry); const cost = calcCost(entry, Number(emp.hourly_rate))
+      const ch = emp.contract_hours || 35
+      const totalH = calcTotalH(entry)
+      const cost = calcCost(entry, Number(emp.hourly_rate), ch)
       const cells = JOURS_DB.map((j, idx) => {
         const type = (entry[`${j}_type` as keyof PlanningEntry] as DayType) || (idx >= 5 ? 'repos' : 'travail')
         const h = entry[j] || 0
@@ -239,10 +249,13 @@ export default function PlanningPage() {
         <td style="padding:7px 10px;border-bottom:1px solid #e2e8f0;border-left:3px solid ${pal.hex};background:#fafafa;">
           <div style="display:flex;align-items:center;gap:7px;">
             <div style="width:26px;height:26px;border-radius:50%;background:${pal.hex};display:flex;align-items:center;justify-content:center;"><span style="color:white;font-size:9px;font-weight:700;">${initials(emp.name)}</span></div>
-            <div><div style="font-weight:700;font-size:12px;">${emp.name}</div><div style="font-size:9px;color:#94a3b8;">${Number(emp.hourly_rate).toFixed(2)} €/h</div></div>
+            <div>
+              <div style="font-weight:700;font-size:12px;">${emp.name}</div>
+              <div style="font-size:9px;color:#94a3b8;">${ch}h · ${Number(emp.hourly_rate).toFixed(2)} €/h</div>
+            </div>
           </div>
         </td>${cells}
-        <td style="padding:6px;text-align:center;font-weight:700;font-size:12px;color:${totalH > 35 ? '#ea580c' : '#1e293b'};background:#f8fafc;border-bottom:1px solid #e2e8f0;">${totalH.toFixed(1)}h</td>
+        <td style="padding:6px;text-align:center;font-weight:700;font-size:12px;color:${totalH > ch ? '#ea580c' : '#1e293b'};background:#f8fafc;border-bottom:1px solid #e2e8f0;">${totalH.toFixed(1)}h</td>
         <td style="padding:6px;text-align:center;font-weight:700;font-size:12px;color:#15803d;background:#f0fdf4;border-bottom:1px solid #e2e8f0;">${cost.toFixed(2)} €</td>
       </tr>`
     }).join('')
@@ -252,8 +265,8 @@ export default function PlanningPage() {
   <div><div style="font-size:18px;font-weight:800;color:#1E3A5F;">Planning — Semaine ${week}</div><div style="font-size:11px;color:#64748b;margin-top:2px;">${getWeekLabel(week, year)}</div></div>
   <div style="text-align:right;"><div style="font-size:10px;color:#64748b;">Coût main d'œuvre</div><div style="font-size:16px;font-weight:800;color:#15803d;">${grandCost.toFixed(2)} €</div></div>
 </div>
-<table><thead><tr><th style="background:#1E3A5F;color:white;padding:7px 10px;font-size:10px;text-align:left;width:150px;">Employé</th>${dayHeaders}<th style="background:#1E3A5F;color:white;padding:7px 5px;font-size:10px;text-align:center;">Total</th><th style="background:#1E3A5F;color:white;padding:7px 5px;font-size:10px;text-align:center;">Coût</th></tr></thead><tbody>${empRows}</tbody></table>
-<p style="margin-top:10px;font-size:9px;color:#94a3b8;">Droit français : ≤ 35h normal · +25 % de 36-43h · +50 % au-delà · CP = 7h/jour · Généré via PILOTE</p>
+<table><thead><tr><th style="background:#1E3A5F;color:white;padding:7px 10px;font-size:10px;text-align:left;width:160px;">Employé</th>${dayHeaders}<th style="background:#1E3A5F;color:white;padding:7px 5px;font-size:10px;text-align:center;">Total</th><th style="background:#1E3A5F;color:white;padding:7px 5px;font-size:10px;text-align:center;">Coût</th></tr></thead><tbody>${empRows}</tbody></table>
+<p style="margin-top:10px;font-size:9px;color:#94a3b8;">Seuils par contrat : 35h → maj. +25 % de 36–43h, +50 % au-delà · 39h → maj. +25 % de 40–47h, +50 % au-delà · CP = 7h/jour · Généré via PILOTE</p>
 </body></html>`
     const win = window.open('', '_blank', 'width=1100,height=750')
     if (!win) return
@@ -263,7 +276,6 @@ export default function PlanningPage() {
 
   return (
     <div className="min-h-screen bg-gray-50" onClick={() => { setSelectedCell(null); setEditingCell(null) }}>
-      {/* Hide number input spinners globally */}
       <style>{`
         input[type=number]::-webkit-inner-spin-button,
         input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
@@ -319,6 +331,10 @@ export default function PlanningPage() {
             <span className="text-xs text-gray-600">{t.label}</span>
           </div>
         ))}
+        <div className="ml-auto flex items-center gap-3 text-[10px] text-gray-400">
+          <span className="bg-gray-100 px-2 py-0.5 rounded font-mono">35h → maj. +25% après 35h</span>
+          <span className="bg-gray-100 px-2 py-0.5 rounded font-mono">39h → maj. +25% après 39h</span>
+        </div>
       </div>
 
       {pageError && <div className="mx-6 mt-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">{pageError}</div>}
@@ -328,7 +344,7 @@ export default function PlanningPage() {
         <table className="w-full min-w-[860px] border-collapse">
           <thead>
             <tr className="bg-white">
-              <th className="w-44 px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider sticky left-0 bg-white z-10 border-b border-r border-gray-200">Employé</th>
+              <th className="w-48 px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider sticky left-0 bg-white z-10 border-b border-r border-gray-200">Employé</th>
               {weekDates.map((date, i) => {
                 const isToday = date.getUTCDate() === today.getDate() && date.getUTCMonth() === today.getMonth() && date.getUTCFullYear() === today.getFullYear()
                 const isWE = i >= 5
@@ -370,8 +386,9 @@ export default function PlanningPage() {
               employees.map((emp, empIdx) => {
                 const pal = EMP_PALETTES[empIdx % EMP_PALETTES.length]
                 const entry = getEntryState(emp.id)
+                const ch = emp.contract_hours || 35
                 const { totalH, cost } = rowStats.find(r => r.empId === emp.id) || { totalH: 0, cost: 0 }
-                const hasOT = totalH > 35
+                const hasOT = totalH > ch
 
                 return (
                   <tr key={emp.id}>
@@ -383,7 +400,10 @@ export default function PlanningPage() {
                         </div>
                         <div>
                           <p className="text-sm font-semibold text-gray-900 leading-tight">{emp.name}</p>
-                          <p className="text-[10px] text-gray-400">{Number(emp.hourly_rate).toFixed(2)} €/h</p>
+                          <p className="text-[10px] text-gray-400">
+                            <span className="font-semibold text-gray-500">{ch}h</span>
+                            {' · '}{Number(emp.hourly_rate).toFixed(2)} €/h
+                          </p>
                         </div>
                       </div>
                     </td>
@@ -404,12 +424,10 @@ export default function PlanningPage() {
                       return (
                         <td key={jour} className="p-0 border-b border-r border-gray-200 align-stretch">
                           <div className="relative h-full" data-cell="true" onClick={e => e.stopPropagation()}>
-                            {/* Case plein cadre */}
                             <div
                               className={`cursor-pointer transition-colors ${cellBg} w-full h-full min-h-[76px] px-2.5 pt-2 pb-2 flex flex-col justify-between select-none hover:brightness-95`}
                               onClick={() => setSelectedCell(isSelected ? null : { empId: emp.id, jour })}
                             >
-                              {/* Type label + chevron */}
                               <div className="flex items-center justify-between gap-1">
                                 <div className="flex items-center gap-1 min-w-0">
                                   <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cellDot}`} />
@@ -418,7 +436,6 @@ export default function PlanningPage() {
                                 <ChevronDown className={`w-3 h-3 flex-shrink-0 opacity-30 ${cellTxt}`} />
                               </div>
 
-                              {/* Valeur centrale — même affichage pour tous les types */}
                               <div className="flex-1 flex items-center justify-center">
                                 {type === 'travail' ? (
                                   isEditing ? (
@@ -448,7 +465,6 @@ export default function PlanningPage() {
                               </div>
                             </div>
 
-                            {/* Dropdown type */}
                             {isSelected && (
                               <div
                                 className="absolute top-full left-0 z-40 mt-1 bg-white rounded-xl shadow-2xl border border-gray-100 p-1.5 min-w-[168px]"
@@ -488,7 +504,7 @@ export default function PlanningPage() {
                         <span className={`font-bold text-sm ${
                           hasOT ? 'text-orange-600' : totalH > 0 ? 'text-gray-800' : 'text-gray-300'
                         }`}>{totalH.toFixed(1)}h</span>
-                        {hasOT && <span className="text-[9px] text-orange-400">+{(totalH - 35).toFixed(1)} sup</span>}
+                        {hasOT && <span className="text-[9px] text-orange-400">+{(totalH - ch).toFixed(1)} sup</span>}
                       </div>
                     </td>
 
@@ -546,7 +562,10 @@ export default function PlanningPage() {
       {employees.length > 0 && (
         <div className="px-6 py-2.5 bg-amber-50 border-t border-amber-100">
           <p className="text-xs text-amber-700">
-            <span className="font-semibold">Droit français :</span> taux normal ≤ 35h · +25 % de 36-43h · +50 % au-delà · CP = 7h/jour
+            <span className="font-semibold">Majoration heures sup :</span>
+            {' '}contrat 35h → +25 % de 36–43h, +50 % au-delà
+            {' · '}contrat 39h → +25 % de 40–47h, +50 % au-delà
+            {' · '}CP = 7h/jour
           </p>
         </div>
       )}
@@ -556,11 +575,34 @@ export default function PlanningPage() {
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 backdrop-blur-sm" onClick={() => setShowAdd(false)}>
           <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
             <h2 className="text-base font-bold text-gray-900 mb-1">Nouvel employé</h2>
-            <p className="text-sm text-gray-500 mb-5">Renseignez le nom et le taux horaire brut.</p>
+            <p className="text-sm text-gray-500 mb-5">Renseignez le nom, le contrat et le taux horaire brut.</p>
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1.5">Prénom et nom</label>
                 <Input value={newName} onChange={e => setNewName(e.target.value)} placeholder="Marie Dupont" autoFocus onKeyDown={e => e.key === 'Enter' && addEmployee()} />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Type de contrat</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {([35, 39] as const).map(h => (
+                    <button
+                      key={h}
+                      onClick={() => setNewContractH(h)}
+                      className={`py-2.5 rounded-lg border-2 text-sm font-semibold transition-all ${
+                        newContractH === h
+                          ? 'border-[#1E3A5F] bg-[#1E3A5F] text-white'
+                          : 'border-gray-200 text-gray-600 hover:border-gray-300'
+                      }`}
+                    >
+                      {h}h / semaine
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[10px] text-gray-400 mt-1.5">
+                  {newContractH === 35
+                    ? 'Majoration +25 % dès la 36e heure'
+                    : 'Majoration +25 % dès la 40e heure'}
+                </p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1.5">Taux horaire brut (€/h)</label>
