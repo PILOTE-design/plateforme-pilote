@@ -20,6 +20,15 @@ const TYPE_CONFIG: Record<DayType, {
   repos:   { label: 'Repos',         bg: 'bg-gray-100', text: 'text-gray-400', dot: 'bg-gray-300', defaultHours: 0, pdfColor: '#f3f4f6', display: '—' },
 }
 
+// Types de contrat français
+const CONTRACT_TYPES = [
+  { key: 'CDI_35', label: 'CDI · 35h', short: 'CDI 35h', hours: 35, desc: '+25 % dès 36h' },
+  { key: 'CDI_39', label: 'CDI · 39h', short: 'CDI 39h', hours: 39, desc: '+25 % dès 40h' },
+  { key: 'CDD_35', label: 'CDD · 35h', short: 'CDD 35h', hours: 35, desc: '+25 % dès 36h' },
+  { key: 'CDD_39', label: 'CDD · 39h', short: 'CDD 39h', hours: 39, desc: '+25 % dès 40h' },
+] as const
+type ContractKey = typeof CONTRACT_TYPES[number]['key']
+
 const EMP_PALETTES = [
   { bg: 'bg-violet-100', lborder: 'border-l-4 border-l-violet-400', text: 'text-violet-900', dot: 'bg-violet-500', hex: '#8b5cf6', lightHex: '#ede9fe' },
   { bg: 'bg-pink-100',   lborder: 'border-l-4 border-l-pink-400',   text: 'text-pink-900',   dot: 'bg-pink-500',   hex: '#ec4899', lightHex: '#fce7f3' },
@@ -31,7 +40,7 @@ const EMP_PALETTES = [
   { bg: 'bg-indigo-100', lborder: 'border-l-4 border-l-indigo-400', text: 'text-indigo-900', dot: 'bg-indigo-500', hex: '#6366f1', lightHex: '#e0e7ff' },
 ]
 
-type Employee = { id: string; name: string; hourly_rate: number; contract_hours: number; created_at: string }
+type Employee = { id: string; name: string; hourly_rate: number; contract_hours: number; contract_type: string; created_at: string }
 type PlanningEntry = {
   id?: string; employee_id: string; week_number: number; year: number
   lundi: number; lundi_type: DayType
@@ -64,6 +73,10 @@ function getWeekLabel(week: number, year: number) {
   const d = getWeekDates(week, year)
   const f = (x: Date) => x.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', timeZone: 'UTC' })
   return `${f(d[0])} – ${f(d[6])} ${year}`
+}
+
+function contractLabel(ct: string | undefined) {
+  return CONTRACT_TYPES.find(c => c.key === ct)?.short ?? (ct ?? 'CDI 35h')
 }
 
 function calcCost(entry: PlanningEntry, rate: number, contractH: number) {
@@ -109,7 +122,7 @@ export default function PlanningPage() {
   const [showAdd, setShowAdd] = useState(false)
   const [newName, setNewName] = useState('')
   const [newRate, setNewRate] = useState('')
-  const [newContractH, setNewContractH] = useState<35 | 39>(35)
+  const [newContractKey, setNewContractKey] = useState<ContractKey>('CDI_35')
   const [adding, setAdding] = useState(false)
   const [pageError, setPageError] = useState<string | null>(null)
 
@@ -126,7 +139,6 @@ export default function PlanningPage() {
     })
   }
 
-  // Fermer les popovers sur clic extérieur
   useEffect(() => {
     const close = () => { setSelectedCell(null); setContractPopover(null) }
     document.addEventListener('click', close)
@@ -163,12 +175,15 @@ export default function PlanningPage() {
     })
   }
 
-  async function updateContractHours(empId: string, hours: 35 | 39) {
-    setEmployees(prev => prev.map(e => e.id === empId ? { ...e, contract_hours: hours } : e))
+  async function updateContract(empId: string, contractKey: ContractKey) {
+    const ct = CONTRACT_TYPES.find(c => c.key === contractKey)!
+    setEmployees(prev => prev.map(e =>
+      e.id === empId ? { ...e, contract_type: ct.key, contract_hours: ct.hours } : e
+    ))
     setContractPopover(null)
     await fetch(`/api/employees/${empId}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contract_hours: hours }),
+      body: JSON.stringify({ contract_type: ct.key, contract_hours: ct.hours }),
     })
   }
 
@@ -180,15 +195,13 @@ export default function PlanningPage() {
       [jour]: newType === 'travail' ? currentH : TYPE_CONFIG[newType].defaultHours,
     }
     setEntriesSync(prev => ({ ...prev, [empId]: updated }))
-    setSelectedCell(null)
-    setEditingCell(null)
+    setSelectedCell(null); setEditingCell(null)
     saveEntryValues(empId, updated)
   }
 
   function updateHours(empId: string, jour: JourDB, value: string) {
     const hours = value === '' ? 0 : Math.max(0, Math.min(24, parseFloat(value) || 0))
-    const updated = { ...getEntry(empId), [jour]: hours }
-    setEntriesSync(prev => ({ ...prev, [empId]: updated }))
+    setEntriesSync(prev => ({ ...prev, [empId]: { ...getEntry(empId), [jour]: hours } }))
   }
 
   function handleBlur(empId: string) {
@@ -199,14 +212,15 @@ export default function PlanningPage() {
   async function addEmployee() {
     if (!newName.trim() || !newRate) return
     setAdding(true)
+    const ct = CONTRACT_TYPES.find(c => c.key === newContractKey)!
     const res = await fetch('/api/employees', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: newName.trim(), hourly_rate: parseFloat(newRate), contract_hours: newContractH }),
+      body: JSON.stringify({ name: newName.trim(), hourly_rate: parseFloat(newRate), contract_type: ct.key, contract_hours: ct.hours }),
     })
     const data = await res.json()
     if (data.id) {
       setEmployees(p => [...p, data])
-      setNewName(''); setNewRate(''); setNewContractH(35); setShowAdd(false)
+      setNewName(''); setNewRate(''); setNewContractKey('CDI_35'); setShowAdd(false)
     }
     setAdding(false)
   }
@@ -252,7 +266,7 @@ export default function PlanningPage() {
         <td style="padding:7px 10px;border-bottom:1px solid #e2e8f0;border-left:3px solid ${pal.hex};background:#fafafa;">
           <div style="display:flex;align-items:center;gap:7px;">
             <div style="width:26px;height:26px;border-radius:50%;background:${pal.hex};display:flex;align-items:center;justify-content:center;"><span style="color:white;font-size:9px;font-weight:700;">${initials(emp.name)}</span></div>
-            <div><div style="font-weight:700;font-size:12px;">${emp.name}</div><div style="font-size:9px;color:#94a3b8;">${ch}h · ${Number(emp.hourly_rate).toFixed(2)} €/h</div></div>
+            <div><div style="font-weight:700;font-size:12px;">${emp.name}</div><div style="font-size:9px;color:#94a3b8;">${contractLabel(emp.contract_type)} · ${Number(emp.hourly_rate).toFixed(2)} €/h</div></div>
           </div>
         </td>${cells}
         <td style="padding:6px;text-align:center;font-weight:700;font-size:12px;color:${totalH > ch ? '#ea580c' : '#1e293b'};background:#f8fafc;border-bottom:1px solid #e2e8f0;">${totalH.toFixed(1)}h</td>
@@ -266,7 +280,7 @@ export default function PlanningPage() {
   <div style="text-align:right;"><div style="font-size:10px;color:#64748b;">Coût main d'œuvre</div><div style="font-size:16px;font-weight:800;color:#15803d;">${grandCost.toFixed(2)} €</div></div>
 </div>
 <table><thead><tr><th style="background:#1E3A5F;color:white;padding:7px 10px;font-size:10px;text-align:left;width:160px;">Employé</th>${dayHeaders}<th style="background:#1E3A5F;color:white;padding:7px 5px;font-size:10px;text-align:center;">Total</th><th style="background:#1E3A5F;color:white;padding:7px 5px;font-size:10px;text-align:center;">Coût</th></tr></thead><tbody>${empRows}</tbody></table>
-<p style="margin-top:10px;font-size:9px;color:#94a3b8;">Seuils : 35h → +25 % de 36–43h, +50 % au-delà · 39h → +25 % de 40–47h, +50 % au-delà · CP = 7h/jour · Généré via PILOTE</p>
+<p style="margin-top:10px;font-size:9px;color:#94a3b8;">Seuils : 35h → +25 % de 36–43h · 39h → +25 % de 40–47h · +50 % au-delà dans les deux cas · CP = 7h/jour · Généré via PILOTE</p>
 </body></html>`
     const win = window.open('', '_blank', 'width=1100,height=750')
     if (!win) return
@@ -340,7 +354,7 @@ export default function PlanningPage() {
         <table className="w-full min-w-[860px] border-collapse">
           <thead>
             <tr className="bg-white">
-              <th className="w-48 px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider sticky left-0 bg-white z-10 border-b border-r border-gray-200">Employé</th>
+              <th className="w-52 px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider sticky left-0 bg-white z-10 border-b border-r border-gray-200">Employé</th>
               {weekDates.map((date, i) => {
                 const isToday = date.getUTCDate() === today.getDate() && date.getUTCMonth() === today.getMonth() && date.getUTCFullYear() === today.getFullYear()
                 const isWE = i >= 5
@@ -361,16 +375,15 @@ export default function PlanningPage() {
                 )
               })}
               <th className="px-3 py-3 text-center text-xs font-semibold text-gray-400 uppercase tracking-wider border-b border-r border-gray-200 w-20">Total</th>
-              <th className="px-3 py-3 text-center text-xs font-semibold text-gray-400 uppercase tracking-wider border-b border-r border-gray-200 w-24">Coût</th>
-              <th className="w-10 border-b border-gray-200" />
+              <th className="px-3 py-3 text-center text-xs font-semibold text-gray-400 uppercase tracking-wider border-b border-gray-200 w-24">Coût</th>
             </tr>
           </thead>
           <tbody>
             {loadingEmployees ? (
-              <tr><td colSpan={12} className="py-12 text-center text-sm text-gray-400">Chargement...</td></tr>
+              <tr><td colSpan={11} className="py-12 text-center text-sm text-gray-400">Chargement...</td></tr>
             ) : employees.length === 0 && !pageError ? (
               <tr>
-                <td colSpan={12} className="py-16 text-center">
+                <td colSpan={11} className="py-16 text-center">
                   <CalendarDays className="w-8 h-8 text-gray-300 mx-auto mb-2" />
                   <p className="text-sm text-gray-400 mb-3">Aucun employé. Ajoutez votre équipe pour commencer.</p>
                   <Button onClick={() => setShowAdd(true)} variant="outline" className="h-8 text-sm px-3">
@@ -388,46 +401,60 @@ export default function PlanningPage() {
                 const showContractPop = contractPopover === emp.id
 
                 return (
-                  <tr key={emp.id}>
-                    {/* Cellule employé */}
+                  <tr key={emp.id} className="group">
+                    {/* Cellule employé — poubelle visible au hover */}
                     <td className={`px-3 py-0 sticky left-0 bg-white z-10 border-b border-r border-gray-200 ${pal.lborder}`}>
-                      <div className="flex items-center gap-2 py-3">
+                      <div className="flex items-center gap-2 py-2.5">
                         <div className={`w-7 h-7 rounded-full ${pal.bg} flex items-center justify-center flex-shrink-0`}>
                           <span className={`text-[10px] font-bold ${pal.text}`}>{initials(emp.name)}</span>
                         </div>
-                        <div className="min-w-0">
+                        <div className="min-w-0 flex-1">
                           <p className="text-sm font-semibold text-gray-900 leading-tight truncate">{emp.name}</p>
-                          <div className="flex items-center gap-1 mt-0.5">
+                          <div className="flex items-center gap-1 mt-0.5 flex-wrap">
                             {/* Badge contrat cliquable */}
                             <div className="relative">
                               <button
                                 onClick={e => { e.stopPropagation(); setContractPopover(showContractPop ? null : emp.id) }}
-                                className="text-[10px] font-bold bg-[#1E3A5F] text-white px-1.5 py-0.5 rounded cursor-pointer hover:bg-[#2a4f7c] transition-colors"
+                                className="text-[10px] font-bold bg-[#1E3A5F] text-white px-1.5 py-0.5 rounded hover:bg-[#2a4f7c] transition-colors cursor-pointer"
                               >
-                                {ch}h
+                                {contractLabel(emp.contract_type)}
                               </button>
                               {showContractPop && (
                                 <div
-                                  className="absolute top-full left-0 mt-1 z-50 bg-white rounded-xl shadow-2xl border border-gray-100 p-1.5 w-36"
+                                  className="absolute top-full left-0 mt-1 z-50 bg-white rounded-xl shadow-2xl border border-gray-100 p-1.5 w-40"
                                   onClick={e => e.stopPropagation()}
                                 >
                                   <p className="text-[10px] text-gray-400 px-2 pb-1 font-medium">Type de contrat</p>
-                                  {([35, 39] as const).map(h => (
+                                  {CONTRACT_TYPES.map(ct => (
                                     <button
-                                      key={h}
-                                      onClick={() => updateContractHours(emp.id, h)}
-                                      className={`w-full flex items-center justify-between px-2 py-1.5 rounded-lg text-left text-xs transition-colors ${
-                                        ch === h ? 'bg-[#1E3A5F] text-white font-bold' : 'hover:bg-gray-50 text-gray-700'
+                                      key={ct.key}
+                                      onClick={() => updateContract(emp.id, ct.key)}
+                                      className={`w-full flex items-center justify-between px-2 py-1.5 rounded-lg text-left transition-colors ${
+                                        emp.contract_type === ct.key
+                                          ? 'bg-[#1E3A5F] text-white'
+                                          : 'hover:bg-gray-50 text-gray-700'
                                       }`}
                                     >
-                                      <span>{h}h / semaine</span>
-                                      {ch === h && <span className="text-[10px]">✓</span>}
+                                      <div>
+                                        <div className="text-xs font-semibold">{ct.short}</div>
+                                        <div className={`text-[9px] ${
+                                          emp.contract_type === ct.key ? 'text-blue-200' : 'text-gray-400'
+                                        }`}>{ct.desc}</div>
+                                      </div>
+                                      {emp.contract_type === ct.key && <span className="text-[10px]">✓</span>}
                                     </button>
                                   ))}
                                 </div>
                               )}
                             </div>
                             <span className="text-[10px] text-gray-400">{Number(emp.hourly_rate).toFixed(2)} €/h</span>
+                            {/* Poubelle inline — visible au hover sans scroll */}
+                            <button
+                              onClick={() => deleteEmployee(emp.id)}
+                              className="ml-auto opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-red-50 text-gray-300 hover:text-red-400 transition-all"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
                           </div>
                         </div>
                       </div>
@@ -497,7 +524,6 @@ export default function PlanningPage() {
                               </div>
                             </div>
 
-                            {/* Dropdown type */}
                             {isSelected && (
                               <div
                                 className="absolute top-full left-0 z-40 mt-1 bg-white rounded-xl shadow-2xl border border-gray-100 p-1.5 min-w-[168px]"
@@ -542,24 +568,17 @@ export default function PlanningPage() {
                     </td>
 
                     {/* Cost */}
-                    <td className="px-2 py-3 text-center border-b border-r border-gray-200">
+                    <td className="px-2 py-3 text-center border-b border-gray-200">
                       <span className={`font-bold text-sm ${cost > 0 ? 'text-green-700' : 'text-gray-300'}`}>
                         {cost > 0 ? `${cost.toFixed(0)} €` : '—'}
                       </span>
-                    </td>
-
-                    {/* Delete */}
-                    <td className="px-2 py-3 text-center border-b border-gray-200">
-                      <button onClick={() => deleteEmployee(emp.id)} className="p-1.5 rounded hover:bg-red-50 text-gray-300 hover:text-red-400 transition-colors">
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
                     </td>
                   </tr>
                 )
               })
             )}
 
-            {/* Footer totaux */}
+            {/* Footer */}
             {employees.length > 0 && (
               <tr className="bg-gray-900">
                 <td className="px-3 py-3 sticky left-0 bg-gray-900 z-10 border-r border-gray-700">
@@ -578,14 +597,13 @@ export default function PlanningPage() {
                   return (
                     <td key={jour} className="px-2 py-3 text-center border-r border-gray-700">
                       {dayH > 0
-                        ? <div><div className="text-sm font-bold text-white">{dayH.toFixed(1)}h</div><div className="text-[10px] text-gray-500">{present} pers.</div></div>
+                        ? <><div className="text-sm font-bold text-white">{dayH.toFixed(1)}h</div><div className="text-[10px] text-gray-500">{present} pers.</div></>
                         : <span className="text-gray-700">—</span>}
                     </td>
                   )
                 })}
                 <td className="px-3 py-3 text-center border-r border-gray-700"><span className="font-bold text-white">{grandH.toFixed(1)}h</span></td>
-                <td className="px-3 py-3 text-center border-r border-gray-700"><span className="font-bold text-orange-400">{grandCost.toFixed(0)} €</span></td>
-                <td />
+                <td className="px-3 py-3 text-center"><span className="font-bold text-orange-400">{grandCost.toFixed(0)} €</span></td>
               </tr>
             )}
           </tbody>
@@ -595,10 +613,10 @@ export default function PlanningPage() {
       {employees.length > 0 && (
         <div className="px-6 py-2.5 bg-amber-50 border-t border-amber-100">
           <p className="text-xs text-amber-700">
-            <span className="font-semibold">Majoration heures sup :</span>
-            {' '}35h → +25 % de 36–43h, +50 % au-delà
-            {' · '}39h → +25 % de 40–47h, +50 % au-delà
-            {' · '}CP = 7h/jour
+            <span className="font-semibold">Majoration :</span>{' '}
+            35h → +25 % de 36–43h, +50 % au-delà{' · '}
+            39h → +25 % de 40–47h, +50 % au-delà{' · '}
+            CP = 7h/jour
           </p>
         </div>
       )}
@@ -608,40 +626,44 @@ export default function PlanningPage() {
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 backdrop-blur-sm" onClick={() => setShowAdd(false)}>
           <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
             <h2 className="text-base font-bold text-gray-900 mb-1">Nouvel employé</h2>
-            <p className="text-sm text-gray-500 mb-5">Renseignez le nom, le contrat et le taux horaire brut.</p>
+            <p className="text-sm text-gray-500 mb-5">Renseignez les informations de l’employé.</p>
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1.5">Prénom et nom</label>
                 <Input value={newName} onChange={e => setNewName(e.target.value)} placeholder="Marie Dupont" autoFocus onKeyDown={e => e.key === 'Enter' && addEmployee()} />
               </div>
               <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">Taux horaire brut (€/h)</label>
+                <Input type="number" step="0.01" min="0" value={newRate} onChange={e => setNewRate(e.target.value)} placeholder="12.50" />
+              </div>
+              <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Type de contrat</label>
                 <div className="grid grid-cols-2 gap-2">
-                  {([35, 39] as const).map(h => (
+                  {CONTRACT_TYPES.map(ct => (
                     <button
-                      key={h}
-                      onClick={() => setNewContractH(h)}
-                      className={`py-2.5 rounded-lg border-2 text-sm font-semibold transition-all ${
-                        newContractH === h
+                      key={ct.key}
+                      onClick={() => setNewContractKey(ct.key)}
+                      className={`py-2.5 px-3 rounded-lg border-2 text-left transition-all ${
+                        newContractKey === ct.key
                           ? 'border-[#1E3A5F] bg-[#1E3A5F] text-white'
-                          : 'border-gray-200 text-gray-600 hover:border-gray-300'
+                          : 'border-gray-200 text-gray-700 hover:border-gray-300 bg-white'
                       }`}
                     >
-                      {h}h / semaine
+                      <div className="text-sm font-bold">{ct.short}</div>
+                      <div className={`text-[10px] mt-0.5 ${
+                        newContractKey === ct.key ? 'text-blue-200' : 'text-gray-400'
+                      }`}>{ct.desc}</div>
                     </button>
                   ))}
                 </div>
-                <p className="text-[10px] text-gray-400 mt-1.5">
-                  {newContractH === 35 ? 'Majoration +25 % dès la 36e heure' : 'Majoration +25 % dès la 40e heure'}
-                </p>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1.5">Taux horaire brut (€/h)</label>
-                <Input type="number" step="0.01" min="0" value={newRate} onChange={e => setNewRate(e.target.value)} placeholder="12.50" onKeyDown={e => e.key === 'Enter' && addEmployee()} />
               </div>
               <div className="flex gap-3 pt-1">
                 <Button variant="outline" className="flex-1" onClick={() => setShowAdd(false)}>Annuler</Button>
-                <Button className="flex-1 bg-[#1E3A5F] hover:bg-[#2a4f7c] text-white" onClick={addEmployee} disabled={!newName.trim() || !newRate || adding}>
+                <Button
+                  className="flex-1 bg-[#1E3A5F] hover:bg-[#2a4f7c] text-white"
+                  onClick={addEmployee}
+                  disabled={!newName.trim() || !newRate || adding}
+                >
                   {adding ? 'Ajout...' : 'Ajouter'}
                 </Button>
               </div>

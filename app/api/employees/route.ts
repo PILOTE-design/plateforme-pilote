@@ -41,13 +41,13 @@ export async function POST(request: NextRequest) {
   if (!clientId) return NextResponse.json({ error: 'Client introuvable' }, { status: 404 })
 
   const body = await request.json()
-  const { name, hourly_rate, contract_hours = 35 } = body
+  const { name, hourly_rate, contract_type = 'CDI_35', contract_hours = 35 } = body
 
   if (!name || !hourly_rate) return NextResponse.json({ error: 'Champs manquants' }, { status: 400 })
 
   const { data, error } = await serviceSupabase
     .from('employees')
-    .insert({ client_id: clientId, name, hourly_rate, contract_hours })
+    .insert({ client_id: clientId, name, hourly_rate, contract_type, contract_hours })
     .select()
     .single()
 

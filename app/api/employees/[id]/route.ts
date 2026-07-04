@@ -23,7 +23,7 @@ export async function PATCH(
   if (!clientRecord) return NextResponse.json({ error: 'Client introuvable' }, { status: 404 })
 
   const body = await req.json()
-  const allowed = ['name', 'hourly_rate', 'contract_hours']
+  const allowed = ['name', 'hourly_rate', 'contract_type', 'contract_hours']
   const updates: Record<string, unknown> = {}
   for (const key of allowed) {
     if (key in body) updates[key] = body[key]
