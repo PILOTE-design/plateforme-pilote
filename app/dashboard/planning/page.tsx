@@ -192,6 +192,54 @@ function calcCost(entry: PlanningEntry, rate: number, contractH: number) {
   return contractH * rate + (t2 - contractH) * rate * 1.25 + (totalH - t2) * rate * 1.5
 }
 
+// ─── CCN Boucherie-Charcuterie (IDCC 992) ────────────────────────────────────
+// Dimanche travaillé : +20 %
+// Jour férié travaillé : +100 % (salaire doublé)
+// Travail de nuit (avant 6h ou après 21h) : +25 %
+
+type CostDetails = { total: number; dimanche: number; ferie: number; nuit: number }
+
+function calcCostCCN(
+  entry: PlanningEntry,
+  rate: number,
+  contractH: number,
+  wDates: Date[],
+  hols: Map<string, string>
+): CostDetails {
+  const base = calcCost(entry, rate, contractH)
+  let dimanche = 0, ferie = 0, nuit = 0
+
+  JOURS_DB.forEach((jour, idx) => {
+    const type = (entry[`${jour}_type` as keyof PlanningEntry] as DayType) || 'travail'
+    if (type !== 'travail') return
+    const sched = entry.schedule_details?.[jour]
+    const dayH  = scheduleHours(sched) || ((entry[jour as keyof PlanningEntry] as number) || 0)
+    if (!dayH) return
+
+    const dateStr = wDates[idx]?.toISOString().slice(0, 10) ?? ''
+    const isFerie = hols.has(dateStr)
+
+    if (isFerie) {
+      ferie += dayH * rate               // +100 % : salaire doublé (on ajoute 1×)
+    } else if (jour === 'dimanche') {
+      dimanche += dayH * rate * 0.20     // +20 % dimanche
+    }
+
+    // Nuit : heures avant 6h00
+    if (sched?.am_start && parseTimeH(sched.am_start) < 6) {
+      const endH = sched.am_end ? Math.min(6, parseTimeH(sched.am_end)) : 6
+      nuit += Math.max(0, endH - parseTimeH(sched.am_start)) * rate * 0.25
+    }
+    // Nuit : heures après 21h00
+    if (sched?.pm_end && parseTimeH(sched.pm_end) > 21) {
+      const startH = sched.pm_start ? Math.max(21, parseTimeH(sched.pm_start)) : 21
+      nuit += Math.max(0, parseTimeH(sched.pm_end) - startH) * rate * 0.25
+    }
+  })
+
+  return { total: base + dimanche + ferie + nuit, dimanche, ferie, nuit }
+}
+
 function emptyEntry(empId: string, week: number, year: number): PlanningEntry {
   return {
     employee_id: empId, week_number: week, year,
@@ -412,17 +460,19 @@ export default function PlanningPage() {
     const weeks     = getWeeksInMonth(monthYear, month)
     try {
       const allResults = await Promise.all(
-        weeks.map(({ week: w, year: y }) => fetch(`/api/planning?week=${w}&year=${y}`).then(r => r.json()).catch(() => []))
+        weeks.map(({ week: w, year: y }) => fetch(`/api/planning?week=${w}&year=${y}`).then(r => r.json()).then(d => ({ d, w, y })).catch(() => ({ d: [], w, y })))
       )
       const stats: Record<string, { hours: number; cost: number; worked: number; cp: number; sick: number }> = {}
-      for (const weekEntries of allResults) {
+      for (const { d: weekEntries, w, y } of allResults) {
         if (!Array.isArray(weekEntries)) continue
         for (const entry of weekEntries) {
           if (!stats[entry.employee_id]) stats[entry.employee_id] = { hours: 0, cost: 0, worked: 0, cp: 0, sick: 0 }
           const emp = employees.find(e => e.id === entry.employee_id)
           if (!emp) continue
           stats[entry.employee_id].hours += calcTotalH(entry)
-          stats[entry.employee_id].cost  += calcCost(entry, Number(emp.hourly_rate), emp.contract_hours || 35)
+          const _wDates = getWeekDates(w, y)
+          const _hols   = getFrenchHolidays(y)
+          stats[entry.employee_id].cost  += calcCostCCN(entry, Number(emp.hourly_rate), emp.contract_hours || 35, _wDates, _hols).total
           for (const jour of JOURS_DB) {
             const t = (entry[`${jour}_type`] as DayType) || 'travail'
             const h = (entry[jour] as number) || 0
@@ -439,7 +489,8 @@ export default function PlanningPage() {
   const rowStats  = employees.map(emp => {
     const e  = getEntryState(emp.id)
     const ch = emp.contract_hours || 35
-    return { empId: emp.id, totalH: calcTotalH(e), cost: calcCost(e, Number(emp.hourly_rate), ch) }
+    const ccn = calcCostCCN(e, Number(emp.hourly_rate), ch, weekDates, holidays)
+    return { empId: emp.id, totalH: calcTotalH(e), cost: ccn.total, dimanche: ccn.dimanche, ferie: ccn.ferie, nuit: ccn.nuit }
   })
   const grandH    = rowStats.reduce((s, r) => s + r.totalH, 0)
   const grandCost = rowStats.reduce((s, r) => s + r.cost, 0)
@@ -456,6 +507,7 @@ export default function PlanningPage() {
       const pal    = EMP_PALETTES[i % EMP_PALETTES.length]
       const entry  = getEntryState(emp.id)
       const ch     = emp.contract_hours || 35
+      const ccnCost = calcCostCCN(entry, Number(emp.hourly_rate), ch, dates, holidays)
       const totalH = calcTotalH(entry)
       const cells  = JOURS_DB.map((j, idx) => {
         const type  = (entry[`${j}_type` as keyof PlanningEntry] as DayType) || (idx >= 5 ? 'repos' : 'travail')
@@ -756,6 +808,15 @@ export default function PlanningPage() {
                     <span className={`font-bold text-sm ${cost > 0 ? 'text-green-700' : 'text-gray-300'}`}>
                       {cost > 0 ? `${cost.toFixed(0)} €` : '—'}
                     </span>
+                    {(rowStats.find(r => r.empId === emp.id)?.dimanche ?? 0) > 0 && (
+                      <div className="text-[9px] text-violet-600 font-semibold">+dim {(rowStats.find(r => r.empId === emp.id)!.dimanche).toFixed(0)}€</div>
+                    )}
+                    {(rowStats.find(r => r.empId === emp.id)?.ferie ?? 0) > 0 && (
+                      <div className="text-[9px] text-amber-600 font-semibold">+fér {(rowStats.find(r => r.empId === emp.id)!.ferie).toFixed(0)}€</div>
+                    )}
+                    {(rowStats.find(r => r.empId === emp.id)?.nuit ?? 0) > 0 && (
+                      <div className="text-[9px] text-indigo-600 font-semibold">+nuit {(rowStats.find(r => r.empId === emp.id)!.nuit).toFixed(0)}€</div>
+                    )}
                   </td>
                 </tr>
               )
@@ -799,7 +860,7 @@ export default function PlanningPage() {
       {employees.length > 0 && (
         <div className="px-6 py-2.5 bg-amber-50 border-t border-amber-100">
           <p className="text-xs text-amber-700">
-            <span className="font-semibold">Majoration :</span> 35h → +25 % de 36–43h, +50 % au-delà · 39h → +25 % de 40–47h, +50 % au-delà · CP = 7h/jour
+            <span className="font-semibold">Majoration CCN Boucherie (IDCC 992) :</span> 35h → +25 % de 36–43h, +50 % au-delà · 39h → +25 % de 40–47h, +50 % au-delà · CP = 7h/jour · <span className="text-violet-700">Dimanche +20 %</span> · <span className="text-amber-700">Férié travaillé +100 %</span> · <span className="text-indigo-700">Nuit (avant 6h/après 21h) +25 %</span>
           </p>
         </div>
       )}
