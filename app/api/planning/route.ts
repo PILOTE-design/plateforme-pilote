@@ -56,6 +56,7 @@ export async function POST(req: NextRequest) {
     employee_id, week_number, year,
     lundi, mardi, mercredi, jeudi, vendredi, samedi, dimanche,
     lundi_type, mardi_type, mercredi_type, jeudi_type, vendredi_type, samedi_type, dimanche_type,
+    schedule_details,
   } = body
 
   const { data, error } = await serviceSupabase
@@ -72,6 +73,7 @@ export async function POST(req: NextRequest) {
         vendredi_type: vendredi_type || 'travail',
         samedi_type:   samedi_type   || 'repos',
         dimanche_type: dimanche_type || 'repos',
+        schedule_details: schedule_details ?? null,
       },
       { onConflict: 'employee_id,week_number,year' }
     )
