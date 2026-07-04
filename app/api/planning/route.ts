@@ -1,34 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 
-async function resolveClientId(serviceSupabase: ReturnType<typeof createServiceClient>, userId: string, userEmail: string | undefined): Promise<string | null> {
+async function resolveClientId(
+  serviceSupabase: ReturnType<typeof createServiceClient>,
+  userId: string,
+  userEmail: string | undefined
+): Promise<string | null> {
   const { data: byId } = await serviceSupabase
-    .from('clients')
-    .select('id')
-    .eq('client_user_id', userId)
-    .maybeSingle()
+    .from('clients').select('id').eq('client_user_id', userId).maybeSingle()
   if (byId) return byId.id
-
   if (!userEmail) return null
   const { data: byEmail } = await serviceSupabase
-    .from('clients')
-    .select('id')
-    .eq('email', userEmail)
-    .maybeSingle()
+    .from('clients').select('id').eq('email', userEmail).maybeSingle()
   if (!byEmail) return null
-
-  await serviceSupabase
-    .from('clients')
-    .update({ client_user_id: userId })
-    .eq('id', byEmail.id)
-
+  await serviceSupabase.from('clients').update({ client_user_id: userId }).eq('id', byEmail.id)
   return byEmail.id
 }
 
 export async function GET(req: NextRequest) {
   const supabase = createClient()
   const serviceSupabase = createServiceClient()
-
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Non autorisé' }, { status: 401 })
 
@@ -41,10 +32,7 @@ export async function GET(req: NextRequest) {
   if (!clientId) return NextResponse.json([])
 
   const { data: empList } = await serviceSupabase
-    .from('employees')
-    .select('id')
-    .eq('client_id', clientId)
-
+    .from('employees').select('id').eq('client_id', clientId)
   if (!empList || empList.length === 0) return NextResponse.json([])
 
   const { data: entries } = await serviceSupabase
@@ -60,32 +48,34 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const supabase = createClient()
   const serviceSupabase = createServiceClient()
-
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Non autorisé' }, { status: 401 })
 
   const body = await req.json()
-  const { employee_id, week_number, year, lundi, mardi, mercredi, jeudi, vendredi, samedi, dimanche } = body
+  const {
+    employee_id, week_number, year,
+    lundi, mardi, mercredi, jeudi, vendredi, samedi, dimanche,
+    lundi_type, mardi_type, mercredi_type, jeudi_type, vendredi_type, samedi_type, dimanche_type,
+  } = body
 
   const { data, error } = await serviceSupabase
     .from('planning_entries')
     .upsert(
       {
-        employee_id,
-        week_number,
-        year,
-        lundi: lundi || 0,
-        mardi: mardi || 0,
-        mercredi: mercredi || 0,
-        jeudi: jeudi || 0,
-        vendredi: vendredi || 0,
-        samedi: samedi || 0,
-        dimanche: dimanche || 0,
+        employee_id, week_number, year,
+        lundi: lundi || 0, mardi: mardi || 0, mercredi: mercredi || 0,
+        jeudi: jeudi || 0, vendredi: vendredi || 0, samedi: samedi || 0, dimanche: dimanche || 0,
+        lundi_type:    lundi_type    || 'travail',
+        mardi_type:    mardi_type    || 'travail',
+        mercredi_type: mercredi_type || 'travail',
+        jeudi_type:    jeudi_type    || 'travail',
+        vendredi_type: vendredi_type || 'travail',
+        samedi_type:   samedi_type   || 'repos',
+        dimanche_type: dimanche_type || 'repos',
       },
       { onConflict: 'employee_id,week_number,year' }
     )
-    .select()
-    .single()
+    .select().single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json(data)
