@@ -312,7 +312,6 @@ export default function PlanningPage() {
     })
   }
 
-  // Open schedule modal for a cell
   function openModal(emp: Employee, jour: JourDB, jourIdx: number) {
     const entry = getEntry(emp.id)
     const sched = entry.schedule_details?.[jour] ?? {}
@@ -332,7 +331,6 @@ export default function PlanningPage() {
     })
   }
 
-  // Save from modal
   function saveModal() {
     if (!scheduleModal) return
     const { empId, jour } = scheduleModal
@@ -488,14 +486,14 @@ export default function PlanningPage() {
           </div>
         </td>${cells}
         <td style="padding:6px;text-align:center;font-weight:700;font-size:12px;color:${totalH > ch ? '#ea580c' : '#1e293b'};background:#f8fafc;border-bottom:1px solid #e2e8f0;">${totalH.toFixed(1)}h</td>
-        <td style="padding:6px;text-align:center;border-bottom:1px solid #e2e8f0;"></td>
+        <td style="padding:6px;text-align:center;border-bottom:1px solid #e2e8f0;min-width:80px;"></td>
       </tr>`
     }).join('')
     const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"><title>Planning S${week}</title>
 <style>@page{size:A4 landscape;margin:1.2cm 1.5cm}*{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial,sans-serif;color:#1e293b}table{width:100%;border-collapse:collapse}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}</style></head><body>
 <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:14px;padding-bottom:10px;border-bottom:2px solid #1E3A5F;">
   <div><div style="font-size:18px;font-weight:800;color:#1E3A5F;">Planning — Semaine ${week}</div><div style="font-size:11px;color:#64748b;margin-top:2px;">${getWeekLabel(week, year)}</div></div>
-  <div style="display:flex;gap:20px;font-size:10px;color:#64748b;align-items:center;">
+  <div style="display:flex;gap:16px;font-size:10px;color:#64748b;align-items:center;">
     ${Object.entries(CATEGORIES).map(([, c]) => `<span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:2px;background:${c.hex};display:inline-block;"></span>${c.label}</span>`).join('')}
   </div>
 </div>
@@ -503,7 +501,7 @@ export default function PlanningPage() {
   <th style="background:#1E3A5F;color:white;padding:7px 10px;font-size:10px;text-align:left;width:150px;">Employé</th>
   ${dayHeaders}
   <th style="background:#1E3A5F;color:white;padding:7px 5px;font-size:10px;text-align:center;width:50px;">Total</th>
-  <th style="background:#1E3A5F;color:white;padding:7px 10px;font-size:10px;text-align:center;width:100px;">Signature</th>
+  <th style="background:#1E3A5F;color:white;padding:7px 10px;font-size:10px;text-align:center;width:90px;">Signature</th>
 </tr></thead><tbody>${empRows}</tbody></table>
 <p style="margin-top:10px;font-size:9px;color:#94a3b8;">Seuils majoration : 35h → +25 % de 36–43h · 39h → +25 % de 40–47h · +50 % au-delà · CP = 7h/jour · Généré via PILOTE</p>
 </body></html>`
@@ -513,13 +511,12 @@ export default function PlanningPage() {
     setTimeout(() => win.print(), 600)
   }
 
-  // ─── Render ────────────────────────────────────────────────────────────────
-
   return (
     <div className="min-h-screen bg-gray-50">
       <style>{`
         input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
         input[type=number]{-moz-appearance:textfield}
+        input[type=time]{color-scheme:light}
       `}</style>
 
       {/* Header */}
@@ -640,7 +637,6 @@ export default function PlanningPage() {
 
               return (
                 <tr key={emp.id} className="group">
-                  {/* Employee col */}
                   <td className={`px-3 py-0 sticky left-0 bg-white z-10 border-b border-r border-gray-200 ${pal.lborder}`}>
                     <div className="flex items-center gap-2 py-2">
                       <div className={`w-7 h-7 rounded-full ${pal.bg} flex items-center justify-center flex-shrink-0`}>
@@ -684,7 +680,6 @@ export default function PlanningPage() {
                     </div>
                   </td>
 
-                  {/* Day cells */}
                   {JOURS_DB.map((jour, idx) => {
                     const typeKey = `${jour}_type` as keyof PlanningEntry
                     const type    = (entry[typeKey] as DayType) || (idx >= 5 ? 'repos' : 'travail')
@@ -694,7 +689,6 @@ export default function PlanningPage() {
                     const pmCat   = sched?.pm_category ? CATEGORIES[sched.pm_category] : null
                     const sh      = scheduleHours(sched)
                     const hours   = sh > 0 ? sh : (entry[jour] || 0)
-
                     const cellBg  = fName ? 'bg-amber-50' : type === 'travail' ? pal.bg : TYPE_CONFIG[type].bg
                     const cellTxt = fName ? 'text-amber-800' : type === 'travail' ? pal.text : TYPE_CONFIG[type].text
                     const cellDot = fName ? 'bg-amber-400' : type === 'travail' ? pal.dot : TYPE_CONFIG[type].dot
@@ -706,14 +700,11 @@ export default function PlanningPage() {
                           className={`cursor-pointer transition-colors ${cellBg} w-full h-full min-h-[90px] px-2 pt-1.5 pb-1.5 flex flex-col hover:brightness-95`}
                           onClick={() => !fName && openModal(emp, jour, idx)}
                         >
-                          {/* Type badge */}
                           <div className="flex items-center gap-1 mb-1">
                             <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cellDot}`} />
                             <span className={`text-[9px] font-semibold truncate ${cellTxt}`}>{typeLabel}</span>
                             {!fName && <Clock className={`w-2.5 h-2.5 ml-auto opacity-20 ${cellTxt}`} />}
                           </div>
-
-                          {/* Schedule display */}
                           {type === 'travail' && !fName ? (
                             <div className="flex-1 flex flex-col justify-center gap-0.5">
                               {sched?.am_start && sched?.am_end ? (
@@ -755,14 +746,12 @@ export default function PlanningPage() {
                     )
                   })}
 
-                  {/* Total */}
                   <td className="px-2 py-3 text-center border-b border-r border-gray-200">
                     <div className={`inline-flex flex-col items-center px-2 py-1 rounded-lg ${hasOT ? 'bg-orange-50' : totalH > 0 ? 'bg-gray-50' : ''}`}>
                       <span className={`font-bold text-sm ${hasOT ? 'text-orange-600' : totalH > 0 ? 'text-gray-800' : 'text-gray-300'}`}>{totalH.toFixed(1)}h</span>
                       {hasOT && <span className="text-[9px] text-orange-400">+{(totalH - ch).toFixed(1)} sup</span>}
                     </div>
                   </td>
-                  {/* Cost */}
                   <td className="px-2 py-3 text-center border-b border-gray-200">
                     <span className={`font-bold text-sm ${cost > 0 ? 'text-green-700' : 'text-gray-300'}`}>
                       {cost > 0 ? `${cost.toFixed(0)} €` : '—'}
@@ -772,7 +761,6 @@ export default function PlanningPage() {
               )
             })}
 
-            {/* Footer */}
             {employees.length > 0 && (
               <tr className="bg-gray-900">
                 <td className="px-3 py-3 sticky left-0 bg-gray-900 z-10 border-r border-gray-700">
@@ -816,7 +804,7 @@ export default function PlanningPage() {
         </div>
       )}
 
-      {/* ── Schedule modal ─────────────────────────────────────────────────── */}
+      {/* ── Schedule modal ── */}
       {scheduleModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 backdrop-blur-sm" onClick={() => setScheduleModal(null)}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
@@ -836,7 +824,7 @@ export default function PlanningPage() {
               <div className="grid grid-cols-4 gap-1.5">
                 {(['travail', 'conges', 'maladie', 'repos'] as DayType[]).map(t => (
                   <button key={t} onClick={() => setScheduleModal(s => s ? { ...s, type: t } : s)}
-                    className={`py-1.5 px-1 rounded-lg text-xs font-semibold border-2 transition-all ${scheduleModal.type === t ? 'border-[#1E3A5F] bg-[#1E3A5F] text-white' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}>
+                    className={`py-1.5 px-1 rounded-lg text-xs font-semibold border-2 transition-all ${scheduleModal.type === t ? 'border-[#1E3A5F] bg-[#1E3A5F] text-white' : 'border-gray-200 text-gray-700 hover:border-gray-300 bg-white'}`}>
                     {TYPE_CONFIG[t].label || 'Travail'}
                   </button>
                 ))}
@@ -846,30 +834,30 @@ export default function PlanningPage() {
             {scheduleModal.type === 'travail' && (
               <>
                 {/* AM */}
-                <div className="mb-4 p-3 bg-gray-50 rounded-xl">
-                  <p className="text-xs font-bold text-gray-700 mb-2.5 flex items-center gap-1.5">
+                <div className="mb-4 p-3 bg-gray-50 rounded-xl border border-gray-200">
+                  <p className="text-xs font-bold text-gray-800 mb-2.5 flex items-center gap-1.5">
                     <span className="w-4 h-4 rounded-full bg-amber-400 flex items-center justify-center text-[8px] text-white font-black">M</span>
                     Matin
                   </p>
                   <div className="flex gap-2 mb-2.5">
                     <div className="flex-1">
-                      <label className="text-[10px] text-gray-400 block mb-1">De</label>
+                      <label className="text-[11px] font-medium text-gray-600 block mb-1">De</label>
                       <input type="time" value={scheduleModal.am_start}
                         onChange={e => setScheduleModal(s => s ? { ...s, am_start: e.target.value } : s)}
-                        className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1E3A5F]/30" />
+                        className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#1E3A5F]/30" />
                     </div>
                     <div className="flex-1">
-                      <label className="text-[10px] text-gray-400 block mb-1">À</label>
+                      <label className="text-[11px] font-medium text-gray-600 block mb-1">À</label>
                       <input type="time" value={scheduleModal.am_end}
                         onChange={e => setScheduleModal(s => s ? { ...s, am_end: e.target.value } : s)}
-                        className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1E3A5F]/30" />
+                        className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#1E3A5F]/30" />
                     </div>
                   </div>
-                  <p className="text-[10px] text-gray-400 mb-1.5">Catégorie matin</p>
+                  <p className="text-[11px] font-medium text-gray-600 mb-1.5">Catégorie matin</p>
                   <div className="grid grid-cols-4 gap-1">
                     {(Object.entries(CATEGORIES) as [CategoryKey, typeof CATEGORIES[CategoryKey]][]).map(([k, c]) => (
                       <button key={k} onClick={() => setScheduleModal(s => s ? { ...s, am_category: s.am_category === k ? '' : k } : s)}
-                        className={`py-1.5 px-1 rounded-lg text-[9px] font-bold border-2 transition-all ${scheduleModal.am_category === k ? 'text-white' : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'}`}
+                        className={`py-1.5 px-1 rounded-lg text-[9px] font-bold border-2 transition-all ${scheduleModal.am_category === k ? 'text-white' : 'bg-white text-gray-700 border-gray-200 hover:border-gray-300'}`}
                         style={scheduleModal.am_category === k ? { background: c.hex, borderColor: c.hex } : {}}>
                         {c.label}
                       </button>
@@ -878,30 +866,30 @@ export default function PlanningPage() {
                 </div>
 
                 {/* PM */}
-                <div className="mb-4 p-3 bg-gray-50 rounded-xl">
-                  <p className="text-xs font-bold text-gray-700 mb-2.5 flex items-center gap-1.5">
+                <div className="mb-4 p-3 bg-gray-50 rounded-xl border border-gray-200">
+                  <p className="text-xs font-bold text-gray-800 mb-2.5 flex items-center gap-1.5">
                     <span className="w-4 h-4 rounded-full bg-blue-400 flex items-center justify-center text-[8px] text-white font-black">A</span>
                     Après-midi
                   </p>
                   <div className="flex gap-2 mb-2.5">
                     <div className="flex-1">
-                      <label className="text-[10px] text-gray-400 block mb-1">De</label>
+                      <label className="text-[11px] font-medium text-gray-600 block mb-1">De</label>
                       <input type="time" value={scheduleModal.pm_start}
                         onChange={e => setScheduleModal(s => s ? { ...s, pm_start: e.target.value } : s)}
-                        className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1E3A5F]/30" />
+                        className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#1E3A5F]/30" />
                     </div>
                     <div className="flex-1">
-                      <label className="text-[10px] text-gray-400 block mb-1">À</label>
+                      <label className="text-[11px] font-medium text-gray-600 block mb-1">À</label>
                       <input type="time" value={scheduleModal.pm_end}
                         onChange={e => setScheduleModal(s => s ? { ...s, pm_end: e.target.value } : s)}
-                        className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1E3A5F]/30" />
+                        className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#1E3A5F]/30" />
                     </div>
                   </div>
-                  <p className="text-[10px] text-gray-400 mb-1.5">Catégorie après-midi</p>
+                  <p className="text-[11px] font-medium text-gray-600 mb-1.5">Catégorie après-midi</p>
                   <div className="grid grid-cols-4 gap-1">
                     {(Object.entries(CATEGORIES) as [CategoryKey, typeof CATEGORIES[CategoryKey]][]).map(([k, c]) => (
                       <button key={k} onClick={() => setScheduleModal(s => s ? { ...s, pm_category: s.pm_category === k ? '' : k } : s)}
-                        className={`py-1.5 px-1 rounded-lg text-[9px] font-bold border-2 transition-all ${scheduleModal.pm_category === k ? 'text-white' : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'}`}
+                        className={`py-1.5 px-1 rounded-lg text-[9px] font-bold border-2 transition-all ${scheduleModal.pm_category === k ? 'text-white' : 'bg-white text-gray-700 border-gray-200 hover:border-gray-300'}`}
                         style={scheduleModal.pm_category === k ? { background: c.hex, borderColor: c.hex } : {}}>
                         {c.label}
                       </button>
@@ -912,17 +900,16 @@ export default function PlanningPage() {
                 {/* Manual hours fallback */}
                 {!scheduleModal.am_start && !scheduleModal.pm_start && (
                   <div className="mb-4">
-                    <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider block mb-1.5">Heures (si pas d'horaires)</label>
+                    <label className="text-xs font-semibold text-gray-700 uppercase tracking-wider block mb-1.5">Heures (si pas d'horaires)</label>
                     <input type="number" min="0" max="24" step="0.5" value={scheduleModal.manualHours}
                       onChange={e => setScheduleModal(s => s ? { ...s, manualHours: e.target.value } : s)}
-                      className="w-24 border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1E3A5F]/30"
+                      className="w-24 border border-gray-300 rounded-lg px-3 py-1.5 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#1E3A5F]/30"
                       placeholder="0" />
                   </div>
                 )}
 
-                {/* Total preview */}
                 {modalHours(scheduleModal) > 0 && (
-                  <div className="mb-4 flex items-center justify-center gap-2 py-2 bg-blue-50 rounded-lg">
+                  <div className="mb-4 flex items-center justify-center gap-2 py-2 bg-blue-50 rounded-lg border border-blue-100">
                     <Clock className="w-3.5 h-3.5 text-blue-600" />
                     <span className="text-sm font-bold text-blue-800">
                       {modalHours(scheduleModal) % 1 === 0 ? modalHours(scheduleModal) : modalHours(scheduleModal).toFixed(1)}h au total
@@ -933,14 +920,14 @@ export default function PlanningPage() {
             )}
 
             <div className="flex gap-3">
-              <Button variant="outline" className="flex-1" onClick={() => setScheduleModal(null)}>Annuler</Button>
+              <Button variant="outline" className="flex-1 text-gray-700" onClick={() => setScheduleModal(null)}>Annuler</Button>
               <Button className="flex-1 bg-[#1E3A5F] hover:bg-[#2a4f7c] text-white" onClick={saveModal}>Valider</Button>
             </div>
           </div>
         </div>
       )}
 
-      {/* ── Récap mensuel ────────────────────────────────────────────────────── */}
+      {/* ── Récap mensuel ── */}
       {showMonthly && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 backdrop-blur-sm" onClick={() => setShowMonthly(false)}>
           <div className="bg-white rounded-2xl p-6 w-full max-w-2xl shadow-2xl max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
@@ -1007,7 +994,7 @@ export default function PlanningPage() {
         </div>
       )}
 
-      {/* ── Ajout employé ────────────────────────────────────────────────────── */}
+      {/* ── Ajout employé ── */}
       {showAdd && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 backdrop-blur-sm" onClick={() => setShowAdd(false)}>
           <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
@@ -1035,7 +1022,7 @@ export default function PlanningPage() {
                 </div>
               </div>
               <div className="flex gap-3 pt-1">
-                <Button variant="outline" className="flex-1" onClick={() => setShowAdd(false)}>Annuler</Button>
+                <Button variant="outline" className="flex-1 text-gray-700" onClick={() => setShowAdd(false)}>Annuler</Button>
                 <Button className="flex-1 bg-[#1E3A5F] hover:bg-[#2a4f7c] text-white" onClick={addEmployee} disabled={!newName.trim() || !newRate || adding}>
                   {adding ? 'Ajout...' : 'Ajouter'}
                 </Button>
