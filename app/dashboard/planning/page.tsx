@@ -12,12 +12,12 @@ const JOURS_DB = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', '
 type JourDB = typeof JOURS_DB[number]
 
 const TYPE_CONFIG: Record<DayType, {
-  label: string; bg: string; text: string; dot: string; defaultHours: number; pdfColor: string
+  label: string; bg: string; text: string; dot: string; defaultHours: number; pdfColor: string; display: string
 }> = {
-  travail: { label: 'Travail',       bg: '',             text: '',              dot: '',           defaultHours: 0, pdfColor: '' },
-  conges:  { label: 'Congé payé',    bg: 'bg-sky-100',   text: 'text-sky-800',  dot: 'bg-sky-400', defaultHours: 7, pdfColor: '#bae6fd' },
-  maladie: { label: 'Arrêt maladie', bg: 'bg-red-100',   text: 'text-red-800',  dot: 'bg-red-400', defaultHours: 0, pdfColor: '#fecaca' },
-  repos:   { label: 'Repos',         bg: 'bg-gray-100',  text: 'text-gray-400', dot: 'bg-gray-300', defaultHours: 0, pdfColor: '#f3f4f6' },
+  travail: { label: 'Travail',       bg: '',             text: '',              dot: '',           defaultHours: 0, pdfColor: '',       display: '' },
+  conges:  { label: 'Congé payé',    bg: 'bg-sky-100',   text: 'text-sky-800',  dot: 'bg-sky-400', defaultHours: 7, pdfColor: '#bae6fd', display: '7h' },
+  maladie: { label: 'Arrêt maladie', bg: 'bg-red-100',   text: 'text-red-800',  dot: 'bg-red-400', defaultHours: 0, pdfColor: '#fecaca', display: 'AM' },
+  repos:   { label: 'Repos',         bg: 'bg-gray-100',  text: 'text-gray-400', dot: 'bg-gray-300', defaultHours: 0, pdfColor: '#f3f4f6', display: '—' },
 }
 
 const EMP_PALETTES = [
@@ -105,6 +105,7 @@ export default function PlanningPage() {
   const [entries, setEntries] = useState<EntriesMap>({})
   const entriesRef = useRef<EntriesMap>({})
   const [selectedCell, setSelectedCell] = useState<{ empId: string; jour: JourDB } | null>(null)
+  const [editingCell, setEditingCell] = useState<{ empId: string; jour: JourDB } | null>(null)
   const [loadingEmployees, setLoadingEmployees] = useState(true)
   const [showAdd, setShowAdd] = useState(false)
   const [newName, setNewName] = useState('')
@@ -173,6 +174,7 @@ export default function PlanningPage() {
     }
     setEntriesSync(prev => ({ ...prev, [empId]: updated }))
     setSelectedCell(null)
+    setEditingCell(null)
     saveEntryValues(empId, updated)
   }
 
@@ -184,6 +186,7 @@ export default function PlanningPage() {
 
   function handleBlur(empId: string) {
     saveEntryValues(empId, entriesRef.current[empId] ?? emptyEntry(empId, week, year))
+    setEditingCell(null)
   }
 
   async function addEmployee() {
@@ -259,7 +262,13 @@ export default function PlanningPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50" onClick={() => setSelectedCell(null)}>
+    <div className="min-h-screen bg-gray-50" onClick={() => { setSelectedCell(null); setEditingCell(null) }}>
+      {/* Hide number input spinners globally */}
+      <style>{`
+        input[type=number]::-webkit-inner-spin-button,
+        input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+        input[type=number] { -moz-appearance: textfield; }
+      `}</style>
 
       {/* Header */}
       <div className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
@@ -319,9 +328,7 @@ export default function PlanningPage() {
         <table className="w-full min-w-[860px] border-collapse">
           <thead>
             <tr className="bg-white">
-              {/* Employee header */}
               <th className="w-44 px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider sticky left-0 bg-white z-10 border-b border-r border-gray-200">Employé</th>
-              {/* Day headers */}
               {weekDates.map((date, i) => {
                 const isToday = date.getUTCDate() === today.getDate() && date.getUTCMonth() === today.getMonth() && date.getUTCFullYear() === today.getFullYear()
                 const isWE = i >= 5
@@ -381,12 +388,13 @@ export default function PlanningPage() {
                       </div>
                     </td>
 
-                    {/* Day cells — plein cadre, pas d'arrondi */}
+                    {/* Day cells */}
                     {JOURS_DB.map((jour, idx) => {
                       const typeKey = `${jour}_type` as keyof PlanningEntry
                       const type = (entry[typeKey] as DayType) || (idx >= 5 ? 'repos' : 'travail')
                       const hours = entry[jour] || 0
                       const isSelected = selectedCell?.empId === emp.id && selectedCell?.jour === jour
+                      const isEditing = editingCell?.empId === emp.id && editingCell?.jour === jour
 
                       const cellBg  = type === 'travail' ? pal.bg : TYPE_CONFIG[type].bg
                       const cellTxt = type === 'travail' ? pal.text : TYPE_CONFIG[type].text
@@ -398,10 +406,10 @@ export default function PlanningPage() {
                           <div className="relative h-full" data-cell="true" onClick={e => e.stopPropagation()}>
                             {/* Case plein cadre */}
                             <div
-                              className={`cursor-pointer transition-colors ${cellBg} w-full h-full min-h-[72px] px-2.5 pt-2 pb-2 flex flex-col justify-between select-none hover:brightness-95`}
+                              className={`cursor-pointer transition-colors ${cellBg} w-full h-full min-h-[76px] px-2.5 pt-2 pb-2 flex flex-col justify-between select-none hover:brightness-95`}
                               onClick={() => setSelectedCell(isSelected ? null : { empId: emp.id, jour })}
                             >
-                              {/* Type label */}
+                              {/* Type label + chevron */}
                               <div className="flex items-center justify-between gap-1">
                                 <div className="flex items-center gap-1 min-w-0">
                                   <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cellDot}`} />
@@ -410,23 +418,34 @@ export default function PlanningPage() {
                                 <ChevronDown className={`w-3 h-3 flex-shrink-0 opacity-30 ${cellTxt}`} />
                               </div>
 
-                              {/* Contenu central */}
-                              {type === 'travail' ? (
-                                <div onClick={e => e.stopPropagation()} className="flex-1 flex items-center justify-center">
-                                  <input
-                                    type="number" min="0" max="24" step="0.5"
-                                    value={hours || ''}
-                                    onChange={e => updateHours(emp.id, jour, e.target.value)}
-                                    onBlur={() => handleBlur(emp.id)}
-                                    className={`w-14 text-center font-bold text-2xl bg-transparent focus:outline-none ${pal.text} placeholder-gray-300`}
-                                    placeholder="—"
-                                  />
-                                </div>
-                              ) : (
-                                <div className={`flex-1 flex items-center justify-center text-sm font-semibold ${cellTxt} opacity-70`}>
-                                  {type === 'conges' ? '7h' : type === 'maladie' ? 'AM' : '—'}
-                                </div>
-                              )}
+                              {/* Valeur centrale — même affichage pour tous les types */}
+                              <div className="flex-1 flex items-center justify-center">
+                                {type === 'travail' ? (
+                                  isEditing ? (
+                                    <input
+                                      autoFocus
+                                      type="number" min="0" max="24" step="0.5"
+                                      value={hours || ''}
+                                      onChange={e => updateHours(emp.id, jour, e.target.value)}
+                                      onBlur={() => handleBlur(emp.id)}
+                                      onClick={e => e.stopPropagation()}
+                                      className={`w-16 text-center font-bold text-2xl bg-transparent focus:outline-none border-b border-current ${pal.text}`}
+                                      placeholder="0"
+                                    />
+                                  ) : (
+                                    <span
+                                      onClick={e => { e.stopPropagation(); setEditingCell({ empId: emp.id, jour }) }}
+                                      className={`font-bold text-2xl ${pal.text} cursor-text`}
+                                    >
+                                      {hours > 0 ? `${hours}h` : '—'}
+                                    </span>
+                                  )
+                                ) : (
+                                  <span className={`font-bold text-2xl ${cellTxt}`}>
+                                    {TYPE_CONFIG[type].display}
+                                  </span>
+                                )}
+                              </div>
                             </div>
 
                             {/* Dropdown type */}
