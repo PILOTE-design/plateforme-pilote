@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Plus, ChevronLeft, ChevronRight, ChevronDown, Trash2, CalendarDays, FileDown, Copy, BarChart2, X, UserCog } from 'lucide-react'
+import { Plus, ChevronLeft, ChevronRight, ChevronDown, Trash2, CalendarDays, FileDown, Copy, BarChart2, X, UserCog, Check } from 'lucide-react'
 import EmployeeProfileModal, { type EmployeeProfile } from '@/components/EmployeeProfileModal'
 
 type DayType = 'travail' | 'conges' | 'maladie' | 'repos'
@@ -79,7 +79,6 @@ type MonthlyStat = { emp: Employee; hours: number; cost: number; worked: number;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/** Calcule la durée en heures entre deux horaires HH:MM */
 function timeDiff(start: string, end: string): number {
   if (!start || !end) return 0
   const [sh, sm] = start.split(':').map(Number)
@@ -88,14 +87,12 @@ function timeDiff(start: string, end: string): number {
   return Math.max(0, parseFloat((diff / 60).toFixed(2)))
 }
 
-/** Formate "08:30" → "8h30", "12:00" → "12h" */
 function fmtTime(t: string): string {
   if (!t) return ''
   const [h, m] = t.split(':')
   return m === '00' ? `${parseInt(h)}h` : `${parseInt(h)}h${m}`
 }
 
-/** Formate une plage "08:30"+"12:30" → "8h30-12h30" */
 function fmtRange(start: string, end: string): string {
   if (!start && !end) return ''
   if (!start || !end) return fmtTime(start || end)
@@ -344,7 +341,6 @@ export default function PlanningPage() {
     refreshCpUsed()
   }
 
-  // ── Mise à jour plage horaire (début ou fin) ────────────────────────────────
   function updateTimeRange(
     empId: string, jour: JourDB,
     field: 'matinDebut' | 'matinFin' | 'apmDebut' | 'apmFin',
@@ -352,7 +348,6 @@ export default function PlanningPage() {
   ) {
     const current = getSched(empId, jour)
     const updated = { ...current, [field]: value }
-    // Recalcule les durées
     const matinH = timeDiff(updated.matinDebut, updated.matinFin)
     const apmH   = timeDiff(updated.apmDebut,   updated.apmFin)
     updated.matin     = matinH
@@ -483,10 +478,7 @@ export default function PlanningPage() {
         const apmRange   = sched ? fmtRange(sched.apmDebut,   sched.apmFin)   : ''
         const label  = type === 'travail'
           ? (h > 0
-            ? `${catLabel ? `<span style="font-size:8px;color:#64748b;font-weight:600;">${catLabel}</span><br>` : ''}
-               ${matinRange ? `<span style="font-size:8px;">${matinRange}</span><br>` : ''}
-               ${apmRange   ? `<span style="font-size:8px;">${apmRange}</span><br>`   : ''}
-               <strong style="font-size:11px;">${h}h</strong>`
+            ? `${catLabel ? `<span style="font-size:8px;color:#64748b;font-weight:600;">${catLabel}</span><br>` : ''}${matinRange ? `<span style="font-size:8px;">${matinRange}</span><br>` : ''}${apmRange ? `<span style="font-size:8px;">${apmRange}</span><br>` : ''}<strong style="font-size:11px;">${h}h</strong>`
             : '—')
           : `<span style="font-size:9px;">${TYPE_CONFIG[type].label}</span>`
         return `<td style="padding:5px 3px;text-align:center;background:${bg};border-bottom:1px solid #e2e8f0;border-right:1px solid #e2e8f0;">${label}${fName ? `<br><span style="font-size:8px;color:#92400e;">Férié</span>` : ''}</td>`
@@ -523,6 +515,7 @@ export default function PlanningPage() {
     <div className="min-h-screen bg-gray-50">
       <style>{`
         input[type=time]::-webkit-calendar-picker-indicator { opacity: 0.5; cursor: pointer; }
+        input[type=time] { color: #0f172a !important; background-color: #ffffff !important; }
       `}</style>
 
       {/* ── Header ── */}
@@ -723,7 +716,7 @@ export default function PlanningPage() {
                           <div className="relative h-full" data-cell="true">
                             <div className={`${cellBg} w-full h-full min-h-[100px] flex flex-col`}>
 
-                              {/* Type badge (cliquable → change type) */}
+                              {/* Type badge */}
                               <div className="flex items-center px-2 pt-1.5 pb-0.5">
                                 <button
                                   onClick={e => {
@@ -742,7 +735,7 @@ export default function PlanningPage() {
                                 </button>
                               </div>
 
-                              {/* Corps de la cellule (clic → encadré détail pour travail) */}
+                              {/* Corps cellule */}
                               <div
                                 className={`flex-1 flex flex-col items-center justify-center gap-0.5 pb-2 px-1 ${
                                   !fName && type === 'travail' ? 'cursor-pointer hover:brightness-95' : ''
@@ -769,7 +762,7 @@ export default function PlanningPage() {
                                         {apmRange && (
                                           <span className={`text-[9px] font-semibold ${pal.text} leading-tight`}>{apmRange}</span>
                                         )}
-                                        <span className={`text-[11px] font-bold ${pal.text} mt-0.5`}>{hours > 0 ? `${hours}h` : ''}</span>
+                                        <span className={`text-[11px] font-bold ${pal.text} mt-0.5`}>{hours > 0 ? `= ${hours}h` : ''}</span>
                                       </div>
                                     ) : (
                                       <>
@@ -847,19 +840,17 @@ export default function PlanningPage() {
                                         type="time"
                                         value={sched.matinDebut}
                                         onChange={e => updateTimeRange(emp.id, jour, 'matinDebut', e.target.value)}
-                                        onBlur={() => saveDay(emp.id)}
-                                        className="flex-1 text-sm border border-gray-300 bg-white rounded-lg px-2 py-1.5 focus:outline-none focus:border-[#1E3A5F] focus:ring-1 focus:ring-[#1E3A5F]/20"
+                                        className="flex-1 text-sm text-gray-900 border border-gray-300 bg-white rounded-lg px-2 py-1.5 focus:outline-none focus:border-[#1E3A5F] focus:ring-1 focus:ring-[#1E3A5F]/20"
                                       />
-                                      <span className="text-gray-400 text-sm font-medium">→</span>
+                                      <span className="text-gray-400 text-sm font-medium flex-shrink-0">→</span>
                                       <input
                                         type="time"
                                         value={sched.matinFin}
                                         onChange={e => updateTimeRange(emp.id, jour, 'matinFin', e.target.value)}
-                                        onBlur={() => saveDay(emp.id)}
-                                        className="flex-1 text-sm border border-gray-300 bg-white rounded-lg px-2 py-1.5 focus:outline-none focus:border-[#1E3A5F] focus:ring-1 focus:ring-[#1E3A5F]/20"
+                                        className="flex-1 text-sm text-gray-900 border border-gray-300 bg-white rounded-lg px-2 py-1.5 focus:outline-none focus:border-[#1E3A5F] focus:ring-1 focus:ring-[#1E3A5F]/20"
                                       />
                                       {sched.matinDebut && sched.matinFin && (
-                                        <span className={`text-xs font-bold w-9 text-right ${pal.text}`}>
+                                        <span className={`text-xs font-bold w-9 text-right flex-shrink-0 ${pal.text}`}>
                                           {timeDiff(sched.matinDebut, sched.matinFin).toFixed(1)}h
                                         </span>
                                       )}
@@ -874,19 +865,17 @@ export default function PlanningPage() {
                                         type="time"
                                         value={sched.apmDebut}
                                         onChange={e => updateTimeRange(emp.id, jour, 'apmDebut', e.target.value)}
-                                        onBlur={() => saveDay(emp.id)}
-                                        className="flex-1 text-sm border border-gray-300 bg-white rounded-lg px-2 py-1.5 focus:outline-none focus:border-[#1E3A5F] focus:ring-1 focus:ring-[#1E3A5F]/20"
+                                        className="flex-1 text-sm text-gray-900 border border-gray-300 bg-white rounded-lg px-2 py-1.5 focus:outline-none focus:border-[#1E3A5F] focus:ring-1 focus:ring-[#1E3A5F]/20"
                                       />
-                                      <span className="text-gray-400 text-sm font-medium">→</span>
+                                      <span className="text-gray-400 text-sm font-medium flex-shrink-0">→</span>
                                       <input
                                         type="time"
                                         value={sched.apmFin}
                                         onChange={e => updateTimeRange(emp.id, jour, 'apmFin', e.target.value)}
-                                        onBlur={() => saveDay(emp.id)}
-                                        className="flex-1 text-sm border border-gray-300 bg-white rounded-lg px-2 py-1.5 focus:outline-none focus:border-[#1E3A5F] focus:ring-1 focus:ring-[#1E3A5F]/20"
+                                        className="flex-1 text-sm text-gray-900 border border-gray-300 bg-white rounded-lg px-2 py-1.5 focus:outline-none focus:border-[#1E3A5F] focus:ring-1 focus:ring-[#1E3A5F]/20"
                                       />
                                       {sched.apmDebut && sched.apmFin && (
-                                        <span className={`text-xs font-bold w-9 text-right ${pal.text}`}>
+                                        <span className={`text-xs font-bold w-9 text-right flex-shrink-0 ${pal.text}`}>
                                           {timeDiff(sched.apmDebut, sched.apmFin).toFixed(1)}h
                                         </span>
                                       )}
@@ -895,13 +884,25 @@ export default function PlanningPage() {
 
                                   {/* Total */}
                                   {(sched.matin > 0 || sched.apresMidi > 0) && (
-                                    <div className="flex items-center justify-between pt-2 border-t border-gray-100">
+                                    <div className="flex items-center justify-between pt-1.5 border-t border-gray-100">
                                       <span className="text-xs text-gray-400">Total journée</span>
                                       <span className={`text-sm font-bold ${pal.text}`}>
                                         {(sched.matin + sched.apresMidi).toFixed(1)}h
                                       </span>
                                     </div>
                                   )}
+
+                                  {/* ── Bouton Valider ── */}
+                                  <button
+                                    onClick={() => {
+                                      saveDay(emp.id)
+                                      setSelectedCell(null)
+                                    }}
+                                    className="w-full flex items-center justify-center gap-2 bg-[#1E3A5F] hover:bg-[#2a4f7c] text-white rounded-xl py-2.5 font-semibold text-sm transition-colors mt-1"
+                                  >
+                                    <Check className="w-4 h-4" />
+                                    Valider
+                                  </button>
                                 </div>
                               </div>
                             )}
