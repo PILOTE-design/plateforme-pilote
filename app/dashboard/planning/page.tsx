@@ -9,13 +9,13 @@ import EmployeeProfileModal, { type EmployeeProfile } from '@/components/Employe
 type DayType = 'travail' | 'conges' | 'maladie' | 'repos'
 type WorkCategory = 'boucherie' | 'charcuterie' | 'traiteur' | 'vente'
 type DaySchedule = {
-  matin: number        // durée calculée (heures)
-  apresMidi: number    // durée calculée (heures)
+  matin: number
+  apresMidi: number
   category: WorkCategory | null
-  matinDebut: string   // "HH:MM"
-  matinFin: string     // "HH:MM"
-  apmDebut: string     // "HH:MM"
-  apmFin: string       // "HH:MM"
+  matinDebut: string
+  matinFin: string
+  apmDebut: string
+  apmFin: string
 }
 type ScheduleMap = Record<string, Partial<Record<JourDB, DaySchedule>>>
 
@@ -84,7 +84,16 @@ function timeDiff(start: string, end: string): number {
   const [sh, sm] = start.split(':').map(Number)
   const [eh, em] = end.split(':').map(Number)
   const diff = (eh * 60 + em) - (sh * 60 + sm)
-  return Math.max(0, parseFloat((diff / 60).toFixed(2)))
+  return Math.max(0, parseFloat((diff / 60).toFixed(10)))
+}
+
+/** Convertit des heures décimales en format lisible : 8.85 → "8h51", 3.5 → "3h30", 5 → "5h" */
+function fmtDecHours(h: number): string {
+  if (h === 0) return '0h'
+  const totalMin = Math.round(h * 60)
+  const hrs = Math.floor(totalMin / 60)
+  const mins = totalMin % 60
+  return mins === 0 ? `${hrs}h` : `${hrs}h${mins.toString().padStart(2, '0')}`
 }
 
 function fmtTime(t: string): string {
@@ -213,7 +222,8 @@ export default function PlanningPage() {
   const [schedMap, setSchedMap]   = useState<ScheduleMap>({})
   const schedMapRef = useRef<ScheduleMap>({})
 
-  const [selectedCell,    setSelectedCell]    = useState<{ empId: string; jour: JourDB } | null>(null)
+  // openUp: true = popover s'ouvre vers le haut (cellule en bas du viewport)
+  const [selectedCell,    setSelectedCell]    = useState<{ empId: string; jour: JourDB; openUp?: boolean } | null>(null)
   const [typeDropCell,    setTypeDropCell]     = useState<{ empId: string; jour: JourDB } | null>(null)
   const [contractPopover, setContractPopover]  = useState<string | null>(null)
 
@@ -352,7 +362,7 @@ export default function PlanningPage() {
     const apmH   = timeDiff(updated.apmDebut,   updated.apmFin)
     updated.matin     = matinH
     updated.apresMidi = apmH
-    const total = parseFloat((matinH + apmH).toFixed(2))
+    const total = parseFloat((matinH + apmH).toFixed(10))
     setSchedMapSync(prev => ({ ...prev, [empId]: { ...prev[empId], [jour]: updated } }))
     setEntriesSync(prev => ({ ...prev, [empId]: { ...getEntry(empId), [jour]: total } }))
   }
@@ -478,7 +488,7 @@ export default function PlanningPage() {
         const apmRange   = sched ? fmtRange(sched.apmDebut,   sched.apmFin)   : ''
         const label  = type === 'travail'
           ? (h > 0
-            ? `${catLabel ? `<span style="font-size:8px;color:#64748b;font-weight:600;">${catLabel}</span><br>` : ''}${matinRange ? `<span style="font-size:8px;">${matinRange}</span><br>` : ''}${apmRange ? `<span style="font-size:8px;">${apmRange}</span><br>` : ''}<strong style="font-size:11px;">${h}h</strong>`
+            ? `${catLabel ? `<span style="font-size:8px;color:#64748b;font-weight:600;">${catLabel}</span><br>` : ''}${matinRange ? `<span style="font-size:8px;">${matinRange}</span><br>` : ''}${apmRange ? `<span style="font-size:8px;">${apmRange}</span><br>` : ''}<strong style="font-size:11px;">${fmtDecHours(h)}</strong>`
             : '—')
           : `<span style="font-size:9px;">${TYPE_CONFIG[type].label}</span>`
         return `<td style="padding:5px 3px;text-align:center;background:${bg};border-bottom:1px solid #e2e8f0;border-right:1px solid #e2e8f0;">${label}${fName ? `<br><span style="font-size:8px;color:#92400e;">Férié</span>` : ''}</td>`
@@ -490,7 +500,7 @@ export default function PlanningPage() {
             <div><div style="font-weight:700;font-size:12px;">${emp.name}</div><div style="font-size:9px;color:#94a3b8;">${contractLabel(emp.contract_type)} · ${Number(emp.hourly_rate).toFixed(2)} €/h</div></div>
           </div>
         </td>${cells}
-        <td style="padding:6px;text-align:center;font-weight:700;font-size:12px;color:${totalH > ch ? '#ea580c' : '#1e293b'};background:#f8fafc;border-bottom:1px solid #e2e8f0;">${totalH.toFixed(1)}h</td>
+        <td style="padding:6px;text-align:center;font-weight:700;font-size:12px;color:${totalH > ch ? '#ea580c' : '#1e293b'};background:#f8fafc;border-bottom:1px solid #e2e8f0;">${fmtDecHours(totalH)}</td>
         <td style="padding:6px;text-align:center;font-weight:700;font-size:12px;color:#15803d;background:#f0fdf4;border-bottom:1px solid #e2e8f0;">${cost.toFixed(2)} €</td>
       </tr>`
     }).join('')
@@ -560,7 +570,7 @@ export default function PlanningPage() {
           {copying ? 'Copie...' : `Copier S${week === 1 ? 52 : week - 1}`}
         </button>
         <div className="ml-auto flex items-center gap-4 text-xs text-gray-400">
-          <span><span className="font-semibold text-gray-700">{grandH.toFixed(1)}h</span> total</span>
+          <span><span className="font-semibold text-gray-700">{fmtDecHours(grandH)}</span> total</span>
           <span><span className="font-semibold text-green-700">{grandCost.toFixed(2)} €</span> coût</span>
         </div>
       </div>
@@ -711,6 +721,11 @@ export default function PlanningPage() {
                       const cellDot = fName ? 'bg-amber-400'   : type === 'travail' ? pal.dot   : TYPE_CONFIG[type].dot
                       const typeLabel = fName ? 'Férié' : type === 'travail' ? 'Travail' : TYPE_CONFIG[type].label
 
+                      // Direction d'ouverture du popover (stockée dans selectedCell.openUp)
+                      const popoverOpenUp = selectedCell?.empId === emp.id && selectedCell?.jour === jour
+                        ? (selectedCell.openUp ?? false)
+                        : false
+
                       return (
                         <td key={jour} className="p-0 border-b border-r border-gray-200 align-stretch">
                           <div className="relative h-full" data-cell="true">
@@ -735,7 +750,7 @@ export default function PlanningPage() {
                                 </button>
                               </div>
 
-                              {/* Corps cellule */}
+                              {/* Corps cellule — clic pour ouvrir le détail */}
                               <div
                                 className={`flex-1 flex flex-col items-center justify-center gap-0.5 pb-2 px-1 ${
                                   !fName && type === 'travail' ? 'cursor-pointer hover:brightness-95' : ''
@@ -743,8 +758,10 @@ export default function PlanningPage() {
                                 onClick={e => {
                                   e.stopPropagation()
                                   if (fName || type !== 'travail') return
+                                  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+                                  const openUp = rect.bottom > window.innerHeight * 0.55
                                   setTypeDropCell(null)
-                                  setSelectedCell(isDetailOpen ? null : { empId: emp.id, jour })
+                                  setSelectedCell(isDetailOpen ? null : { empId: emp.id, jour, openUp })
                                 }}
                               >
                                 {type === 'travail' && !fName ? (
@@ -762,12 +779,14 @@ export default function PlanningPage() {
                                         {apmRange && (
                                           <span className={`text-[9px] font-semibold ${pal.text} leading-tight`}>{apmRange}</span>
                                         )}
-                                        <span className={`text-[11px] font-bold ${pal.text} mt-0.5`}>{hours > 0 ? `= ${hours}h` : ''}</span>
+                                        <span className={`text-[11px] font-bold ${pal.text} mt-0.5`}>
+                                          {hours > 0 ? `= ${fmtDecHours(hours)}` : ''}
+                                        </span>
                                       </div>
                                     ) : (
                                       <>
                                         <span className={`font-bold text-xl ${pal.text} leading-none`}>
-                                          {hours > 0 ? `${hours}h` : '—'}
+                                          {hours > 0 ? fmtDecHours(hours) : '—'}
                                         </span>
                                         {hours === 0 && (
                                           <span className={`text-[9px] opacity-40 ${pal.text}`}>cliquer pour saisir</span>
@@ -808,8 +827,11 @@ export default function PlanningPage() {
 
                             {/* ── Encadré détail travail ── */}
                             {isDetailOpen && type === 'travail' && (
-                              <div className="absolute top-full left-0 z-50 mt-1 bg-white rounded-xl shadow-2xl border border-gray-100 p-3 w-72" data-cell="true" onClick={e => e.stopPropagation()}>
-
+                              <div
+                                className={`absolute ${popoverOpenUp ? 'bottom-full mb-1' : 'top-full mt-1'} left-0 z-50 bg-white rounded-xl shadow-2xl border border-gray-100 p-3 w-72`}
+                                data-cell="true"
+                                onClick={e => e.stopPropagation()}
+                              >
                                 {/* Poste */}
                                 <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-2">Poste</p>
                                 <div className="grid grid-cols-2 gap-1 mb-3">
@@ -850,8 +872,8 @@ export default function PlanningPage() {
                                         className="flex-1 text-sm text-gray-900 border border-gray-300 bg-white rounded-lg px-2 py-1.5 focus:outline-none focus:border-[#1E3A5F] focus:ring-1 focus:ring-[#1E3A5F]/20"
                                       />
                                       {sched.matinDebut && sched.matinFin && (
-                                        <span className={`text-xs font-bold w-9 text-right flex-shrink-0 ${pal.text}`}>
-                                          {timeDiff(sched.matinDebut, sched.matinFin).toFixed(1)}h
+                                        <span className={`text-xs font-bold w-10 text-right flex-shrink-0 ${pal.text}`}>
+                                          {fmtDecHours(timeDiff(sched.matinDebut, sched.matinFin))}
                                         </span>
                                       )}
                                     </div>
@@ -875,24 +897,24 @@ export default function PlanningPage() {
                                         className="flex-1 text-sm text-gray-900 border border-gray-300 bg-white rounded-lg px-2 py-1.5 focus:outline-none focus:border-[#1E3A5F] focus:ring-1 focus:ring-[#1E3A5F]/20"
                                       />
                                       {sched.apmDebut && sched.apmFin && (
-                                        <span className={`text-xs font-bold w-9 text-right flex-shrink-0 ${pal.text}`}>
-                                          {timeDiff(sched.apmDebut, sched.apmFin).toFixed(1)}h
+                                        <span className={`text-xs font-bold w-10 text-right flex-shrink-0 ${pal.text}`}>
+                                          {fmtDecHours(timeDiff(sched.apmDebut, sched.apmFin))}
                                         </span>
                                       )}
                                     </div>
                                   </div>
 
-                                  {/* Total */}
+                                  {/* Total journée */}
                                   {(sched.matin > 0 || sched.apresMidi > 0) && (
                                     <div className="flex items-center justify-between pt-1.5 border-t border-gray-100">
                                       <span className="text-xs text-gray-400">Total journée</span>
                                       <span className={`text-sm font-bold ${pal.text}`}>
-                                        {(sched.matin + sched.apresMidi).toFixed(1)}h
+                                        {fmtDecHours(sched.matin + sched.apresMidi)}
                                       </span>
                                     </div>
                                   )}
 
-                                  {/* ── Bouton Valider ── */}
+                                  {/* Bouton Valider */}
                                   <button
                                     onClick={() => {
                                       saveDay(emp.id)
@@ -918,8 +940,8 @@ export default function PlanningPage() {
                       }`}>
                         <span className={`font-bold text-sm ${
                           hasOT ? 'text-orange-600' : totalH > 0 ? 'text-gray-800' : 'text-gray-300'
-                        }`}>{totalH.toFixed(1)}h</span>
-                        {hasOT && <span className="text-[9px] text-orange-400">+{(totalH - ch).toFixed(1)} sup</span>}
+                        }`}>{fmtDecHours(totalH)}</span>
+                        {hasOT && <span className="text-[9px] text-orange-400">+{fmtDecHours(totalH - ch)} sup</span>}
                       </div>
                     </td>
 
@@ -954,12 +976,12 @@ export default function PlanningPage() {
                   return (
                     <td key={jour} className={`px-2 py-3 text-center border-r border-gray-700 ${isFerie ? 'bg-amber-950/30' : ''}`}>
                       {dayH > 0
-                        ? <><div className="text-sm font-bold text-white">{dayH.toFixed(1)}h</div><div className="text-[10px] text-gray-500">{present} pers.</div></>
+                        ? <><div className="text-sm font-bold text-white">{fmtDecHours(dayH)}</div><div className="text-[10px] text-gray-500">{present} pers.</div></>
                         : <span className="text-gray-700">—</span>}
                     </td>
                   )
                 })}
-                <td className="px-3 py-3 text-center border-r border-gray-700"><span className="font-bold text-white">{grandH.toFixed(1)}h</span></td>
+                <td className="px-3 py-3 text-center border-r border-gray-700"><span className="font-bold text-white">{fmtDecHours(grandH)}</span></td>
                 <td className="px-3 py-3 text-center"><span className="font-bold text-orange-400">{grandCost.toFixed(0)} €</span></td>
               </tr>
             )}
@@ -1024,7 +1046,7 @@ export default function PlanningPage() {
                           </div>
                         </td>
                         <td className="text-center py-3">
-                          <span className={`font-bold ${hasOT ? 'text-orange-600' : 'text-gray-800'}`}>{hours.toFixed(1)}h</span>
+                          <span className={`font-bold ${hasOT ? 'text-orange-600' : 'text-gray-800'}`}>{fmtDecHours(hours)}</span>
                         </td>
                         <td className="text-center py-3 text-gray-600">{worked > 0 ? `${worked}j` : '—'}</td>
                         <td className="text-center py-3">{cp > 0 ? <span className="text-sky-700 font-medium">{cp}j</span> : <span className="text-gray-300">—</span>}</td>
@@ -1037,7 +1059,7 @@ export default function PlanningPage() {
                 <tfoot>
                   <tr className="bg-gray-900">
                     <td className="py-2.5 px-2 text-xs font-bold uppercase text-gray-400">Total mois</td>
-                    <td className="text-center py-2.5 font-bold text-white">{monthlyData.reduce((s, r) => s + r.hours, 0).toFixed(1)}h</td>
+                    <td className="text-center py-2.5 font-bold text-white">{fmtDecHours(monthlyData.reduce((s, r) => s + r.hours, 0))}</td>
                     <td className="text-center py-2.5 text-gray-400">{monthlyData.reduce((s, r) => s + r.worked, 0)}j</td>
                     <td className="text-center py-2.5 text-sky-400">{monthlyData.reduce((s, r) => s + r.cp, 0)}j</td>
                     <td className="text-center py-2.5 text-red-400">{monthlyData.reduce((s, r) => s + r.sick, 0)}j</td>
