@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Plus, ChevronLeft, ChevronRight, ChevronDown, Trash2, CalendarDays, FileDown, Copy, BarChart2, X, UserCog } from 'lucide-react'
-import { EmployeeProfileModal, type EmployeeProfile } from '@/components/EmployeeProfileModal'
+import EmployeeProfileModal, { type EmployeeProfile } from '@/components/EmployeeProfileModal'
 
 type DayType = 'travail' | 'conges' | 'maladie' | 'repos'
 
@@ -595,11 +595,11 @@ export default function PlanningPage() {
                           <div className="flex items-center gap-1">
                             <p className="text-sm font-semibold text-gray-900 leading-tight truncate">{emp.name}</p>
                             <button
-                              onClick={e => { e.stopPropagation(); setProfileEmp(emp as EmployeeProfile) }}
-                              className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-blue-50 text-gray-300 hover:text-[#1E3A5F] transition-all flex-shrink-0"
+                              onClick={e => { e.stopPropagation(); setProfileEmp({ ...emp, cp_initial: emp.cp_initial ?? 25, position: emp.position ?? null, hire_date: emp.hire_date ?? null, contract_end_date: emp.contract_end_date ?? null, phone: emp.phone ?? null, email: emp.email ?? null, notes: emp.notes ?? null, is_minor: emp.is_minor ?? false }) }}
+                              className="p-1 rounded-md bg-[#1E3A5F]/10 hover:bg-[#1E3A5F]/20 text-[#1E3A5F] transition-colors flex-shrink-0"
                               title="Fiche employé"
                             >
-                              <UserCog className="w-3 h-3" />
+                              <UserCog className="w-3.5 h-3.5" />
                             </button>
                           </div>
                           <div className="flex items-center gap-1 mt-0.5 flex-wrap">
@@ -879,7 +879,7 @@ export default function PlanningPage() {
         <EmployeeProfileModal
           employee={profileEmp}
           onClose={() => setProfileEmp(null)}
-          onSave={updated => {
+          onSaved={updated => {
             setEmployees(prev => prev.map(e => e.id === updated.id ? { ...e, ...updated } : e))
             setProfileEmp(null)
           }}
