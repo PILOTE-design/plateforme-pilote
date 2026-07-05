@@ -21,11 +21,11 @@ type ScheduleMap = Record<string, Partial<Record<JourDB, DaySchedule>>>
 
 const EMPTY_SCHED: DaySchedule = { matin: 0, apresMidi: 0, category: null, matinDebut: '', matinFin: '', apmDebut: '', apmFin: '' }
 
-const WORK_CATS: { key: WorkCategory; label: string; short: string }[] = [
-  { key: 'boucherie',   label: 'Boucherie',   short: 'Bou.' },
-  { key: 'charcuterie', label: 'Charcuterie', short: 'Cha.' },
-  { key: 'traiteur',    label: 'Traiteur',    short: 'Tra.' },
-  { key: 'vente',       label: 'Vente',       short: 'Vte.' },
+const WORK_CATS: { key: WorkCategory; label: string }[] = [
+  { key: 'boucherie',   label: 'Boucherie'   },
+  { key: 'charcuterie', label: 'Charcuterie' },
+  { key: 'traiteur',    label: 'Traiteur'    },
+  { key: 'vente',       label: 'Vente'       },
 ]
 
 const JOURS_SHORT = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim']
@@ -77,6 +77,15 @@ type PlanningEntry = {
 type EntriesMap = Record<string, PlanningEntry>
 type MonthlyStat = { emp: Employee; hours: number; cost: number; worked: number; cp: number; sick: number }
 
+// Popover avec coordonnées viewport (position:fixed)
+type SelectedCell = {
+  empId: string
+  jour: JourDB
+  x: number      // left en px viewport
+  y: number      // top (si openUp=false) ou ancre top de cellule (si openUp=true)
+  openUp: boolean
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function timeDiff(start: string, end: string): number {
@@ -84,10 +93,9 @@ function timeDiff(start: string, end: string): number {
   const [sh, sm] = start.split(':').map(Number)
   const [eh, em] = end.split(':').map(Number)
   const diff = (eh * 60 + em) - (sh * 60 + sm)
-  return Math.max(0, parseFloat((diff / 60).toFixed(10)))
+  return Math.max(0, diff / 60)
 }
 
-/** Convertit des heures décimales en format lisible : 8.85 → "8h51", 3.5 → "3h30", 5 → "5h" */
 function fmtDecHours(h: number): string {
   if (h === 0) return '0h'
   const totalMin = Math.round(h * 60)
@@ -222,8 +230,8 @@ export default function PlanningPage() {
   const [schedMap, setSchedMap]   = useState<ScheduleMap>({})
   const schedMapRef = useRef<ScheduleMap>({})
 
-  // openUp: true = popover s'ouvre vers le haut (cellule en bas du viewport)
-  const [selectedCell,    setSelectedCell]    = useState<{ empId: string; jour: JourDB; openUp?: boolean } | null>(null)
+  // selectedCell stocke les coordonnées viewport pour position:fixed
+  const [selectedCell,    setSelectedCell]    = useState<SelectedCell | null>(null)
   const [typeDropCell,    setTypeDropCell]     = useState<{ empId: string; jour: JourDB } | null>(null)
   const [contractPopover, setContractPopover]  = useState<string | null>(null)
 
@@ -362,9 +370,8 @@ export default function PlanningPage() {
     const apmH   = timeDiff(updated.apmDebut,   updated.apmFin)
     updated.matin     = matinH
     updated.apresMidi = apmH
-    const total = parseFloat((matinH + apmH).toFixed(10))
     setSchedMapSync(prev => ({ ...prev, [empId]: { ...prev[empId], [jour]: updated } }))
-    setEntriesSync(prev => ({ ...prev, [empId]: { ...getEntry(empId), [jour]: total } }))
+    setEntriesSync(prev => ({ ...prev, [empId]: { ...getEntry(empId), [jour]: matinH + apmH } }))
   }
 
   async function updateCategory(empId: string, jour: JourDB, category: WorkCategory | null) {
@@ -521,12 +528,131 @@ export default function PlanningPage() {
 
   // ─── Render ─────────────────────────────────────────────────────────────────
 
+  // Popover actif (cherche l'employé et la cellule correspondante)
+  const activeEmp   = selectedCell ? employees.find(e => e.id === selectedCell.empId) : null
+  const activeEmpIdx = activeEmp ? employees.indexOf(activeEmp) : 0
+  const activePal   = EMP_PALETTES[activeEmpIdx % EMP_PALETTES.length]
+  const activeSched = selectedCell ? getSched(selectedCell.empId, selectedCell.jour) : { ...EMPTY_SCHED }
+
   return (
     <div className="min-h-screen bg-gray-50">
       <style>{`
         input[type=time]::-webkit-calendar-picker-indicator { opacity: 0.5; cursor: pointer; }
         input[type=time] { color: #0f172a !important; background-color: #ffffff !important; }
       `}</style>
+
+      {/* ── Popover détail (position:fixed — au-dessus de tout) ── */}
+      {selectedCell && activeEmp && (
+        <div
+          style={{
+            position: 'fixed',
+            left: selectedCell.x,
+            ...(selectedCell.openUp
+              ? { bottom: window.innerHeight - selectedCell.y + 8 }
+              : { top: selectedCell.y + 8 }),
+            zIndex: 99999,
+            width: '288px',
+          }}
+          className="bg-white rounded-xl shadow-2xl border border-gray-100 p-3"
+          data-cell="true"
+          onClick={e => e.stopPropagation()}
+        >
+          {/* Poste */}
+          <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-2">Poste</p>
+          <div className="grid grid-cols-2 gap-1 mb-3">
+            {WORK_CATS.map(cat => {
+              const isActive = activeSched.category === cat.key
+              return (
+                <button key={cat.key}
+                  onClick={() => updateCategory(selectedCell.empId, selectedCell.jour, isActive ? null : cat.key)}
+                  className={`px-2 py-1.5 rounded-lg text-xs font-medium transition-all text-center ${
+                    isActive ? 'bg-[#1E3A5F] text-white shadow-sm' : 'bg-gray-50 hover:bg-gray-100 text-gray-600 border border-gray-200'
+                  }`}
+                >
+                  {cat.label}
+                </button>
+              )
+            })}
+          </div>
+
+          {/* Horaires */}
+          <div className="border-t border-gray-100 pt-2.5 space-y-3">
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Horaires</p>
+
+            {/* Matin */}
+            <div>
+              <p className="text-xs font-medium text-gray-600 mb-1.5">Matin</p>
+              <div className="flex items-center gap-2">
+                <input
+                  type="time"
+                  value={activeSched.matinDebut}
+                  onChange={e => updateTimeRange(selectedCell.empId, selectedCell.jour, 'matinDebut', e.target.value)}
+                  className="flex-1 text-sm text-gray-900 border border-gray-300 bg-white rounded-lg px-2 py-1.5 focus:outline-none focus:border-[#1E3A5F] focus:ring-1 focus:ring-[#1E3A5F]/20"
+                />
+                <span className="text-gray-400 text-sm font-medium flex-shrink-0">→</span>
+                <input
+                  type="time"
+                  value={activeSched.matinFin}
+                  onChange={e => updateTimeRange(selectedCell.empId, selectedCell.jour, 'matinFin', e.target.value)}
+                  className="flex-1 text-sm text-gray-900 border border-gray-300 bg-white rounded-lg px-2 py-1.5 focus:outline-none focus:border-[#1E3A5F] focus:ring-1 focus:ring-[#1E3A5F]/20"
+                />
+                {activeSched.matinDebut && activeSched.matinFin && (
+                  <span className={`text-xs font-bold w-10 text-right flex-shrink-0 ${activePal.text}`}>
+                    {fmtDecHours(timeDiff(activeSched.matinDebut, activeSched.matinFin))}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Après-midi */}
+            <div>
+              <p className="text-xs font-medium text-gray-600 mb-1.5">Après-midi</p>
+              <div className="flex items-center gap-2">
+                <input
+                  type="time"
+                  value={activeSched.apmDebut}
+                  onChange={e => updateTimeRange(selectedCell.empId, selectedCell.jour, 'apmDebut', e.target.value)}
+                  className="flex-1 text-sm text-gray-900 border border-gray-300 bg-white rounded-lg px-2 py-1.5 focus:outline-none focus:border-[#1E3A5F] focus:ring-1 focus:ring-[#1E3A5F]/20"
+                />
+                <span className="text-gray-400 text-sm font-medium flex-shrink-0">→</span>
+                <input
+                  type="time"
+                  value={activeSched.apmFin}
+                  onChange={e => updateTimeRange(selectedCell.empId, selectedCell.jour, 'apmFin', e.target.value)}
+                  className="flex-1 text-sm text-gray-900 border border-gray-300 bg-white rounded-lg px-2 py-1.5 focus:outline-none focus:border-[#1E3A5F] focus:ring-1 focus:ring-[#1E3A5F]/20"
+                />
+                {activeSched.apmDebut && activeSched.apmFin && (
+                  <span className={`text-xs font-bold w-10 text-right flex-shrink-0 ${activePal.text}`}>
+                    {fmtDecHours(timeDiff(activeSched.apmDebut, activeSched.apmFin))}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Total journée */}
+            {(activeSched.matin > 0 || activeSched.apresMidi > 0) && (
+              <div className="flex items-center justify-between pt-1.5 border-t border-gray-100">
+                <span className="text-xs text-gray-400">Total journée</span>
+                <span className={`text-sm font-bold ${activePal.text}`}>
+                  {fmtDecHours(activeSched.matin + activeSched.apresMidi)}
+                </span>
+              </div>
+            )}
+
+            {/* Bouton Valider */}
+            <button
+              onClick={() => {
+                saveDay(selectedCell.empId)
+                setSelectedCell(null)
+              }}
+              className="w-full flex items-center justify-center gap-2 bg-[#1E3A5F] hover:bg-[#2a4f7c] text-white rounded-xl py-2.5 font-semibold text-sm transition-colors mt-1"
+            >
+              <Check className="w-4 h-4" />
+              Valider
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── Header ── */}
       <div className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
@@ -721,11 +847,6 @@ export default function PlanningPage() {
                       const cellDot = fName ? 'bg-amber-400'   : type === 'travail' ? pal.dot   : TYPE_CONFIG[type].dot
                       const typeLabel = fName ? 'Férié' : type === 'travail' ? 'Travail' : TYPE_CONFIG[type].label
 
-                      // Direction d'ouverture du popover (stockée dans selectedCell.openUp)
-                      const popoverOpenUp = selectedCell?.empId === emp.id && selectedCell?.jour === jour
-                        ? (selectedCell.openUp ?? false)
-                        : false
-
                       return (
                         <td key={jour} className="p-0 border-b border-r border-gray-200 align-stretch">
                           <div className="relative h-full" data-cell="true">
@@ -750,7 +871,7 @@ export default function PlanningPage() {
                                 </button>
                               </div>
 
-                              {/* Corps cellule — clic pour ouvrir le détail */}
+                              {/* Corps cellule */}
                               <div
                                 className={`flex-1 flex flex-col items-center justify-center gap-0.5 pb-2 px-1 ${
                                   !fName && type === 'travail' ? 'cursor-pointer hover:brightness-95' : ''
@@ -758,10 +879,20 @@ export default function PlanningPage() {
                                 onClick={e => {
                                   e.stopPropagation()
                                   if (fName || type !== 'travail') return
+                                  if (isDetailOpen) { setSelectedCell(null); return }
                                   const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-                                  const openUp = rect.bottom > window.innerHeight * 0.55
+                                  // Estime si le popover tient en dessous (hauteur ~380px)
+                                  const openUp = rect.bottom + 390 > window.innerHeight
+                                  // Evite de déborder à droite (popover = 288px)
+                                  const x = Math.min(rect.left, window.innerWidth - 296)
                                   setTypeDropCell(null)
-                                  setSelectedCell(isDetailOpen ? null : { empId: emp.id, jour, openUp })
+                                  setSelectedCell({
+                                    empId: emp.id,
+                                    jour,
+                                    x,
+                                    y: openUp ? rect.top : rect.bottom,
+                                    openUp,
+                                  })
                                 }}
                               >
                                 {type === 'travail' && !fName ? (
@@ -773,12 +904,8 @@ export default function PlanningPage() {
                                     )}
                                     {hasRanges ? (
                                       <div className="flex flex-col items-center gap-0.5">
-                                        {matinRange && (
-                                          <span className={`text-[9px] font-semibold ${pal.text} leading-tight`}>{matinRange}</span>
-                                        )}
-                                        {apmRange && (
-                                          <span className={`text-[9px] font-semibold ${pal.text} leading-tight`}>{apmRange}</span>
-                                        )}
+                                        {matinRange && <span className={`text-[9px] font-semibold ${pal.text} leading-tight`}>{matinRange}</span>}
+                                        {apmRange   && <span className={`text-[9px] font-semibold ${pal.text} leading-tight`}>{apmRange}</span>}
                                         <span className={`text-[11px] font-bold ${pal.text} mt-0.5`}>
                                           {hours > 0 ? `= ${fmtDecHours(hours)}` : ''}
                                         </span>
@@ -788,9 +915,7 @@ export default function PlanningPage() {
                                         <span className={`font-bold text-xl ${pal.text} leading-none`}>
                                           {hours > 0 ? fmtDecHours(hours) : '—'}
                                         </span>
-                                        {hours === 0 && (
-                                          <span className={`text-[9px] opacity-40 ${pal.text}`}>cliquer pour saisir</span>
-                                        )}
+                                        {hours === 0 && <span className={`text-[9px] opacity-40 ${pal.text}`}>cliquer pour saisir</span>}
                                       </>
                                     )}
                                   </>
@@ -807,10 +932,10 @@ export default function PlanningPage() {
                               <div className="absolute top-full left-0 z-50 mt-1 bg-white rounded-xl shadow-2xl border border-gray-100 p-1.5 min-w-[170px]" data-cell="true" onClick={e => e.stopPropagation()}>
                                 <p className="text-[10px] text-gray-400 px-2 py-1 font-medium uppercase tracking-wide">Type de journée</p>
                                 {([
-                                  { key: 'travail' as DayType, label: 'Travail',       dot: pal.dot         },
-                                  { key: 'conges'  as DayType, label: 'Congé payé',    dot: 'bg-sky-400'    },
-                                  { key: 'maladie' as DayType, label: 'Arrêt maladie', dot: 'bg-red-400'    },
-                                  { key: 'repos'   as DayType, label: 'Repos',         dot: 'bg-gray-300'   },
+                                  { key: 'travail' as DayType, label: 'Travail',       dot: pal.dot      },
+                                  { key: 'conges'  as DayType, label: 'Congé payé',    dot: 'bg-sky-400' },
+                                  { key: 'maladie' as DayType, label: 'Arrêt maladie', dot: 'bg-red-400' },
+                                  { key: 'repos'   as DayType, label: 'Repos',         dot: 'bg-gray-300' },
                                 ]).map(opt => (
                                   <button key={opt.key} onClick={() => changeType(emp.id, jour, opt.key)}
                                     className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-left text-sm transition-colors ${
@@ -822,110 +947,6 @@ export default function PlanningPage() {
                                     {type === opt.key && <span className="ml-auto text-gray-400 text-xs">✓</span>}
                                   </button>
                                 ))}
-                              </div>
-                            )}
-
-                            {/* ── Encadré détail travail ── */}
-                            {isDetailOpen && type === 'travail' && (
-                              <div
-                                className={`absolute ${popoverOpenUp ? 'bottom-full mb-1' : 'top-full mt-1'} left-0 z-50 bg-white rounded-xl shadow-2xl border border-gray-100 p-3 w-72`}
-                                data-cell="true"
-                                onClick={e => e.stopPropagation()}
-                              >
-                                {/* Poste */}
-                                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-2">Poste</p>
-                                <div className="grid grid-cols-2 gap-1 mb-3">
-                                  {WORK_CATS.map(cat => {
-                                    const isActive = sched.category === cat.key
-                                    return (
-                                      <button key={cat.key}
-                                        onClick={() => updateCategory(emp.id, jour, isActive ? null : cat.key)}
-                                        className={`px-2 py-1.5 rounded-lg text-xs font-medium transition-all text-center ${
-                                          isActive ? 'bg-[#1E3A5F] text-white shadow-sm' : 'bg-gray-50 hover:bg-gray-100 text-gray-600 border border-gray-200'
-                                        }`}
-                                      >
-                                        {cat.label}
-                                      </button>
-                                    )
-                                  })}
-                                </div>
-
-                                {/* Horaires */}
-                                <div className="border-t border-gray-100 pt-2.5 space-y-3">
-                                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Horaires</p>
-
-                                  {/* Matin */}
-                                  <div>
-                                    <p className="text-xs font-medium text-gray-600 mb-1.5">Matin</p>
-                                    <div className="flex items-center gap-2">
-                                      <input
-                                        type="time"
-                                        value={sched.matinDebut}
-                                        onChange={e => updateTimeRange(emp.id, jour, 'matinDebut', e.target.value)}
-                                        className="flex-1 text-sm text-gray-900 border border-gray-300 bg-white rounded-lg px-2 py-1.5 focus:outline-none focus:border-[#1E3A5F] focus:ring-1 focus:ring-[#1E3A5F]/20"
-                                      />
-                                      <span className="text-gray-400 text-sm font-medium flex-shrink-0">→</span>
-                                      <input
-                                        type="time"
-                                        value={sched.matinFin}
-                                        onChange={e => updateTimeRange(emp.id, jour, 'matinFin', e.target.value)}
-                                        className="flex-1 text-sm text-gray-900 border border-gray-300 bg-white rounded-lg px-2 py-1.5 focus:outline-none focus:border-[#1E3A5F] focus:ring-1 focus:ring-[#1E3A5F]/20"
-                                      />
-                                      {sched.matinDebut && sched.matinFin && (
-                                        <span className={`text-xs font-bold w-10 text-right flex-shrink-0 ${pal.text}`}>
-                                          {fmtDecHours(timeDiff(sched.matinDebut, sched.matinFin))}
-                                        </span>
-                                      )}
-                                    </div>
-                                  </div>
-
-                                  {/* Après-midi */}
-                                  <div>
-                                    <p className="text-xs font-medium text-gray-600 mb-1.5">Après-midi</p>
-                                    <div className="flex items-center gap-2">
-                                      <input
-                                        type="time"
-                                        value={sched.apmDebut}
-                                        onChange={e => updateTimeRange(emp.id, jour, 'apmDebut', e.target.value)}
-                                        className="flex-1 text-sm text-gray-900 border border-gray-300 bg-white rounded-lg px-2 py-1.5 focus:outline-none focus:border-[#1E3A5F] focus:ring-1 focus:ring-[#1E3A5F]/20"
-                                      />
-                                      <span className="text-gray-400 text-sm font-medium flex-shrink-0">→</span>
-                                      <input
-                                        type="time"
-                                        value={sched.apmFin}
-                                        onChange={e => updateTimeRange(emp.id, jour, 'apmFin', e.target.value)}
-                                        className="flex-1 text-sm text-gray-900 border border-gray-300 bg-white rounded-lg px-2 py-1.5 focus:outline-none focus:border-[#1E3A5F] focus:ring-1 focus:ring-[#1E3A5F]/20"
-                                      />
-                                      {sched.apmDebut && sched.apmFin && (
-                                        <span className={`text-xs font-bold w-10 text-right flex-shrink-0 ${pal.text}`}>
-                                          {fmtDecHours(timeDiff(sched.apmDebut, sched.apmFin))}
-                                        </span>
-                                      )}
-                                    </div>
-                                  </div>
-
-                                  {/* Total journée */}
-                                  {(sched.matin > 0 || sched.apresMidi > 0) && (
-                                    <div className="flex items-center justify-between pt-1.5 border-t border-gray-100">
-                                      <span className="text-xs text-gray-400">Total journée</span>
-                                      <span className={`text-sm font-bold ${pal.text}`}>
-                                        {fmtDecHours(sched.matin + sched.apresMidi)}
-                                      </span>
-                                    </div>
-                                  )}
-
-                                  {/* Bouton Valider */}
-                                  <button
-                                    onClick={() => {
-                                      saveDay(emp.id)
-                                      setSelectedCell(null)
-                                    }}
-                                    className="w-full flex items-center justify-center gap-2 bg-[#1E3A5F] hover:bg-[#2a4f7c] text-white rounded-xl py-2.5 font-semibold text-sm transition-colors mt-1"
-                                  >
-                                    <Check className="w-4 h-4" />
-                                    Valider
-                                  </button>
-                                </div>
                               </div>
                             )}
                           </div>
