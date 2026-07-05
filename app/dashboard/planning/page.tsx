@@ -7,6 +7,16 @@ import { Plus, ChevronLeft, ChevronRight, ChevronDown, Trash2, CalendarDays, Fil
 import EmployeeProfileModal, { type EmployeeProfile } from '@/components/EmployeeProfileModal'
 
 type DayType = 'travail' | 'conges' | 'maladie' | 'repos'
+type WorkCategory = 'boucherie' | 'charcuterie' | 'traiteur' | 'vente'
+type DaySchedule = { matin: number; apresMidi: number; category: WorkCategory | null }
+type ScheduleMap = Record<string, Partial<Record<JourDB, DaySchedule>>>
+
+const WORK_CATS: { key: WorkCategory; label: string; short: string }[] = [
+  { key: 'boucherie',   label: 'Boucherie',   short: 'Bou.' },
+  { key: 'charcuterie', label: 'Charcuterie', short: 'Cha.' },
+  { key: 'traiteur',    label: 'Traiteur',    short: 'Tra.' },
+  { key: 'vente',       label: 'Vente',       short: 'Vte.' },
+]
 
 const JOURS_SHORT = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim']
 const JOURS_DB = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche'] as const
@@ -44,29 +54,18 @@ type Employee = {
   id: string; name: string; hourly_rate: number
   contract_hours: number; contract_type: string
   cp_initial?: number; created_at: string
-  // Champs RH étendus (depuis EmployeeProfile)
-  position?: string | null
-  hire_date?: string | null
-  contract_end_date?: string | null
-  phone?: string | null
-  email?: string | null
-  notes?: string | null
-  is_minor?: boolean
+  position?: string | null; hire_date?: string | null; contract_end_date?: string | null
+  phone?: string | null; email?: string | null; notes?: string | null; is_minor?: boolean
 }
 type PlanningEntry = {
   id?: string; employee_id: string; week_number: number; year: number
-  lundi: number; lundi_type: DayType
-  mardi: number; mardi_type: DayType
-  mercredi: number; mercredi_type: DayType
-  jeudi: number; jeudi_type: DayType
-  vendredi: number; vendredi_type: DayType
-  samedi: number; samedi_type: DayType
+  lundi: number; lundi_type: DayType; mardi: number; mardi_type: DayType
+  mercredi: number; mercredi_type: DayType; jeudi: number; jeudi_type: DayType
+  vendredi: number; vendredi_type: DayType; samedi: number; samedi_type: DayType
   dimanche: number; dimanche_type: DayType
 }
 type EntriesMap = Record<string, PlanningEntry>
-type MonthlyStat = {
-  emp: Employee; hours: number; cost: number; worked: number; cp: number; sick: number
-}
+type MonthlyStat = { emp: Employee; hours: number; cost: number; worked: number; cp: number; sick: number }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -105,7 +104,6 @@ function getEaster(year: number): Date {
   return new Date(Date.UTC(year, month - 1, day))
 }
 
-/** Returns a Map of ISO date string → holiday name for all 11 French public holidays */
 function getFrenchHolidays(year: number): Map<string, string> {
   const easter = getEaster(year)
   const add = (d: Date, n: number) => { const r = new Date(d); r.setUTCDate(d.getUTCDate() + n); return r }
@@ -182,43 +180,51 @@ export default function PlanningPage() {
   const [employees, setEmployees] = useState<Employee[]>([])
   const [entries, setEntries]     = useState<EntriesMap>({})
   const entriesRef = useRef<EntriesMap>({})
-  const [selectedCell,   setSelectedCell]   = useState<{ empId: string; jour: JourDB } | null>(null)
-  const [editingCell,    setEditingCell]     = useState<{ empId: string; jour: JourDB } | null>(null)
-  const [contractPopover,setContractPopover] = useState<string | null>(null)
+  const [schedMap, setSchedMap]   = useState<ScheduleMap>({})
+  const schedMapRef = useRef<ScheduleMap>({})
+  const [selectedCell,    setSelectedCell]    = useState<{ empId: string; jour: JourDB } | null>(null)
+  const [editingCell,     setEditingCell]      = useState<{ empId: string; jour: JourDB } | null>(null)
+  const [contractPopover, setContractPopover]  = useState<string | null>(null)
   const [loadingEmployees, setLoadingEmployees] = useState(true)
-  const [showAdd,      setShowAdd]      = useState(false)
-  const [newName,      setNewName]      = useState('')
-  const [newRate,      setNewRate]      = useState('')
+  const [showAdd,       setShowAdd]       = useState(false)
+  const [newName,       setNewName]       = useState('')
+  const [newRate,       setNewRate]       = useState('')
   const [newContractKey, setNewContractKey] = useState<ContractKey>('CDI_35')
-  const [adding,       setAdding]       = useState(false)
-  const [pageError,    setPageError]    = useState<string | null>(null)
-  // New
-  const [copying,        setCopying]        = useState(false)
-  const [cpUsed,         setCpUsed]         = useState<Record<string, number>>({})
-  const [showMonthly,    setShowMonthly]    = useState(false)
-  const [monthlyData,    setMonthlyData]    = useState<MonthlyStat[] | null>(null)
+  const [adding,        setAdding]        = useState(false)
+  const [pageError,     setPageError]     = useState<string | null>(null)
+  const [copying,       setCopying]       = useState(false)
+  const [cpUsed,        setCpUsed]        = useState<Record<string, number>>({})
+  const [showMonthly,   setShowMonthly]   = useState(false)
+  const [monthlyData,   setMonthlyData]   = useState<MonthlyStat[] | null>(null)
   const [loadingMonthly, setLoadingMonthly] = useState(false)
-  const [profileEmp,     setProfileEmp]     = useState<EmployeeProfile | null>(null)
+  const [profileEmp,    setProfileEmp]    = useState<EmployeeProfile | null>(null)
 
   const { week: cw, year: cy } = getISOWeek(new Date())
   const isCurrentWeek = week === cw && year === cy
   const weekDates     = getWeekDates(week, year)
   const today         = new Date()
-
-  // Jours fériés pour l'année affichée
-  const holidays     = getFrenchHolidays(year)
-  const weekHolidays = weekDates.map(d => holidays.get(d.toISOString().slice(0, 10)) ?? null)
+  const holidays      = getFrenchHolidays(year)
+  const weekHolidays  = weekDates.map(d => holidays.get(d.toISOString().slice(0, 10)) ?? null)
 
   const setEntriesSync = (updater: (prev: EntriesMap) => EntriesMap) => {
-    setEntries(prev => {
-      const next = updater(prev)
-      entriesRef.current = next
-      return next
-    })
+    setEntries(prev => { const next = updater(prev); entriesRef.current = next; return next })
+  }
+  const setSchedMapSync = (updater: (prev: ScheduleMap) => ScheduleMap) => {
+    setSchedMap(prev => { const next = updater(prev); schedMapRef.current = next; return next })
   }
 
+  function getSched(empId: string, jour: JourDB): DaySchedule {
+    return schedMapRef.current[empId]?.[jour] ?? { matin: 0, apresMidi: 0, category: null }
+  }
+
+  // ── Fix: close handler via closest instead of unconditional close ──────────
   useEffect(() => {
-    const close = () => { setSelectedCell(null); setContractPopover(null) }
+    const close = (e: MouseEvent) => {
+      if (!(e.target as Element).closest('[data-cell]')) {
+        setSelectedCell(null)
+        setContractPopover(null)
+      }
+    }
     document.addEventListener('click', close)
     return () => document.removeEventListener('click', close)
   }, [])
@@ -231,7 +237,6 @@ export default function PlanningPage() {
     }).catch(() => { setPageError('Erreur réseau'); setLoadingEmployees(false) })
   }, [])
 
-  // Solde CP : rechargé à chaque changement d'année
   const refreshCpUsed = useCallback(() => {
     fetch(`/api/planning/stats?year=${year}`)
       .then(r => r.json())
@@ -241,18 +246,23 @@ export default function PlanningPage() {
           for (const { employee_id, cp_used } of data) map[employee_id] = cp_used
           setCpUsed(map)
         }
-      })
-      .catch(() => {})
+      }).catch(() => {})
   }, [year])
 
   useEffect(() => { refreshCpUsed() }, [refreshCpUsed])
 
+  // ── loadEntries: also parse schedule_details ────────────────────────────────
   const loadEntries = useCallback(() => {
     fetch(`/api/planning?week=${week}&year=${year}`).then(r => r.json()).then(data => {
       if (Array.isArray(data)) {
         const map: EntriesMap = {}
-        for (const e of data) map[e.employee_id] = e
+        const smap: ScheduleMap = {}
+        for (const e of data) {
+          map[e.employee_id] = e
+          if (e.schedule_details) smap[e.employee_id] = e.schedule_details as Partial<Record<JourDB, DaySchedule>>
+        }
         setEntries(map); entriesRef.current = map
+        setSchedMap(smap); schedMapRef.current = smap
       }
     })
   }, [week, year])
@@ -262,18 +272,18 @@ export default function PlanningPage() {
   function getEntry(empId: string)      { return entriesRef.current[empId] ?? emptyEntry(empId, week, year) }
   function getEntryState(empId: string) { return entries[empId] ?? emptyEntry(empId, week, year) }
 
+  // ── saveEntryValues: include schedule_details ───────────────────────────────
   async function saveEntryValues(empId: string, entry: PlanningEntry) {
+    const schedule_details = schedMapRef.current[empId] ?? {}
     await fetch('/api/planning', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...entry, employee_id: empId, week_number: week, year }),
+      body: JSON.stringify({ ...entry, employee_id: empId, week_number: week, year, schedule_details }),
     })
   }
 
   async function updateContract(empId: string, contractKey: ContractKey) {
     const ct = CONTRACT_TYPES.find(c => c.key === contractKey)!
-    setEmployees(prev => prev.map(e =>
-      e.id === empId ? { ...e, contract_type: ct.key, contract_hours: ct.hours } : e
-    ))
+    setEmployees(prev => prev.map(e => e.id === empId ? { ...e, contract_type: ct.key, contract_hours: ct.hours } : e))
     setContractPopover(null)
     await fetch(`/api/employees/${empId}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
@@ -288,15 +298,35 @@ export default function PlanningPage() {
       ...getEntry(empId), [typeKey]: newType,
       [jour]: newType === 'travail' ? currentH : TYPE_CONFIG[newType].defaultHours,
     }
+    // Clear schedule details if not travail
+    if (newType !== 'travail') {
+      setSchedMapSync(prev => {
+        const empSched = { ...prev[empId] }
+        delete empSched[jour]
+        return { ...prev, [empId]: empSched }
+      })
+    }
     setEntriesSync(prev => ({ ...prev, [empId]: updated }))
     setSelectedCell(null); setEditingCell(null)
     await saveEntryValues(empId, updated)
     refreshCpUsed()
   }
 
-  function updateHours(empId: string, jour: JourDB, value: string) {
-    const hours = value === '' ? 0 : Math.max(0, Math.min(24, parseFloat(value) || 0))
-    setEntriesSync(prev => ({ ...prev, [empId]: { ...getEntry(empId), [jour]: hours } }))
+  // ── updateDayPart: updates matin or après-midi ──────────────────────────────
+  function updateDayPart(empId: string, jour: JourDB, part: 'matin' | 'apresMidi', rawValue: string) {
+    const val = rawValue === '' ? 0 : Math.max(0, Math.min(16, parseFloat(rawValue) || 0))
+    const current = getSched(empId, jour)
+    const updated = { ...current, [part]: val }
+    const total = parseFloat((updated.matin + updated.apresMidi).toFixed(2))
+    setSchedMapSync(prev => ({ ...prev, [empId]: { ...prev[empId], [jour]: updated } }))
+    setEntriesSync(prev => ({ ...prev, [empId]: { ...getEntry(empId), [jour]: total } }))
+  }
+
+  // ── updateCategory ──────────────────────────────────────────────────────────
+  async function updateCategory(empId: string, jour: JourDB, category: WorkCategory | null) {
+    const current = getSched(empId, jour)
+    setSchedMapSync(prev => ({ ...prev, [empId]: { ...prev[empId], [jour]: { ...current, category } } }))
+    await saveEntryValues(empId, entriesRef.current[empId] ?? emptyEntry(empId, week, year))
   }
 
   function handleBlur(empId: string) {
@@ -348,23 +378,17 @@ export default function PlanningPage() {
         })
       }
       loadEntries()
-    } finally {
-      setCopying(false)
-    }
+    } finally { setCopying(false) }
   }
 
   async function openMonthly() {
-    setShowMonthly(true)
-    setLoadingMonthly(true)
-    setMonthlyData(null)
+    setShowMonthly(true); setLoadingMonthly(true); setMonthlyData(null)
     const monthYear = weekDates[0].getUTCFullYear()
     const month     = weekDates[0].getUTCMonth() + 1
     const weeks     = getWeeksInMonth(monthYear, month)
     try {
       const allResults = await Promise.all(
-        weeks.map(({ week: w, year: y }) =>
-          fetch(`/api/planning?week=${w}&year=${y}`).then(r => r.json()).catch(() => [])
-        )
+        weeks.map(({ week: w, year: y }) => fetch(`/api/planning?week=${w}&year=${y}`).then(r => r.json()).catch(() => []))
       )
       const stats: Record<string, { hours: number; cost: number; worked: number; cp: number; sick: number }> = {}
       for (const weekEntries of allResults) {
@@ -385,9 +409,7 @@ export default function PlanningPage() {
         }
       }
       setMonthlyData(employees.map(emp => ({ emp, ...(stats[emp.id] || { hours: 0, cost: 0, worked: 0, cp: 0, sick: 0 }) })))
-    } finally {
-      setLoadingMonthly(false)
-    }
+    } finally { setLoadingMonthly(false) }
   }
 
   const rowStats  = employees.map(emp => {
@@ -416,9 +438,11 @@ export default function PlanningPage() {
         const type   = (entry[`${j}_type` as keyof PlanningEntry] as DayType) || (idx >= 5 ? 'repos' : 'travail')
         const h      = entry[j] || 0
         const fName  = weekHolidays[idx]
+        const sched  = schedMapRef.current[emp.id]?.[j]
+        const catLabel = sched?.category ? WORK_CATS.find(c => c.key === sched.category)?.short : null
         const bg     = fName ? '#fef3c7' : type === 'travail' ? pal.lightHex : TYPE_CONFIG[type].pdfColor
         const label  = type === 'travail'
-          ? (h > 0 ? `<strong>${h}h</strong>` : '—')
+          ? (h > 0 ? `${catLabel ? `<span style="font-size:8px;color:#64748b;">${catLabel}</span><br>` : ''}<strong>${h}h</strong>${sched?.matin || sched?.apresMidi ? `<br><span style="font-size:8px;color:#94a3b8;">${sched.matin}h/${sched.apresMidi}h</span>` : ''}` : '—')
           : `<span style="font-size:9px;">${TYPE_CONFIG[type].label}</span>`
         return `<td style="padding:6px 4px;text-align:center;background:${bg};border-bottom:1px solid #e2e8f0;border-right:1px solid #e2e8f0;">${label}${fName ? `<br><span style="font-size:8px;color:#92400e;">Férié</span>` : ''}</td>`
       }).join('')
@@ -447,6 +471,8 @@ export default function PlanningPage() {
     win.document.write(html); win.document.close(); win.focus()
     setTimeout(() => win.print(), 600)
   }
+
+  // ─── Render ─────────────────────────────────────────────────────────────────
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -491,8 +517,7 @@ export default function PlanningPage() {
           <button onClick={() => { setWeek(cw); setYear(cy) }} className="text-xs text-[#1E3A5F] hover:underline">← Semaine actuelle</button>
         )}
         <button
-          onClick={copyPrevWeek}
-          disabled={copying}
+          onClick={copyPrevWeek} disabled={copying}
           className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-800 border border-gray-200 rounded-md px-2.5 py-1 hover:bg-gray-50 transition-colors disabled:opacity-40"
         >
           <Copy className="w-3 h-3" />
@@ -505,19 +530,24 @@ export default function PlanningPage() {
       </div>
 
       {/* ── Legend ── */}
-      <div className="bg-white border-b border-gray-100 px-6 py-2 flex items-center gap-5">
+      <div className="bg-white border-b border-gray-100 px-6 py-2 flex items-center gap-5 flex-wrap">
         <span className="text-xs font-medium text-gray-400">Types :</span>
         {([
-          { label: 'Travail',       dot: 'bg-violet-400' },
-          { label: 'Congé payé',   dot: 'bg-sky-400'    },
-          { label: 'Arrêt maladie',dot: 'bg-red-400'    },
-          { label: 'Repos',        dot: 'bg-gray-300'   },
-          { label: 'Jour férié',   dot: 'bg-amber-400'  },
+          { label: 'Travail',        dot: 'bg-violet-400' },
+          { label: 'Congé payé',    dot: 'bg-sky-400'    },
+          { label: 'Arrêt maladie', dot: 'bg-red-400'    },
+          { label: 'Repos',         dot: 'bg-gray-300'   },
+          { label: 'Jour férié',    dot: 'bg-amber-400'  },
         ]).map(t => (
           <div key={t.label} className="flex items-center gap-1.5">
             <div className={`w-2.5 h-2.5 rounded-sm ${t.dot}`} />
             <span className="text-xs text-gray-600">{t.label}</span>
           </div>
+        ))}
+        <span className="text-xs text-gray-300">·</span>
+        <span className="text-xs font-medium text-gray-400">Postes :</span>
+        {WORK_CATS.map(c => (
+          <span key={c.key} className="text-xs text-gray-500">{c.label}</span>
         ))}
       </div>
 
@@ -636,7 +666,6 @@ export default function PlanningPage() {
                               <Trash2 className="w-3 h-3" />
                             </button>
                           </div>
-                          {/* CP balance */}
                           <div className="flex items-center gap-1 mt-1">
                             <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
                               cpRemaining < 0 ? 'bg-red-400' : cpRemaining <= 3 ? 'bg-orange-400' : 'bg-sky-300'
@@ -651,25 +680,28 @@ export default function PlanningPage() {
 
                     {/* Day cells */}
                     {JOURS_DB.map((jour, idx) => {
-                      const typeKey = `${jour}_type` as keyof PlanningEntry
-                      const type    = (entry[typeKey] as DayType) || (idx >= 5 ? 'repos' : 'travail')
-                      const hours   = entry[jour] || 0
+                      const typeKey  = `${jour}_type` as keyof PlanningEntry
+                      const type     = (entry[typeKey] as DayType) || (idx >= 5 ? 'repos' : 'travail')
+                      const hours    = entry[jour] || 0
+                      const sched    = getSched(emp.id, jour)
                       const isSelected = selectedCell?.empId === emp.id && selectedCell?.jour === jour
                       const isEditing  = editingCell?.empId  === emp.id && editingCell?.jour  === jour
-                      const fName   = weekHolidays[idx]
+                      const fName    = weekHolidays[idx]
+                      const catInfo  = sched.category ? WORK_CATS.find(c => c.key === sched.category) : null
 
-                      const cellBg  = fName ? 'bg-amber-50'    : type === 'travail' ? pal.bg    : TYPE_CONFIG[type].bg
-                      const cellTxt = fName ? 'text-amber-800' : type === 'travail' ? pal.text  : TYPE_CONFIG[type].text
-                      const cellDot = fName ? 'bg-amber-400'   : type === 'travail' ? pal.dot   : TYPE_CONFIG[type].dot
+                      const cellBg   = fName ? 'bg-amber-50'    : type === 'travail' ? pal.bg    : TYPE_CONFIG[type].bg
+                      const cellTxt  = fName ? 'text-amber-800' : type === 'travail' ? pal.text  : TYPE_CONFIG[type].text
+                      const cellDot  = fName ? 'bg-amber-400'   : type === 'travail' ? pal.dot   : TYPE_CONFIG[type].dot
                       const typeLabel = fName ? 'Férié' : type === 'travail' ? 'Travail' : TYPE_CONFIG[type].label
 
                       return (
                         <td key={jour} className="p-0 border-b border-r border-gray-200 align-stretch">
                           <div className="relative h-full" data-cell="true" onClick={e => e.stopPropagation()}>
                             <div
-                              className={`cursor-pointer transition-colors ${cellBg} w-full h-full min-h-[80px] px-2.5 pt-2 pb-2 flex flex-col justify-between select-none hover:brightness-95`}
+                              className={`cursor-pointer transition-colors ${cellBg} w-full h-full min-h-[90px] px-2 pt-1.5 pb-1.5 flex flex-col justify-between select-none hover:brightness-95`}
                               onClick={() => { setContractPopover(null); setSelectedCell(isSelected ? null : { empId: emp.id, jour }) }}
                             >
+                              {/* Top: type + chevron */}
                               <div className="flex items-center justify-between gap-1">
                                 <div className="flex items-center gap-1 min-w-0">
                                   <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cellDot}`} />
@@ -677,23 +709,59 @@ export default function PlanningPage() {
                                 </div>
                                 {!fName && <ChevronDown className={`w-3 h-3 flex-shrink-0 opacity-30 ${cellTxt}`} />}
                               </div>
-                              <div className="flex-1 flex items-center justify-center">
+
+                              {/* Middle: hours display / edit */}
+                              <div className="flex-1 flex flex-col items-center justify-center gap-0.5">
                                 {!fName && type === 'travail' ? (
                                   isEditing ? (
-                                    <input autoFocus type="number" min="0" max="24" step="0.5"
-                                      value={hours || ''}
-                                      onChange={e => updateHours(emp.id, jour, e.target.value)}
-                                      onBlur={() => handleBlur(emp.id)}
-                                      onClick={e => e.stopPropagation()}
-                                      className={`w-16 text-center font-bold text-2xl bg-transparent focus:outline-none border-b border-current ${pal.text}`}
-                                      placeholder="0"
-                                    />
+                                    // ── Edit mode: matin + après-midi inputs ──
+                                    <div className="flex flex-col gap-1 w-full px-1" onClick={e => e.stopPropagation()}>
+                                      <div className="flex items-center gap-1">
+                                        <span className={`text-[9px] font-medium w-4 text-right opacity-60 ${pal.text}`}>M</span>
+                                        <input
+                                          autoFocus
+                                          type="number" min="0" max="16" step="0.5"
+                                          value={sched.matin || ''}
+                                          onChange={e => updateDayPart(emp.id, jour, 'matin', e.target.value)}
+                                          onBlur={() => handleBlur(emp.id)}
+                                          className={`flex-1 text-center font-bold text-sm bg-transparent focus:outline-none border-b border-current ${pal.text}`}
+                                          placeholder="0"
+                                        />
+                                        <span className={`text-[9px] opacity-60 ${pal.text}`}>h</span>
+                                      </div>
+                                      <div className="flex items-center gap-1">
+                                        <span className={`text-[9px] font-medium w-4 text-right opacity-60 ${pal.text}`}>S</span>
+                                        <input
+                                          type="number" min="0" max="16" step="0.5"
+                                          value={sched.apresMidi || ''}
+                                          onChange={e => updateDayPart(emp.id, jour, 'apresMidi', e.target.value)}
+                                          onBlur={() => handleBlur(emp.id)}
+                                          className={`flex-1 text-center font-bold text-sm bg-transparent focus:outline-none border-b border-current ${pal.text}`}
+                                          placeholder="0"
+                                        />
+                                        <span className={`text-[9px] opacity-60 ${pal.text}`}>h</span>
+                                      </div>
+                                    </div>
                                   ) : (
-                                    <span onClick={e => { e.stopPropagation(); setEditingCell({ empId: emp.id, jour }) }}
-                                      className={`font-bold text-2xl ${pal.text} cursor-text`}
-                                    >
-                                      {hours > 0 ? `${hours}h` : '—'}
-                                    </span>
+                                    // ── Display mode: category + total + breakdown ──
+                                    <div className="flex flex-col items-center gap-0.5">
+                                      {catInfo && (
+                                        <span className={`text-[8px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-white/50 ${pal.text}`}>
+                                          {catInfo.label}
+                                        </span>
+                                      )}
+                                      <span
+                                        onClick={e => { e.stopPropagation(); setEditingCell({ empId: emp.id, jour }) }}
+                                        className={`font-bold text-xl ${pal.text} cursor-text leading-none`}
+                                      >
+                                        {hours > 0 ? `${hours}h` : '—'}
+                                      </span>
+                                      {hours > 0 && (sched.matin > 0 || sched.apresMidi > 0) && (
+                                        <span className={`text-[9px] opacity-50 ${pal.text}`}>
+                                          {sched.matin}h/{sched.apresMidi}h
+                                        </span>
+                                      )}
+                                    </div>
                                   )
                                 ) : (
                                   <span className={`font-bold text-2xl ${cellTxt}`}>
@@ -703,8 +771,10 @@ export default function PlanningPage() {
                               </div>
                             </div>
 
+                            {/* ── Dropdown ── */}
                             {isSelected && (
-                              <div className="absolute top-full left-0 z-40 mt-1 bg-white rounded-xl shadow-2xl border border-gray-100 p-1.5 min-w-[168px]" data-cell="true" onClick={e => e.stopPropagation()}>
+                              <div className="absolute top-full left-0 z-40 mt-1 bg-white rounded-xl shadow-2xl border border-gray-100 p-1.5 min-w-[180px]" data-cell="true" onClick={e => e.stopPropagation()}>
+                                {/* Type options */}
                                 {([
                                   { key: 'travail' as DayType, label: 'Travail',       dot: pal.dot         },
                                   { key: 'conges'  as DayType, label: 'Congé payé',    dot: 'bg-sky-400'    },
@@ -721,6 +791,29 @@ export default function PlanningPage() {
                                     {type === opt.key && <span className="ml-auto text-gray-400 text-xs">✓</span>}
                                   </button>
                                 ))}
+
+                                {/* Category chips (only for travail) */}
+                                {type === 'travail' && (
+                                  <div className="mt-1 pt-1.5 border-t border-gray-100">
+                                    <p className="text-[10px] text-gray-400 px-2 pb-1 font-medium uppercase tracking-wide">Poste</p>
+                                    <div className="grid grid-cols-2 gap-1 px-1">
+                                      {WORK_CATS.map(cat => {
+                                        const isActive = sched.category === cat.key
+                                        return (
+                                          <button
+                                            key={cat.key}
+                                            onClick={e => { e.stopPropagation(); updateCategory(emp.id, jour, isActive ? null : cat.key) }}
+                                            className={`px-2 py-1.5 rounded-lg text-xs font-medium transition-colors text-left ${
+                                              isActive ? 'bg-[#1E3A5F] text-white' : 'hover:bg-gray-50 text-gray-600 border border-gray-200'
+                                            }`}
+                                          >
+                                            {cat.label}
+                                          </button>
+                                        )
+                                      })}
+                                    </div>
+                                  </div>
+                                )}
                               </div>
                             )}
                           </div>
@@ -751,7 +844,7 @@ export default function PlanningPage() {
               })
             )}
 
-            {/* Footer row */}
+            {/* Footer totals row */}
             {employees.length > 0 && (
               <tr className="bg-gray-900">
                 <td className="px-3 py-3 sticky left-0 bg-gray-900 z-10 border-r border-gray-700">
@@ -790,12 +883,13 @@ export default function PlanningPage() {
             <span className="font-semibold">Majoration :</span>{' '}
             35h → +25 % de 36–43h, +50 % au-delà{' · '}
             39h → +25 % de 40–47h, +50 % au-delà{' · '}
-            CP = 7h/jour
+            CP = 7h/jour{' · '}
+            <span className="font-semibold">M</span> = Matin · <span className="font-semibold">S</span> = Soir/Après-midi
           </p>
         </div>
       )}
 
-      {/* ── Récap mensuel modal ── */}
+      {/* ── Récap mensuel ── */}
       {showMonthly && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 backdrop-blur-sm" onClick={() => setShowMonthly(false)}>
           <div className="bg-white rounded-2xl p-6 w-full max-w-2xl shadow-2xl max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
@@ -810,7 +904,6 @@ export default function PlanningPage() {
                 <X className="w-4 h-4 text-gray-500" />
               </button>
             </div>
-
             {loadingMonthly ? (
               <div className="py-12 text-center text-sm text-gray-400">Chargement des données...</div>
             ) : monthlyData ? (
@@ -827,8 +920,8 @@ export default function PlanningPage() {
                 </thead>
                 <tbody>
                   {monthlyData.map(({ emp, hours, cost, worked, cp, sick }, i) => {
-                    const pal  = EMP_PALETTES[i % EMP_PALETTES.length]
-                    const ch   = emp.contract_hours || 35
+                    const pal   = EMP_PALETTES[i % EMP_PALETTES.length]
+                    const ch    = emp.contract_hours || 35
                     const hasOT = hours > ch * 4
                     return (
                       <tr key={emp.id} className="border-b border-gray-100 hover:bg-gray-50">
@@ -847,12 +940,8 @@ export default function PlanningPage() {
                           <span className={`font-bold ${hasOT ? 'text-orange-600' : 'text-gray-800'}`}>{hours.toFixed(1)}h</span>
                         </td>
                         <td className="text-center py-3 text-gray-600">{worked > 0 ? `${worked}j` : '—'}</td>
-                        <td className="text-center py-3">
-                          {cp > 0 ? <span className="text-sky-700 font-medium">{cp}j</span> : <span className="text-gray-300">—</span>}
-                        </td>
-                        <td className="text-center py-3">
-                          {sick > 0 ? <span className="text-red-600 font-medium">{sick}j</span> : <span className="text-gray-300">—</span>}
-                        </td>
+                        <td className="text-center py-3">{cp > 0 ? <span className="text-sky-700 font-medium">{cp}j</span> : <span className="text-gray-300">—</span>}</td>
+                        <td className="text-center py-3">{sick > 0 ? <span className="text-red-600 font-medium">{sick}j</span> : <span className="text-gray-300">—</span>}</td>
                         <td className="text-center py-3 font-bold text-green-700">{cost.toFixed(0)} €</td>
                       </tr>
                     )
@@ -874,7 +963,7 @@ export default function PlanningPage() {
         </div>
       )}
 
-      {/* ── Fiche employé modal ── */}
+      {/* ── Fiche employé ── */}
       {profileEmp && (
         <EmployeeProfileModal
           employee={profileEmp}
@@ -886,7 +975,7 @@ export default function PlanningPage() {
         />
       )}
 
-      {/* ── Ajout employé modal ── */}
+      {/* ── Ajout employé ── */}
       {showAdd && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 backdrop-blur-sm" onClick={() => setShowAdd(false)}>
           <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
