@@ -182,9 +182,13 @@ export default function PlanningPage() {
   const entriesRef = useRef<EntriesMap>({})
   const [schedMap, setSchedMap]   = useState<ScheduleMap>({})
   const schedMapRef = useRef<ScheduleMap>({})
+
+  // selectedCell = encadré détail travail (catégorie + horaires)
   const [selectedCell,    setSelectedCell]    = useState<{ empId: string; jour: JourDB } | null>(null)
-  const [editingCell,     setEditingCell]      = useState<{ empId: string; jour: JourDB } | null>(null)
+  // typeDropCell = dropdown de changement de type (travail/congé/maladie/repos)
+  const [typeDropCell,    setTypeDropCell]     = useState<{ empId: string; jour: JourDB } | null>(null)
   const [contractPopover, setContractPopover]  = useState<string | null>(null)
+
   const [loadingEmployees, setLoadingEmployees] = useState(true)
   const [showAdd,       setShowAdd]       = useState(false)
   const [newName,       setNewName]       = useState('')
@@ -217,11 +221,12 @@ export default function PlanningPage() {
     return schedMapRef.current[empId]?.[jour] ?? { matin: 0, apresMidi: 0, category: null }
   }
 
-  // ── Fix: close handler via closest instead of unconditional close ──────────
+  // ── Close handler : ferme tout si clic hors d'une cellule ─────────────────
   useEffect(() => {
     const close = (e: MouseEvent) => {
       if (!(e.target as Element).closest('[data-cell]')) {
         setSelectedCell(null)
+        setTypeDropCell(null)
         setContractPopover(null)
       }
     }
@@ -251,7 +256,6 @@ export default function PlanningPage() {
 
   useEffect(() => { refreshCpUsed() }, [refreshCpUsed])
 
-  // ── loadEntries: also parse schedule_details ────────────────────────────────
   const loadEntries = useCallback(() => {
     fetch(`/api/planning?week=${week}&year=${year}`).then(r => r.json()).then(data => {
       if (Array.isArray(data)) {
@@ -272,7 +276,6 @@ export default function PlanningPage() {
   function getEntry(empId: string)      { return entriesRef.current[empId] ?? emptyEntry(empId, week, year) }
   function getEntryState(empId: string) { return entries[empId] ?? emptyEntry(empId, week, year) }
 
-  // ── saveEntryValues: include schedule_details ───────────────────────────────
   async function saveEntryValues(empId: string, entry: PlanningEntry) {
     const schedule_details = schedMapRef.current[empId] ?? {}
     await fetch('/api/planning', {
@@ -298,7 +301,6 @@ export default function PlanningPage() {
       ...getEntry(empId), [typeKey]: newType,
       [jour]: newType === 'travail' ? currentH : TYPE_CONFIG[newType].defaultHours,
     }
-    // Clear schedule details if not travail
     if (newType !== 'travail') {
       setSchedMapSync(prev => {
         const empSched = { ...prev[empId] }
@@ -307,12 +309,12 @@ export default function PlanningPage() {
       })
     }
     setEntriesSync(prev => ({ ...prev, [empId]: updated }))
-    setSelectedCell(null); setEditingCell(null)
+    setSelectedCell(null); setTypeDropCell(null)
     await saveEntryValues(empId, updated)
     refreshCpUsed()
   }
 
-  // ── updateDayPart: updates matin or après-midi ──────────────────────────────
+  // ── Mise à jour matin / après-midi ─────────────────────────────────────────
   function updateDayPart(empId: string, jour: JourDB, part: 'matin' | 'apresMidi', rawValue: string) {
     const val = rawValue === '' ? 0 : Math.max(0, Math.min(16, parseFloat(rawValue) || 0))
     const current = getSched(empId, jour)
@@ -322,16 +324,15 @@ export default function PlanningPage() {
     setEntriesSync(prev => ({ ...prev, [empId]: { ...getEntry(empId), [jour]: total } }))
   }
 
-  // ── updateCategory ──────────────────────────────────────────────────────────
   async function updateCategory(empId: string, jour: JourDB, category: WorkCategory | null) {
     const current = getSched(empId, jour)
     setSchedMapSync(prev => ({ ...prev, [empId]: { ...prev[empId], [jour]: { ...current, category } } }))
-    await saveEntryValues(empId, entriesRef.current[empId] ?? emptyEntry(empId, week, year))
+    const entry = entriesRef.current[empId] ?? emptyEntry(empId, week, year)
+    await saveEntryValues(empId, entry)
   }
 
-  function handleBlur(empId: string) {
+  function saveDay(empId: string) {
     saveEntryValues(empId, entriesRef.current[empId] ?? emptyEntry(empId, week, year))
-    setEditingCell(null)
   }
 
   async function addEmployee() {
@@ -530,25 +531,8 @@ export default function PlanningPage() {
       </div>
 
       {/* ── Legend ── */}
-      <div className="bg-white border-b border-gray-100 px-6 py-2 flex items-center gap-5 flex-wrap">
-        <span className="text-xs font-medium text-gray-400">Types :</span>
-        {([
-          { label: 'Travail',        dot: 'bg-violet-400' },
-          { label: 'Congé payé',    dot: 'bg-sky-400'    },
-          { label: 'Arrêt maladie', dot: 'bg-red-400'    },
-          { label: 'Repos',         dot: 'bg-gray-300'   },
-          { label: 'Jour férié',    dot: 'bg-amber-400'  },
-        ]).map(t => (
-          <div key={t.label} className="flex items-center gap-1.5">
-            <div className={`w-2.5 h-2.5 rounded-sm ${t.dot}`} />
-            <span className="text-xs text-gray-600">{t.label}</span>
-          </div>
-        ))}
-        <span className="text-xs text-gray-300">·</span>
-        <span className="text-xs font-medium text-gray-400">Postes :</span>
-        {WORK_CATS.map(c => (
-          <span key={c.key} className="text-xs text-gray-500">{c.label}</span>
-        ))}
+      <div className="bg-white border-b border-gray-100 px-6 py-2 flex items-center gap-4 flex-wrap text-xs text-gray-500">
+        <span className="font-medium text-gray-400">Cliquer sur une case Travail pour saisir les horaires · Badge "Travail ▾" pour changer le type</span>
       </div>
 
       {pageError && <div className="mx-6 mt-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">{pageError}</div>}
@@ -684,8 +668,8 @@ export default function PlanningPage() {
                       const type     = (entry[typeKey] as DayType) || (idx >= 5 ? 'repos' : 'travail')
                       const hours    = entry[jour] || 0
                       const sched    = getSched(emp.id, jour)
-                      const isSelected = selectedCell?.empId === emp.id && selectedCell?.jour === jour
-                      const isEditing  = editingCell?.empId  === emp.id && editingCell?.jour  === jour
+                      const isDetailOpen = selectedCell?.empId === emp.id && selectedCell?.jour === jour
+                      const isTypeOpen   = typeDropCell?.empId === emp.id && typeDropCell?.jour === jour
                       const fName    = weekHolidays[idx]
                       const catInfo  = sched.category ? WORK_CATS.find(c => c.key === sched.category) : null
 
@@ -696,73 +680,61 @@ export default function PlanningPage() {
 
                       return (
                         <td key={jour} className="p-0 border-b border-r border-gray-200 align-stretch">
-                          <div className="relative h-full" data-cell="true" onClick={e => e.stopPropagation()}>
+                          <div className="relative h-full" data-cell="true">
                             <div
-                              className={`cursor-pointer transition-colors ${cellBg} w-full h-full min-h-[90px] px-2 pt-1.5 pb-1.5 flex flex-col justify-between select-none hover:brightness-95`}
-                              onClick={() => { setContractPopover(null); setSelectedCell(isSelected ? null : { empId: emp.id, jour }) }}
+                              className={`${cellBg} w-full h-full min-h-[90px] flex flex-col select-none`}
                             >
-                              {/* Top: type + chevron */}
-                              <div className="flex items-center justify-between gap-1">
-                                <div className="flex items-center gap-1 min-w-0">
+                              {/* Top bar: type badge (cliquable) + dot */}
+                              <div className="flex items-center justify-between px-2 pt-1.5 pb-0.5">
+                                <button
+                                  onClick={e => {
+                                    e.stopPropagation()
+                                    if (fName) return
+                                    setSelectedCell(null)
+                                    setTypeDropCell(isTypeOpen ? null : { empId: emp.id, jour })
+                                  }}
+                                  className={`flex items-center gap-1 rounded px-1 py-0.5 transition-colors ${
+                                    fName ? 'cursor-default' : 'hover:bg-black/10 cursor-pointer'
+                                  }`}
+                                  title={fName ? undefined : 'Changer le type'}
+                                >
                                   <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cellDot}`} />
-                                  <span className={`text-[10px] font-semibold truncate ${cellTxt}`}>{typeLabel}</span>
-                                </div>
-                                {!fName && <ChevronDown className={`w-3 h-3 flex-shrink-0 opacity-30 ${cellTxt}`} />}
+                                  <span className={`text-[10px] font-semibold ${cellTxt}`}>{typeLabel}</span>
+                                  {!fName && <ChevronDown className={`w-2.5 h-2.5 ${cellTxt} opacity-50`} />}
+                                </button>
                               </div>
 
-                              {/* Middle: hours display / edit */}
-                              <div className="flex-1 flex flex-col items-center justify-center gap-0.5">
-                                {!fName && type === 'travail' ? (
-                                  isEditing ? (
-                                    // ── Edit mode: matin + après-midi inputs ──
-                                    <div className="flex flex-col gap-1 w-full px-1" onClick={e => e.stopPropagation()}>
-                                      <div className="flex items-center gap-1">
-                                        <span className={`text-[9px] font-medium w-4 text-right opacity-60 ${pal.text}`}>M</span>
-                                        <input
-                                          autoFocus
-                                          type="number" min="0" max="16" step="0.5"
-                                          value={sched.matin || ''}
-                                          onChange={e => updateDayPart(emp.id, jour, 'matin', e.target.value)}
-                                          onBlur={() => handleBlur(emp.id)}
-                                          className={`flex-1 text-center font-bold text-sm bg-transparent focus:outline-none border-b border-current ${pal.text}`}
-                                          placeholder="0"
-                                        />
-                                        <span className={`text-[9px] opacity-60 ${pal.text}`}>h</span>
-                                      </div>
-                                      <div className="flex items-center gap-1">
-                                        <span className={`text-[9px] font-medium w-4 text-right opacity-60 ${pal.text}`}>S</span>
-                                        <input
-                                          type="number" min="0" max="16" step="0.5"
-                                          value={sched.apresMidi || ''}
-                                          onChange={e => updateDayPart(emp.id, jour, 'apresMidi', e.target.value)}
-                                          onBlur={() => handleBlur(emp.id)}
-                                          className={`flex-1 text-center font-bold text-sm bg-transparent focus:outline-none border-b border-current ${pal.text}`}
-                                          placeholder="0"
-                                        />
-                                        <span className={`text-[9px] opacity-60 ${pal.text}`}>h</span>
-                                      </div>
-                                    </div>
-                                  ) : (
-                                    // ── Display mode: category + total + breakdown ──
-                                    <div className="flex flex-col items-center gap-0.5">
-                                      {catInfo && (
-                                        <span className={`text-[8px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-white/50 ${pal.text}`}>
-                                          {catInfo.label}
-                                        </span>
-                                      )}
-                                      <span
-                                        onClick={e => { e.stopPropagation(); setEditingCell({ empId: emp.id, jour }) }}
-                                        className={`font-bold text-xl ${pal.text} cursor-text leading-none`}
-                                      >
-                                        {hours > 0 ? `${hours}h` : '—'}
+                              {/* Body: click to open detail (travail) */}
+                              <div
+                                className={`flex-1 flex flex-col items-center justify-center gap-0.5 pb-1.5 px-1 ${
+                                  !fName && type === 'travail' ? 'cursor-pointer hover:brightness-95' : ''
+                                }`}
+                                onClick={e => {
+                                  e.stopPropagation()
+                                  if (fName || type !== 'travail') return
+                                  setTypeDropCell(null)
+                                  setSelectedCell(isDetailOpen ? null : { empId: emp.id, jour })
+                                }}
+                              >
+                                {type === 'travail' && !fName ? (
+                                  <>
+                                    {catInfo && (
+                                      <span className={`text-[8px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-white/50 ${pal.text}`}>
+                                        {catInfo.label}
                                       </span>
-                                      {hours > 0 && (sched.matin > 0 || sched.apresMidi > 0) && (
-                                        <span className={`text-[9px] opacity-50 ${pal.text}`}>
-                                          {sched.matin}h/{sched.apresMidi}h
-                                        </span>
-                                      )}
-                                    </div>
-                                  )
+                                    )}
+                                    <span className={`font-bold text-xl ${pal.text} leading-none`}>
+                                      {hours > 0 ? `${hours}h` : '—'}
+                                    </span>
+                                    {hours > 0 && (sched.matin > 0 || sched.apresMidi > 0) && (
+                                      <span className={`text-[9px] opacity-50 ${pal.text}`}>
+                                        {sched.matin}h / {sched.apresMidi}h
+                                      </span>
+                                    )}
+                                    {hours === 0 && (
+                                      <span className={`text-[9px] opacity-40 ${pal.text}`}>cliquer pour saisir</span>
+                                    )}
+                                  </>
                                 ) : (
                                   <span className={`font-bold text-2xl ${cellTxt}`}>
                                     {fName ? '✦' : TYPE_CONFIG[type].display}
@@ -771,10 +743,10 @@ export default function PlanningPage() {
                               </div>
                             </div>
 
-                            {/* ── Dropdown ── */}
-                            {isSelected && (
-                              <div className="absolute top-full left-0 z-40 mt-1 bg-white rounded-xl shadow-2xl border border-gray-100 p-1.5 min-w-[180px]" data-cell="true" onClick={e => e.stopPropagation()}>
-                                {/* Type options */}
+                            {/* ── Dropdown changement de type ── */}
+                            {isTypeOpen && (
+                              <div className="absolute top-full left-0 z-50 mt-1 bg-white rounded-xl shadow-2xl border border-gray-100 p-1.5 min-w-[170px]" data-cell="true" onClick={e => e.stopPropagation()}>
+                                <p className="text-[10px] text-gray-400 px-2 py-1 font-medium uppercase tracking-wide">Type de journée</p>
                                 {([
                                   { key: 'travail' as DayType, label: 'Travail',       dot: pal.dot         },
                                   { key: 'conges'  as DayType, label: 'Congé payé',    dot: 'bg-sky-400'    },
@@ -791,29 +763,70 @@ export default function PlanningPage() {
                                     {type === opt.key && <span className="ml-auto text-gray-400 text-xs">✓</span>}
                                   </button>
                                 ))}
+                              </div>
+                            )}
 
-                                {/* Category chips (only for travail) */}
-                                {type === 'travail' && (
-                                  <div className="mt-1 pt-1.5 border-t border-gray-100">
-                                    <p className="text-[10px] text-gray-400 px-2 pb-1 font-medium uppercase tracking-wide">Poste</p>
-                                    <div className="grid grid-cols-2 gap-1 px-1">
-                                      {WORK_CATS.map(cat => {
-                                        const isActive = sched.category === cat.key
-                                        return (
-                                          <button
-                                            key={cat.key}
-                                            onClick={e => { e.stopPropagation(); updateCategory(emp.id, jour, isActive ? null : cat.key) }}
-                                            className={`px-2 py-1.5 rounded-lg text-xs font-medium transition-colors text-left ${
-                                              isActive ? 'bg-[#1E3A5F] text-white' : 'hover:bg-gray-50 text-gray-600 border border-gray-200'
-                                            }`}
-                                          >
-                                            {cat.label}
-                                          </button>
-                                        )
-                                      })}
-                                    </div>
+                            {/* ── Encadré détail travail ── */}
+                            {isDetailOpen && type === 'travail' && (
+                              <div className="absolute top-full left-0 z-50 mt-1 bg-white rounded-xl shadow-2xl border border-gray-100 p-3 w-52" data-cell="true" onClick={e => e.stopPropagation()}>
+                                {/* Catégorie */}
+                                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-2">Poste</p>
+                                <div className="grid grid-cols-2 gap-1 mb-3">
+                                  {WORK_CATS.map(cat => {
+                                    const isActive = sched.category === cat.key
+                                    return (
+                                      <button
+                                        key={cat.key}
+                                        onClick={() => updateCategory(emp.id, jour, isActive ? null : cat.key)}
+                                        className={`px-2 py-1.5 rounded-lg text-xs font-medium transition-all text-center ${
+                                          isActive
+                                            ? 'bg-[#1E3A5F] text-white shadow-sm'
+                                            : 'bg-gray-50 hover:bg-gray-100 text-gray-600 border border-gray-200'
+                                        }`}
+                                      >
+                                        {cat.label}
+                                      </button>
+                                    )
+                                  })}
+                                </div>
+
+                                {/* Horaires */}
+                                <div className="border-t border-gray-100 pt-2.5 space-y-2.5">
+                                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5">Horaires</p>
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-sm font-medium text-gray-600 w-24 flex-shrink-0">Matin</span>
+                                    <input
+                                      autoFocus
+                                      type="number" min="0" max="12" step="0.5"
+                                      value={sched.matin || ''}
+                                      onChange={e => updateDayPart(emp.id, jour, 'matin', e.target.value)}
+                                      onBlur={() => saveDay(emp.id)}
+                                      className="w-14 text-center text-sm border border-gray-300 bg-white rounded-lg px-2 py-1 focus:outline-none focus:border-[#1E3A5F] focus:ring-1 focus:ring-[#1E3A5F]/20"
+                                      placeholder="0"
+                                    />
+                                    <span className="text-xs text-gray-400">h</span>
                                   </div>
-                                )}
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-sm font-medium text-gray-600 w-24 flex-shrink-0">Après-midi</span>
+                                    <input
+                                      type="number" min="0" max="12" step="0.5"
+                                      value={sched.apresMidi || ''}
+                                      onChange={e => updateDayPart(emp.id, jour, 'apresMidi', e.target.value)}
+                                      onBlur={() => saveDay(emp.id)}
+                                      className="w-14 text-center text-sm border border-gray-300 bg-white rounded-lg px-2 py-1 focus:outline-none focus:border-[#1E3A5F] focus:ring-1 focus:ring-[#1E3A5F]/20"
+                                      placeholder="0"
+                                    />
+                                    <span className="text-xs text-gray-400">h</span>
+                                  </div>
+                                  {(sched.matin > 0 || sched.apresMidi > 0) && (
+                                    <div className="flex items-center justify-between pt-1.5 border-t border-gray-100">
+                                      <span className="text-xs text-gray-400">Total</span>
+                                      <span className={`text-sm font-bold ${pal.text}`}>
+                                        {(sched.matin + sched.apresMidi).toFixed(1)}h
+                                      </span>
+                                    </div>
+                                  )}
+                                </div>
                               </div>
                             )}
                           </div>
@@ -844,7 +857,7 @@ export default function PlanningPage() {
               })
             )}
 
-            {/* Footer totals row */}
+            {/* Footer totals */}
             {employees.length > 0 && (
               <tr className="bg-gray-900">
                 <td className="px-3 py-3 sticky left-0 bg-gray-900 z-10 border-r border-gray-700">
@@ -880,11 +893,8 @@ export default function PlanningPage() {
       {employees.length > 0 && (
         <div className="px-6 py-2.5 bg-amber-50 border-t border-amber-100">
           <p className="text-xs text-amber-700">
-            <span className="font-semibold">Majoration :</span>{' '}
-            35h → +25 % de 36–43h, +50 % au-delà{' · '}
-            39h → +25 % de 40–47h, +50 % au-delà{' · '}
-            CP = 7h/jour{' · '}
-            <span className="font-semibold">M</span> = Matin · <span className="font-semibold">S</span> = Soir/Après-midi
+            <span className="font-semibold">Majorations CCN 992 :</span>{' '}
+            35h → +25 % de 36–43h, +50 % au-delà · 39h → +25 % de 40–47h, +50 % au-delà · CP = 7h/jour
           </p>
         </div>
       )}
