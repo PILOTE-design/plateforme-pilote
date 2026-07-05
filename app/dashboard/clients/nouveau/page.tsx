@@ -29,7 +29,7 @@ export default function NouveauClientPage() {
     } finally { setLoading(false) }
   }
 
-  const inputClass = "w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+  const inputClass = "w-full border border-gray-400 bg-slate-50 rounded-lg px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:ring-2 focus:ring-[#1E3A5F]/20 focus:border-[#1E3A5F] outline-none transition-colors"
 
   return (
     <div className="p-8 max-w-lg mx-auto">
@@ -50,7 +50,7 @@ export default function NouveauClientPage() {
         {error && <p className="text-sm text-red-600">{error}</p>}
         <div className="flex gap-3 pt-2">
           <button type="button" onClick={() => router.back()} className="flex-1 border border-gray-300 text-gray-700 py-2 rounded-lg text-sm hover:bg-gray-50">Annuler</button>
-          <button type="submit" disabled={loading} className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
+          <button type="submit" disabled={loading} className="flex-1 bg-[#1E3A5F] text-white py-2 rounded-lg text-sm font-medium hover:bg-[#2a4f7c] disabled:opacity-50">
             {loading ? 'Enregistrement...' : 'Enregistrer'}
           </button>
         </div>

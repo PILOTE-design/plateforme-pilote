@@ -25,3 +25,21 @@ body {
     text-wrap: balance;
   }
 }
+
+/* ── Visibilité globale des champs de formulaire ──────────────────────────
+   Règles unlayered = priorité plus haute que les classes @layer utilities
+   de Tailwind. Couvre automatiquement tous les <select> et <textarea>
+   du site, quelle que soit leur classe Tailwind. ───────────────────────── */
+select,
+textarea {
+  border: 1px solid #94a3b8;   /* slate-400 — bien visible sur fond blanc */
+  background-color: #f8fafc;   /* slate-50  — léger contraste             */
+  color: #0f172a;
+}
+
+select:focus,
+textarea:focus {
+  border-color: #1E3A5F;
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(30, 58, 95, 0.08);
+}
