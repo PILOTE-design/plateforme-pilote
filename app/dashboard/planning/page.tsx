@@ -257,6 +257,10 @@ export default function PlanningPage() {
   const holidays      = getFrenchHolidays(year)
   const weekHolidays  = weekDates.map(d => holidays.get(d.toISOString().slice(0, 10)) ?? null)
 
+  // ─── Date range label for nav ───────────────────────────────────────────────
+  const fmtShort = (d: Date) => d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', timeZone: 'UTC' })
+  const weekRangeLabel = `${fmtShort(weekDates[0])} – ${fmtShort(weekDates[6])}`
+
   const setEntriesSync = (updater: (prev: EntriesMap) => EntriesMap) => {
     setEntries(prev => { const next = updater(prev); entriesRef.current = next; return next })
   }
@@ -689,6 +693,8 @@ export default function PlanningPage() {
         <button onClick={prevWeek} className="p-1.5 rounded hover:bg-gray-100"><ChevronLeft className="w-4 h-4 text-gray-500" /></button>
         <div className="flex items-center gap-2">
           <span className="font-semibold text-gray-900 text-sm">Semaine {week}</span>
+          <span className="text-gray-300 text-sm">·</span>
+          <span className="text-xs text-gray-500">{weekRangeLabel}</span>
           {isCurrentWeek && <span className="text-[10px] bg-[#1E3A5F] text-white px-1.5 py-0.5 rounded font-medium">Actuelle</span>}
         </div>
         <button onClick={nextWeek} className="p-1.5 rounded hover:bg-gray-100"><ChevronRight className="w-4 h-4 text-gray-500" /></button>
@@ -719,7 +725,7 @@ export default function PlanningPage() {
 
       {pageError && <div className="mx-6 mt-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">{pageError}</div>}
 
-      {/* ── Grid (flex-1 pour pousser le footer vers le bas) ── */}
+      {/* ── Grid ── */}
       <div className="flex-1 overflow-x-auto pb-12">
         <table className="w-full min-w-[860px] border-collapse">
           <thead>
@@ -730,7 +736,7 @@ export default function PlanningPage() {
                 const isWE    = i >= 5
                 const fName   = weekHolidays[i]
                 return (
-                  <th key={i} className={`px-2 py-2 text-center min-w-[120px] border-b border-r border-gray-200 ${
+                  <th key={i} className={`px-2 py-2 text-center min-w-[108px] border-b border-r border-gray-200 ${
                     isToday ? 'bg-[#1E3A5F]' : fName ? 'bg-amber-50' : isWE ? 'bg-gray-50' : 'bg-white'
                   }`}>
                     <div className={`text-xs font-bold uppercase tracking-wide ${isToday ? 'text-white' : fName ? 'text-amber-700' : isWE ? 'text-gray-400' : 'text-gray-500'}`}>{JOURS_SHORT[i]}</div>
@@ -744,8 +750,8 @@ export default function PlanningPage() {
                   </th>
                 )
               })}
-              <th className="px-3 py-3 text-center text-xs font-semibold text-gray-400 uppercase tracking-wider border-b border-r border-gray-200 w-20">Total</th>
-              <th className="px-3 py-3 text-center text-xs font-semibold text-gray-400 uppercase tracking-wider border-b border-gray-200 w-24">Coût</th>
+              <th className="px-1 py-3 text-center text-xs font-semibold text-gray-400 uppercase tracking-wider border-b border-r border-gray-200 w-14">Total</th>
+              <th className="px-1 py-3 text-center text-xs font-semibold text-gray-400 uppercase tracking-wider border-b border-gray-200 w-20">Coût</th>
             </tr>
           </thead>
           <tbody>
@@ -849,30 +855,31 @@ export default function PlanningPage() {
                       const hasRanges  = !!(matinRange || apmRange)
                       const hasCopyData = !!(sched.matinDebut || sched.matinFin || sched.apmDebut || sched.apmFin || sched.category)
 
-                      const cellBg  = fName ? 'bg-amber-50'    : type === 'travail' ? pal.bg    : TYPE_CONFIG[type].bg
-                      const cellTxt = fName ? 'text-amber-800' : type === 'travail' ? pal.text  : TYPE_CONFIG[type].text
-                      const cellDot = fName ? 'bg-amber-400'   : type === 'travail' ? pal.dot   : TYPE_CONFIG[type].dot
-                      const typeLabel = fName ? 'Férié' : type === 'travail' ? 'Travail' : TYPE_CONFIG[type].label
+                      // Fériés sont traitables comme des jours normaux — styling légèrement ambré si travail
+                      const cellBg  = (fName && type === 'travail') ? `${pal.bg} opacity-90` : type === 'travail' ? pal.bg : TYPE_CONFIG[type].bg
+                      const cellTxt = type === 'travail' ? pal.text  : TYPE_CONFIG[type].text
+                      const cellDot = type === 'travail' ? pal.dot   : TYPE_CONFIG[type].dot
+                      const typeLabel = type === 'travail' ? 'Travail' : TYPE_CONFIG[type].label
 
                       return (
-                        <td key={jour} className="p-0 border-b border-r border-gray-200 align-stretch">
+                        <td key={jour} className={`p-0 border-b border-r border-gray-200 align-stretch ${fName && type === 'travail' ? 'border-t-2 border-t-amber-300' : ''}`}>
                           <div className="relative h-full group/cell" data-cell="true">
-                            <div className={`${cellBg} w-full h-full min-h-[100px] flex flex-col`}>
+                            <div className={`${type === 'travail' ? pal.bg : TYPE_CONFIG[type].bg} ${fName && type === 'travail' ? 'bg-amber-50/30' : ''} w-full h-full min-h-[100px] flex flex-col`}>
                               <div className="flex items-center px-2 pt-1.5 pb-0.5">
                                 <button
                                   onClick={e => {
                                     e.stopPropagation()
-                                    if (fName) return
                                     setSelectedCell(null)
                                     setTypeDropCell(isTypeOpen ? null : { empId: emp.id, jour })
                                   }}
-                                  className={`flex items-center gap-1 rounded px-1 py-0.5 transition-colors ${fName ? 'cursor-default' : 'hover:bg-black/10 cursor-pointer'}`}
+                                  className="flex items-center gap-1 rounded px-1 py-0.5 transition-colors hover:bg-black/10 cursor-pointer"
                                 >
                                   <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cellDot}`} />
                                   <span className={`text-[10px] font-semibold ${cellTxt}`}>{typeLabel}</span>
-                                  {!fName && <ChevronDown className={`w-2.5 h-2.5 ${cellTxt} opacity-40`} />}
+                                  {fName && type === 'travail' && <span className="text-[8px] text-amber-500 ml-0.5">✦</span>}
+                                  <ChevronDown className={`w-2.5 h-2.5 ${cellTxt} opacity-40`} />
                                 </button>
-                                {!fName && type === 'travail' && (
+                                {type === 'travail' && (
                                   <div className="ml-auto flex items-center gap-0.5 opacity-0 group-hover/cell:opacity-100 transition-opacity">
                                     {hasCopyData && (
                                       <button
@@ -899,11 +906,11 @@ export default function PlanningPage() {
                               </div>
                               <div
                                 className={`flex-1 flex flex-col items-center justify-center gap-0.5 pb-2 px-1 ${
-                                  !fName && type === 'travail' ? 'cursor-pointer hover:brightness-95' : ''
+                                  type === 'travail' ? 'cursor-pointer hover:brightness-95' : ''
                                 }`}
                                 onClick={e => {
                                   e.stopPropagation()
-                                  if (fName || type !== 'travail') return
+                                  if (type !== 'travail') return
                                   if (isDetailOpen) { setSelectedCell(null); return }
                                   const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
                                   const openUp = rect.bottom + 390 > window.innerHeight
@@ -912,7 +919,7 @@ export default function PlanningPage() {
                                   setSelectedCell({ empId: emp.id, jour, x, y: openUp ? rect.top : rect.bottom, openUp })
                                 }}
                               >
-                                {type === 'travail' && !fName ? (
+                                {type === 'travail' ? (
                                   <>
                                     {catInfo && (
                                       <span className={`text-[8px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-white/50 ${pal.text}`}>
@@ -936,7 +943,7 @@ export default function PlanningPage() {
                                   </>
                                 ) : (
                                   <span className={`font-bold text-2xl ${cellTxt}`}>
-                                    {fName ? '✦' : TYPE_CONFIG[type].display}
+                                    {TYPE_CONFIG[type].display}
                                   </span>
                                 )}
                               </div>
@@ -967,14 +974,14 @@ export default function PlanningPage() {
                       )
                     })}
 
-                    <td className="px-2 py-3 text-center border-b border-r border-gray-200">
-                      <div className={`inline-flex flex-col items-center px-2 py-1 rounded-lg ${hasOT ? 'bg-orange-50' : totalH > 0 ? 'bg-gray-50' : ''}`}>
-                        <span className={`font-bold text-sm ${hasOT ? 'text-orange-600' : totalH > 0 ? 'text-gray-800' : 'text-gray-300'}`}>{fmtDecHours(totalH)}</span>
-                        {hasOT && <span className="text-[9px] text-orange-400">+{fmtDecHours(totalH - ch)} sup</span>}
+                    <td className="px-1 py-3 text-center border-b border-r border-gray-200">
+                      <div className={`inline-flex flex-col items-center px-1 py-1 rounded-lg ${hasOT ? 'bg-orange-50' : totalH > 0 ? 'bg-gray-50' : ''}`}>
+                        <span className={`font-bold text-xs ${hasOT ? 'text-orange-600' : totalH > 0 ? 'text-gray-800' : 'text-gray-300'}`}>{fmtDecHours(totalH)}</span>
+                        {hasOT && <span className="text-[9px] text-orange-400">+{fmtDecHours(totalH - ch)}</span>}
                       </div>
                     </td>
-                    <td className="px-2 py-3 text-center border-b border-gray-200">
-                      <span className={`font-bold text-sm ${cost > 0 ? 'text-green-700' : 'text-gray-300'}`}>
+                    <td className="px-1 py-3 text-center border-b border-gray-200">
+                      <span className={`font-bold text-xs ${cost > 0 ? 'text-green-700' : 'text-gray-300'}`}>
                         {cost > 0 ? `${cost.toFixed(0)} €` : '—'}
                       </span>
                     </td>
@@ -1007,15 +1014,15 @@ export default function PlanningPage() {
                     </td>
                   )
                 })}
-                <td className="px-3 py-3 text-center border-r border-gray-700"><span className="font-bold text-white">{fmtDecHours(grandH)}</span></td>
-                <td className="px-3 py-3 text-center"><span className="font-bold text-orange-400">{grandCost.toFixed(0)} €</span></td>
+                <td className="px-1 py-3 text-center border-r border-gray-700"><span className="font-bold text-white text-xs">{fmtDecHours(grandH)}</span></td>
+                <td className="px-1 py-3 text-center"><span className="font-bold text-orange-400 text-xs">{grandCost.toFixed(0)} €</span></td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
 
-      {/* ── CCN 992 — sticky au bas de l'écran, toujours visible ── */}
+      {/* ── CCN 992 — sticky au bas de l'écran ── */}
       <div className="sticky bottom-0 z-30 px-6 py-3 bg-[#0f172a] border-t border-gray-800">
         <div className="flex flex-wrap items-center gap-x-6 gap-y-1.5">
           <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">CCN 992 · Boucherie-Charcuterie</span>
