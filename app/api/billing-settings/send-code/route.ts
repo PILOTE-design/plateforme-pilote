@@ -10,19 +10,23 @@ export async function POST(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
+  // Vérification de la clé Resend
+  if (!process.env.RESEND_API_KEY) {
+    console.error('[send-code] RESEND_API_KEY manquante')
+    return NextResponse.json({ error: 'Configuration email manquante (RESEND_API_KEY)' }, { status: 500 })
+  }
+
   const { billing_email } = await request.json()
   if (!billing_email || !billing_email.includes('@')) {
     return NextResponse.json({ error: 'Email invalide' }, { status: 400 })
   }
 
-  // Générer un code 6 chiffres
   const code = Math.floor(100000 + Math.random() * 900000).toString()
   const codeHash = crypto.createHash('sha256').update(code).digest('hex')
   const expires = new Date(Date.now() + 15 * 60 * 1000).toISOString()
 
   const serviceSupabase = createServiceClient()
 
-  // Générer billing_forward_id si absent
   const { data: existingProfile } = await serviceSupabase
     .from('profiles')
     .select('billing_forward_id')
@@ -43,8 +47,7 @@ export async function POST(request: NextRequest) {
     })
     .eq('user_id', user.id)
 
-  // Envoyer le code par email
-  const { error: emailError } = await resend.emails.send({
+  const { data: sendData, error: emailError } = await resend.emails.send({
     from: 'PILOTE <onboarding@resend.dev>',
     to: billing_email,
     subject: `${code} — Code de validation PILOTE`,
@@ -69,8 +72,12 @@ export async function POST(request: NextRequest) {
   })
 
   if (emailError) {
-    return NextResponse.json({ error: 'Erreur envoi email' }, { status: 500 })
+    console.error('[send-code] Resend error:', JSON.stringify(emailError))
+    // On retourne l'erreur Resend brute en dev pour débugger
+    const msg = (emailError as any)?.message || (emailError as any)?.name || 'Erreur envoi email'
+    return NextResponse.json({ error: msg }, { status: 500 })
   }
 
+  console.log('[send-code] Email envoyé:', sendData?.id, '→', billing_email)
   return NextResponse.json({ ok: true })
 }
