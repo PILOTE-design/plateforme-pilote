@@ -5,15 +5,18 @@ import crypto from 'crypto'
 
 const resend = new Resend(process.env.RESEND_API_KEY)
 
+// Sur Resend plan gratuit : RESEND_FROM_EMAIL doit être omis (utilise onboarding@resend.dev)
+// et l'adresse destinataire doit être dans Authorized Recipients du compte Resend.
+// Avec un domaine vérifié : définir RESEND_FROM_EMAIL=noreply@getpilote.app dans Vercel.
+const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev'
+
 export async function POST(request: NextRequest) {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  // Vérification de la clé Resend
   if (!process.env.RESEND_API_KEY) {
-    console.error('[send-code] RESEND_API_KEY manquante')
-    return NextResponse.json({ error: 'Configuration email manquante (RESEND_API_KEY)' }, { status: 500 })
+    return NextResponse.json({ error: 'RESEND_API_KEY manquante dans les variables d\'environnement Vercel' }, { status: 500 })
   }
 
   const { billing_email } = await request.json()
@@ -48,7 +51,7 @@ export async function POST(request: NextRequest) {
     .eq('user_id', user.id)
 
   const { data: sendData, error: emailError } = await resend.emails.send({
-    from: 'PILOTE <onboarding@resend.dev>',
+    from: `PILOTE <${FROM_EMAIL}>`,
     to: billing_email,
     subject: `${code} — Code de validation PILOTE`,
     html: `
@@ -58,7 +61,8 @@ export async function POST(request: NextRequest) {
         </div>
         <h2 style="color:#0f172a;font-size:18px;margin-bottom:8px;">Validation de votre adresse de facturation</h2>
         <p style="color:#64748b;font-size:14px;margin-bottom:24px;">
-          Vous avez demandé à connecter <strong>${billing_email}</strong> à PILOTE pour la lecture automatique de vos factures.
+          Vous avez demandé à connecter <strong>${billing_email}</strong> à PILOTE
+          pour la lecture automatique de vos factures.
         </p>
         <div style="background:#f1f5f9;border-radius:16px;padding:28px;text-align:center;margin-bottom:24px;">
           <p style="color:#64748b;font-size:12px;text-transform:uppercase;letter-spacing:2px;margin:0 0 12px;">Votre code de validation</p>
@@ -73,11 +77,10 @@ export async function POST(request: NextRequest) {
 
   if (emailError) {
     console.error('[send-code] Resend error:', JSON.stringify(emailError))
-    // On retourne l'erreur Resend brute en dev pour débugger
-    const msg = (emailError as any)?.message || (emailError as any)?.name || 'Erreur envoi email'
+    const msg = (emailError as any)?.message || (emailError as any)?.name || 'Erreur Resend'
     return NextResponse.json({ error: msg }, { status: 500 })
   }
 
-  console.log('[send-code] Email envoyé:', sendData?.id, '→', billing_email)
+  console.log('[send-code] OK:', sendData?.id, '→', billing_email)
   return NextResponse.json({ ok: true })
 }
