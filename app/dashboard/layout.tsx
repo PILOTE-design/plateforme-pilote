@@ -1,9 +1,7 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-import { BarChart3, FileText, Settings, LogOut, ShieldCheck, CalendarDays } from 'lucide-react'
-
-const ADMIN_EMAIL = 'nouvion.theo51@gmail.com'
+import { BarChart3, FileText, Settings, LogOut, CalendarDays, Receipt } from 'lucide-react'
 
 async function signOut() {
   'use server'
@@ -24,21 +22,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
     .eq('user_id', user.id)
     .single()
 
-  // Check if this user is a client (invited via the clients system)
-  const { data: clientRecord } = await supabase
-    .from('clients')
-    .select('id')
-    .eq('email', user.email)
-    .single()
-
-  const isClientUser = !!clientRecord
-
-  // Skip onboarding for client users — they don't need to complete it
-  if (!isClientUser && profile && !profile.onboarding_completed && process.env.NODE_ENV !== 'development') {
+  if (profile && !profile.onboarding_completed && process.env.NODE_ENV !== 'development') {
     redirect('/onboarding')
   }
-
-  const isAdmin = user.email === ADMIN_EMAIL
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
@@ -62,24 +48,20 @@ export default async function DashboardLayout({ children }: { children: React.Re
             <FileText className="w-4 h-4" />
             Mes rapports
           </Link>
-          {!isAdmin && (
-            <Link
-              href="/dashboard/planning"
-              className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-100 transition-colors"
-            >
-              <CalendarDays className="w-4 h-4" />
-              Gestion de planning
-            </Link>
-          )}
-          {isAdmin && (
-            <Link
-              href="/admin"
-              className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-orange-600 font-medium hover:bg-orange-50 transition-colors"
-            >
-              <ShieldCheck className="w-4 h-4" />
-              Espace Admin
-            </Link>
-          )}
+          <Link
+            href="/dashboard/planning"
+            className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+          >
+            <CalendarDays className="w-4 h-4" />
+            Planning
+          </Link>
+          <Link
+            href="/dashboard/facturation"
+            className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+          >
+            <Receipt className="w-4 h-4" />
+            Facturation
+          </Link>
           <Link
             href="/dashboard/settings"
             className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-100 transition-colors"
