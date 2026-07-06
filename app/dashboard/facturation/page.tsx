@@ -6,7 +6,8 @@ import { Input } from '@/components/ui/input'
 import {
   Receipt, ChevronLeft, ChevronRight, Plus, Trash2,
   TrendingUp, TrendingDown, ShoppingCart, Users, Euro,
-  Save, X, Settings, Check, AlertCircle
+  Save, X, Settings, Check, Mail, ShieldCheck, Copy, Loader2,
+  ArrowRight, AlertCircle
 } from 'lucide-react'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -49,12 +50,16 @@ type BillingSettings = {
   billing_email?: string
   company_name?: string
   siret?: string
+  billing_email_verified?: boolean
+  billing_forward_id?: string
 }
+
+type VerifyStep = 'idle' | 'sending' | 'code_sent' | 'verifying' | 'verified'
 
 // ─── Constantes ──────────────────────────────────────────────────────────────
 
 const CATEGORIES = [
-  { key: 'viande',         label: 'Viande',          color: 'bg-red-100 text-red-800'     },
+  { key: 'viande',         label: 'Viande',          color: 'bg-red-100 text-red-800'      },
   { key: 'charcuterie',    label: 'Charcuterie',     color: 'bg-orange-100 text-orange-800' },
   { key: 'epicerie',       label: 'Épicerie',        color: 'bg-yellow-100 text-yellow-800' },
   { key: 'emballage',      label: 'Emballage',       color: 'bg-blue-100 text-blue-800'    },
@@ -101,6 +106,212 @@ function catInfo(key: string) {
   return CATEGORIES.find(c => c.key === key) ?? CATEGORIES[CATEGORIES.length - 1]
 }
 
+// ─── Composant : Bloc vérification email ─────────────────────────────────────
+
+function EmailVerificationCard({
+  settings, onVerified
+}: {
+  settings: BillingSettings
+  onVerified: (email: string, forwardAddress: string) => void
+}) {
+  const isVerified = settings.billing_email_verified && settings.billing_email
+  const forwardAddr = settings.billing_forward_id
+    ? `factures-${settings.billing_forward_id}@mail.getpilote.app`
+    : null
+
+  const [step, setStep]       = useState<VerifyStep>(isVerified ? 'verified' : 'idle')
+  const [email, setEmail]     = useState(settings.billing_email || '')
+  const [code, setCode]       = useState('')
+  const [error, setError]     = useState('')
+  const [copied, setCopied]   = useState(false)
+  const [finalAddr, setFinalAddr] = useState(isVerified ? forwardAddr : null)
+
+  // Sync when settings load from server
+  useEffect(() => {
+    if (settings.billing_email_verified && settings.billing_email) {
+      setStep('verified')
+      setEmail(settings.billing_email)
+      setFinalAddr(settings.billing_forward_id
+        ? `factures-${settings.billing_forward_id}@mail.getpilote.app`
+        : null)
+    }
+  }, [settings.billing_email_verified, settings.billing_email, settings.billing_forward_id])
+
+  async function sendCode() {
+    setError('')
+    setStep('sending')
+    const res = await fetch('/api/billing-settings/send-code', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ billing_email: email })
+    })
+    const data = await res.json()
+    if (!res.ok) { setError(data.error || 'Erreur envoi'); setStep('idle'); return }
+    setStep('code_sent')
+  }
+
+  async function verifyCode() {
+    setError('')
+    setStep('verifying')
+    const res = await fetch('/api/billing-settings/verify-code', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code })
+    })
+    const data = await res.json()
+    if (!res.ok) { setError(data.error || 'Code incorrect'); setStep('code_sent'); return }
+    setFinalAddr(data.forward_address)
+    setStep('verified')
+    onVerified(data.billing_email, data.forward_address)
+  }
+
+  function copyAddr() {
+    if (!finalAddr) return
+    navigator.clipboard.writeText(finalAddr)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  // ── Vérifié ──
+  if (step === 'verified' && finalAddr) {
+    return (
+      <div className="bg-white rounded-xl border border-green-200 shadow-sm p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <div className="w-9 h-9 rounded-xl bg-green-100 flex items-center justify-center flex-shrink-0">
+              <ShieldCheck className="w-5 h-5 text-green-600" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="font-semibold text-gray-900 text-sm">Lecture automatique des factures activée</h3>
+                <span className="text-[10px] bg-green-100 text-green-700 font-bold px-1.5 py-0.5 rounded">ACTIF</span>
+              </div>
+              <p className="text-xs text-gray-500 mt-0.5">Connecté à <strong>{email}</strong></p>
+            </div>
+          </div>
+          <button
+            onClick={() => setStep('idle')}
+            className="text-xs text-gray-400 hover:text-gray-600 underline whitespace-nowrap"
+          >
+            Changer
+          </button>
+        </div>
+        <div className="mt-4 bg-[#0f172a] rounded-xl p-4">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2">
+            Transférez vos factures à cette adresse
+          </p>
+          <div className="flex items-center gap-2">
+            <code className="flex-1 text-sm font-mono text-green-400 bg-[#1e293b] rounded-lg px-3 py-2 overflow-x-auto">
+              {finalAddr}
+            </code>
+            <button
+              onClick={copyAddr}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-all ${
+                copied
+                  ? 'bg-green-500 text-white'
+                  : 'bg-[#1e293b] text-gray-300 hover:bg-[#2d3f55]'
+              }`}
+            >
+              {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+              {copied ? 'Copié !' : 'Copier'}
+            </button>
+          </div>
+          <p className="text-[10px] text-gray-500 mt-2">
+            Transférez (ou faites transférer) vos emails de factures fournisseurs à cette adresse.
+            PILOTE les lira automatiquement et enregistrera les montants.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  // ── Code envoyé ──
+  if (step === 'code_sent' || step === 'verifying') {
+    return (
+      <div className="bg-white rounded-xl border border-[#1E3A5F]/20 shadow-sm p-5">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-9 h-9 rounded-xl bg-blue-50 flex items-center justify-center flex-shrink-0">
+            <Mail className="w-5 h-5 text-[#1E3A5F]" />
+          </div>
+          <div>
+            <h3 className="font-semibold text-gray-900 text-sm">Code de validation envoyé</h3>
+            <p className="text-xs text-gray-500">Vérifiez votre boîte <strong>{email}</strong></p>
+          </div>
+        </div>
+        <p className="text-xs text-gray-500 mb-3">
+          Entrez le code à 6 chiffres reçu par email (valable 15 minutes).
+        </p>
+        <div className="flex gap-2">
+          <Input
+            value={code}
+            onChange={e => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+            placeholder="123456"
+            maxLength={6}
+            className="font-mono text-lg tracking-widest text-center"
+            autoFocus
+            onKeyDown={e => e.key === 'Enter' && code.length === 6 && verifyCode()}
+          />
+          <Button
+            onClick={verifyCode}
+            disabled={code.length !== 6 || step === 'verifying'}
+            className="bg-[#1E3A5F] hover:bg-[#2a4f7c] text-white px-4"
+          >
+            {step === 'verifying' ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />}
+          </Button>
+        </div>
+        {error && (
+          <div className="mt-2 flex items-center gap-1.5 text-xs text-red-600">
+            <AlertCircle className="w-3.5 h-3.5" />{error}
+          </div>
+        )}
+        <button onClick={() => setStep('idle')} className="mt-3 text-xs text-gray-400 hover:text-gray-600 underline">
+          Changer d'adresse
+        </button>
+      </div>
+    )
+  }
+
+  // ── Idle / sending ──
+  return (
+    <div className="bg-white rounded-xl border border-dashed border-gray-300 shadow-sm p-5">
+      <div className="flex items-center gap-3 mb-3">
+        <div className="w-9 h-9 rounded-xl bg-gray-100 flex items-center justify-center flex-shrink-0">
+          <Mail className="w-5 h-5 text-gray-400" />
+        </div>
+        <div>
+          <h3 className="font-semibold text-gray-900 text-sm">Lecture automatique des factures</h3>
+          <p className="text-xs text-gray-400">Connectez votre email de facturation pour automatiser la saisie</p>
+        </div>
+      </div>
+      <div className="flex gap-2">
+        <Input
+          type="email"
+          value={email}
+          onChange={e => setEmail(e.target.value)}
+          placeholder="factures@maboucherie.fr"
+          className="flex-1"
+          onKeyDown={e => e.key === 'Enter' && email.includes('@') && sendCode()}
+        />
+        <Button
+          onClick={sendCode}
+          disabled={!email.includes('@') || step === 'sending'}
+          className="bg-[#1E3A5F] hover:bg-[#2a4f7c] text-white whitespace-nowrap"
+        >
+          {step === 'sending'
+            ? <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" />Envoi...</>
+            : <>Valider <ArrowRight className="w-3.5 h-3.5 ml-1.5" /></>}
+        </Button>
+      </div>
+      {error && (
+        <div className="mt-2 flex items-center gap-1.5 text-xs text-red-600">
+          <AlertCircle className="w-3.5 h-3.5" />{error}
+        </div>
+      )}
+      <p className="text-[10px] text-gray-400 mt-2">
+        Un code de validation sera envoyé à cette adresse. Une fois confirmé, PILOTE lira vos factures automatiquement.
+      </p>
+    </div>
+  )
+}
+
 // ─── Composant principal ──────────────────────────────────────────────────────
 
 export default function FacturationPage() {
@@ -118,6 +329,7 @@ export default function FacturationPage() {
   const [newInvoice, setNewInvoice] = useState<any>(EMPTY_INVOICE)
   const [saving,    setSaving]    = useState(false)
   const [caForm,    setCaForm]    = useState({ ca_total: '', ca_boucherie: '', ca_charcuterie: '', ca_traiteur: '', ca_vente: '' })
+  const [settForm,  setSettForm]  = useState({ company_name: '', siret: '' })
 
   const [mon, sun] = getWeekDates(week, year)
   const { week: cw, year: cy } = getISOWeek(new Date())
@@ -133,15 +345,17 @@ export default function FacturationPage() {
     ])
     setInvoices(Array.isArray(invRes) ? invRes : [])
     setSummary(sumRes)
-    setSettings(settRes || {})
+    const s = settRes || {}
+    setSettings(s)
+    setSettForm({ company_name: s.company_name || '', siret: s.siret || '' })
     if (caRes) {
       setWeeklyCA(caRes)
       setCaForm({
-        ca_total:      String(caRes.ca_total      || ''),
-        ca_boucherie:  String(caRes.ca_boucherie  || ''),
-        ca_charcuterie:String(caRes.ca_charcuterie|| ''),
-        ca_traiteur:   String(caRes.ca_traiteur   || ''),
-        ca_vente:      String(caRes.ca_vente      || ''),
+        ca_total:       String(caRes.ca_total       || ''),
+        ca_boucherie:   String(caRes.ca_boucherie   || ''),
+        ca_charcuterie: String(caRes.ca_charcuterie || ''),
+        ca_traiteur:    String(caRes.ca_traiteur    || ''),
+        ca_vente:       String(caRes.ca_vente       || ''),
       })
     } else {
       setWeeklyCA({})
@@ -196,14 +410,18 @@ export default function FacturationPage() {
 
   async function saveSettings() {
     setSaving(true)
-    await fetch('/api/billing-settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(settings) })
+    await fetch('/api/billing-settings', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(settForm),
+    })
     setSaving(false)
     setShowSettings(false)
+    load()
   }
 
   const ttcAmount = parseFloat(newInvoice.amount_ht || '0') * (1 + parseFloat(newInvoice.tva_rate || '20') / 100)
 
-  // ── Render KPI Card ───────────────────────────────────────────────────────
   function KpiCard({ icon: Icon, label, value, sub, color, warn }: any) {
     return (
       <div className={`bg-white rounded-xl border p-4 flex flex-col gap-1 ${warn ? 'border-red-200' : 'border-gray-100'} shadow-sm`}>
@@ -258,6 +476,14 @@ export default function FacturationPage() {
 
       <div className="flex-1 px-6 py-6 space-y-6">
 
+        {/* ── Bloc email verification ── */}
+        <EmailVerificationCard
+          settings={settings}
+          onVerified={(email, addr) => {
+            setSettings(s => ({ ...s, billing_email: email, billing_email_verified: true }))
+          }}
+        />
+
         {/* ── KPIs ── */}
         {summary !== null && (
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -265,7 +491,7 @@ export default function FacturationPage() {
               icon={Euro}
               label="CA semaine"
               value={summary.ca_total > 0 ? fmtEuro(summary.ca_total) : '—'}
-              sub={summary.ca_total === 0 ? 'Cliquer sur « Saisir le CA »' : `${summary.ca_detail ? 'par catégorie' : ''}`}
+              sub={summary.ca_total === 0 ? 'Cliquer sur « Saisir le CA »' : ''}
               color="bg-blue-50 text-blue-600"
             />
             <KpiCard
@@ -505,17 +731,17 @@ export default function FacturationPage() {
               </div>
               <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider pt-1">Détail par rayon (optionnel)</p>
               {[
-                { key: 'ca_boucherie',   label: 'Boucherie',   placeholder: '0.00' },
-                { key: 'ca_charcuterie', label: 'Charcuterie', placeholder: '0.00' },
-                { key: 'ca_traiteur',    label: 'Traiteur',    placeholder: '0.00' },
-                { key: 'ca_vente',       label: 'Vente / Épicerie', placeholder: '0.00' },
-              ].map(({ key, label, placeholder }) => (
+                { key: 'ca_boucherie',   label: 'Boucherie' },
+                { key: 'ca_charcuterie', label: 'Charcuterie' },
+                { key: 'ca_traiteur',    label: 'Traiteur' },
+                { key: 'ca_vente',       label: 'Vente / Épicerie' },
+              ].map(({ key, label }) => (
                 <div key={key} className="flex items-center gap-2">
                   <label className="text-xs text-gray-500 w-28 flex-shrink-0">{label}</label>
                   <Input type="number" step="0.01" min="0"
                     value={(caForm as any)[key]}
                     onChange={e => setCaForm(p => ({ ...p, [key]: e.target.value }))}
-                    placeholder={placeholder}
+                    placeholder="0.00"
                   />
                 </div>
               ))}
@@ -531,12 +757,12 @@ export default function FacturationPage() {
         </div>
       )}
 
-      {/* ── Modal : Paramètres facturation ── */}
+      {/* ── Modal : Paramètres entreprise ── */}
       {showSettings && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 backdrop-blur-sm" onClick={() => setShowSettings(false)}>
           <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-5">
-              <h2 className="text-base font-bold text-gray-900">Paramètres facturation</h2>
+              <h2 className="text-base font-bold text-gray-900">Paramètres entreprise</h2>
               <button onClick={() => setShowSettings(false)} className="p-1.5 rounded-lg hover:bg-gray-100">
                 <X className="w-4 h-4 text-gray-500" />
               </button>
@@ -544,22 +770,11 @@ export default function FacturationPage() {
             <div className="space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-gray-700 mb-1">Nom de l'entreprise</label>
-                <Input value={settings.company_name || ''} onChange={e => setSettings(p => ({ ...p, company_name: e.target.value }))} placeholder="Boucherie Dupont" />
+                <Input value={settForm.company_name} onChange={e => setSettForm(p => ({ ...p, company_name: e.target.value }))} placeholder="Boucherie Dupont" />
               </div>
               <div>
                 <label className="block text-xs font-semibold text-gray-700 mb-1">SIRET</label>
-                <Input value={settings.siret || ''} onChange={e => setSettings(p => ({ ...p, siret: e.target.value }))} placeholder="123 456 789 00012" />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-gray-700 mb-1">Email de facturation</label>
-                <Input type="email" value={settings.billing_email || ''} onChange={e => setSettings(p => ({ ...p, billing_email: e.target.value }))} placeholder="factures@maboucherie.fr" />
-                <div className="mt-2 flex items-start gap-2 p-2.5 bg-blue-50 rounded-lg">
-                  <AlertCircle className="w-3.5 h-3.5 text-blue-500 flex-shrink-0 mt-0.5" />
-                  <p className="text-[10px] text-blue-600 leading-relaxed">
-                    Renseignez l'adresse depuis laquelle vous recevez vos factures fournisseurs. 
-                    La lecture automatique des emails sera disponible prochainement.
-                  </p>
-                </div>
+                <Input value={settForm.siret} onChange={e => setSettForm(p => ({ ...p, siret: e.target.value }))} placeholder="123 456 789 00012" />
               </div>
               <div className="flex gap-3 pt-1">
                 <Button variant="outline" className="flex-1" onClick={() => setShowSettings(false)}>Annuler</Button>
