@@ -185,6 +185,12 @@ function contractLabel(ct: string | undefined) {
   return CONTRACT_TYPES.find(c => c.key === ct)?.short ?? (ct ?? 'CDI 35h')
 }
 
+// ─── Dérive les heures contractuelles depuis le type de contrat (source de vérité)
+function getContractHours(emp: Employee): number {
+  const def = CONTRACT_TYPES.find(c => c.key === emp.contract_type)
+  return def?.hours ?? emp.contract_hours ?? 35
+}
+
 function calcTotalH(entry: PlanningEntry) {
   return JOURS_DB.reduce((s, j) => {
     const t = (entry[`${j}_type` as keyof PlanningEntry] as DayType) || 'travail'
@@ -229,7 +235,6 @@ export default function PlanningPage() {
   const [selectedCell,    setSelectedCell]    = useState<SelectedCell | null>(null)
   const [typeDropCell,    setTypeDropCell]     = useState<{ empId: string; jour: JourDB } | null>(null)
   const [contractPopover, setContractPopover]  = useState<string | null>(null)
-  // Presse-papier horaires : copier/coller entre jours
   const [copiedSched,     setCopiedSched]      = useState<DaySchedule | null>(null)
 
   const [loadingEmployees, setLoadingEmployees] = useState(true)
@@ -392,7 +397,6 @@ export default function PlanningPage() {
     setSchedMapSync(prev => ({ ...prev, [empId]: { ...prev[empId], [jour]: pasted } }))
     const newEntry = { ...getEntry(empId), [jour]: matinH + apmH }
     setEntriesSync(prev => ({ ...prev, [empId]: newEntry }))
-    // Sauvegarde immédiate
     const schedule_details = { ...schedMapRef.current[empId], [jour]: pasted }
     await fetch('/api/planning', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -465,8 +469,9 @@ export default function PlanningPage() {
           if (!stats[entry.employee_id]) stats[entry.employee_id] = { hours: 0, cost: 0, worked: 0, cp: 0, sick: 0 }
           const emp = employees.find(e => e.id === entry.employee_id)
           if (!emp) continue
+          const ch = getContractHours(emp)
           stats[entry.employee_id].hours += calcTotalH(entry)
-          stats[entry.employee_id].cost  += calcCost(entry, Number(emp.hourly_rate), emp.contract_hours || 35)
+          stats[entry.employee_id].cost  += calcCost(entry, Number(emp.hourly_rate), ch)
           for (const jour of JOURS_DB) {
             const t = (entry[`${jour}_type`] as DayType) || 'travail'
             const h = (entry[jour] as number) || 0
@@ -480,10 +485,11 @@ export default function PlanningPage() {
     } finally { setLoadingMonthly(false) }
   }
 
+  // rowStats : source de vérité — ch dérivé depuis contract_type
   const rowStats  = employees.map(emp => {
     const e  = getEntryState(emp.id)
-    const ch = emp.contract_hours || 35
-    return { empId: emp.id, totalH: calcTotalH(e), cost: calcCost(e, Number(emp.hourly_rate), ch) }
+    const ch = getContractHours(emp)
+    return { empId: emp.id, totalH: calcTotalH(e), cost: calcCost(e, Number(emp.hourly_rate), ch), ch }
   })
   const grandH    = rowStats.reduce((s, r) => s + r.totalH, 0)
   const grandCost = rowStats.reduce((s, r) => s + r.cost, 0)
@@ -499,7 +505,7 @@ export default function PlanningPage() {
     const empRows = employees.map((emp, i) => {
       const pal    = EMP_PALETTES[i % EMP_PALETTES.length]
       const entry  = getEntryState(emp.id)
-      const ch     = emp.contract_hours || 35
+      const ch     = getContractHours(emp)
       const totalH = calcTotalH(entry)
       const cost   = calcCost(entry, Number(emp.hourly_rate), ch)
       const cells  = JOURS_DB.map((j, idx) => {
@@ -553,7 +559,7 @@ export default function PlanningPage() {
   const activeHasData = !!(activeSched.matinDebut || activeSched.matinFin || activeSched.apmDebut || activeSched.apmFin || activeSched.category)
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 pb-10">
       <style>{`
         input[type=time]::-webkit-calendar-picker-indicator { opacity: 0.5; cursor: pointer; }
         input[type=time] { color: #0f172a !important; background-color: #ffffff !important; }
@@ -578,7 +584,6 @@ export default function PlanningPage() {
           {/* Poste */}
           <div className="flex items-center justify-between mb-2">
             <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Poste</p>
-            {/* Bouton Copier dans le popover */}
             {activeHasData && (
               <button
                 onClick={() => { copySchedule(selectedCell.empId, selectedCell.jour); setSelectedCell(null) }}
@@ -777,8 +782,8 @@ export default function PlanningPage() {
               employees.map((emp, empIdx) => {
                 const pal    = EMP_PALETTES[empIdx % EMP_PALETTES.length]
                 const entry  = getEntryState(emp.id)
-                const ch     = emp.contract_hours || 35
-                const { totalH, cost } = rowStats.find(r => r.empId === emp.id) || { totalH: 0, cost: 0 }
+                // ch dérivé depuis contract_type — source de vérité
+                const { totalH, cost, ch } = rowStats.find(r => r.empId === emp.id) || { totalH: 0, cost: 0, ch: 35 }
                 const hasOT  = totalH > ch
                 const showContractPop = contractPopover === emp.id
                 const cpInitial   = emp.cp_initial ?? 25
@@ -890,7 +895,7 @@ export default function PlanningPage() {
                                   {!fName && <ChevronDown className={`w-2.5 h-2.5 ${cellTxt} opacity-40`} />}
                                 </button>
 
-                                {/* ── Boutons copier / coller (hover sur la cellule) ── */}
+                                {/* ── Boutons copier / coller ── */}
                                 {!fName && type === 'travail' && (
                                   <div className="ml-auto flex items-center gap-0.5 opacity-0 group-hover/cell:opacity-100 transition-opacity">
                                     {hasCopyData && (
@@ -1042,14 +1047,21 @@ export default function PlanningPage() {
         </table>
       </div>
 
-      {employees.length > 0 && (
-        <div className="px-6 py-2.5 bg-amber-50 border-t border-amber-100">
-          <p className="text-xs text-amber-700">
-            <span className="font-semibold">CCN 992 :</span>{' '}
-            35h → +25 % de 36–43h · 39h → +25 % de 40–47h · +50 % au-delà · CP = 7h/jour
-          </p>
+      {/* ── CCN 992 Footer — tout en bas de la feuille ── */}
+      <div className="mt-auto px-6 py-3 bg-[#0f172a] border-t border-gray-800">
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-1.5">
+          <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">CCN 992 · Boucherie-Charcuterie</span>
+          <div className="flex flex-wrap gap-x-5 gap-y-1 text-[11px] text-gray-500">
+            <span><span className="text-gray-300 font-semibold">CDI/CDD 35h</span> — HS +25 % de 36h à 43h · HS +50 % dès 44h</span>
+            <span className="text-gray-700">|</span>
+            <span><span className="text-gray-300 font-semibold">CDI/CDD 39h</span> — HS +25 % de 40h à 47h · HS +50 % dès 48h</span>
+            <span className="text-gray-700">|</span>
+            <span>Congé payé = <span className="text-gray-300">7h / jour</span></span>
+            <span className="text-gray-700">|</span>
+            <span>Ferié travaillé = <span className="text-gray-300">+100 %</span></span>
+          </div>
         </div>
-      )}
+      </div>
 
       {/* ── Récap mensuel ── */}
       {showMonthly && (
@@ -1083,7 +1095,7 @@ export default function PlanningPage() {
                 <tbody>
                   {monthlyData.map(({ emp, hours, cost, worked, cp, sick }, i) => {
                     const pal   = EMP_PALETTES[i % EMP_PALETTES.length]
-                    const ch    = emp.contract_hours || 35
+                    const ch    = getContractHours(emp)
                     const hasOT = hours > ch * 4
                     return (
                       <tr key={emp.id} className="border-b border-gray-100 hover:bg-gray-50">
