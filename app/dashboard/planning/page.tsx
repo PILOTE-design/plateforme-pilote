@@ -9,7 +9,7 @@ import EmployeeProfileModal, { type EmployeeProfile } from '@/components/Employe
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type DayType = 'travail' | 'conges' | 'maladie' | 'repos'
-type CategoryKey = 'boucherie' | 'charcuterie' | 'traiteur' | 'vente'
+type CategoryKey = 'boucherie' | 'charcuterie' | 'traiteur' | 'vente' | 'administratif'
 type WorkCategory = CategoryKey
 
 const JOURS_SHORT = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim']
@@ -21,6 +21,7 @@ const CATEGORIES: Record<CategoryKey, { label: string; hex: string; light: strin
   charcuterie: { label: 'Charcuterie', hex: '#a855f7', light: '#f3e8ff', textCss: 'text-purple-700', dotCss: 'bg-purple-500', bgCss: 'bg-purple-100' },
   traiteur:    { label: 'Traiteur',    hex: '#f97316', light: '#ffedd5', textCss: 'text-orange-700', dotCss: 'bg-orange-500', bgCss: 'bg-orange-100' },
   vente:       { label: 'Vente',       hex: '#14b8a6', light: '#ccfbf1', textCss: 'text-teal-700',   dotCss: 'bg-teal-500',   bgCss: 'bg-teal-100'   },
+  administratif: { label: 'Administratif', hex: '#64748b', light: '#f1f5f9', textCss: 'text-slate-700', dotCss: 'bg-slate-500', bgCss: 'bg-slate-100' },
 }
 
 const TYPE_CONFIG: Record<DayType, { label: string; bg: string; text: string; dot: string; defaultHours: number; pdfColor: string; display: string }> = {
@@ -52,7 +53,8 @@ const EMP_PALETTES = [
 type Employee = {
   id: string; name: string; hourly_rate: number
   contract_hours: number; contract_type: string
-  cp_initial?: number; charges_patronales?: number; created_at: string
+  cp_initial?: number; charges_patronales?: number; hs_cumules?: number
+  is_minor?: boolean; created_at: string
 }
 
 type DaySchedule = {
@@ -83,7 +85,7 @@ type ScheduleModal = {
   manualHours: string
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Helpers ────────────────────────────────────────────────────────────────────────────
 
 function getISOWeek(date: Date) {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
@@ -176,10 +178,11 @@ function formatTime(t?: string) {
   return t.replace(':00', 'h').replace(':', 'h')
 }
 
-function calcTotalH(entry: PlanningEntry) {
+function calcTotalH(entry: PlanningEntry, contractH: number = 35) {
+  const cpH = contractH >= 39 ? 7.83 : 7
   return JOURS_DB.reduce((s, j) => {
     const t = (entry[`${j}_type` as keyof PlanningEntry] as DayType) || 'travail'
-    if (t === 'conges') return s + 7
+    if (t === 'conges') return s + cpH
     if (t !== 'travail') return s
     const sh = scheduleHours(entry.schedule_details?.[j])
     return s + (sh > 0 ? sh : (entry[j] || 0))
@@ -187,7 +190,7 @@ function calcTotalH(entry: PlanningEntry) {
 }
 
 function calcCost(entry: PlanningEntry, rate: number, contractH: number) {
-  const totalH = calcTotalH(entry)
+  const totalH = calcTotalH(entry, contractH)
   const t2 = contractH + 8
   if (totalH <= contractH) return totalH * rate
   if (totalH <= t2) return contractH * rate + (totalH - contractH) * rate * 1.25
@@ -203,7 +206,7 @@ function calcCostFull(totalH: number, rate: number, contractH: number, chargesPc
   return { brut, charge: brut * (1 + chargesPct / 100) }
 }
 
-// ─── CCN Boucherie-Charcuterie (IDCC 992) ────────────────────────────────────
+// ─── CCN Boucherie-Charcuterie (IDCC 992) ────────────────────────────────────────────────────
 // Dimanche travaillé : +20 %
 // Jour férié travaillé : +100 % (salaire doublé)
 // Travail de nuit (avant 6h ou après 21h) : +25 %
@@ -273,7 +276,7 @@ function modalHours(m: ScheduleModal): number {
   return parseFloat(m.manualHours) || 0
 }
 
-// ─── Component ────────────────────────────────────────────────────────────────
+// ─── Component ────────────────────────────────────────────────────────────────────────────
 
 export default function PlanningPage() {
   const now = getISOWeek(new Date())
@@ -397,6 +400,9 @@ export default function PlanningPage() {
     const { empId, jour } = scheduleModal
     const typeKey = `${jour}_type` as keyof PlanningEntry
     const totalH  = modalHours(scheduleModal)
+    const empForCp = employees.find(e => e.id === empId)
+    const empCh = CONTRACT_TYPES.find(ct => ct.key === empForCp?.contract_type)?.hours ?? empForCp?.contract_hours ?? 35
+    const cpH = empCh >= 39 ? 7.83 : 7
 
     const newSched: DaySchedule = {
       am_start:    scheduleModal.am_start    || undefined,
@@ -411,7 +417,7 @@ export default function PlanningPage() {
     const updated: PlanningEntry = {
       ...prev,
       [typeKey]: scheduleModal.type,
-      [jour]: scheduleModal.type === 'travail' ? totalH : TYPE_CONFIG[scheduleModal.type].defaultHours,
+      [jour]: scheduleModal.type === 'travail' ? totalH : scheduleModal.type === 'conges' ? cpH : TYPE_CONFIG[scheduleModal.type].defaultHours,
       schedule_details: {
         ...(prev.schedule_details ?? {}),
         [jour]: newSched,
@@ -482,7 +488,7 @@ export default function PlanningPage() {
           if (!stats[entry.employee_id]) stats[entry.employee_id] = { hours: 0, cost: 0, worked: 0, cp: 0, sick: 0 }
           const emp = employees.find(e => e.id === entry.employee_id)
           if (!emp) continue
-          stats[entry.employee_id].hours += calcTotalH(entry)
+          stats[entry.employee_id].hours += calcTotalH(entry, emp.contract_hours || 35)
           const _wDates = getWeekDates(w, y)
           const _hols   = getFrenchHolidays(y)
           stats[entry.employee_id].cost  += calcCostCCN(entry, Number(emp.hourly_rate), emp.contract_hours || 35, _wDates, _hols).total
@@ -502,7 +508,7 @@ export default function PlanningPage() {
   const rowStats  = employees.map(emp => {
     const e      = getEntryState(emp.id)
     const ch     = CONTRACT_TYPES.find(ct => ct.key === emp.contract_type)?.hours ?? emp.contract_hours ?? 35
-    const totalH = calcTotalH(e)
+    const totalH = calcTotalH(e, ch)
     const ccn    = calcCostCCN(e, Number(emp.hourly_rate), ch, weekDates, holidays)
     const { brut, charge } = calcCostFull(totalH, Number(emp.hourly_rate), ch, emp.charges_patronales ?? 45)
     return { empId: emp.id, totalH, ch, brut, charge, dimanche: ccn.dimanche, ferie: ccn.ferie, nuit: ccn.nuit }
@@ -516,7 +522,7 @@ export default function PlanningPage() {
     const dayHeaders = dates.map((d, i) => {
       const fName = holidays.get(d.toISOString().slice(0, 10))
       const bg    = fName ? '#d97706' : i >= 5 ? '#94a3b8' : '#1E3A5F'
-      return `<th style="background:${bg};color:white;padding:7px 5px;font-size:10px;text-align:center;">${fmtD(d)}${fName ? `<br><span style="font-size:8px;opacity:.9;">✦ ${fName}</span>` : ''}</th>`
+      return `<th style="background:${bg};color:white;padding:7px 5px;font-size:10px;text-align:center;">${fmtD(d)}${fName ? `<br><span style="font-size:8px;opacity:.9;">❆ ${fName}</span>` : ''}</th>`
     }).join('')
     const empRows = employees.map((emp, i) => {
       const pal    = EMP_PALETTES[i % EMP_PALETTES.length]
@@ -570,7 +576,7 @@ export default function PlanningPage() {
   <th style="background:#1E3A5F;color:white;padding:7px 5px;font-size:10px;text-align:center;width:50px;">Total</th>
   <th style="background:#1E3A5F;color:white;padding:7px 10px;font-size:10px;text-align:center;width:90px;">Signature</th>
 </tr></thead><tbody>${empRows}</tbody></table>
-<p style="margin-top:10px;font-size:9px;color:#94a3b8;">Seuils majoration : 35h → +25 % de 36–43h · 39h → +25 % de 40–47h · +50 % au-delà · CP = 7h/jour · Généré via PILOTE</p>
+<p style="margin-top:10px;font-size:9px;color:#94a3b8;">Seuils majoration : 35h → +25 % de 36–43h · 39h → +25 % de 40–47h · +50 % au-delà · CP : 7h/jour (35h), 7,83h/jour (39h) · Généré via PILOTE</p>
 </body></html>`
     const win = window.open('', '_blank', 'width=1200,height=800')
     if (!win) return
@@ -671,7 +677,7 @@ export default function PlanningPage() {
                     <div className={`text-xs font-bold uppercase tracking-wide ${isToday ? 'text-white' : fName ? 'text-amber-700' : isWE ? 'text-gray-400' : 'text-gray-500'}`}>{JOURS_SHORT[i]}</div>
                     <div className={`text-lg font-bold ${isToday ? 'text-white' : fName ? 'text-amber-800' : isWE ? 'text-gray-300' : 'text-gray-800'}`}>{date.getUTCDate()}</div>
                     <div className={`text-[10px] ${isToday ? 'text-blue-200' : 'text-gray-400'}`}>{date.toLocaleDateString('fr-FR', { month: 'short', timeZone: 'UTC' })}</div>
-                    {fName && <div className="text-[8px] font-semibold text-amber-700 bg-amber-100 px-1 py-0.5 rounded mt-0.5 leading-tight truncate" title={fName}>✦ {fName}</div>}
+                    {fName && <div className="text-[8px] font-semibold text-amber-700 bg-amber-100 px-1 py-0.5 rounded mt-0.5 leading-tight truncate" title={fName}>❆ {fName}</div>}
                   </th>
                 )
               })}
@@ -695,8 +701,9 @@ export default function PlanningPage() {
             ) : employees.map((emp, empIdx) => {
               const pal   = EMP_PALETTES[empIdx % EMP_PALETTES.length]
               const entry = getEntryState(emp.id)
-              const ch    = emp.contract_hours || 35
+              const ch    = CONTRACT_TYPES.find(ct => ct.key === emp.contract_type)?.hours ?? emp.contract_hours ?? 35
               const { totalH, brut, charge } = rowStats.find(r => r.empId === emp.id) || { totalH: 0, brut: 0, charge: 0 }
+              const weekHS = Math.max(0, totalH - ch)
               const hasOT = totalH > ch
               const showContractPop = contractPopover === emp.id
               const cpInitial   = emp.cp_initial ?? 25
@@ -736,7 +743,7 @@ export default function PlanningPage() {
                           <span className="text-[10px] text-gray-400">{Number(emp.hourly_rate).toFixed(2)} €/h</span>
                           <span className="text-[10px] text-orange-500">≈ {(Number(emp.hourly_rate) * (1 + (emp.charges_patronales ?? 45) / 100)).toFixed(2)} €/h chargé</span>
                           <div className="ml-auto flex items-center gap-1 opacity-0 group-hover:opacity-100">
-                            <button onClick={() => setProfileModal({ id: emp.id, name: emp.name, hourly_rate: Number(emp.hourly_rate), contract_type: emp.contract_type, contract_hours: emp.contract_hours, cp_initial: emp.cp_initial ?? 25, charges_patronales: emp.charges_patronales ?? 45, position: null, hire_date: null, contract_end_date: null, phone: null, email: null, notes: null, is_minor: emp.is_minor ?? false })}
+                            <button onClick={() => setProfileModal({ id: emp.id, name: emp.name, hourly_rate: Number(emp.hourly_rate), contract_type: emp.contract_type, contract_hours: emp.contract_hours, cp_initial: emp.cp_initial ?? 25, charges_patronales: emp.charges_patronales ?? 45, hs_cumules: emp.hs_cumules ?? 0, position: null, hire_date: null, contract_end_date: null, phone: null, email: null, notes: null, is_minor: emp.is_minor ?? false })}
                               className="p-1 rounded hover:bg-blue-50 text-gray-300 hover:text-[#1E3A5F] transition-all">
                               <UserCog className="w-3 h-3" />
                             </button>
@@ -749,6 +756,11 @@ export default function PlanningPage() {
                         <div className="flex items-center gap-1 mt-1">
                           <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cpRemaining < 0 ? 'bg-red-400' : cpRemaining <= 3 ? 'bg-orange-400' : 'bg-sky-300'}`} />
                           <span className={`text-[9px] ${cpRemaining < 0 ? 'text-red-500 font-semibold' : cpRemaining <= 3 ? 'text-orange-500' : 'text-gray-400'}`}>{cpRemaining}j CP restants</span>
+                          {((emp.hs_cumules ?? 0) !== 0 || weekHS > 0) && (
+                            <span className="text-[9px] text-purple-600 ml-1 font-medium">
+                              · {weekHS > 0 ? `+${weekHS.toFixed(1)}h HS` : ''}{(emp.hs_cumules ?? 0) !== 0 ? ` (solde: ${(emp.hs_cumules ?? 0) > 0 ? '+' : ''}${emp.hs_cumules}h)` : ''}
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -811,7 +823,7 @@ export default function PlanningPage() {
                           ) : (
                             <div className="flex-1 flex items-center justify-center">
                               <span className={`font-bold text-xl ${cellTxt}`}>
-                                {fName ? '✦' : TYPE_CONFIG[type].display}
+                                {fName ? '❆' : type === 'conges' ? (ch >= 39 ? '7.83h' : '7h') : TYPE_CONFIG[type].display}
                               </span>
                             </div>
                           )}
@@ -856,7 +868,8 @@ export default function PlanningPage() {
                   const dayH = employees.reduce((s, emp) => {
                     const e = getEntryState(emp.id)
                     const t = (e[`${jour}_type` as keyof PlanningEntry] as DayType) || 'travail'
-                    if (t === 'conges') return s + 7
+                    const empCh2 = CONTRACT_TYPES.find(ct => ct.key === emp.contract_type)?.hours ?? emp.contract_hours ?? 35
+                    if (t === 'conges') return s + (empCh2 >= 39 ? 7.83 : 7)
                     if (t !== 'travail') return s
                     const sh = scheduleHours(e.schedule_details?.[jour])
                     return s + (sh > 0 ? sh : (e[jour] || 0))
@@ -1094,6 +1107,7 @@ export default function PlanningPage() {
               contract_hours: updated.contract_hours,
               cp_initial: updated.cp_initial,
               charges_patronales: updated.charges_patronales,
+              hs_cumules: updated.hs_cumules,
               is_minor: updated.is_minor,
             } : e))
             setProfileModal(null)
