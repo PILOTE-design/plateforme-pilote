@@ -9,8 +9,8 @@ export async function GET() {
   const serviceSupabase = createServiceClient()
   const { data } = await serviceSupabase
     .from('profiles')
-    .select('billing_email, company_name, siret')
-    .eq('id', user.id)
+    .select('billing_email, company_name, siret, billing_email_verified, billing_forward_id')
+    .eq('user_id', user.id)
     .maybeSingle()
 
   return NextResponse.json(data || {})
@@ -22,12 +22,13 @@ export async function PATCH(request: NextRequest) {
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const body = await request.json()
-  const { billing_email, company_name, siret } = body
+  const { company_name, siret } = body
 
   const serviceSupabase = createServiceClient()
   const { data, error } = await serviceSupabase
     .from('profiles')
-    .upsert({ id: user.id, billing_email, company_name, siret })
+    .update({ company_name, siret })
+    .eq('user_id', user.id)
     .select()
     .single()
 
