@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Plus, ChevronLeft, ChevronRight, ChevronDown, Trash2, CalendarDays, FileDown, Copy, BarChart2, X, UserCog, Check } from 'lucide-react'
+import { Plus, ChevronLeft, ChevronRight, ChevronDown, Trash2, CalendarDays, FileDown, Copy, Clipboard, BarChart2, X, UserCog, Check } from 'lucide-react'
 import EmployeeProfileModal, { type EmployeeProfile } from '@/components/EmployeeProfileModal'
 
 type DayType = 'travail' | 'conges' | 'maladie' | 'repos'
@@ -77,13 +77,9 @@ type PlanningEntry = {
 type EntriesMap = Record<string, PlanningEntry>
 type MonthlyStat = { emp: Employee; hours: number; cost: number; worked: number; cp: number; sick: number }
 
-// Popover avec coordonnées viewport (position:fixed)
 type SelectedCell = {
-  empId: string
-  jour: JourDB
-  x: number      // left en px viewport
-  y: number      // top (si openUp=false) ou ancre top de cellule (si openUp=true)
-  openUp: boolean
+  empId: string; jour: JourDB
+  x: number; y: number; openUp: boolean
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -230,10 +226,11 @@ export default function PlanningPage() {
   const [schedMap, setSchedMap]   = useState<ScheduleMap>({})
   const schedMapRef = useRef<ScheduleMap>({})
 
-  // selectedCell stocke les coordonnées viewport pour position:fixed
   const [selectedCell,    setSelectedCell]    = useState<SelectedCell | null>(null)
   const [typeDropCell,    setTypeDropCell]     = useState<{ empId: string; jour: JourDB } | null>(null)
   const [contractPopover, setContractPopover]  = useState<string | null>(null)
+  // Presse-papier horaires : copier/coller entre jours
+  const [copiedSched,     setCopiedSched]      = useState<DaySchedule | null>(null)
 
   const [loadingEmployees, setLoadingEmployees] = useState(true)
   const [showAdd,        setShowAdd]        = useState(false)
@@ -359,17 +356,12 @@ export default function PlanningPage() {
     refreshCpUsed()
   }
 
-  function updateTimeRange(
-    empId: string, jour: JourDB,
-    field: 'matinDebut' | 'matinFin' | 'apmDebut' | 'apmFin',
-    value: string
-  ) {
+  function updateTimeRange(empId: string, jour: JourDB, field: 'matinDebut' | 'matinFin' | 'apmDebut' | 'apmFin', value: string) {
     const current = getSched(empId, jour)
     const updated = { ...current, [field]: value }
     const matinH = timeDiff(updated.matinDebut, updated.matinFin)
     const apmH   = timeDiff(updated.apmDebut,   updated.apmFin)
-    updated.matin     = matinH
-    updated.apresMidi = apmH
+    updated.matin = matinH; updated.apresMidi = apmH
     setSchedMapSync(prev => ({ ...prev, [empId]: { ...prev[empId], [jour]: updated } }))
     setEntriesSync(prev => ({ ...prev, [empId]: { ...getEntry(empId), [jour]: matinH + apmH } }))
   }
@@ -383,6 +375,32 @@ export default function PlanningPage() {
   function saveDay(empId: string) {
     saveEntryValues(empId, entriesRef.current[empId] ?? emptyEntry(empId, week, year))
   }
+
+  // ── Copier / Coller horaires ───────────────────────────────────────────────
+
+  function copySchedule(empId: string, jour: JourDB) {
+    const sched = getSched(empId, jour)
+    const hasData = sched.matinDebut || sched.matinFin || sched.apmDebut || sched.apmFin || sched.category
+    if (hasData) setCopiedSched({ ...sched })
+  }
+
+  async function pasteSchedule(empId: string, jour: JourDB) {
+    if (!copiedSched) return
+    const matinH = timeDiff(copiedSched.matinDebut, copiedSched.matinFin)
+    const apmH   = timeDiff(copiedSched.apmDebut,   copiedSched.apmFin)
+    const pasted: DaySchedule = { ...copiedSched, matin: matinH, apresMidi: apmH }
+    setSchedMapSync(prev => ({ ...prev, [empId]: { ...prev[empId], [jour]: pasted } }))
+    const newEntry = { ...getEntry(empId), [jour]: matinH + apmH }
+    setEntriesSync(prev => ({ ...prev, [empId]: newEntry }))
+    // Sauvegarde immédiate
+    const schedule_details = { ...schedMapRef.current[empId], [jour]: pasted }
+    await fetch('/api/planning', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...newEntry, employee_id: empId, week_number: week, year, schedule_details }),
+    })
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
 
   async function addEmployee() {
     if (!newName.trim() || !newRate) return
@@ -528,11 +546,11 @@ export default function PlanningPage() {
 
   // ─── Render ─────────────────────────────────────────────────────────────────
 
-  // Popover actif (cherche l'employé et la cellule correspondante)
-  const activeEmp   = selectedCell ? employees.find(e => e.id === selectedCell.empId) : null
+  const activeEmp    = selectedCell ? employees.find(e => e.id === selectedCell.empId) : null
   const activeEmpIdx = activeEmp ? employees.indexOf(activeEmp) : 0
-  const activePal   = EMP_PALETTES[activeEmpIdx % EMP_PALETTES.length]
-  const activeSched = selectedCell ? getSched(selectedCell.empId, selectedCell.jour) : { ...EMPTY_SCHED }
+  const activePal    = EMP_PALETTES[activeEmpIdx % EMP_PALETTES.length]
+  const activeSched  = selectedCell ? getSched(selectedCell.empId, selectedCell.jour) : { ...EMPTY_SCHED }
+  const activeHasData = !!(activeSched.matinDebut || activeSched.matinFin || activeSched.apmDebut || activeSched.apmFin || activeSched.category)
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -558,7 +576,20 @@ export default function PlanningPage() {
           onClick={e => e.stopPropagation()}
         >
           {/* Poste */}
-          <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-2">Poste</p>
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Poste</p>
+            {/* Bouton Copier dans le popover */}
+            {activeHasData && (
+              <button
+                onClick={() => { copySchedule(selectedCell.empId, selectedCell.jour); setSelectedCell(null) }}
+                className="flex items-center gap-1 text-[10px] font-medium text-gray-500 hover:text-[#1E3A5F] px-1.5 py-0.5 rounded hover:bg-gray-100 transition-colors"
+                title="Copier ces horaires"
+              >
+                <Copy className="w-3 h-3" />
+                Copier
+              </button>
+            )}
+          </div>
           <div className="grid grid-cols-2 gap-1 mb-3">
             {WORK_CATS.map(cat => {
               const isActive = activeSched.category === cat.key
@@ -579,20 +610,15 @@ export default function PlanningPage() {
           <div className="border-t border-gray-100 pt-2.5 space-y-3">
             <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Horaires</p>
 
-            {/* Matin */}
             <div>
               <p className="text-xs font-medium text-gray-600 mb-1.5">Matin</p>
               <div className="flex items-center gap-2">
-                <input
-                  type="time"
-                  value={activeSched.matinDebut}
+                <input type="time" value={activeSched.matinDebut}
                   onChange={e => updateTimeRange(selectedCell.empId, selectedCell.jour, 'matinDebut', e.target.value)}
                   className="flex-1 text-sm text-gray-900 border border-gray-300 bg-white rounded-lg px-2 py-1.5 focus:outline-none focus:border-[#1E3A5F] focus:ring-1 focus:ring-[#1E3A5F]/20"
                 />
                 <span className="text-gray-400 text-sm font-medium flex-shrink-0">→</span>
-                <input
-                  type="time"
-                  value={activeSched.matinFin}
+                <input type="time" value={activeSched.matinFin}
                   onChange={e => updateTimeRange(selectedCell.empId, selectedCell.jour, 'matinFin', e.target.value)}
                   className="flex-1 text-sm text-gray-900 border border-gray-300 bg-white rounded-lg px-2 py-1.5 focus:outline-none focus:border-[#1E3A5F] focus:ring-1 focus:ring-[#1E3A5F]/20"
                 />
@@ -604,20 +630,15 @@ export default function PlanningPage() {
               </div>
             </div>
 
-            {/* Après-midi */}
             <div>
               <p className="text-xs font-medium text-gray-600 mb-1.5">Après-midi</p>
               <div className="flex items-center gap-2">
-                <input
-                  type="time"
-                  value={activeSched.apmDebut}
+                <input type="time" value={activeSched.apmDebut}
                   onChange={e => updateTimeRange(selectedCell.empId, selectedCell.jour, 'apmDebut', e.target.value)}
                   className="flex-1 text-sm text-gray-900 border border-gray-300 bg-white rounded-lg px-2 py-1.5 focus:outline-none focus:border-[#1E3A5F] focus:ring-1 focus:ring-[#1E3A5F]/20"
                 />
                 <span className="text-gray-400 text-sm font-medium flex-shrink-0">→</span>
-                <input
-                  type="time"
-                  value={activeSched.apmFin}
+                <input type="time" value={activeSched.apmFin}
                   onChange={e => updateTimeRange(selectedCell.empId, selectedCell.jour, 'apmFin', e.target.value)}
                   className="flex-1 text-sm text-gray-900 border border-gray-300 bg-white rounded-lg px-2 py-1.5 focus:outline-none focus:border-[#1E3A5F] focus:ring-1 focus:ring-[#1E3A5F]/20"
                 />
@@ -629,7 +650,6 @@ export default function PlanningPage() {
               </div>
             </div>
 
-            {/* Total journée */}
             {(activeSched.matin > 0 || activeSched.apresMidi > 0) && (
               <div className="flex items-center justify-between pt-1.5 border-t border-gray-100">
                 <span className="text-xs text-gray-400">Total journée</span>
@@ -639,12 +659,8 @@ export default function PlanningPage() {
               </div>
             )}
 
-            {/* Bouton Valider */}
             <button
-              onClick={() => {
-                saveDay(selectedCell.empId)
-                setSelectedCell(null)
-              }}
+              onClick={() => { saveDay(selectedCell.empId); setSelectedCell(null) }}
               className="w-full flex items-center justify-center gap-2 bg-[#1E3A5F] hover:bg-[#2a4f7c] text-white rounded-xl py-2.5 font-semibold text-sm transition-colors mt-1"
             >
               <Check className="w-4 h-4" />
@@ -695,6 +711,18 @@ export default function PlanningPage() {
           <Copy className="w-3 h-3" />
           {copying ? 'Copie...' : `Copier S${week === 1 ? 52 : week - 1}`}
         </button>
+
+        {/* ── Indicateur presse-papier ── */}
+        {copiedSched && (
+          <div className="flex items-center gap-1.5 text-xs bg-violet-50 border border-violet-200 text-violet-700 rounded-full px-2.5 py-1 animate-pulse">
+            <Clipboard className="w-3 h-3 flex-shrink-0" />
+            <span>Horaires copiés — cliquez une cellule pour coller</span>
+            <button onClick={() => setCopiedSched(null)} className="hover:text-violet-900 ml-0.5">
+              <X className="w-3 h-3" />
+            </button>
+          </div>
+        )}
+
         <div className="ml-auto flex items-center gap-4 text-xs text-gray-400">
           <span><span className="font-semibold text-gray-700">{fmtDecHours(grandH)}</span> total</span>
           <span><span className="font-semibold text-green-700">{grandCost.toFixed(2)} €</span> coût</span>
@@ -717,19 +745,13 @@ export default function PlanningPage() {
                   <th key={i} className={`px-2 py-2 text-center min-w-[120px] border-b border-r border-gray-200 ${
                     isToday ? 'bg-[#1E3A5F]' : fName ? 'bg-amber-50' : isWE ? 'bg-gray-50' : 'bg-white'
                   }`}>
-                    <div className={`text-xs font-bold uppercase tracking-wide ${
-                      isToday ? 'text-white' : fName ? 'text-amber-700' : isWE ? 'text-gray-400' : 'text-gray-500'
-                    }`}>{JOURS_SHORT[i]}</div>
-                    <div className={`text-lg font-bold ${
-                      isToday ? 'text-white' : fName ? 'text-amber-800' : isWE ? 'text-gray-300' : 'text-gray-800'
-                    }`}>{date.getUTCDate()}</div>
+                    <div className={`text-xs font-bold uppercase tracking-wide ${isToday ? 'text-white' : fName ? 'text-amber-700' : isWE ? 'text-gray-400' : 'text-gray-500'}`}>{JOURS_SHORT[i]}</div>
+                    <div className={`text-lg font-bold ${isToday ? 'text-white' : fName ? 'text-amber-800' : isWE ? 'text-gray-300' : 'text-gray-800'}`}>{date.getUTCDate()}</div>
                     <div className={`text-[10px] ${isToday ? 'text-blue-200' : 'text-gray-400'}`}>
                       {date.toLocaleDateString('fr-FR', { month: 'short', timeZone: 'UTC' })}
                     </div>
                     {fName && (
-                      <div className="text-[8px] font-semibold text-amber-700 bg-amber-100 px-1 py-0.5 rounded mt-0.5 leading-tight truncate" title={fName}>
-                        ✦ {fName}
-                      </div>
+                      <div className="text-[8px] font-semibold text-amber-700 bg-amber-100 px-1 py-0.5 rounded mt-0.5 leading-tight truncate" title={fName}>✦ {fName}</div>
                     )}
                   </th>
                 )
@@ -777,7 +799,6 @@ export default function PlanningPage() {
                             <button
                               onClick={e => { e.stopPropagation(); setProfileEmp({ ...emp, cp_initial: emp.cp_initial ?? 25, position: emp.position ?? null, hire_date: emp.hire_date ?? null, contract_end_date: emp.contract_end_date ?? null, phone: emp.phone ?? null, email: emp.email ?? null, notes: emp.notes ?? null, is_minor: emp.is_minor ?? false }) }}
                               className="p-1 rounded-md bg-[#1E3A5F]/10 hover:bg-[#1E3A5F]/20 text-[#1E3A5F] transition-colors flex-shrink-0"
-                              title="Fiche employé"
                             >
                               <UserCog className="w-3.5 h-3.5" />
                             </button>
@@ -841,6 +862,7 @@ export default function PlanningPage() {
                       const matinRange = fmtRange(sched.matinDebut, sched.matinFin)
                       const apmRange   = fmtRange(sched.apmDebut,   sched.apmFin)
                       const hasRanges  = !!(matinRange || apmRange)
+                      const hasCopyData = !!(sched.matinDebut || sched.matinFin || sched.apmDebut || sched.apmFin || sched.category)
 
                       const cellBg  = fName ? 'bg-amber-50'    : type === 'travail' ? pal.bg    : TYPE_CONFIG[type].bg
                       const cellTxt = fName ? 'text-amber-800' : type === 'travail' ? pal.text  : TYPE_CONFIG[type].text
@@ -849,7 +871,7 @@ export default function PlanningPage() {
 
                       return (
                         <td key={jour} className="p-0 border-b border-r border-gray-200 align-stretch">
-                          <div className="relative h-full" data-cell="true">
+                          <div className="relative h-full group/cell" data-cell="true">
                             <div className={`${cellBg} w-full h-full min-h-[100px] flex flex-col`}>
 
                               {/* Type badge */}
@@ -861,14 +883,38 @@ export default function PlanningPage() {
                                     setSelectedCell(null)
                                     setTypeDropCell(isTypeOpen ? null : { empId: emp.id, jour })
                                   }}
-                                  className={`flex items-center gap-1 rounded px-1 py-0.5 transition-colors ${
-                                    fName ? 'cursor-default' : 'hover:bg-black/10 cursor-pointer'
-                                  }`}
+                                  className={`flex items-center gap-1 rounded px-1 py-0.5 transition-colors ${fName ? 'cursor-default' : 'hover:bg-black/10 cursor-pointer'}`}
                                 >
                                   <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cellDot}`} />
                                   <span className={`text-[10px] font-semibold ${cellTxt}`}>{typeLabel}</span>
                                   {!fName && <ChevronDown className={`w-2.5 h-2.5 ${cellTxt} opacity-40`} />}
                                 </button>
+
+                                {/* ── Boutons copier / coller (hover sur la cellule) ── */}
+                                {!fName && type === 'travail' && (
+                                  <div className="ml-auto flex items-center gap-0.5 opacity-0 group-hover/cell:opacity-100 transition-opacity">
+                                    {hasCopyData && (
+                                      <button
+                                        onClick={e => { e.stopPropagation(); copySchedule(emp.id, jour) }}
+                                        className="p-1 rounded hover:bg-black/10 text-gray-400 hover:text-gray-700"
+                                        title="Copier ces horaires"
+                                        data-cell="true"
+                                      >
+                                        <Copy className="w-3 h-3" />
+                                      </button>
+                                    )}
+                                    {copiedSched && (
+                                      <button
+                                        onClick={e => { e.stopPropagation(); pasteSchedule(emp.id, jour) }}
+                                        className="p-1 rounded bg-violet-100 hover:bg-violet-200 text-violet-600"
+                                        title="Coller les horaires"
+                                        data-cell="true"
+                                      >
+                                        <Clipboard className="w-3 h-3" />
+                                      </button>
+                                    )}
+                                  </div>
+                                )}
                               </div>
 
                               {/* Corps cellule */}
@@ -881,18 +927,10 @@ export default function PlanningPage() {
                                   if (fName || type !== 'travail') return
                                   if (isDetailOpen) { setSelectedCell(null); return }
                                   const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-                                  // Estime si le popover tient en dessous (hauteur ~380px)
                                   const openUp = rect.bottom + 390 > window.innerHeight
-                                  // Evite de déborder à droite (popover = 288px)
                                   const x = Math.min(rect.left, window.innerWidth - 296)
                                   setTypeDropCell(null)
-                                  setSelectedCell({
-                                    empId: emp.id,
-                                    jour,
-                                    x,
-                                    y: openUp ? rect.top : rect.bottom,
-                                    openUp,
-                                  })
+                                  setSelectedCell({ empId: emp.id, jour, x, y: openUp ? rect.top : rect.bottom, openUp })
                                 }}
                               >
                                 {type === 'travail' && !fName ? (
@@ -906,9 +944,7 @@ export default function PlanningPage() {
                                       <div className="flex flex-col items-center gap-0.5">
                                         {matinRange && <span className={`text-[9px] font-semibold ${pal.text} leading-tight`}>{matinRange}</span>}
                                         {apmRange   && <span className={`text-[9px] font-semibold ${pal.text} leading-tight`}>{apmRange}</span>}
-                                        <span className={`text-[11px] font-bold ${pal.text} mt-0.5`}>
-                                          {hours > 0 ? `= ${fmtDecHours(hours)}` : ''}
-                                        </span>
+                                        <span className={`text-[11px] font-bold ${pal.text} mt-0.5`}>{hours > 0 ? `= ${fmtDecHours(hours)}` : ''}</span>
                                       </div>
                                     ) : (
                                       <>
@@ -932,9 +968,9 @@ export default function PlanningPage() {
                               <div className="absolute top-full left-0 z-50 mt-1 bg-white rounded-xl shadow-2xl border border-gray-100 p-1.5 min-w-[170px]" data-cell="true" onClick={e => e.stopPropagation()}>
                                 <p className="text-[10px] text-gray-400 px-2 py-1 font-medium uppercase tracking-wide">Type de journée</p>
                                 {([
-                                  { key: 'travail' as DayType, label: 'Travail',       dot: pal.dot      },
-                                  { key: 'conges'  as DayType, label: 'Congé payé',    dot: 'bg-sky-400' },
-                                  { key: 'maladie' as DayType, label: 'Arrêt maladie', dot: 'bg-red-400' },
+                                  { key: 'travail' as DayType, label: 'Travail',       dot: pal.dot       },
+                                  { key: 'conges'  as DayType, label: 'Congé payé',    dot: 'bg-sky-400'  },
+                                  { key: 'maladie' as DayType, label: 'Arrêt maladie', dot: 'bg-red-400'  },
                                   { key: 'repos'   as DayType, label: 'Repos',         dot: 'bg-gray-300' },
                                 ]).map(opt => (
                                   <button key={opt.key} onClick={() => changeType(emp.id, jour, opt.key)}
@@ -956,12 +992,8 @@ export default function PlanningPage() {
 
                     {/* Total */}
                     <td className="px-2 py-3 text-center border-b border-r border-gray-200">
-                      <div className={`inline-flex flex-col items-center px-2 py-1 rounded-lg ${
-                        hasOT ? 'bg-orange-50' : totalH > 0 ? 'bg-gray-50' : ''
-                      }`}>
-                        <span className={`font-bold text-sm ${
-                          hasOT ? 'text-orange-600' : totalH > 0 ? 'text-gray-800' : 'text-gray-300'
-                        }`}>{fmtDecHours(totalH)}</span>
+                      <div className={`inline-flex flex-col items-center px-2 py-1 rounded-lg ${hasOT ? 'bg-orange-50' : totalH > 0 ? 'bg-gray-50' : ''}`}>
+                        <span className={`font-bold text-sm ${hasOT ? 'text-orange-600' : totalH > 0 ? 'text-gray-800' : 'text-gray-300'}`}>{fmtDecHours(totalH)}</span>
                         {hasOT && <span className="text-[9px] text-orange-400">+{fmtDecHours(totalH - ch)} sup</span>}
                       </div>
                     </td>
@@ -1066,9 +1098,7 @@ export default function PlanningPage() {
                             </div>
                           </div>
                         </td>
-                        <td className="text-center py-3">
-                          <span className={`font-bold ${hasOT ? 'text-orange-600' : 'text-gray-800'}`}>{fmtDecHours(hours)}</span>
-                        </td>
+                        <td className="text-center py-3"><span className={`font-bold ${hasOT ? 'text-orange-600' : 'text-gray-800'}`}>{fmtDecHours(hours)}</span></td>
                         <td className="text-center py-3 text-gray-600">{worked > 0 ? `${worked}j` : '—'}</td>
                         <td className="text-center py-3">{cp > 0 ? <span className="text-sky-700 font-medium">{cp}j</span> : <span className="text-gray-300">—</span>}</td>
                         <td className="text-center py-3">{sick > 0 ? <span className="text-red-600 font-medium">{sick}j</span> : <span className="text-gray-300">—</span>}</td>
