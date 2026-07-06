@@ -14,6 +14,7 @@ export interface EmployeeProfile {
   contract_type: string
   contract_hours: number
   cp_initial: number
+  charges_patronales: number
   // Champs RH
   position: string | null
   hire_date: string | null
@@ -75,6 +76,7 @@ export default function EmployeeProfileModal({ employee, onClose, onSaved }: Pro
           contract_type:     form.contract_type,
           contract_hours:    form.contract_hours,
           cp_initial:        form.cp_initial,
+          charges_patronales: form.charges_patronales,
           position:          form.position || null,
           hire_date:         form.hire_date || null,
           contract_end_date: form.contract_end_date || null,
@@ -117,6 +119,9 @@ export default function EmployeeProfileModal({ employee, onClose, onSaved }: Pro
         return days
       })()
     : null
+
+  // Coût réel/h chargé
+  const coutCharge = form.hourly_rate * (1 + (form.charges_patronales ?? 45) / 100)
 
   return (
     <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -238,6 +243,23 @@ export default function EmployeeProfileModal({ employee, onClose, onSaved }: Pro
                   onChange={e => set('hourly_rate', parseFloat(e.target.value) || 0)}
                   className="h-9 text-sm"
                 />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Charges patronales (%)</label>
+                <Input
+                  type="number"
+                  min={0} max={100} step={0.5}
+                  value={form.charges_patronales}
+                  onChange={e => set('charges_patronales', parseFloat(e.target.value) || 45)}
+                  className="h-9 text-sm"
+                />
+              </div>
+              <div className="col-span-2">
+                <div className="flex items-center gap-2 bg-orange-50 border border-orange-100 rounded-lg px-3 py-2">
+                  <span className="text-xs text-orange-700">Coût réel employeur :</span>
+                  <span className="text-sm font-bold text-orange-800">{coutCharge.toFixed(2)} €/h chargé</span>
+                  <span className="text-xs text-orange-500 ml-auto">({form.hourly_rate.toFixed(2)} € brut × {(1 + (form.charges_patronales ?? 45) / 100).toFixed(2)})</span>
+                </div>
               </div>
               <div>
                 <label className="block text-xs text-gray-500 mb-1">CP initial (jours)</label>

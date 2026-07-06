@@ -3,42 +3,31 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Plus, ChevronLeft, ChevronRight, ChevronDown, Trash2, CalendarDays, FileDown, Copy, Clipboard, BarChart2, X, UserCog, Check } from 'lucide-react'
+import { Plus, ChevronLeft, ChevronRight, ChevronDown, Trash2, CalendarDays, FileDown, Copy, Clipboard, BarChart2, X, Clock, UserCog, Check } from 'lucide-react'
 import EmployeeProfileModal, { type EmployeeProfile } from '@/components/EmployeeProfileModal'
 
+// ─── Types ────────────────────────────────────────────────────────────────────
+
 type DayType = 'travail' | 'conges' | 'maladie' | 'repos'
-type WorkCategory = 'boucherie' | 'charcuterie' | 'traiteur' | 'vente'
-type DaySchedule = {
-  matin: number
-  apresMidi: number
-  category: WorkCategory | null
-  matinDebut: string
-  matinFin: string
-  apmDebut: string
-  apmFin: string
-}
-type ScheduleMap = Record<string, Partial<Record<JourDB, DaySchedule>>>
-
-const EMPTY_SCHED: DaySchedule = { matin: 0, apresMidi: 0, category: null, matinDebut: '', matinFin: '', apmDebut: '', apmFin: '' }
-
-const WORK_CATS: { key: WorkCategory; label: string }[] = [
-  { key: 'boucherie',   label: 'Boucherie'   },
-  { key: 'charcuterie', label: 'Charcuterie' },
-  { key: 'traiteur',    label: 'Traiteur'    },
-  { key: 'vente',       label: 'Vente'       },
-]
+type CategoryKey = 'boucherie' | 'charcuterie' | 'traiteur' | 'vente'
+type WorkCategory = CategoryKey
 
 const JOURS_SHORT = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim']
 const JOURS_DB = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche'] as const
 type JourDB = typeof JOURS_DB[number]
 
-const TYPE_CONFIG: Record<DayType, {
-  label: string; bg: string; text: string; dot: string; defaultHours: number; pdfColor: string; display: string
-}> = {
-  travail: { label: 'Travail',        bg: '',            text: '',              dot: '',           defaultHours: 0, pdfColor: '',        display: '' },
-  conges:  { label: 'Congé payé',    bg: 'bg-sky-100',  text: 'text-sky-800',  dot: 'bg-sky-400', defaultHours: 7, pdfColor: '#bae6fd', display: '7h' },
-  maladie: { label: 'Arrêt maladie', bg: 'bg-red-100',  text: 'text-red-800',  dot: 'bg-red-400', defaultHours: 0, pdfColor: '#fecaca', display: 'AM' },
-  repos:   { label: 'Repos',          bg: 'bg-gray-100', text: 'text-gray-400', dot: 'bg-gray-300', defaultHours: 0, pdfColor: '#f3f4f6', display: '—' },
+const CATEGORIES: Record<CategoryKey, { label: string; hex: string; light: string; textCss: string; dotCss: string; bgCss: string }> = {
+  boucherie:   { label: 'Boucherie',   hex: '#ef4444', light: '#fee2e2', textCss: 'text-red-700',    dotCss: 'bg-red-500',    bgCss: 'bg-red-100'    },
+  charcuterie: { label: 'Charcuterie', hex: '#a855f7', light: '#f3e8ff', textCss: 'text-purple-700', dotCss: 'bg-purple-500', bgCss: 'bg-purple-100' },
+  traiteur:    { label: 'Traiteur',    hex: '#f97316', light: '#ffedd5', textCss: 'text-orange-700', dotCss: 'bg-orange-500', bgCss: 'bg-orange-100' },
+  vente:       { label: 'Vente',       hex: '#14b8a6', light: '#ccfbf1', textCss: 'text-teal-700',   dotCss: 'bg-teal-500',   bgCss: 'bg-teal-100'   },
+}
+
+const TYPE_CONFIG: Record<DayType, { label: string; bg: string; text: string; dot: string; defaultHours: number; pdfColor: string; display: string }> = {
+  travail: { label: 'Travail',        bg: '',            text: '',              dot: '',            defaultHours: 0, pdfColor: '',        display: '' },
+  conges:  { label: 'Congé payé',    bg: 'bg-sky-100',  text: 'text-sky-800',  dot: 'bg-sky-400',  defaultHours: 7, pdfColor: '#bae6fd', display: '7h' },
+  maladie: { label: 'Arrêt maladie', bg: 'bg-red-100',  text: 'text-red-800',  dot: 'bg-red-400',  defaultHours: 0, pdfColor: '#fecaca', display: 'AM' },
+  repos:   { label: 'Repos',         bg: 'bg-gray-100', text: 'text-gray-400', dot: 'bg-gray-300', defaultHours: 0, pdfColor: '#f3f4f6', display: '—'  },
 }
 
 const CONTRACT_TYPES = [
@@ -63,54 +52,38 @@ const EMP_PALETTES = [
 type Employee = {
   id: string; name: string; hourly_rate: number
   contract_hours: number; contract_type: string
-  cp_initial?: number; created_at: string
-  position?: string | null; hire_date?: string | null; contract_end_date?: string | null
-  phone?: string | null; email?: string | null; notes?: string | null; is_minor?: boolean
+  cp_initial?: number; charges_patronales?: number; created_at: string
 }
+
+type DaySchedule = {
+  am_start?: string; am_end?: string; am_category?: CategoryKey
+  pm_start?: string; pm_end?: string; pm_category?: CategoryKey
+}
+type ScheduleDetails = Partial<Record<JourDB, DaySchedule>>
+
 type PlanningEntry = {
   id?: string; employee_id: string; week_number: number; year: number
-  lundi: number; lundi_type: DayType; mardi: number; mardi_type: DayType
-  mercredi: number; mercredi_type: DayType; jeudi: number; jeudi_type: DayType
-  vendredi: number; vendredi_type: DayType; samedi: number; samedi_type: DayType
+  lundi: number; lundi_type: DayType
+  mardi: number; mardi_type: DayType
+  mercredi: number; mercredi_type: DayType
+  jeudi: number; jeudi_type: DayType
+  vendredi: number; vendredi_type: DayType
+  samedi: number; samedi_type: DayType
   dimanche: number; dimanche_type: DayType
+  schedule_details?: ScheduleDetails
 }
 type EntriesMap = Record<string, PlanningEntry>
 type MonthlyStat = { emp: Employee; hours: number; cost: number; worked: number; cp: number; sick: number }
 
-type SelectedCell = {
-  empId: string; jour: JourDB
-  x: number; y: number; openUp: boolean
+type ScheduleModal = {
+  empId: string; jour: JourDB; empName: string; jourLabel: string
+  type: DayType
+  am_start: string; am_end: string; am_category: CategoryKey | ''
+  pm_start: string; pm_end: string; pm_category: CategoryKey | ''
+  manualHours: string
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function timeDiff(start: string, end: string): number {
-  if (!start || !end) return 0
-  const [sh, sm] = start.split(':').map(Number)
-  const [eh, em] = end.split(':').map(Number)
-  const diff = (eh * 60 + em) - (sh * 60 + sm)
-  return Math.max(0, diff / 60)
-}
-
-function fmtDecHours(h: number): string {
-  if (h === 0) return '0h'
-  const totalMin = Math.round(h * 60)
-  const hrs = Math.floor(totalMin / 60)
-  const mins = totalMin % 60
-  return mins === 0 ? `${hrs}h` : `${hrs}h${mins.toString().padStart(2, '0')}`
-}
-
-function fmtTime(t: string): string {
-  if (!t) return ''
-  const [h, m] = t.split(':')
-  return m === '00' ? `${parseInt(h)}h` : `${parseInt(h)}h${m}`
-}
-
-function fmtRange(start: string, end: string): string {
-  if (!start && !end) return ''
-  if (!start || !end) return fmtTime(start || end)
-  return `${fmtTime(start)}-${fmtTime(end)}`
-}
 
 function getISOWeek(date: Date) {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
@@ -185,15 +158,31 @@ function contractLabel(ct: string | undefined) {
   return CONTRACT_TYPES.find(c => c.key === ct)?.short ?? (ct ?? 'CDI 35h')
 }
 
-function getContractHours(emp: Employee): number {
-  const def = CONTRACT_TYPES.find(c => c.key === emp.contract_type)
-  return def?.hours ?? emp.contract_hours ?? 35
+function parseTimeH(t?: string): number {
+  if (!t) return 0
+  const [h, m] = t.split(':').map(Number)
+  return h + (m || 0) / 60
+}
+
+function scheduleHours(sched?: DaySchedule): number {
+  if (!sched) return 0
+  const am = sched.am_start && sched.am_end ? Math.max(0, parseTimeH(sched.am_end) - parseTimeH(sched.am_start)) : 0
+  const pm = sched.pm_start && sched.pm_end ? Math.max(0, parseTimeH(sched.pm_end) - parseTimeH(sched.pm_start)) : 0
+  return am + pm
+}
+
+function formatTime(t?: string) {
+  if (!t) return ''
+  return t.replace(':00', 'h').replace(':', 'h')
 }
 
 function calcTotalH(entry: PlanningEntry) {
   return JOURS_DB.reduce((s, j) => {
     const t = (entry[`${j}_type` as keyof PlanningEntry] as DayType) || 'travail'
-    return s + (t === 'travail' ? (entry[j] || 0) : t === 'conges' ? 7 : 0)
+    if (t === 'conges') return s + 7
+    if (t !== 'travail') return s
+    const sh = scheduleHours(entry.schedule_details?.[j])
+    return s + (sh > 0 ? sh : (entry[j] || 0))
   }, 0)
 }
 
@@ -203,6 +192,63 @@ function calcCost(entry: PlanningEntry, rate: number, contractH: number) {
   if (totalH <= contractH) return totalH * rate
   if (totalH <= t2) return contractH * rate + (totalH - contractH) * rate * 1.25
   return contractH * rate + (t2 - contractH) * rate * 1.25 + (totalH - t2) * rate * 1.5
+}
+
+function calcCostFull(totalH: number, rate: number, contractH: number, chargesPct: number = 45) {
+  const t2 = contractH + 8
+  let brut: number
+  if (totalH <= contractH)     brut = totalH * rate
+  else if (totalH <= t2)       brut = contractH * rate + (totalH - contractH) * rate * 1.25
+  else                         brut = contractH * rate + 8 * rate * 1.25 + (totalH - t2) * rate * 1.5
+  return { brut, charge: brut * (1 + chargesPct / 100) }
+}
+
+// ─── CCN Boucherie-Charcuterie (IDCC 992) ────────────────────────────────────
+// Dimanche travaillé : +20 %
+// Jour férié travaillé : +100 % (salaire doublé)
+// Travail de nuit (avant 6h ou après 21h) : +25 %
+
+type CostDetails = { total: number; dimanche: number; ferie: number; nuit: number }
+
+function calcCostCCN(
+  entry: PlanningEntry,
+  rate: number,
+  contractH: number,
+  wDates: Date[],
+  hols: Map<string, string>
+): CostDetails {
+  const base = calcCost(entry, rate, contractH)
+  let dimanche = 0, ferie = 0, nuit = 0
+
+  JOURS_DB.forEach((jour, idx) => {
+    const type = (entry[`${jour}_type` as keyof PlanningEntry] as DayType) || 'travail'
+    if (type !== 'travail') return
+    const sched = entry.schedule_details?.[jour]
+    const dayH  = scheduleHours(sched) || ((entry[jour as keyof PlanningEntry] as number) || 0)
+    if (!dayH) return
+
+    const dateStr = wDates[idx]?.toISOString().slice(0, 10) ?? ''
+    const isFerie = hols.has(dateStr)
+
+    if (isFerie) {
+      ferie += dayH * rate               // +100 % : salaire doublé (on ajoute 1×)
+    } else if (jour === 'dimanche') {
+      dimanche += dayH * rate * 0.20     // +20 % dimanche
+    }
+
+    // Nuit : heures avant 6h00
+    if (sched?.am_start && parseTimeH(sched.am_start) < 6) {
+      const endH = sched.am_end ? Math.min(6, parseTimeH(sched.am_end)) : 6
+      nuit += Math.max(0, endH - parseTimeH(sched.am_start)) * rate * 0.25
+    }
+    // Nuit : heures après 21h00
+    if (sched?.pm_end && parseTimeH(sched.pm_end) > 21) {
+      const startH = sched.pm_start ? Math.max(21, parseTimeH(sched.pm_start)) : 21
+      nuit += Math.max(0, parseTimeH(sched.pm_end) - startH) * rate * 0.25
+    }
+  })
+
+  return { total: base + dimanche + ferie + nuit, dimanche, ferie, nuit }
 }
 
 function emptyEntry(empId: string, week: number, year: number): PlanningEntry {
@@ -219,6 +265,14 @@ function initials(name: string) {
   return name.split(' ').map(p => p[0]).join('').toUpperCase().slice(0, 2)
 }
 
+function modalHours(m: ScheduleModal): number {
+  const am = m.am_start && m.am_end ? Math.max(0, parseTimeH(m.am_end) - parseTimeH(m.am_start)) : 0
+  const pm = m.pm_start && m.pm_end ? Math.max(0, parseTimeH(m.pm_end) - parseTimeH(m.pm_start)) : 0
+  const fromTimes = am + pm
+  if (fromTimes > 0) return fromTimes
+  return parseFloat(m.manualHours) || 0
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function PlanningPage() {
@@ -228,27 +282,22 @@ export default function PlanningPage() {
   const [employees, setEmployees] = useState<Employee[]>([])
   const [entries, setEntries]     = useState<EntriesMap>({})
   const entriesRef = useRef<EntriesMap>({})
-  const [schedMap, setSchedMap]   = useState<ScheduleMap>({})
-  const schedMapRef = useRef<ScheduleMap>({})
-
-  const [selectedCell,    setSelectedCell]    = useState<SelectedCell | null>(null)
-  const [typeDropCell,    setTypeDropCell]     = useState<{ empId: string; jour: JourDB } | null>(null)
-  const [contractPopover, setContractPopover]  = useState<string | null>(null)
-  const [copiedSched,     setCopiedSched]      = useState<DaySchedule | null>(null)
-
+  const [contractPopover, setContractPopover] = useState<string | null>(null)
+  const [scheduleModal, setScheduleModal]     = useState<ScheduleModal | null>(null)
   const [loadingEmployees, setLoadingEmployees] = useState(true)
-  const [showAdd,        setShowAdd]        = useState(false)
-  const [newName,        setNewName]        = useState('')
-  const [newRate,        setNewRate]        = useState('')
+  const [showAdd,     setShowAdd]     = useState(false)
+  const [newName,     setNewName]     = useState('')
+  const [newRate,     setNewRate]     = useState('')
   const [newContractKey, setNewContractKey] = useState<ContractKey>('CDI_35')
-  const [adding,         setAdding]         = useState(false)
-  const [pageError,      setPageError]      = useState<string | null>(null)
-  const [copying,        setCopying]        = useState(false)
-  const [cpUsed,         setCpUsed]         = useState<Record<string, number>>({})
+  const [adding,      setAdding]      = useState(false)
+  const [pageError,   setPageError]   = useState<string | null>(null)
+  const [copying,     setCopying]     = useState(false)
+  const [profileModal, setProfileModal] = useState<EmployeeProfile | null>(null)
+  const [copiedCell, setCopiedCell]     = useState<{ empId: string; jour: JourDB } | null>(null)
+  const [cpUsed,      setCpUsed]      = useState<Record<string, number>>({})
   const [showMonthly,    setShowMonthly]    = useState(false)
   const [monthlyData,    setMonthlyData]    = useState<MonthlyStat[] | null>(null)
   const [loadingMonthly, setLoadingMonthly] = useState(false)
-  const [profileEmp,     setProfileEmp]     = useState<EmployeeProfile | null>(null)
 
   const { week: cw, year: cy } = getISOWeek(new Date())
   const isCurrentWeek = week === cw && year === cy
@@ -257,29 +306,16 @@ export default function PlanningPage() {
   const holidays      = getFrenchHolidays(year)
   const weekHolidays  = weekDates.map(d => holidays.get(d.toISOString().slice(0, 10)) ?? null)
 
-  // ─── Date range label for nav ───────────────────────────────────────────────
-  const fmtShort = (d: Date) => d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', timeZone: 'UTC' })
-  const weekRangeLabel = `${fmtShort(weekDates[0])} – ${fmtShort(weekDates[6])}`
-
   const setEntriesSync = (updater: (prev: EntriesMap) => EntriesMap) => {
-    setEntries(prev => { const next = updater(prev); entriesRef.current = next; return next })
-  }
-  const setSchedMapSync = (updater: (prev: ScheduleMap) => ScheduleMap) => {
-    setSchedMap(prev => { const next = updater(prev); schedMapRef.current = next; return next })
-  }
-
-  function getSched(empId: string, jour: JourDB): DaySchedule {
-    return schedMapRef.current[empId]?.[jour] ?? { ...EMPTY_SCHED }
+    setEntries(prev => {
+      const next = updater(prev)
+      entriesRef.current = next
+      return next
+    })
   }
 
   useEffect(() => {
-    const close = (e: MouseEvent) => {
-      if (!(e.target as Element).closest('[data-cell]')) {
-        setSelectedCell(null)
-        setTypeDropCell(null)
-        setContractPopover(null)
-      }
-    }
+    const close = () => { setContractPopover(null) }
     document.addEventListener('click', close)
     return () => document.removeEventListener('click', close)
   }, [])
@@ -294,8 +330,7 @@ export default function PlanningPage() {
 
   const refreshCpUsed = useCallback(() => {
     fetch(`/api/planning/stats?year=${year}`)
-      .then(r => r.json())
-      .then(data => {
+      .then(r => r.json()).then(data => {
         if (Array.isArray(data)) {
           const map: Record<string, number> = {}
           for (const { employee_id, cp_used } of data) map[employee_id] = cp_used
@@ -310,13 +345,8 @@ export default function PlanningPage() {
     fetch(`/api/planning?week=${week}&year=${year}`).then(r => r.json()).then(data => {
       if (Array.isArray(data)) {
         const map: EntriesMap = {}
-        const smap: ScheduleMap = {}
-        for (const e of data) {
-          map[e.employee_id] = e
-          if (e.schedule_details) smap[e.employee_id] = e.schedule_details as Partial<Record<JourDB, DaySchedule>>
-        }
+        for (const e of data) map[e.employee_id] = e
         setEntries(map); entriesRef.current = map
-        setSchedMap(smap); schedMapRef.current = smap
       }
     })
   }, [week, year])
@@ -327,10 +357,9 @@ export default function PlanningPage() {
   function getEntryState(empId: string) { return entries[empId] ?? emptyEntry(empId, week, year) }
 
   async function saveEntryValues(empId: string, entry: PlanningEntry) {
-    const schedule_details = schedMapRef.current[empId] ?? {}
     await fetch('/api/planning', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...entry, employee_id: empId, week_number: week, year, schedule_details }),
+      body: JSON.stringify({ ...entry, employee_id: empId, week_number: week, year }),
     })
   }
 
@@ -344,65 +373,54 @@ export default function PlanningPage() {
     })
   }
 
-  async function changeType(empId: string, jour: JourDB, newType: DayType) {
-    const typeKey = `${jour}_type` as keyof PlanningEntry
-    const currentH = getEntry(empId)[jour] || 0
-    const updated: PlanningEntry = {
-      ...getEntry(empId), [typeKey]: newType,
-      [jour]: newType === 'travail' ? currentH : TYPE_CONFIG[newType].defaultHours,
-    }
-    if (newType !== 'travail') {
-      setSchedMapSync(prev => {
-        const empSched = { ...prev[empId] }
-        delete empSched[jour]
-        return { ...prev, [empId]: empSched }
-      })
-    }
-    setEntriesSync(prev => ({ ...prev, [empId]: updated }))
-    setSelectedCell(null); setTypeDropCell(null)
-    await saveEntryValues(empId, updated)
-    refreshCpUsed()
-  }
-
-  function updateTimeRange(empId: string, jour: JourDB, field: 'matinDebut' | 'matinFin' | 'apmDebut' | 'apmFin', value: string) {
-    const current = getSched(empId, jour)
-    const updated = { ...current, [field]: value }
-    const matinH = timeDiff(updated.matinDebut, updated.matinFin)
-    const apmH   = timeDiff(updated.apmDebut,   updated.apmFin)
-    updated.matin = matinH; updated.apresMidi = apmH
-    setSchedMapSync(prev => ({ ...prev, [empId]: { ...prev[empId], [jour]: updated } }))
-    setEntriesSync(prev => ({ ...prev, [empId]: { ...getEntry(empId), [jour]: matinH + apmH } }))
-  }
-
-  async function updateCategory(empId: string, jour: JourDB, category: WorkCategory | null) {
-    const current = getSched(empId, jour)
-    setSchedMapSync(prev => ({ ...prev, [empId]: { ...prev[empId], [jour]: { ...current, category } } }))
-    await saveEntryValues(empId, entriesRef.current[empId] ?? emptyEntry(empId, week, year))
-  }
-
-  function saveDay(empId: string) {
-    saveEntryValues(empId, entriesRef.current[empId] ?? emptyEntry(empId, week, year))
-  }
-
-  function copySchedule(empId: string, jour: JourDB) {
-    const sched = getSched(empId, jour)
-    const hasData = sched.matinDebut || sched.matinFin || sched.apmDebut || sched.apmFin || sched.category
-    if (hasData) setCopiedSched({ ...sched })
-  }
-
-  async function pasteSchedule(empId: string, jour: JourDB) {
-    if (!copiedSched) return
-    const matinH = timeDiff(copiedSched.matinDebut, copiedSched.matinFin)
-    const apmH   = timeDiff(copiedSched.apmDebut,   copiedSched.apmFin)
-    const pasted: DaySchedule = { ...copiedSched, matin: matinH, apresMidi: apmH }
-    setSchedMapSync(prev => ({ ...prev, [empId]: { ...prev[empId], [jour]: pasted } }))
-    const newEntry = { ...getEntry(empId), [jour]: matinH + apmH }
-    setEntriesSync(prev => ({ ...prev, [empId]: newEntry }))
-    const schedule_details = { ...schedMapRef.current[empId], [jour]: pasted }
-    await fetch('/api/planning', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...newEntry, employee_id: empId, week_number: week, year, schedule_details }),
+  function openModal(emp: Employee, jour: JourDB, jourIdx: number) {
+    const entry = getEntry(emp.id)
+    const sched = entry.schedule_details?.[jour] ?? {}
+    const type  = (entry[`${jour}_type` as keyof PlanningEntry] as DayType) || (jourIdx >= 5 ? 'repos' : 'travail')
+    setScheduleModal({
+      empId: emp.id, jour,
+      empName: emp.name,
+      jourLabel: `${JOURS_SHORT[jourIdx]} ${weekDates[jourIdx].getUTCDate()}`,
+      type,
+      am_start: sched.am_start ?? '',
+      am_end:   sched.am_end   ?? '',
+      am_category: sched.am_category ?? '',
+      pm_start: sched.pm_start ?? '',
+      pm_end:   sched.pm_end   ?? '',
+      pm_category: sched.pm_category ?? '',
+      manualHours: String(entry[jour] || ''),
     })
+  }
+
+  function saveModal() {
+    if (!scheduleModal) return
+    const { empId, jour } = scheduleModal
+    const typeKey = `${jour}_type` as keyof PlanningEntry
+    const totalH  = modalHours(scheduleModal)
+
+    const newSched: DaySchedule = {
+      am_start:    scheduleModal.am_start    || undefined,
+      am_end:      scheduleModal.am_end      || undefined,
+      am_category: (scheduleModal.am_category as CategoryKey) || undefined,
+      pm_start:    scheduleModal.pm_start    || undefined,
+      pm_end:      scheduleModal.pm_end      || undefined,
+      pm_category: (scheduleModal.pm_category as CategoryKey) || undefined,
+    }
+
+    const prev = getEntry(empId)
+    const updated: PlanningEntry = {
+      ...prev,
+      [typeKey]: scheduleModal.type,
+      [jour]: scheduleModal.type === 'travail' ? totalH : TYPE_CONFIG[scheduleModal.type].defaultHours,
+      schedule_details: {
+        ...(prev.schedule_details ?? {}),
+        [jour]: newSched,
+      },
+    }
+
+    setEntriesSync(p => ({ ...p, [empId]: updated }))
+    setScheduleModal(null)
+    saveEntryValues(empId, updated).then(() => refreshCpUsed())
   }
 
   async function addEmployee() {
@@ -414,10 +432,7 @@ export default function PlanningPage() {
       body: JSON.stringify({ name: newName.trim(), hourly_rate: parseFloat(newRate), contract_type: ct.key, contract_hours: ct.hours }),
     })
     const data = await res.json()
-    if (data.id) {
-      setEmployees(p => [...p, data])
-      setNewName(''); setNewRate(''); setNewContractKey('CDI_35'); setShowAdd(false)
-    }
+    if (data.id) { setEmployees(p => [...p, data]); setNewName(''); setNewRate(''); setNewContractKey('CDI_35'); setShowAdd(false) }
     setAdding(false)
   }
 
@@ -441,8 +456,7 @@ export default function PlanningPage() {
       const data = await res.json()
       if (!Array.isArray(data) || data.length === 0) return
       for (const entry of data) {
-        const entryData = { ...entry }
-        delete entryData.id
+        const entryData = { ...entry }; delete entryData.id
         await fetch('/api/planning', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ ...entryData, week_number: week, year }),
@@ -459,18 +473,19 @@ export default function PlanningPage() {
     const weeks     = getWeeksInMonth(monthYear, month)
     try {
       const allResults = await Promise.all(
-        weeks.map(({ week: w, year: y }) => fetch(`/api/planning?week=${w}&year=${y}`).then(r => r.json()).catch(() => []))
+        weeks.map(({ week: w, year: y }) => fetch(`/api/planning?week=${w}&year=${y}`).then(r => r.json()).then(d => ({ d, w, y })).catch(() => ({ d: [], w, y })))
       )
       const stats: Record<string, { hours: number; cost: number; worked: number; cp: number; sick: number }> = {}
-      for (const weekEntries of allResults) {
+      for (const { d: weekEntries, w, y } of allResults) {
         if (!Array.isArray(weekEntries)) continue
         for (const entry of weekEntries) {
           if (!stats[entry.employee_id]) stats[entry.employee_id] = { hours: 0, cost: 0, worked: 0, cp: 0, sick: 0 }
           const emp = employees.find(e => e.id === entry.employee_id)
           if (!emp) continue
-          const ch = getContractHours(emp)
           stats[entry.employee_id].hours += calcTotalH(entry)
-          stats[entry.employee_id].cost  += calcCost(entry, Number(emp.hourly_rate), ch)
+          const _wDates = getWeekDates(w, y)
+          const _hols   = getFrenchHolidays(y)
+          stats[entry.employee_id].cost  += calcCostCCN(entry, Number(emp.hourly_rate), emp.contract_hours || 35, _wDates, _hols).total
           for (const jour of JOURS_DB) {
             const t = (entry[`${jour}_type`] as DayType) || 'travail'
             const h = (entry[jour] as number) || 0
@@ -485,12 +500,15 @@ export default function PlanningPage() {
   }
 
   const rowStats  = employees.map(emp => {
-    const e  = getEntryState(emp.id)
-    const ch = getContractHours(emp)
-    return { empId: emp.id, totalH: calcTotalH(e), cost: calcCost(e, Number(emp.hourly_rate), ch), ch }
+    const e      = getEntryState(emp.id)
+    const ch     = CONTRACT_TYPES.find(ct => ct.key === emp.contract_type)?.hours ?? emp.contract_hours ?? 35
+    const totalH = calcTotalH(e)
+    const ccn    = calcCostCCN(e, Number(emp.hourly_rate), ch, weekDates, holidays)
+    const { brut, charge } = calcCostFull(totalH, Number(emp.hourly_rate), ch, emp.charges_patronales ?? 45)
+    return { empId: emp.id, totalH, ch, brut, charge, dimanche: ccn.dimanche, ferie: ccn.ferie, nuit: ccn.nuit }
   })
   const grandH    = rowStats.reduce((s, r) => s + r.totalH, 0)
-  const grandCost = rowStats.reduce((s, r) => s + r.cost, 0)
+  const grandCost = rowStats.reduce((s, r) => s + r.brut, 0)
 
   function exportPDF() {
     const dates = getWeekDates(week, year)
@@ -503,169 +521,72 @@ export default function PlanningPage() {
     const empRows = employees.map((emp, i) => {
       const pal    = EMP_PALETTES[i % EMP_PALETTES.length]
       const entry  = getEntryState(emp.id)
-      const ch     = getContractHours(emp)
+      const ch     = emp.contract_hours || 35
+      const ccnCost = calcCostCCN(entry, Number(emp.hourly_rate), ch, dates, holidays)
       const totalH = calcTotalH(entry)
-      const cost   = calcCost(entry, Number(emp.hourly_rate), ch)
       const cells  = JOURS_DB.map((j, idx) => {
-        const type   = (entry[`${j}_type` as keyof PlanningEntry] as DayType) || (idx >= 5 ? 'repos' : 'travail')
-        const h      = entry[j] || 0
-        const fName  = weekHolidays[idx]
-        const sched  = schedMapRef.current[emp.id]?.[j]
-        const catLabel = sched?.category ? WORK_CATS.find(c => c.key === sched.category)?.label : null
-        const bg     = fName ? '#fef3c7' : type === 'travail' ? pal.lightHex : TYPE_CONFIG[type].pdfColor
-        const matinRange = sched ? fmtRange(sched.matinDebut, sched.matinFin) : ''
-        const apmRange   = sched ? fmtRange(sched.apmDebut,   sched.apmFin)   : ''
-        const label  = type === 'travail'
-          ? (h > 0
-            ? `${catLabel ? `<span style="font-size:8px;color:#64748b;font-weight:600;">${catLabel}</span><br>` : ''}${matinRange ? `<span style="font-size:8px;">${matinRange}</span><br>` : ''}${apmRange ? `<span style="font-size:8px;">${apmRange}</span><br>` : ''}<strong style="font-size:11px;">${fmtDecHours(h)}</strong>`
-            : '—')
-          : `<span style="font-size:9px;">${TYPE_CONFIG[type].label}</span>`
-        return `<td style="padding:5px 3px;text-align:center;background:${bg};border-bottom:1px solid #e2e8f0;border-right:1px solid #e2e8f0;">${label}${fName ? `<br><span style="font-size:8px;color:#92400e;">Férié</span>` : ''}</td>`
+        const type  = (entry[`${j}_type` as keyof PlanningEntry] as DayType) || (idx >= 5 ? 'repos' : 'travail')
+        const sched = entry.schedule_details?.[j]
+        const fName = weekHolidays[idx]
+        const bg    = fName ? '#fef3c7' : type === 'travail' ? pal.lightHex : TYPE_CONFIG[type].pdfColor
+        let content = ''
+        if (type === 'travail' && sched) {
+          const amCat = sched.am_category ? CATEGORIES[sched.am_category] : null
+          const pmCat = sched.pm_category ? CATEGORIES[sched.pm_category] : null
+          const amLine = sched.am_start ? `<div style="font-size:8px;${amCat ? `color:${amCat.hex};font-weight:bold;` : ''}">${amCat ? amCat.label : ''}${sched.am_start && sched.am_end ? ` ${formatTime(sched.am_start)}–${formatTime(sched.am_end)}` : ''}</div>` : ''
+          const pmLine = sched.pm_start ? `<div style="font-size:8px;${pmCat ? `color:${pmCat.hex};font-weight:bold;` : ''}">${pmCat ? pmCat.label : ''}${sched.pm_start && sched.pm_end ? ` ${formatTime(sched.pm_start)}–${formatTime(sched.pm_end)}` : ''}</div>` : ''
+          const h = scheduleHours(sched) || entry[j] || 0
+          content = `${amLine}${pmLine}<strong style="font-size:10px;">${h > 0 ? h.toFixed(1) + 'h' : '—'}</strong>`
+        } else if (type === 'travail') {
+          const h = entry[j] || 0
+          content = `<strong>${h > 0 ? h + 'h' : '—'}</strong>`
+        } else {
+          content = `<span style="font-size:9px;">${TYPE_CONFIG[type].label}</span>`
+        }
+        return `<td style="padding:5px 4px;text-align:center;background:${bg};border-bottom:1px solid #e2e8f0;border-right:1px solid #e2e8f0;">${content}${fName ? `<br><span style="font-size:8px;color:#92400e;">Férié</span>` : ''}</td>`
       }).join('')
       return `<tr>
         <td style="padding:7px 10px;border-bottom:1px solid #e2e8f0;border-left:3px solid ${pal.hex};background:#fafafa;">
           <div style="display:flex;align-items:center;gap:7px;">
             <div style="width:26px;height:26px;border-radius:50%;background:${pal.hex};display:flex;align-items:center;justify-content:center;"><span style="color:white;font-size:9px;font-weight:700;">${initials(emp.name)}</span></div>
-            <div><div style="font-weight:700;font-size:12px;">${emp.name}</div><div style="font-size:9px;color:#94a3b8;">${contractLabel(emp.contract_type)} · ${Number(emp.hourly_rate).toFixed(2)} €/h</div></div>
+            <div><div style="font-weight:700;font-size:12px;">${emp.name}</div><div style="font-size:9px;color:#94a3b8;">${contractLabel(emp.contract_type)}</div></div>
           </div>
         </td>${cells}
-        <td style="padding:6px;text-align:center;font-weight:700;font-size:12px;color:${totalH > ch ? '#ea580c' : '#1e293b'};background:#f8fafc;border-bottom:1px solid #e2e8f0;">${fmtDecHours(totalH)}</td>
-        <td style="padding:6px;text-align:center;font-weight:700;font-size:12px;color:#15803d;background:#f0fdf4;border-bottom:1px solid #e2e8f0;">${cost.toFixed(2)} €</td>
+        <td style="padding:6px;text-align:center;font-weight:700;font-size:12px;color:${totalH > ch ? '#ea580c' : '#1e293b'};background:#f8fafc;border-bottom:1px solid #e2e8f0;">${totalH.toFixed(1)}h</td>
+        <td style="padding:6px;text-align:center;border-bottom:1px solid #e2e8f0;min-width:80px;"></td>
       </tr>`
     }).join('')
     const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"><title>Planning S${week}</title>
 <style>@page{size:A4 landscape;margin:1.2cm 1.5cm}*{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial,sans-serif;color:#1e293b}table{width:100%;border-collapse:collapse}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}</style></head><body>
 <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:14px;padding-bottom:10px;border-bottom:2px solid #1E3A5F;">
   <div><div style="font-size:18px;font-weight:800;color:#1E3A5F;">Planning — Semaine ${week}</div><div style="font-size:11px;color:#64748b;margin-top:2px;">${getWeekLabel(week, year)}</div></div>
-  <div style="text-align:right;"><div style="font-size:10px;color:#64748b;">Coût main d'œuvre</div><div style="font-size:16px;font-weight:800;color:#15803d;">${grandCost.toFixed(2)} €</div></div>
+  <div style="display:flex;gap:16px;font-size:10px;color:#64748b;align-items:center;">
+    ${Object.entries(CATEGORIES).map(([, c]) => `<span style="display:inline-flex;align-items:center;gap:4px;"><span style="width:10px;height:10px;border-radius:2px;background:${c.hex};display:inline-block;"></span>${c.label}</span>`).join('')}
+  </div>
 </div>
-<table><thead><tr><th style="background:#1E3A5F;color:white;padding:7px 10px;font-size:10px;text-align:left;width:160px;">Employé</th>${dayHeaders}<th style="background:#1E3A5F;color:white;padding:7px 5px;font-size:10px;text-align:center;">Total</th><th style="background:#1E3A5F;color:white;padding:7px 5px;font-size:10px;text-align:center;">Coût</th></tr></thead><tbody>${empRows}</tbody></table>
-<p style="margin-top:10px;font-size:9px;color:#94a3b8;">CCN 992 : 35h → +25 % de 36–43h · 39h → +25 % de 40–47h · +50 % au-delà · Généré via PILOTE</p>
+<table><thead><tr>
+  <th style="background:#1E3A5F;color:white;padding:7px 10px;font-size:10px;text-align:left;width:150px;">Employé</th>
+  ${dayHeaders}
+  <th style="background:#1E3A5F;color:white;padding:7px 5px;font-size:10px;text-align:center;width:50px;">Total</th>
+  <th style="background:#1E3A5F;color:white;padding:7px 10px;font-size:10px;text-align:center;width:90px;">Signature</th>
+</tr></thead><tbody>${empRows}</tbody></table>
+<p style="margin-top:10px;font-size:9px;color:#94a3b8;">Seuils majoration : 35h → +25 % de 36–43h · 39h → +25 % de 40–47h · +50 % au-delà · CP = 7h/jour · Généré via PILOTE</p>
 </body></html>`
-    const win = window.open('', '_blank', 'width=1100,height=750')
+    const win = window.open('', '_blank', 'width=1200,height=800')
     if (!win) return
     win.document.write(html); win.document.close(); win.focus()
     setTimeout(() => win.print(), 600)
   }
 
-  // ─── Render ─────────────────────────────────────────────────────────────────
-
-  const activeEmp    = selectedCell ? employees.find(e => e.id === selectedCell.empId) : null
-  const activeEmpIdx = activeEmp ? employees.indexOf(activeEmp) : 0
-  const activePal    = EMP_PALETTES[activeEmpIdx % EMP_PALETTES.length]
-  const activeSched  = selectedCell ? getSched(selectedCell.empId, selectedCell.jour) : { ...EMPTY_SCHED }
-  const activeHasData = !!(activeSched.matinDebut || activeSched.matinFin || activeSched.apmDebut || activeSched.apmFin || activeSched.category)
-
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col">
+    <div className="min-h-screen bg-gray-50">
       <style>{`
-        input[type=time]::-webkit-calendar-picker-indicator { opacity: 0.5; cursor: pointer; }
-        input[type=time] { color: #0f172a !important; background-color: #ffffff !important; }
+        input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
+        input[type=number]{-moz-appearance:textfield}
+        input[type=time]{color-scheme:light}
       `}</style>
 
-      {/* ── Popover détail (position:fixed) ── */}
-      {selectedCell && activeEmp && (
-        <div
-          style={{
-            position: 'fixed',
-            left: selectedCell.x,
-            ...(selectedCell.openUp
-              ? { bottom: window.innerHeight - selectedCell.y + 8 }
-              : { top: selectedCell.y + 8 }),
-            zIndex: 99999,
-            width: '288px',
-          }}
-          className="bg-white rounded-xl shadow-2xl border border-gray-100 p-3"
-          data-cell="true"
-          onClick={e => e.stopPropagation()}
-        >
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Poste</p>
-            {activeHasData && (
-              <button
-                onClick={() => { copySchedule(selectedCell.empId, selectedCell.jour); setSelectedCell(null) }}
-                className="flex items-center gap-1 text-[10px] font-medium text-gray-500 hover:text-[#1E3A5F] px-1.5 py-0.5 rounded hover:bg-gray-100 transition-colors"
-              >
-                <Copy className="w-3 h-3" />
-                Copier
-              </button>
-            )}
-          </div>
-          <div className="grid grid-cols-2 gap-1 mb-3">
-            {WORK_CATS.map(cat => {
-              const isActive = activeSched.category === cat.key
-              return (
-                <button key={cat.key}
-                  onClick={() => updateCategory(selectedCell.empId, selectedCell.jour, isActive ? null : cat.key)}
-                  className={`px-2 py-1.5 rounded-lg text-xs font-medium transition-all text-center ${
-                    isActive ? 'bg-[#1E3A5F] text-white shadow-sm' : 'bg-gray-50 hover:bg-gray-100 text-gray-600 border border-gray-200'
-                  }`}
-                >
-                  {cat.label}
-                </button>
-              )
-            })}
-          </div>
-          <div className="border-t border-gray-100 pt-2.5 space-y-3">
-            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Horaires</p>
-            <div>
-              <p className="text-xs font-medium text-gray-600 mb-1.5">Matin</p>
-              <div className="flex items-center gap-2">
-                <input type="time" value={activeSched.matinDebut}
-                  onChange={e => updateTimeRange(selectedCell.empId, selectedCell.jour, 'matinDebut', e.target.value)}
-                  className="flex-1 text-sm text-gray-900 border border-gray-300 bg-white rounded-lg px-2 py-1.5 focus:outline-none focus:border-[#1E3A5F] focus:ring-1 focus:ring-[#1E3A5F]/20"
-                />
-                <span className="text-gray-400 text-sm font-medium flex-shrink-0">→</span>
-                <input type="time" value={activeSched.matinFin}
-                  onChange={e => updateTimeRange(selectedCell.empId, selectedCell.jour, 'matinFin', e.target.value)}
-                  className="flex-1 text-sm text-gray-900 border border-gray-300 bg-white rounded-lg px-2 py-1.5 focus:outline-none focus:border-[#1E3A5F] focus:ring-1 focus:ring-[#1E3A5F]/20"
-                />
-                {activeSched.matinDebut && activeSched.matinFin && (
-                  <span className={`text-xs font-bold w-10 text-right flex-shrink-0 ${activePal.text}`}>
-                    {fmtDecHours(timeDiff(activeSched.matinDebut, activeSched.matinFin))}
-                  </span>
-                )}
-              </div>
-            </div>
-            <div>
-              <p className="text-xs font-medium text-gray-600 mb-1.5">Après-midi</p>
-              <div className="flex items-center gap-2">
-                <input type="time" value={activeSched.apmDebut}
-                  onChange={e => updateTimeRange(selectedCell.empId, selectedCell.jour, 'apmDebut', e.target.value)}
-                  className="flex-1 text-sm text-gray-900 border border-gray-300 bg-white rounded-lg px-2 py-1.5 focus:outline-none focus:border-[#1E3A5F] focus:ring-1 focus:ring-[#1E3A5F]/20"
-                />
-                <span className="text-gray-400 text-sm font-medium flex-shrink-0">→</span>
-                <input type="time" value={activeSched.apmFin}
-                  onChange={e => updateTimeRange(selectedCell.empId, selectedCell.jour, 'apmFin', e.target.value)}
-                  className="flex-1 text-sm text-gray-900 border border-gray-300 bg-white rounded-lg px-2 py-1.5 focus:outline-none focus:border-[#1E3A5F] focus:ring-1 focus:ring-[#1E3A5F]/20"
-                />
-                {activeSched.apmDebut && activeSched.apmFin && (
-                  <span className={`text-xs font-bold w-10 text-right flex-shrink-0 ${activePal.text}`}>
-                    {fmtDecHours(timeDiff(activeSched.apmDebut, activeSched.apmFin))}
-                  </span>
-                )}
-              </div>
-            </div>
-            {(activeSched.matin > 0 || activeSched.apresMidi > 0) && (
-              <div className="flex items-center justify-between pt-1.5 border-t border-gray-100">
-                <span className="text-xs text-gray-400">Total journée</span>
-                <span className={`text-sm font-bold ${activePal.text}`}>
-                  {fmtDecHours(activeSched.matin + activeSched.apresMidi)}
-                </span>
-              </div>
-            )}
-            <button
-              onClick={() => { saveDay(selectedCell.empId); setSelectedCell(null) }}
-              className="w-full flex items-center justify-center gap-2 bg-[#1E3A5F] hover:bg-[#2a4f7c] text-white rounded-xl py-2.5 font-semibold text-sm transition-colors mt-1"
-            >
-              <Check className="w-4 h-4" />
-              Valider
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* ── Header ── */}
+      {/* Header */}
       <div className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-2.5">
           <CalendarDays className="w-5 h-5 text-[#1E3A5F]" />
@@ -678,7 +599,7 @@ export default function PlanningPage() {
                 <BarChart2 className="w-3.5 h-3.5 mr-1.5" />Récap du mois
               </Button>
               <Button onClick={exportPDF} variant="outline" className="h-8 text-sm px-3 border-[#1E3A5F] text-[#1E3A5F] hover:bg-blue-50">
-                <FileDown className="w-3.5 h-3.5 mr-1.5" />Enregistrer en PDF
+                <FileDown className="w-3.5 h-3.5 mr-1.5" />PDF
               </Button>
             </>
           )}
@@ -688,70 +609,74 @@ export default function PlanningPage() {
         </div>
       </div>
 
-      {/* ── Week nav ── */}
+      {/* Week nav */}
       <div className="bg-white border-b border-gray-100 px-6 py-2.5 flex items-center gap-3">
         <button onClick={prevWeek} className="p-1.5 rounded hover:bg-gray-100"><ChevronLeft className="w-4 h-4 text-gray-500" /></button>
         <div className="flex items-center gap-2">
           <span className="font-semibold text-gray-900 text-sm">Semaine {week}</span>
-          <span className="text-gray-300 text-sm">·</span>
-          <span className="text-xs text-gray-500">{weekRangeLabel}</span>
           {isCurrentWeek && <span className="text-[10px] bg-[#1E3A5F] text-white px-1.5 py-0.5 rounded font-medium">Actuelle</span>}
         </div>
         <button onClick={nextWeek} className="p-1.5 rounded hover:bg-gray-100"><ChevronRight className="w-4 h-4 text-gray-500" /></button>
         {!isCurrentWeek && (
           <button onClick={() => { setWeek(cw); setYear(cy) }} className="text-xs text-[#1E3A5F] hover:underline">← Semaine actuelle</button>
         )}
-        <button
-          onClick={copyPrevWeek} disabled={copying}
-          className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-800 border border-gray-200 rounded-md px-2.5 py-1 hover:bg-gray-50 transition-colors disabled:opacity-40"
-        >
+        <button onClick={copyPrevWeek} disabled={copying}
+          className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-800 border border-gray-200 rounded-md px-2.5 py-1 hover:bg-gray-50 disabled:opacity-40">
           <Copy className="w-3 h-3" />
           {copying ? 'Copie...' : `Copier S${week === 1 ? 52 : week - 1}`}
         </button>
-        {copiedSched && (
-          <div className="flex items-center gap-1.5 text-xs bg-violet-50 border border-violet-200 text-violet-700 rounded-full px-2.5 py-1 animate-pulse">
-            <Clipboard className="w-3 h-3 flex-shrink-0" />
-            <span>Horaires copiés — cliquez une cellule pour coller</span>
-            <button onClick={() => setCopiedSched(null)} className="hover:text-violet-900 ml-0.5">
-              <X className="w-3 h-3" />
-            </button>
-          </div>
-        )}
         <div className="ml-auto flex items-center gap-4 text-xs text-gray-400">
-          <span><span className="font-semibold text-gray-700">{fmtDecHours(grandH)}</span> total</span>
-          <span><span className="font-semibold text-green-700">{grandCost.toFixed(2)} €</span> coût</span>
+          <span><span className="font-semibold text-gray-700">{grandH.toFixed(1)}h</span> total</span>
+          <span><span className="font-semibold text-green-700">{grandCost.toFixed(0)} € brut</span> / <span className="font-semibold text-orange-600">{rowStats.reduce((s, r) => s + r.charge, 0).toFixed(0)} € chargé</span></span>
         </div>
+      </div>
+
+      {/* Legend */}
+      <div className="bg-white border-b border-gray-100 px-6 py-2 flex items-center gap-5 flex-wrap">
+        <span className="text-xs font-medium text-gray-400">Types :</span>
+        {[
+          { label: 'Travail', dot: 'bg-violet-400' },
+          { label: 'Congé payé', dot: 'bg-sky-400' },
+          { label: 'Arrêt maladie', dot: 'bg-red-400' },
+          { label: 'Repos', dot: 'bg-gray-300' },
+          { label: 'Jour férié', dot: 'bg-amber-400' },
+        ].map(t => (
+          <div key={t.label} className="flex items-center gap-1.5">
+            <div className={`w-2.5 h-2.5 rounded-sm ${t.dot}`} /><span className="text-xs text-gray-600">{t.label}</span>
+          </div>
+        ))}
+        <span className="text-xs font-medium text-gray-400 ml-4">Catégories :</span>
+        {(Object.entries(CATEGORIES) as [CategoryKey, typeof CATEGORIES[CategoryKey]][]).map(([k, c]) => (
+          <div key={k} className="flex items-center gap-1.5">
+            <div className="w-2.5 h-2.5 rounded-sm" style={{ background: c.hex }} />
+            <span className="text-xs text-gray-600">{c.label}</span>
+          </div>
+        ))}
       </div>
 
       {pageError && <div className="mx-6 mt-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">{pageError}</div>}
 
-      {/* ── Grid ── */}
-      <div className="flex-1 overflow-x-auto pb-12">
-        <table className="w-full min-w-[860px] border-collapse">
+      {/* Grid */}
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[900px] border-collapse">
           <thead>
             <tr className="bg-white">
               <th className="w-52 px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider sticky left-0 bg-white z-10 border-b border-r border-gray-200">Employé</th>
               {weekDates.map((date, i) => {
                 const isToday = date.getUTCDate() === today.getDate() && date.getUTCMonth() === today.getMonth() && date.getUTCFullYear() === today.getFullYear()
-                const isWE    = i >= 5
-                const fName   = weekHolidays[i]
+                const isWE  = i >= 5
+                const fName = weekHolidays[i]
                 return (
-                  <th key={i} className={`px-2 py-2 text-center min-w-[108px] border-b border-r border-gray-200 ${
-                    isToday ? 'bg-[#1E3A5F]' : fName ? 'bg-amber-50' : isWE ? 'bg-gray-50' : 'bg-white'
-                  }`}>
+                  <th key={i} className={`px-2 py-2 text-center min-w-[120px] border-b border-r border-gray-200 ${isToday ? 'bg-[#1E3A5F]' : fName ? 'bg-amber-50' : isWE ? 'bg-gray-50' : 'bg-white'}`}>
                     <div className={`text-xs font-bold uppercase tracking-wide ${isToday ? 'text-white' : fName ? 'text-amber-700' : isWE ? 'text-gray-400' : 'text-gray-500'}`}>{JOURS_SHORT[i]}</div>
                     <div className={`text-lg font-bold ${isToday ? 'text-white' : fName ? 'text-amber-800' : isWE ? 'text-gray-300' : 'text-gray-800'}`}>{date.getUTCDate()}</div>
-                    <div className={`text-[10px] ${isToday ? 'text-blue-200' : 'text-gray-400'}`}>
-                      {date.toLocaleDateString('fr-FR', { month: 'short', timeZone: 'UTC' })}
-                    </div>
-                    {fName && (
-                      <div className="text-[8px] font-semibold text-amber-700 bg-amber-100 px-1 py-0.5 rounded mt-0.5 leading-tight truncate" title={fName}>✦ {fName}</div>
-                    )}
+                    <div className={`text-[10px] ${isToday ? 'text-blue-200' : 'text-gray-400'}`}>{date.toLocaleDateString('fr-FR', { month: 'short', timeZone: 'UTC' })}</div>
+                    {fName && <div className="text-[8px] font-semibold text-amber-700 bg-amber-100 px-1 py-0.5 rounded mt-0.5 leading-tight truncate" title={fName}>✦ {fName}</div>}
                   </th>
                 )
               })}
-              <th className="px-1 py-3 text-center text-xs font-semibold text-gray-400 uppercase tracking-wider border-b border-r border-gray-200 w-14">Total</th>
-              <th className="px-1 py-3 text-center text-xs font-semibold text-gray-400 uppercase tracking-wider border-b border-gray-200 w-20">Coût</th>
+              <th className="px-3 py-3 text-center text-xs font-semibold text-gray-400 uppercase tracking-wider border-b border-r border-gray-200 w-20">Total</th>
+              <th className="px-3 py-3 text-center text-xs font-semibold text-gray-400 uppercase tracking-wider border-b border-gray-200 w-28">Coût brut / chargé</th>
             </tr>
           </thead>
           <tbody>
@@ -761,234 +686,166 @@ export default function PlanningPage() {
               <tr>
                 <td colSpan={11} className="py-16 text-center">
                   <CalendarDays className="w-8 h-8 text-gray-300 mx-auto mb-2" />
-                  <p className="text-sm text-gray-400 mb-3">Aucun employé. Ajoutez votre équipe pour commencer.</p>
+                  <p className="text-sm text-gray-400 mb-3">Aucun employé.</p>
                   <Button onClick={() => setShowAdd(true)} variant="outline" className="h-8 text-sm px-3">
                     <Plus className="w-3.5 h-3.5 mr-1.5" />Ajouter un employé
                   </Button>
                 </td>
               </tr>
-            ) : (
-              employees.map((emp, empIdx) => {
-                const pal    = EMP_PALETTES[empIdx % EMP_PALETTES.length]
-                const entry  = getEntryState(emp.id)
-                const { totalH, cost, ch } = rowStats.find(r => r.empId === emp.id) || { totalH: 0, cost: 0, ch: 35 }
-                const hasOT  = totalH > ch
-                const showContractPop = contractPopover === emp.id
-                const cpInitial   = emp.cp_initial ?? 25
-                const cpUsedCount = cpUsed[emp.id] || 0
-                const cpRemaining = cpInitial - cpUsedCount
+            ) : employees.map((emp, empIdx) => {
+              const pal   = EMP_PALETTES[empIdx % EMP_PALETTES.length]
+              const entry = getEntryState(emp.id)
+              const ch    = emp.contract_hours || 35
+              const { totalH, brut, charge } = rowStats.find(r => r.empId === emp.id) || { totalH: 0, brut: 0, charge: 0 }
+              const hasOT = totalH > ch
+              const showContractPop = contractPopover === emp.id
+              const cpInitial   = emp.cp_initial ?? 25
+              const cpRemaining = cpInitial - (cpUsed[emp.id] || 0)
 
-                return (
-                  <tr key={emp.id} className="group">
-                    <td className={`px-3 py-0 sticky left-0 bg-white z-10 border-b border-r border-gray-200 ${pal.lborder}`}>
-                      <div className="flex items-center gap-2 py-2">
-                        <div className={`w-7 h-7 rounded-full ${pal.bg} flex items-center justify-center flex-shrink-0`}>
-                          <span className={`text-[10px] font-bold ${pal.text}`}>{initials(emp.name)}</span>
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-1">
-                            <p className="text-sm font-semibold text-gray-900 leading-tight truncate">{emp.name}</p>
-                            <button
-                              onClick={e => { e.stopPropagation(); setProfileEmp({ ...emp, cp_initial: emp.cp_initial ?? 25, position: emp.position ?? null, hire_date: emp.hire_date ?? null, contract_end_date: emp.contract_end_date ?? null, phone: emp.phone ?? null, email: emp.email ?? null, notes: emp.notes ?? null, is_minor: emp.is_minor ?? false }) }}
-                              className="p-1 rounded-md bg-[#1E3A5F]/10 hover:bg-[#1E3A5F]/20 text-[#1E3A5F] transition-colors flex-shrink-0"
-                            >
-                              <UserCog className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                          <div className="flex items-center gap-1 mt-0.5 flex-wrap">
-                            <div className="relative">
-                              <button
-                                onClick={e => { e.stopPropagation(); setContractPopover(showContractPop ? null : emp.id) }}
-                                className="text-[10px] font-bold bg-[#1E3A5F] text-white px-1.5 py-0.5 rounded hover:bg-[#2a4f7c] transition-colors"
-                              >
-                                {contractLabel(emp.contract_type)}
-                              </button>
-                              {showContractPop && (
-                                <div className="absolute top-full left-0 mt-1 z-50 bg-white rounded-xl shadow-2xl border border-gray-100 p-1.5 w-40" onClick={e => e.stopPropagation()}>
-                                  <p className="text-[10px] text-gray-400 px-2 pb-1 font-medium">Type de contrat</p>
-                                  {CONTRACT_TYPES.map(ct => (
-                                    <button key={ct.key} onClick={() => updateContract(emp.id, ct.key)}
-                                      className={`w-full flex items-center justify-between px-2 py-1.5 rounded-lg text-left transition-colors ${
-                                        emp.contract_type === ct.key ? 'bg-[#1E3A5F] text-white' : 'hover:bg-gray-50 text-gray-700'
-                                      }`}
-                                    >
-                                      <div>
-                                        <div className="text-xs font-semibold">{ct.short}</div>
-                                        <div className={`text-[9px] ${emp.contract_type === ct.key ? 'text-blue-200' : 'text-gray-400'}`}>{ct.desc}</div>
-                                      </div>
-                                      {emp.contract_type === ct.key && <span className="text-[10px]">✓</span>}
-                                    </button>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                            <span className="text-[10px] text-gray-400">{Number(emp.hourly_rate).toFixed(2)} €/h</span>
-                            <button onClick={() => deleteEmployee(emp.id)}
-                              className="ml-auto opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-red-50 text-gray-300 hover:text-red-400 transition-all"
-                            >
-                              <Trash2 className="w-3 h-3" />
-                            </button>
-                          </div>
-                          <div className="flex items-center gap-1 mt-1">
-                            <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                              cpRemaining < 0 ? 'bg-red-400' : cpRemaining <= 3 ? 'bg-orange-400' : 'bg-sky-300'
-                            }`} />
-                            <span className={`text-[9px] ${
-                              cpRemaining < 0 ? 'text-red-500 font-semibold' : cpRemaining <= 3 ? 'text-orange-500' : 'text-gray-400'
-                            }`}>{cpRemaining}j CP restants</span>
-                          </div>
-                        </div>
+              return (
+                <tr key={emp.id} className="group">
+                  <td className={`px-3 py-0 sticky left-0 bg-white z-10 border-b border-r border-gray-200 ${pal.lborder}`}>
+                    <div className="flex items-center gap-2 py-2">
+                      <div className={`w-7 h-7 rounded-full ${pal.bg} flex items-center justify-center flex-shrink-0`}>
+                        <span className={`text-[10px] font-bold ${pal.text}`}>{initials(emp.name)}</span>
                       </div>
-                    </td>
-
-                    {JOURS_DB.map((jour, idx) => {
-                      const typeKey   = `${jour}_type` as keyof PlanningEntry
-                      const type      = (entry[typeKey] as DayType) || (idx >= 5 ? 'repos' : 'travail')
-                      const hours     = entry[jour] || 0
-                      const sched     = getSched(emp.id, jour)
-                      const isDetailOpen = selectedCell?.empId === emp.id && selectedCell?.jour === jour
-                      const isTypeOpen   = typeDropCell?.empId  === emp.id && typeDropCell?.jour  === jour
-                      const fName     = weekHolidays[idx]
-                      const catInfo   = sched.category ? WORK_CATS.find(c => c.key === sched.category) : null
-                      const matinRange = fmtRange(sched.matinDebut, sched.matinFin)
-                      const apmRange   = fmtRange(sched.apmDebut,   sched.apmFin)
-                      const hasRanges  = !!(matinRange || apmRange)
-                      const hasCopyData = !!(sched.matinDebut || sched.matinFin || sched.apmDebut || sched.apmFin || sched.category)
-
-                      // Fériés sont traitables comme des jours normaux — styling légèrement ambré si travail
-                      const cellBg  = (fName && type === 'travail') ? `${pal.bg} opacity-90` : type === 'travail' ? pal.bg : TYPE_CONFIG[type].bg
-                      const cellTxt = type === 'travail' ? pal.text  : TYPE_CONFIG[type].text
-                      const cellDot = type === 'travail' ? pal.dot   : TYPE_CONFIG[type].dot
-                      const typeLabel = type === 'travail' ? 'Travail' : TYPE_CONFIG[type].label
-
-                      return (
-                        <td key={jour} className={`p-0 border-b border-r border-gray-200 align-stretch ${fName && type === 'travail' ? 'border-t-2 border-t-amber-300' : ''}`}>
-                          <div className="relative h-full group/cell" data-cell="true">
-                            <div className={`${type === 'travail' ? pal.bg : TYPE_CONFIG[type].bg} ${fName && type === 'travail' ? 'bg-amber-50/30' : ''} w-full h-full min-h-[100px] flex flex-col`}>
-                              <div className="flex items-center px-2 pt-1.5 pb-0.5">
-                                <button
-                                  onClick={e => {
-                                    e.stopPropagation()
-                                    setSelectedCell(null)
-                                    setTypeDropCell(isTypeOpen ? null : { empId: emp.id, jour })
-                                  }}
-                                  className="flex items-center gap-1 rounded px-1 py-0.5 transition-colors hover:bg-black/10 cursor-pointer"
-                                >
-                                  <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cellDot}`} />
-                                  <span className={`text-[10px] font-semibold ${cellTxt}`}>{typeLabel}</span>
-                                  {fName && type === 'travail' && <span className="text-[8px] text-amber-500 ml-0.5">✦</span>}
-                                  <ChevronDown className={`w-2.5 h-2.5 ${cellTxt} opacity-40`} />
-                                </button>
-                                {type === 'travail' && (
-                                  <div className="ml-auto flex items-center gap-0.5 opacity-0 group-hover/cell:opacity-100 transition-opacity">
-                                    {hasCopyData && (
-                                      <button
-                                        onClick={e => { e.stopPropagation(); copySchedule(emp.id, jour) }}
-                                        className="p-1 rounded hover:bg-black/10 text-gray-400 hover:text-gray-700"
-                                        title="Copier ces horaires"
-                                        data-cell="true"
-                                      >
-                                        <Copy className="w-3 h-3" />
-                                      </button>
-                                    )}
-                                    {copiedSched && (
-                                      <button
-                                        onClick={e => { e.stopPropagation(); pasteSchedule(emp.id, jour) }}
-                                        className="p-1 rounded bg-violet-100 hover:bg-violet-200 text-violet-600"
-                                        title="Coller les horaires"
-                                        data-cell="true"
-                                      >
-                                        <Clipboard className="w-3 h-3" />
-                                      </button>
-                                    )}
-                                  </div>
-                                )}
-                              </div>
-                              <div
-                                className={`flex-1 flex flex-col items-center justify-center gap-0.5 pb-2 px-1 ${
-                                  type === 'travail' ? 'cursor-pointer hover:brightness-95' : ''
-                                }`}
-                                onClick={e => {
-                                  e.stopPropagation()
-                                  if (type !== 'travail') return
-                                  if (isDetailOpen) { setSelectedCell(null); return }
-                                  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-                                  const openUp = rect.bottom + 390 > window.innerHeight
-                                  const x = Math.min(rect.left, window.innerWidth - 296)
-                                  setTypeDropCell(null)
-                                  setSelectedCell({ empId: emp.id, jour, x, y: openUp ? rect.top : rect.bottom, openUp })
-                                }}
-                              >
-                                {type === 'travail' ? (
-                                  <>
-                                    {catInfo && (
-                                      <span className={`text-[8px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-white/50 ${pal.text}`}>
-                                        {catInfo.label}
-                                      </span>
-                                    )}
-                                    {hasRanges ? (
-                                      <div className="flex flex-col items-center gap-0.5">
-                                        {matinRange && <span className={`text-[9px] font-semibold ${pal.text} leading-tight`}>{matinRange}</span>}
-                                        {apmRange   && <span className={`text-[9px] font-semibold ${pal.text} leading-tight`}>{apmRange}</span>}
-                                        <span className={`text-[11px] font-bold ${pal.text} mt-0.5`}>{hours > 0 ? `= ${fmtDecHours(hours)}` : ''}</span>
-                                      </div>
-                                    ) : (
-                                      <>
-                                        <span className={`font-bold text-xl ${pal.text} leading-none`}>
-                                          {hours > 0 ? fmtDecHours(hours) : '—'}
-                                        </span>
-                                        {hours === 0 && <span className={`text-[9px] opacity-40 ${pal.text}`}>cliquer pour saisir</span>}
-                                      </>
-                                    )}
-                                  </>
-                                ) : (
-                                  <span className={`font-bold text-2xl ${cellTxt}`}>
-                                    {TYPE_CONFIG[type].display}
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                            {isTypeOpen && (
-                              <div className="absolute top-full left-0 z-50 mt-1 bg-white rounded-xl shadow-2xl border border-gray-100 p-1.5 min-w-[170px]" data-cell="true" onClick={e => e.stopPropagation()}>
-                                <p className="text-[10px] text-gray-400 px-2 py-1 font-medium uppercase tracking-wide">Type de journée</p>
-                                {([
-                                  { key: 'travail' as DayType, label: 'Travail',       dot: pal.dot       },
-                                  { key: 'conges'  as DayType, label: 'Congé payé',    dot: 'bg-sky-400'  },
-                                  { key: 'maladie' as DayType, label: 'Arrêt maladie', dot: 'bg-red-400'  },
-                                  { key: 'repos'   as DayType, label: 'Repos',         dot: 'bg-gray-300' },
-                                ]).map(opt => (
-                                  <button key={opt.key} onClick={() => changeType(emp.id, jour, opt.key)}
-                                    className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-left text-sm transition-colors ${
-                                      type === opt.key ? 'bg-gray-100 font-semibold text-gray-900' : 'hover:bg-gray-50 text-gray-600'
-                                    }`}
-                                  >
-                                    <div className={`w-2.5 h-2.5 rounded-sm flex-shrink-0 ${opt.dot}`} />
-                                    {opt.label}
-                                    {type === opt.key && <span className="ml-auto text-gray-400 text-xs">✓</span>}
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-semibold text-gray-900 leading-tight truncate">{emp.name}</p>
+                        <div className="flex items-center gap-1 mt-0.5 flex-wrap">
+                          <div className="relative">
+                            <button onClick={e => { e.stopPropagation(); setContractPopover(showContractPop ? null : emp.id) }}
+                              className="text-[10px] font-bold bg-[#1E3A5F] text-white px-1.5 py-0.5 rounded hover:bg-[#2a4f7c] transition-colors cursor-pointer">
+                              {contractLabel(emp.contract_type)}
+                            </button>
+                            {showContractPop && (
+                              <div className="absolute top-full left-0 mt-1 z-50 bg-white rounded-xl shadow-2xl border border-gray-100 p-1.5 w-40" onClick={e => e.stopPropagation()}>
+                                <p className="text-[10px] text-gray-400 px-2 pb-1 font-medium">Type de contrat</p>
+                                {CONTRACT_TYPES.map(ct => (
+                                  <button key={ct.key} onClick={() => updateContract(emp.id, ct.key)}
+                                    className={`w-full flex items-center justify-between px-2 py-1.5 rounded-lg text-left transition-colors ${emp.contract_type === ct.key ? 'bg-[#1E3A5F] text-white' : 'hover:bg-gray-50 text-gray-700'}`}>
+                                    <div>
+                                      <div className="text-xs font-semibold">{ct.short}</div>
+                                      <div className={`text-[9px] ${emp.contract_type === ct.key ? 'text-blue-200' : 'text-gray-400'}`}>{ct.desc}</div>
+                                    </div>
+                                    {emp.contract_type === ct.key && <span className="text-[10px]">✓</span>}
                                   </button>
                                 ))}
                               </div>
                             )}
                           </div>
-                        </td>
-                      )
-                    })}
-
-                    <td className="px-1 py-3 text-center border-b border-r border-gray-200">
-                      <div className={`inline-flex flex-col items-center px-1 py-1 rounded-lg ${hasOT ? 'bg-orange-50' : totalH > 0 ? 'bg-gray-50' : ''}`}>
-                        <span className={`font-bold text-xs ${hasOT ? 'text-orange-600' : totalH > 0 ? 'text-gray-800' : 'text-gray-300'}`}>{fmtDecHours(totalH)}</span>
-                        {hasOT && <span className="text-[9px] text-orange-400">+{fmtDecHours(totalH - ch)}</span>}
+                          <span className="text-[10px] text-gray-400">{Number(emp.hourly_rate).toFixed(2)} €/h</span>
+                          <span className="text-[10px] text-orange-500">≈ {(Number(emp.hourly_rate) * (1 + (emp.charges_patronales ?? 45) / 100)).toFixed(2)} €/h chargé</span>
+                          <div className="ml-auto flex items-center gap-1 opacity-0 group-hover:opacity-100">
+                            <button onClick={() => setProfileModal({ id: emp.id, name: emp.name, hourly_rate: Number(emp.hourly_rate), contract_type: emp.contract_type, contract_hours: emp.contract_hours, cp_initial: emp.cp_initial ?? 25, charges_patronales: emp.charges_patronales ?? 45, position: null, hire_date: null, contract_end_date: null, phone: null, email: null, notes: null, is_minor: emp.is_minor ?? false })}
+                              className="p-1 rounded hover:bg-blue-50 text-gray-300 hover:text-[#1E3A5F] transition-all">
+                              <UserCog className="w-3 h-3" />
+                            </button>
+                            <button onClick={() => deleteEmployee(emp.id)}
+                              className="p-1 rounded hover:bg-red-50 text-gray-300 hover:text-red-400 transition-all">
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1 mt-1">
+                          <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cpRemaining < 0 ? 'bg-red-400' : cpRemaining <= 3 ? 'bg-orange-400' : 'bg-sky-300'}`} />
+                          <span className={`text-[9px] ${cpRemaining < 0 ? 'text-red-500 font-semibold' : cpRemaining <= 3 ? 'text-orange-500' : 'text-gray-400'}`}>{cpRemaining}j CP restants</span>
+                        </div>
                       </div>
-                    </td>
-                    <td className="px-1 py-3 text-center border-b border-gray-200">
-                      <span className={`font-bold text-xs ${cost > 0 ? 'text-green-700' : 'text-gray-300'}`}>
-                        {cost > 0 ? `${cost.toFixed(0)} €` : '—'}
-                      </span>
-                    </td>
-                  </tr>
-                )
-              })
-            )}
+                    </div>
+                  </td>
+
+                  {JOURS_DB.map((jour, idx) => {
+                    const typeKey = `${jour}_type` as keyof PlanningEntry
+                    const type    = (entry[typeKey] as DayType) || (idx >= 5 ? 'repos' : 'travail')
+                    const sched   = entry.schedule_details?.[jour]
+                    const fName   = weekHolidays[idx]
+                    const amCat   = sched?.am_category ? CATEGORIES[sched.am_category] : null
+                    const pmCat   = sched?.pm_category ? CATEGORIES[sched.pm_category] : null
+                    const sh      = scheduleHours(sched)
+                    const hours   = sh > 0 ? sh : (entry[jour] || 0)
+                    const cellBg  = fName ? 'bg-amber-50' : type === 'travail' ? pal.bg : TYPE_CONFIG[type].bg
+                    const cellTxt = fName ? 'text-amber-800' : type === 'travail' ? pal.text : TYPE_CONFIG[type].text
+                    const cellDot = fName ? 'bg-amber-400' : type === 'travail' ? pal.dot : TYPE_CONFIG[type].dot
+                    const typeLabel = fName ? 'Férié' : type === 'travail' ? 'Travail' : TYPE_CONFIG[type].label
+
+                    return (
+                      <td key={jour} className="p-0 border-b border-r border-gray-200 align-stretch">
+                        <div
+                          className={`cursor-pointer transition-colors ${cellBg} w-full h-full min-h-[90px] px-2 pt-1.5 pb-1.5 flex flex-col hover:brightness-95`}
+                          onClick={() => !fName && openModal(emp, jour, idx)}
+                        >
+                          <div className="flex items-center gap-1 mb-1">
+                            <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cellDot}`} />
+                            <span className={`text-[9px] font-semibold truncate ${cellTxt}`}>{typeLabel}</span>
+                            {!fName && <Clock className={`w-2.5 h-2.5 ml-auto opacity-20 ${cellTxt}`} />}
+                          </div>
+                          {type === 'travail' && !fName ? (
+                            <div className="flex-1 flex flex-col justify-center gap-0.5">
+                              {sched?.am_start && sched?.am_end ? (
+                                <div className="flex items-center gap-1 px-1 py-0.5 rounded" style={{ background: amCat?.light || '#f3f4f6' }}>
+                                  {amCat && <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: amCat.hex }} />}
+                                  <span className="text-[9px] font-semibold truncate" style={{ color: amCat?.hex || '#374151' }}>
+                                    {amCat?.label || 'Matin'} · {formatTime(sched.am_start)}–{formatTime(sched.am_end)}
+                                  </span>
+                                </div>
+                              ) : null}
+                              {sched?.pm_start && sched?.pm_end ? (
+                                <div className="flex items-center gap-1 px-1 py-0.5 rounded" style={{ background: pmCat?.light || '#f3f4f6' }}>
+                                  {pmCat && <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: pmCat.hex }} />}
+                                  <span className="text-[9px] font-semibold truncate" style={{ color: pmCat?.hex || '#374151' }}>
+                                    {pmCat?.label || 'A-M'} · {formatTime(sched.pm_start)}–{formatTime(sched.pm_end)}
+                                  </span>
+                                </div>
+                              ) : null}
+                              {!sched?.am_start && !sched?.pm_start && (
+                                <span className={`font-bold text-xl text-center ${pal.text}`}>
+                                  {hours > 0 ? `${hours}h` : '—'}
+                                </span>
+                              )}
+                              {(sched?.am_start || sched?.pm_start) && (
+                                <span className={`text-[10px] font-bold text-center mt-0.5 ${pal.text}`}>
+                                  {hours > 0 ? `${hours % 1 === 0 ? hours : hours.toFixed(1)}h total` : ''}
+                                </span>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="flex-1 flex items-center justify-center">
+                              <span className={`font-bold text-xl ${cellTxt}`}>
+                                {fName ? '✦' : TYPE_CONFIG[type].display}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                    )
+                  })}
+
+                  <td className="px-2 py-3 text-center border-b border-r border-gray-200">
+                    <div className={`inline-flex flex-col items-center px-2 py-1 rounded-lg ${hasOT ? 'bg-orange-50' : totalH > 0 ? 'bg-gray-50' : ''}`}>
+                      <span className={`font-bold text-sm ${hasOT ? 'text-orange-600' : totalH > 0 ? 'text-gray-800' : 'text-gray-300'}`}>{totalH.toFixed(1)}h</span>
+                      {hasOT && <span className="text-[9px] text-orange-400">+{(totalH - ch).toFixed(1)} sup</span>}
+                    </div>
+                  </td>
+                  <td className="px-2 py-2 text-center border-b border-gray-200">
+                    {brut > 0 ? (
+                      <div className="flex flex-col items-center gap-0.5">
+                        <span className="font-bold text-sm text-green-700">{brut.toFixed(0)} € brut</span>
+                        <span className="text-[10px] text-orange-600 font-semibold">{charge.toFixed(0)} € chargé</span>
+                        {(rowStats.find(r => r.empId === emp.id)?.dimanche ?? 0) > 0 && (
+                          <div className="text-[9px] text-violet-600 font-semibold">+dim {(rowStats.find(r => r.empId === emp.id)!.dimanche).toFixed(0)}€</div>
+                        )}
+                        {(rowStats.find(r => r.empId === emp.id)?.ferie ?? 0) > 0 && (
+                          <div className="text-[9px] text-amber-600 font-semibold">+fér {(rowStats.find(r => r.empId === emp.id)!.ferie).toFixed(0)}€</div>
+                        )}
+                        {(rowStats.find(r => r.empId === emp.id)?.nuit ?? 0) > 0 && (
+                          <div className="text-[9px] text-indigo-600 font-semibold">+nuit {(rowStats.find(r => r.empId === emp.id)!.nuit).toFixed(0)}€</div>
+                        )}
+                      </div>
+                    ) : <span className="font-bold text-sm text-gray-300">—</span>}
+                  </td>
+                </tr>
+              )
+            })}
 
             {employees.length > 0 && (
               <tr className="bg-gray-900">
@@ -999,7 +856,10 @@ export default function PlanningPage() {
                   const dayH = employees.reduce((s, emp) => {
                     const e = getEntryState(emp.id)
                     const t = (e[`${jour}_type` as keyof PlanningEntry] as DayType) || 'travail'
-                    return s + (t === 'travail' ? (e[jour] || 0) : t === 'conges' ? 7 : 0)
+                    if (t === 'conges') return s + 7
+                    if (t !== 'travail') return s
+                    const sh = scheduleHours(e.schedule_details?.[jour])
+                    return s + (sh > 0 ? sh : (e[jour] || 0))
                   }, 0)
                   const present = employees.filter(emp => {
                     const t = (getEntryState(emp.id)[`${jour}_type` as keyof PlanningEntry] as DayType) || 'travail'
@@ -1009,34 +869,149 @@ export default function PlanningPage() {
                   return (
                     <td key={jour} className={`px-2 py-3 text-center border-r border-gray-700 ${isFerie ? 'bg-amber-950/30' : ''}`}>
                       {dayH > 0
-                        ? <><div className="text-sm font-bold text-white">{fmtDecHours(dayH)}</div><div className="text-[10px] text-gray-500">{present} pers.</div></>
+                        ? <><div className="text-sm font-bold text-white">{dayH.toFixed(1)}h</div><div className="text-[10px] text-gray-500">{present} pers.</div></>
                         : <span className="text-gray-700">—</span>}
                     </td>
                   )
                 })}
-                <td className="px-1 py-3 text-center border-r border-gray-700"><span className="font-bold text-white text-xs">{fmtDecHours(grandH)}</span></td>
-                <td className="px-1 py-3 text-center"><span className="font-bold text-orange-400 text-xs">{grandCost.toFixed(0)} €</span></td>
+                <td className="px-3 py-3 text-center border-r border-gray-700"><span className="font-bold text-white">{grandH.toFixed(1)}h</span></td>
+                <td className="px-3 py-3 text-center"><div><span className="font-bold text-orange-400">{grandCost.toFixed(0)} € brut</span><br/><span className="font-bold text-red-400 text-xs">{rowStats.reduce((s, r) => s + r.charge, 0).toFixed(0)} € chargé</span></div></td>
               </tr>
             )}
           </tbody>
         </table>
       </div>
 
-      {/* ── CCN 992 — sticky au bas de l'écran ── */}
-      <div className="sticky bottom-0 z-30 px-6 py-3 bg-[#0f172a] border-t border-gray-800">
-        <div className="flex flex-wrap items-center gap-x-6 gap-y-1.5">
-          <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">CCN 992 · Boucherie-Charcuterie</span>
-          <div className="flex flex-wrap gap-x-5 gap-y-1 text-[11px] text-gray-500">
-            <span><span className="text-gray-300 font-semibold">CDI/CDD 35h</span> — HS +25 % de 36h à 43h · HS +50 % dès 44h</span>
-            <span className="text-gray-700">|</span>
-            <span><span className="text-gray-300 font-semibold">CDI/CDD 39h</span> — HS +25 % de 40h à 47h · HS +50 % dès 48h</span>
-            <span className="text-gray-700">|</span>
-            <span>Congé payé = <span className="text-gray-300">7h / jour</span></span>
-            <span className="text-gray-700">|</span>
-            <span>Férié travaillé = <span className="text-gray-300">+100 %</span></span>
+      {employees.length > 0 && (
+        <div className="px-6 py-2.5 bg-amber-50 border-t border-amber-100">
+          <p className="text-xs text-amber-700">
+            <span className="font-semibold">Majoration CCN Boucherie (IDCC 992) :</span> 35h → +25 % de 36–43h, +50 % au-delà · 39h → +25 % de 40–47h, +50 % au-delà · CP = 7h/jour · <span className="text-violet-700">Dimanche +20 %</span> · <span className="text-amber-700">Férié travaillé +100 %</span> · <span className="text-indigo-700">Nuit (avant 6h/après 21h) +25 %</span>
+          </p>
+        </div>
+      )}
+
+      {/* ── Schedule modal ── */}
+      {scheduleModal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 backdrop-blur-sm" onClick={() => setScheduleModal(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h2 className="text-base font-bold text-gray-900">{scheduleModal.empName}</h2>
+                <p className="text-sm text-gray-500">{scheduleModal.jourLabel}</p>
+              </div>
+              <button onClick={() => setScheduleModal(null)} className="p-1.5 rounded-lg hover:bg-gray-100">
+                <X className="w-4 h-4 text-gray-500" />
+              </button>
+            </div>
+
+            {/* Type */}
+            <div className="mb-5">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Type de journée</p>
+              <div className="grid grid-cols-4 gap-1.5">
+                {(['travail', 'conges', 'maladie', 'repos'] as DayType[]).map(t => (
+                  <button key={t} onClick={() => setScheduleModal(s => s ? { ...s, type: t } : s)}
+                    className={`py-1.5 px-1 rounded-lg text-xs font-semibold border-2 transition-all ${scheduleModal.type === t ? 'border-[#1E3A5F] bg-[#1E3A5F] text-white' : 'border-gray-200 text-gray-700 hover:border-gray-300 bg-white'}`}>
+                    {TYPE_CONFIG[t].label || 'Travail'}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {scheduleModal.type === 'travail' && (
+              <>
+                {/* AM */}
+                <div className="mb-4 p-3 bg-gray-50 rounded-xl border border-gray-200">
+                  <p className="text-xs font-bold text-gray-800 mb-2.5 flex items-center gap-1.5">
+                    <span className="w-4 h-4 rounded-full bg-amber-400 flex items-center justify-center text-[8px] text-white font-black">M</span>
+                    Matin
+                  </p>
+                  <div className="flex gap-2 mb-2.5">
+                    <div className="flex-1">
+                      <label className="text-[11px] font-medium text-gray-600 block mb-1">De</label>
+                      <input type="time" value={scheduleModal.am_start}
+                        onChange={e => setScheduleModal(s => s ? { ...s, am_start: e.target.value } : s)}
+                        className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#1E3A5F]/30" />
+                    </div>
+                    <div className="flex-1">
+                      <label className="text-[11px] font-medium text-gray-600 block mb-1">À</label>
+                      <input type="time" value={scheduleModal.am_end}
+                        onChange={e => setScheduleModal(s => s ? { ...s, am_end: e.target.value } : s)}
+                        className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#1E3A5F]/30" />
+                    </div>
+                  </div>
+                  <p className="text-[11px] font-medium text-gray-600 mb-1.5">Catégorie matin</p>
+                  <div className="grid grid-cols-4 gap-1">
+                    {(Object.entries(CATEGORIES) as [CategoryKey, typeof CATEGORIES[CategoryKey]][]).map(([k, c]) => (
+                      <button key={k} onClick={() => setScheduleModal(s => s ? { ...s, am_category: s.am_category === k ? '' : k } : s)}
+                        className={`py-1.5 px-1 rounded-lg text-[9px] font-bold border-2 transition-all ${scheduleModal.am_category === k ? 'text-white' : 'bg-white text-gray-700 border-gray-200 hover:border-gray-300'}`}
+                        style={scheduleModal.am_category === k ? { background: c.hex, borderColor: c.hex } : {}}>
+                        {c.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* PM */}
+                <div className="mb-4 p-3 bg-gray-50 rounded-xl border border-gray-200">
+                  <p className="text-xs font-bold text-gray-800 mb-2.5 flex items-center gap-1.5">
+                    <span className="w-4 h-4 rounded-full bg-blue-400 flex items-center justify-center text-[8px] text-white font-black">A</span>
+                    Après-midi
+                  </p>
+                  <div className="flex gap-2 mb-2.5">
+                    <div className="flex-1">
+                      <label className="text-[11px] font-medium text-gray-600 block mb-1">De</label>
+                      <input type="time" value={scheduleModal.pm_start}
+                        onChange={e => setScheduleModal(s => s ? { ...s, pm_start: e.target.value } : s)}
+                        className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#1E3A5F]/30" />
+                    </div>
+                    <div className="flex-1">
+                      <label className="text-[11px] font-medium text-gray-600 block mb-1">À</label>
+                      <input type="time" value={scheduleModal.pm_end}
+                        onChange={e => setScheduleModal(s => s ? { ...s, pm_end: e.target.value } : s)}
+                        className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#1E3A5F]/30" />
+                    </div>
+                  </div>
+                  <p className="text-[11px] font-medium text-gray-600 mb-1.5">Catégorie après-midi</p>
+                  <div className="grid grid-cols-4 gap-1">
+                    {(Object.entries(CATEGORIES) as [CategoryKey, typeof CATEGORIES[CategoryKey]][]).map(([k, c]) => (
+                      <button key={k} onClick={() => setScheduleModal(s => s ? { ...s, pm_category: s.pm_category === k ? '' : k } : s)}
+                        className={`py-1.5 px-1 rounded-lg text-[9px] font-bold border-2 transition-all ${scheduleModal.pm_category === k ? 'text-white' : 'bg-white text-gray-700 border-gray-200 hover:border-gray-300'}`}
+                        style={scheduleModal.pm_category === k ? { background: c.hex, borderColor: c.hex } : {}}>
+                        {c.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Manual hours fallback */}
+                {!scheduleModal.am_start && !scheduleModal.pm_start && (
+                  <div className="mb-4">
+                    <label className="text-xs font-semibold text-gray-700 uppercase tracking-wider block mb-1.5">Heures (si pas d'horaires)</label>
+                    <input type="number" min="0" max="24" step="0.5" value={scheduleModal.manualHours}
+                      onChange={e => setScheduleModal(s => s ? { ...s, manualHours: e.target.value } : s)}
+                      className="w-24 border border-gray-300 rounded-lg px-3 py-1.5 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#1E3A5F]/30"
+                      placeholder="0" />
+                  </div>
+                )}
+
+                {modalHours(scheduleModal) > 0 && (
+                  <div className="mb-4 flex items-center justify-center gap-2 py-2 bg-blue-50 rounded-lg border border-blue-100">
+                    <Clock className="w-3.5 h-3.5 text-blue-600" />
+                    <span className="text-sm font-bold text-blue-800">
+                      {modalHours(scheduleModal) % 1 === 0 ? modalHours(scheduleModal) : modalHours(scheduleModal).toFixed(1)}h au total
+                    </span>
+                  </div>
+                )}
+              </>
+            )}
+
+            <div className="flex gap-3">
+              <Button variant="outline" className="flex-1 text-gray-700" onClick={() => setScheduleModal(null)}>Annuler</Button>
+              <Button className="flex-1 bg-[#1E3A5F] hover:bg-[#2a4f7c] text-white" onClick={saveModal}>Valider</Button>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* ── Récap mensuel ── */}
       {showMonthly && (
@@ -1045,16 +1020,12 @@ export default function PlanningPage() {
             <div className="flex items-center justify-between mb-5">
               <div>
                 <h2 className="text-base font-bold text-gray-900">Récapitulatif mensuel</h2>
-                <p className="text-sm text-gray-500 mt-0.5">
-                  {weekDates[0].toLocaleDateString('fr-FR', { month: 'long', year: 'numeric', timeZone: 'UTC' })}
-                </p>
+                <p className="text-sm text-gray-500 mt-0.5">{weekDates[0].toLocaleDateString('fr-FR', { month: 'long', year: 'numeric', timeZone: 'UTC' })}</p>
               </div>
-              <button onClick={() => setShowMonthly(false)} className="p-1.5 rounded-lg hover:bg-gray-100">
-                <X className="w-4 h-4 text-gray-500" />
-              </button>
+              <button onClick={() => setShowMonthly(false)} className="p-1.5 rounded-lg hover:bg-gray-100"><X className="w-4 h-4 text-gray-500" /></button>
             </div>
             {loadingMonthly ? (
-              <div className="py-12 text-center text-sm text-gray-400">Chargement des données...</div>
+              <div className="py-12 text-center text-sm text-gray-400">Chargement...</div>
             ) : monthlyData ? (
               <table className="w-full border-collapse text-sm">
                 <thead>
@@ -1070,8 +1041,7 @@ export default function PlanningPage() {
                 <tbody>
                   {monthlyData.map(({ emp, hours, cost, worked, cp, sick }, i) => {
                     const pal   = EMP_PALETTES[i % EMP_PALETTES.length]
-                    const ch    = getContractHours(emp)
-                    const hasOT = hours > ch * 4
+                    const hasOT = hours > (emp.contract_hours || 35) * 4
                     return (
                       <tr key={emp.id} className="border-b border-gray-100 hover:bg-gray-50">
                         <td className="py-3">
@@ -1085,7 +1055,7 @@ export default function PlanningPage() {
                             </div>
                           </div>
                         </td>
-                        <td className="text-center py-3"><span className={`font-bold ${hasOT ? 'text-orange-600' : 'text-gray-800'}`}>{fmtDecHours(hours)}</span></td>
+                        <td className="text-center py-3"><span className={`font-bold ${hasOT ? 'text-orange-600' : 'text-gray-800'}`}>{hours.toFixed(1)}h</span></td>
                         <td className="text-center py-3 text-gray-600">{worked > 0 ? `${worked}j` : '—'}</td>
                         <td className="text-center py-3">{cp > 0 ? <span className="text-sky-700 font-medium">{cp}j</span> : <span className="text-gray-300">—</span>}</td>
                         <td className="text-center py-3">{sick > 0 ? <span className="text-red-600 font-medium">{sick}j</span> : <span className="text-gray-300">—</span>}</td>
@@ -1097,7 +1067,7 @@ export default function PlanningPage() {
                 <tfoot>
                   <tr className="bg-gray-900">
                     <td className="py-2.5 px-2 text-xs font-bold uppercase text-gray-400">Total mois</td>
-                    <td className="text-center py-2.5 font-bold text-white">{fmtDecHours(monthlyData.reduce((s, r) => s + r.hours, 0))}</td>
+                    <td className="text-center py-2.5 font-bold text-white">{monthlyData.reduce((s, r) => s + r.hours, 0).toFixed(1)}h</td>
                     <td className="text-center py-2.5 text-gray-400">{monthlyData.reduce((s, r) => s + r.worked, 0)}j</td>
                     <td className="text-center py-2.5 text-sky-400">{monthlyData.reduce((s, r) => s + r.cp, 0)}j</td>
                     <td className="text-center py-2.5 text-red-400">{monthlyData.reduce((s, r) => s + r.sick, 0)}j</td>
@@ -1110,17 +1080,28 @@ export default function PlanningPage() {
         </div>
       )}
 
-      {profileEmp && (
+      {/* ── Profile Modal ── */}
+      {profileModal && (
         <EmployeeProfileModal
-          employee={profileEmp}
-          onClose={() => setProfileEmp(null)}
+          employee={profileModal}
+          onClose={() => setProfileModal(null)}
           onSaved={updated => {
-            setEmployees(prev => prev.map(e => e.id === updated.id ? { ...e, ...updated } : e))
-            setProfileEmp(null)
+            setEmployees(prev => prev.map(e => e.id === updated.id ? {
+              ...e,
+              name: updated.name,
+              hourly_rate: updated.hourly_rate,
+              contract_type: updated.contract_type,
+              contract_hours: updated.contract_hours,
+              cp_initial: updated.cp_initial,
+              charges_patronales: updated.charges_patronales,
+              is_minor: updated.is_minor,
+            } : e))
+            setProfileModal(null)
           }}
         />
       )}
 
+      {/* ── Ajout employé ── */}
       {showAdd && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 backdrop-blur-sm" onClick={() => setShowAdd(false)}>
           <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
@@ -1140,10 +1121,7 @@ export default function PlanningPage() {
                 <div className="grid grid-cols-2 gap-2">
                   {CONTRACT_TYPES.map(ct => (
                     <button key={ct.key} onClick={() => setNewContractKey(ct.key)}
-                      className={`py-2.5 px-3 rounded-lg border-2 text-left transition-all ${
-                        newContractKey === ct.key ? 'border-[#1E3A5F] bg-[#1E3A5F] text-white' : 'border-gray-200 text-gray-700 hover:border-gray-300 bg-white'
-                      }`}
-                    >
+                      className={`py-2.5 px-3 rounded-lg border-2 text-left transition-all ${newContractKey === ct.key ? 'border-[#1E3A5F] bg-[#1E3A5F] text-white' : 'border-gray-200 text-gray-700 hover:border-gray-300 bg-white'}`}>
                       <div className="text-sm font-bold">{ct.short}</div>
                       <div className={`text-[10px] mt-0.5 ${newContractKey === ct.key ? 'text-blue-200' : 'text-gray-400'}`}>{ct.desc}</div>
                     </button>
@@ -1151,7 +1129,7 @@ export default function PlanningPage() {
                 </div>
               </div>
               <div className="flex gap-3 pt-1">
-                <Button variant="outline" className="flex-1" onClick={() => setShowAdd(false)}>Annuler</Button>
+                <Button variant="outline" className="flex-1 text-gray-700" onClick={() => setShowAdd(false)}>Annuler</Button>
                 <Button className="flex-1 bg-[#1E3A5F] hover:bg-[#2a4f7c] text-white" onClick={addEmployee} disabled={!newName.trim() || !newRate || adding}>
                   {adding ? 'Ajout...' : 'Ajouter'}
                 </Button>
