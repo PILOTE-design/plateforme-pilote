@@ -30,7 +30,7 @@ export async function PATCH(
   const body = await req.json() as Record<string, unknown>
   const allowed = [
     'name', 'hourly_rate', 'contract_type', 'contract_hours', 'cp_initial',
-    'charges_patronales',
+    'charges_patronales', 'hs_cumules',
     // Champs RH
     'position', 'hire_date', 'contract_end_date', 'phone', 'email', 'notes', 'is_minor',
   ]

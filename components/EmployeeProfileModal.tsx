@@ -15,6 +15,7 @@ export interface EmployeeProfile {
   contract_hours: number
   cp_initial: number
   charges_patronales: number
+  hs_cumules: number
   // Champs RH
   position: string | null
   hire_date: string | null
@@ -71,19 +72,20 @@ export default function EmployeeProfileModal({ employee, onClose, onSaved }: Pro
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          name:              form.name,
-          hourly_rate:       form.hourly_rate,
-          contract_type:     form.contract_type,
-          contract_hours:    form.contract_hours,
-          cp_initial:        form.cp_initial,
+          name:               form.name,
+          hourly_rate:        form.hourly_rate,
+          contract_type:      form.contract_type,
+          contract_hours:     form.contract_hours,
+          cp_initial:         form.cp_initial,
           charges_patronales: form.charges_patronales,
-          position:          form.position || null,
-          hire_date:         form.hire_date || null,
-          contract_end_date: form.contract_end_date || null,
-          phone:             form.phone || null,
-          email:             form.email || null,
-          notes:             form.notes || null,
-          is_minor:          form.is_minor,
+          hs_cumules:         form.hs_cumules,
+          position:           form.position || null,
+          hire_date:          form.hire_date || null,
+          contract_end_date:  form.contract_end_date || null,
+          phone:              form.phone || null,
+          email:              form.email || null,
+          notes:              form.notes || null,
+          is_minor:           form.is_minor,
         }),
       })
       if (!res.ok) {
@@ -270,6 +272,17 @@ export default function EmployeeProfileModal({ employee, onClose, onSaved }: Pro
                   onChange={e => set('cp_initial', parseFloat(e.target.value) || 0)}
                   className="h-9 text-sm"
                 />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Solde heures supp (h)</label>
+                <Input
+                  type="number"
+                  step={0.5}
+                  value={form.hs_cumules}
+                  onChange={e => set('hs_cumules', parseFloat(e.target.value) || 0)}
+                  className="h-9 text-sm"
+                />
+                <p className="text-[10px] text-gray-400 mt-1">Heures HS cumulées (positif = crédit, négatif = dette)</p>
               </div>
               <div>
                 <label className="block text-xs text-gray-500 mb-1 flex items-center gap-1">
