@@ -185,7 +185,6 @@ function contractLabel(ct: string | undefined) {
   return CONTRACT_TYPES.find(c => c.key === ct)?.short ?? (ct ?? 'CDI 35h')
 }
 
-// ─── Dérive les heures contractuelles depuis le type de contrat (source de vérité)
 function getContractHours(emp: Employee): number {
   const def = CONTRACT_TYPES.find(c => c.key === emp.contract_type)
   return def?.hours ?? emp.contract_hours ?? 35
@@ -381,8 +380,6 @@ export default function PlanningPage() {
     saveEntryValues(empId, entriesRef.current[empId] ?? emptyEntry(empId, week, year))
   }
 
-  // ── Copier / Coller horaires ───────────────────────────────────────────────
-
   function copySchedule(empId: string, jour: JourDB) {
     const sched = getSched(empId, jour)
     const hasData = sched.matinDebut || sched.matinFin || sched.apmDebut || sched.apmFin || sched.category
@@ -403,8 +400,6 @@ export default function PlanningPage() {
       body: JSON.stringify({ ...newEntry, employee_id: empId, week_number: week, year, schedule_details }),
     })
   }
-
-  // ─────────────────────────────────────────────────────────────────────────
 
   async function addEmployee() {
     if (!newName.trim() || !newRate) return
@@ -485,7 +480,6 @@ export default function PlanningPage() {
     } finally { setLoadingMonthly(false) }
   }
 
-  // rowStats : source de vérité — ch dérivé depuis contract_type
   const rowStats  = employees.map(emp => {
     const e  = getEntryState(emp.id)
     const ch = getContractHours(emp)
@@ -559,13 +553,13 @@ export default function PlanningPage() {
   const activeHasData = !!(activeSched.matinDebut || activeSched.matinFin || activeSched.apmDebut || activeSched.apmFin || activeSched.category)
 
   return (
-    <div className="min-h-screen bg-gray-50 pb-10">
+    <div className="min-h-screen bg-gray-50 flex flex-col">
       <style>{`
         input[type=time]::-webkit-calendar-picker-indicator { opacity: 0.5; cursor: pointer; }
         input[type=time] { color: #0f172a !important; background-color: #ffffff !important; }
       `}</style>
 
-      {/* ── Popover détail (position:fixed — au-dessus de tout) ── */}
+      {/* ── Popover détail (position:fixed) ── */}
       {selectedCell && activeEmp && (
         <div
           style={{
@@ -581,14 +575,12 @@ export default function PlanningPage() {
           data-cell="true"
           onClick={e => e.stopPropagation()}
         >
-          {/* Poste */}
           <div className="flex items-center justify-between mb-2">
             <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Poste</p>
             {activeHasData && (
               <button
                 onClick={() => { copySchedule(selectedCell.empId, selectedCell.jour); setSelectedCell(null) }}
                 className="flex items-center gap-1 text-[10px] font-medium text-gray-500 hover:text-[#1E3A5F] px-1.5 py-0.5 rounded hover:bg-gray-100 transition-colors"
-                title="Copier ces horaires"
               >
                 <Copy className="w-3 h-3" />
                 Copier
@@ -610,11 +602,8 @@ export default function PlanningPage() {
               )
             })}
           </div>
-
-          {/* Horaires */}
           <div className="border-t border-gray-100 pt-2.5 space-y-3">
             <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Horaires</p>
-
             <div>
               <p className="text-xs font-medium text-gray-600 mb-1.5">Matin</p>
               <div className="flex items-center gap-2">
@@ -634,7 +623,6 @@ export default function PlanningPage() {
                 )}
               </div>
             </div>
-
             <div>
               <p className="text-xs font-medium text-gray-600 mb-1.5">Après-midi</p>
               <div className="flex items-center gap-2">
@@ -654,7 +642,6 @@ export default function PlanningPage() {
                 )}
               </div>
             </div>
-
             {(activeSched.matin > 0 || activeSched.apresMidi > 0) && (
               <div className="flex items-center justify-between pt-1.5 border-t border-gray-100">
                 <span className="text-xs text-gray-400">Total journée</span>
@@ -663,7 +650,6 @@ export default function PlanningPage() {
                 </span>
               </div>
             )}
-
             <button
               onClick={() => { saveDay(selectedCell.empId); setSelectedCell(null) }}
               className="w-full flex items-center justify-center gap-2 bg-[#1E3A5F] hover:bg-[#2a4f7c] text-white rounded-xl py-2.5 font-semibold text-sm transition-colors mt-1"
@@ -716,8 +702,6 @@ export default function PlanningPage() {
           <Copy className="w-3 h-3" />
           {copying ? 'Copie...' : `Copier S${week === 1 ? 52 : week - 1}`}
         </button>
-
-        {/* ── Indicateur presse-papier ── */}
         {copiedSched && (
           <div className="flex items-center gap-1.5 text-xs bg-violet-50 border border-violet-200 text-violet-700 rounded-full px-2.5 py-1 animate-pulse">
             <Clipboard className="w-3 h-3 flex-shrink-0" />
@@ -727,7 +711,6 @@ export default function PlanningPage() {
             </button>
           </div>
         )}
-
         <div className="ml-auto flex items-center gap-4 text-xs text-gray-400">
           <span><span className="font-semibold text-gray-700">{fmtDecHours(grandH)}</span> total</span>
           <span><span className="font-semibold text-green-700">{grandCost.toFixed(2)} €</span> coût</span>
@@ -736,8 +719,8 @@ export default function PlanningPage() {
 
       {pageError && <div className="mx-6 mt-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">{pageError}</div>}
 
-      {/* ── Grid ── */}
-      <div className="overflow-x-auto">
+      {/* ── Grid (flex-1 pour pousser le footer vers le bas) ── */}
+      <div className="flex-1 overflow-x-auto pb-12">
         <table className="w-full min-w-[860px] border-collapse">
           <thead>
             <tr className="bg-white">
@@ -782,7 +765,6 @@ export default function PlanningPage() {
               employees.map((emp, empIdx) => {
                 const pal    = EMP_PALETTES[empIdx % EMP_PALETTES.length]
                 const entry  = getEntryState(emp.id)
-                // ch dérivé depuis contract_type — source de vérité
                 const { totalH, cost, ch } = rowStats.find(r => r.empId === emp.id) || { totalH: 0, cost: 0, ch: 35 }
                 const hasOT  = totalH > ch
                 const showContractPop = contractPopover === emp.id
@@ -792,7 +774,6 @@ export default function PlanningPage() {
 
                 return (
                   <tr key={emp.id} className="group">
-                    {/* Employee cell */}
                     <td className={`px-3 py-0 sticky left-0 bg-white z-10 border-b border-r border-gray-200 ${pal.lborder}`}>
                       <div className="flex items-center gap-2 py-2">
                         <div className={`w-7 h-7 rounded-full ${pal.bg} flex items-center justify-center flex-shrink-0`}>
@@ -854,7 +835,6 @@ export default function PlanningPage() {
                       </div>
                     </td>
 
-                    {/* Day cells */}
                     {JOURS_DB.map((jour, idx) => {
                       const typeKey   = `${jour}_type` as keyof PlanningEntry
                       const type      = (entry[typeKey] as DayType) || (idx >= 5 ? 'repos' : 'travail')
@@ -878,8 +858,6 @@ export default function PlanningPage() {
                         <td key={jour} className="p-0 border-b border-r border-gray-200 align-stretch">
                           <div className="relative h-full group/cell" data-cell="true">
                             <div className={`${cellBg} w-full h-full min-h-[100px] flex flex-col`}>
-
-                              {/* Type badge */}
                               <div className="flex items-center px-2 pt-1.5 pb-0.5">
                                 <button
                                   onClick={e => {
@@ -894,8 +872,6 @@ export default function PlanningPage() {
                                   <span className={`text-[10px] font-semibold ${cellTxt}`}>{typeLabel}</span>
                                   {!fName && <ChevronDown className={`w-2.5 h-2.5 ${cellTxt} opacity-40`} />}
                                 </button>
-
-                                {/* ── Boutons copier / coller ── */}
                                 {!fName && type === 'travail' && (
                                   <div className="ml-auto flex items-center gap-0.5 opacity-0 group-hover/cell:opacity-100 transition-opacity">
                                     {hasCopyData && (
@@ -921,8 +897,6 @@ export default function PlanningPage() {
                                   </div>
                                 )}
                               </div>
-
-                              {/* Corps cellule */}
                               <div
                                 className={`flex-1 flex flex-col items-center justify-center gap-0.5 pb-2 px-1 ${
                                   !fName && type === 'travail' ? 'cursor-pointer hover:brightness-95' : ''
@@ -967,8 +941,6 @@ export default function PlanningPage() {
                                 )}
                               </div>
                             </div>
-
-                            {/* ── Dropdown type ── */}
                             {isTypeOpen && (
                               <div className="absolute top-full left-0 z-50 mt-1 bg-white rounded-xl shadow-2xl border border-gray-100 p-1.5 min-w-[170px]" data-cell="true" onClick={e => e.stopPropagation()}>
                                 <p className="text-[10px] text-gray-400 px-2 py-1 font-medium uppercase tracking-wide">Type de journée</p>
@@ -995,15 +967,12 @@ export default function PlanningPage() {
                       )
                     })}
 
-                    {/* Total */}
                     <td className="px-2 py-3 text-center border-b border-r border-gray-200">
                       <div className={`inline-flex flex-col items-center px-2 py-1 rounded-lg ${hasOT ? 'bg-orange-50' : totalH > 0 ? 'bg-gray-50' : ''}`}>
                         <span className={`font-bold text-sm ${hasOT ? 'text-orange-600' : totalH > 0 ? 'text-gray-800' : 'text-gray-300'}`}>{fmtDecHours(totalH)}</span>
                         {hasOT && <span className="text-[9px] text-orange-400">+{fmtDecHours(totalH - ch)} sup</span>}
                       </div>
                     </td>
-
-                    {/* Cost */}
                     <td className="px-2 py-3 text-center border-b border-gray-200">
                       <span className={`font-bold text-sm ${cost > 0 ? 'text-green-700' : 'text-gray-300'}`}>
                         {cost > 0 ? `${cost.toFixed(0)} €` : '—'}
@@ -1014,7 +983,6 @@ export default function PlanningPage() {
               })
             )}
 
-            {/* Footer totals */}
             {employees.length > 0 && (
               <tr className="bg-gray-900">
                 <td className="px-3 py-3 sticky left-0 bg-gray-900 z-10 border-r border-gray-700">
@@ -1047,8 +1015,8 @@ export default function PlanningPage() {
         </table>
       </div>
 
-      {/* ── CCN 992 Footer — tout en bas de la feuille ── */}
-      <div className="mt-auto px-6 py-3 bg-[#0f172a] border-t border-gray-800">
+      {/* ── CCN 992 — sticky au bas de l'écran, toujours visible ── */}
+      <div className="sticky bottom-0 z-30 px-6 py-3 bg-[#0f172a] border-t border-gray-800">
         <div className="flex flex-wrap items-center gap-x-6 gap-y-1.5">
           <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">CCN 992 · Boucherie-Charcuterie</span>
           <div className="flex flex-wrap gap-x-5 gap-y-1 text-[11px] text-gray-500">
@@ -1058,7 +1026,7 @@ export default function PlanningPage() {
             <span className="text-gray-700">|</span>
             <span>Congé payé = <span className="text-gray-300">7h / jour</span></span>
             <span className="text-gray-700">|</span>
-            <span>Ferié travaillé = <span className="text-gray-300">+100 %</span></span>
+            <span>Férié travaillé = <span className="text-gray-300">+100 %</span></span>
           </div>
         </div>
       </div>
@@ -1135,7 +1103,6 @@ export default function PlanningPage() {
         </div>
       )}
 
-      {/* ── Fiche employé ── */}
       {profileEmp && (
         <EmployeeProfileModal
           employee={profileEmp}
@@ -1147,7 +1114,6 @@ export default function PlanningPage() {
         />
       )}
 
-      {/* ── Ajout employé ── */}
       {showAdd && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 backdrop-blur-sm" onClick={() => setShowAdd(false)}>
           <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
