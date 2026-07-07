@@ -1151,6 +1151,33 @@ export async function POST(req: NextRequest) {
     })
     if (dbError) return NextResponse.json({ error: 'DB: ' + dbError.message }, { status: 500 })
 
+    // 9b. Upsert CA par famille dans weekly_ca (pour tableau de bord)
+    if (clientId) {
+      const famBoucherie = ['BOEUF', 'VEAU', 'PORC', 'AGNEAU', 'VOLAILLE', 'LAPIN', 'BOUCHERIE', 'VIANDE']
+      const famCharcuterie = ['CHARCUTERIE', 'SALAISON', 'SAUCISSE', 'JAMBON', 'RILLETTE', 'PATE']
+      const famTraiteur = ['TRAITEUR', 'PLATS CUISIN', 'QUICHE', 'SALADE', 'CUISINE']
+      const kwMatch = (nom: string, kws: string[]) => kws.some(kw => nom.toUpperCase().includes(kw))
+      let ca_boucherie = 0, ca_charcuterie = 0, ca_traiteur = 0, ca_vente = 0
+      for (const f of data.ventes_n.familles) {
+        if (kwMatch(f.nom, famBoucherie)) ca_boucherie += f.total_montant
+        else if (kwMatch(f.nom, famCharcuterie)) ca_charcuterie += f.total_montant
+        else if (kwMatch(f.nom, famTraiteur)) ca_traiteur += f.total_montant
+        else ca_vente += f.total_montant
+      }
+      await serviceSupabase.from('weekly_ca')
+        .delete().eq('client_id', clientId).eq('week_number', data.week_number).eq('year', data.year)
+      await serviceSupabase.from('weekly_ca').insert({
+        client_id: clientId,
+        week_number: data.week_number,
+        year: data.year,
+        ca_total: data.ventes_n.total || (ca_boucherie + ca_charcuterie + ca_traiteur + ca_vente),
+        ca_boucherie,
+        ca_charcuterie,
+        ca_traiteur,
+        ca_vente,
+      })
+    }
+
     // 10. Email
     const toEmail = clientEmail || (profile as { delivery_email?: string }).delivery_email || user.email || ''
     const resend = new Resend(process.env.RESEND_API_KEY ?? '')
