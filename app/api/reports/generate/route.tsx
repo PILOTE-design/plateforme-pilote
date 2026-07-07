@@ -204,51 +204,51 @@ const HRPage = ({ hr, week, year }: { hr: HRData; week: number; year: number }) 
         <KpiBox
           label="RATIO / CA"
           value={`${ratioPct} %`}
-          sub={hr.ratio_ca > 0.35 ? '⚠ Seuil 35 % dépassé' : 'Objectif < 35 %'}
+          sub={hr.ratio_ca > 0.35 ? 'Seuil 35 % depasse' : 'Objectif < 35 %'}
           bg={ratioBg}
         />
-        <KpiBox label="HEURES ÉQUIPE" value={`${hr.total_hours.toFixed(1)} h`}
-          sub="Total heures travaillées" bg={C.blue} />
+        <KpiBox label="HEURES EQUIPE" value={`${hr.total_hours.toFixed(1)} h`}
+          sub="Total heures travaillees" bg={C.blue} />
       </View>
 
-      {/* Table employés */}
+      {/* Table employes */}
       <View style={S.tableWrap}>
         <View style={S.tHead}>
-          <Text style={[S.tHeadCell, { flex: 2.2 }]}>EMPLOYÉ</Text>
+          <Text style={[S.tHeadCell, { flex: 2.2 }]}>EMPLOYE</Text>
           <Text style={[S.tHeadCell, { flex: 1.4 }]}>CONTRAT</Text>
           <Text style={[S.tHeadCell, { flex: 1, textAlign: 'right' }]}>HEURES</Text>
           <Text style={[S.tHeadCell, { flex: 1.4, textAlign: 'right' }]}>BASE</Text>
           <Text style={[S.tHeadCell, { flex: 1, textAlign: 'right' }]}>HS</Text>
           <Text style={[S.tHeadCell, { flex: 1, textAlign: 'right' }]}>DIM.</Text>
-          <Text style={[S.tHeadCell, { flex: 1, textAlign: 'right' }]}>FÉR.</Text>
+          <Text style={[S.tHeadCell, { flex: 1, textAlign: 'right' }]}>FER.</Text>
           <Text style={[S.tHeadCell, { flex: 1, textAlign: 'right' }]}>NUIT</Text>
           <Text style={[S.tHeadCell, { flex: 1.4, textAlign: 'right' }]}>TOTAL</Text>
         </View>
         {hr.employees.map((emp, i) => (
           <View key={i} style={i % 2 === 0 ? S.tRow : S.tRowAlt}>
             <Text style={[S.tCellB, { flex: 2.2 }]}>
-              {trunc(emp.name, 18)}{emp.is_minor ? ' ⚠' : ''}
+              {trunc(emp.name, 18)}{emp.is_minor ? ' (m)' : ''}
             </Text>
             <Text style={[S.tCell, { flex: 1.4 }]}>{emp.contract_type} {emp.contract_hours}h</Text>
             <Text style={[S.tCellR, { flex: 1 }]}>{emp.hours_worked.toFixed(1)}h</Text>
             <Text style={[S.tCellR, { flex: 1.4 }]}>{eur(emp.cost_base)}</Text>
             <Text style={[emp.cost_hs > 0 ? S.tCellRed : S.tCellR, { flex: 1 }]}>
-              {emp.cost_hs > 0 ? eur(emp.cost_hs) : '—'}
+              {emp.cost_hs > 0 ? eur(emp.cost_hs) : '-'}
             </Text>
             <Text style={[S.tCellR, { flex: 1 }]}>
-              {emp.cost_dimanche > 0 ? eur(emp.cost_dimanche) : '—'}
+              {emp.cost_dimanche > 0 ? eur(emp.cost_dimanche) : '-'}
             </Text>
             <Text style={[S.tCellR, { flex: 1 }]}>
-              {emp.cost_ferie > 0 ? eur(emp.cost_ferie) : '—'}
+              {emp.cost_ferie > 0 ? eur(emp.cost_ferie) : '-'}
             </Text>
             <Text style={[S.tCellR, { flex: 1 }]}>
-              {emp.cost_nuit > 0 ? eur(emp.cost_nuit) : '—'}
+              {emp.cost_nuit > 0 ? eur(emp.cost_nuit) : '-'}
             </Text>
             <Text style={[S.tCellRB, { flex: 1.4 }]}>{eur(emp.cost_total)}</Text>
           </View>
         ))}
         <View style={S.tTotal}>
-          <Text style={[S.tTotalCellL, { flex: 2.2 }]}>TOTAL ÉQUIPE</Text>
+          <Text style={[S.tTotalCellL, { flex: 2.2 }]}>TOTAL EQUIPE</Text>
           <Text style={[S.tTotalCell, { flex: 1.4 }]}></Text>
           <Text style={[S.tTotalCell, { flex: 1 }]}>{hr.total_hours.toFixed(1)}h</Text>
           <Text style={[S.tTotalCell, { flex: 1.4 }]}></Text>
@@ -260,11 +260,11 @@ const HRPage = ({ hr, week, year }: { hr: HRData; week: number; year: number }) 
         </View>
       </View>
 
-      {/* Alertes réglementaires */}
+      {/* Alertes reglementaires */}
       {hr.alerts.length > 0 && (
         <View style={{ paddingHorizontal: 36, marginTop: 14 }}>
           <Text style={{ fontSize: 9, fontFamily: 'Helvetica-Bold', color: C.red, marginBottom: 6 }}>
-            ALERTES RÉGLEMENTAIRES CCN 992
+            ALERTES REGLEMENTAIRES CCN 992
           </Text>
           {hr.alerts.map((a, i) => (
             <Text key={i} style={{ fontSize: 8.5, color: C.textMid, marginBottom: 3 }}>{a}</Text>
@@ -272,11 +272,11 @@ const HRPage = ({ hr, week, year }: { hr: HRData; week: number; year: number }) 
         </View>
       )}
 
-      {/* Disclaimer légal */}
+      {/* Disclaimer legal */}
       <View style={{ paddingHorizontal: 36, marginTop: 14, paddingTop: 10, borderTopColor: C.line, borderTopWidth: 0.5 }}>
         <Text style={{ fontSize: 7.5, color: C.textLight, lineHeight: 1.4 }}>
-          Ces données sont calculées à titre indicatif à partir du planning PILOTE (CCN Boucherie-Charcuterie IDCC 992).
-          Elles ne constituent pas un bulletin de paie officiel. Consultez votre expert-comptable pour la paie définitive.
+          Ces donnees sont calculees a titre indicatif a partir du planning PILOTE (CCN Boucherie-Charcuterie IDCC 992).
+          Elles ne constituent pas un bulletin de paie officiel. Consultez votre expert-comptable pour la paie definitive.
           Semaine {week} · {year}
         </Text>
       </View>
@@ -314,18 +314,18 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
               <Text style={S.coverClient}>{clientName.toUpperCase()}</Text>
             </>
           )}
-          <Text style={S.coverMeta}>Généré le {generatedOn}</Text>
-          <Text style={S.coverMeta}>Période comparée (N-1) : {data.period_n1}</Text>
+          <Text style={S.coverMeta}>Genere le {generatedOn}</Text>
+          <Text style={S.coverMeta}>Periode comparee (N-1) : {data.period_n1}</Text>
           <Text style={S.coverMeta}>
-            Analyse IA intégrée · Graphiques de répartition · Top &amp; Flop produits
+            Analyse IA integree · Graphiques de repartition · Top &amp; Flop produits
             {hr.has_data ? ' · Analyse RH & Masse salariale' : ''}
           </Text>
         </View>
       </Page>
 
-      {/* ══ PAGE 2 — SYNTHÈSE FINANCIÈRE ════════════════════════════════════ */}
+      {/* ══ PAGE 2 — SYNTHESE FINANCIERE ════════════════════════════════════ */}
       <Page size="A4" style={S.page}>
-        <SecHeader title="SYNTHÈSE FINANCIÈRE" />
+        <SecHeader title="SYNTHESE FINANCIERE" />
 
         <Text style={{ paddingHorizontal: 36, fontSize: 9, color: C.textLight, marginBottom: 8 }}>
           CHIFFRE D'AFFAIRES
@@ -361,14 +361,14 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
         </View>
 
         <Text style={{ paddingHorizontal: 36, fontSize: 9.5, fontFamily: 'Helvetica-Bold', color: C.navy, marginBottom: 10 }}>
-          Récapitulatif par famille de produits
+          Recapitulatif par famille de produits
         </Text>
         <View style={S.tableWrap}>
           <View style={S.tHead}>
             <Text style={[S.tHeadCell, { flex: 3 }]}>FAMILLE</Text>
             <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N</Text>
             <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N-1</Text>
-            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>ÉCART</Text>
+            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>ECART</Text>
             <Text style={[S.tHeadCell, { flex: 1.2, textAlign: 'right' }]}>% CA</Text>
             <Text style={[S.tHeadCell, { flex: 1, textAlign: 'center' }]}>TEND.</Text>
           </View>
@@ -380,7 +380,7 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
               <View key={fam.id} style={i % 2 === 0 ? S.tRow : S.tRowAlt}>
                 <Text style={[S.tCellB, { flex: 3 }]}>{trunc(fam.nom, 28)}</Text>
                 <Text style={[S.tCellR, { flex: 2 }]}>{eur(fam.total_montant)}</Text>
-                <Text style={[S.tCellR, { flex: 2 }]}>{f1 ? eur(f1.total_montant) : '—'}</Text>
+                <Text style={[S.tCellR, { flex: 2 }]}>{f1 ? eur(f1.total_montant) : '-'}</Text>
                 <Text style={[ec >= 0 ? S.tCellGreen : S.tCellRed, { flex: 2 }]}>{signEur(ec)}</Text>
                 <Text style={[S.tCellRB, { flex: 1.2 }]}>{pctStr(w)}</Text>
                 <Text style={[ec >= 0 ? S.tCellGreen : S.tCellRed, { flex: 1, textAlign: 'center' }]}>
@@ -390,7 +390,7 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
             )
           })}
           <View style={S.tTotal}>
-            <Text style={[S.tTotalCellL, { flex: 3 }]}>TOTAL GÉNÉRAL</Text>
+            <Text style={[S.tTotalCellL, { flex: 3 }]}>TOTAL GENERAL</Text>
             <Text style={[S.tTotalCell, { flex: 2 }]}>{eur(vn.total)}</Text>
             <Text style={[S.tTotalCell, { flex: 2 }]}>{eur(vn1.total)}</Text>
             <Text style={[S.tTotalCell, { flex: 2 }]}>{signEur(vn.total - vn1.total)}</Text>
@@ -404,14 +404,14 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
         <Footer page={2} week={data.week_number} year={data.year} />
       </Page>
 
-      {/* ══ PAGE 3 — RÉPARTITION CA (CAMEMBERT) ═════════════════════════════ */}
+      {/* ══ PAGE 3 — REPARTITION CA (CAMEMBERT) ═════════════════════════════ */}
       <Page size="A4" style={S.page}>
-        <SecHeader title="RÉPARTITION DU CA PAR FAMILLE" />
+        <SecHeader title="REPARTITION DU CA PAR FAMILLE" />
         <View style={S.chartWrap}>
           <Image src={`data:image/png;base64,${pieBuffer.toString('base64')}`} style={{ width: 490, height: 300 }} />
         </View>
         <Text style={S.chartCaption}>
-          Poids de chaque famille dans le chiffre d'affaires total — Semaine {data.week_number} {data.year}
+          Poids de chaque famille dans le chiffre d'affaires total - Semaine {data.week_number} {data.year}
         </Text>
 
         <View style={[S.tableWrap, { marginTop: 14 }]}>
@@ -421,7 +421,7 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
             <Text style={[S.tHeadCell, { flex: 1.5, textAlign: 'right' }]}>% N</Text>
             <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N-1</Text>
             <Text style={[S.tHeadCell, { flex: 1.5, textAlign: 'right' }]}>% N-1</Text>
-            <Text style={[S.tHeadCell, { flex: 1.5, textAlign: 'right' }]}>ÉVOL. %</Text>
+            <Text style={[S.tHeadCell, { flex: 1.5, textAlign: 'right' }]}>EVOL. %</Text>
           </View>
           {vn.familles.map((fam, i) => {
             const f1 = famMap.get(fam.nom.toUpperCase())
@@ -433,10 +433,10 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
                 <Text style={[S.tCellB, { flex: 3 }]}>{trunc(fam.nom, 28)}</Text>
                 <Text style={[S.tCellR, { flex: 2 }]}>{eur(fam.total_montant)}</Text>
                 <Text style={[S.tCellRB, { flex: 1.5 }]}>{pctStr(wN)}</Text>
-                <Text style={[S.tCellR, { flex: 2 }]}>{f1 ? eur(f1.total_montant) : '—'}</Text>
-                <Text style={[S.tCellR, { flex: 1.5 }]}>{f1 ? pctStr(wN1) : '—'}</Text>
+                <Text style={[S.tCellR, { flex: 2 }]}>{f1 ? eur(f1.total_montant) : '-'}</Text>
+                <Text style={[S.tCellR, { flex: 1.5 }]}>{f1 ? pctStr(wN1) : '-'}</Text>
                 <Text style={[evolPct >= 0 ? S.tCellGreen : S.tCellRed, { flex: 1.5 }]}>
-                  {f1 ? signPct(evolPct) : '—'}
+                  {f1 ? signPct(evolPct) : '-'}
                 </Text>
               </View>
             )
@@ -448,24 +448,24 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
 
       {/* ══ PAGE 4 — COMPARAISON N vs N-1 (BARRES) ══════════════════════════ */}
       <Page size="A4" style={S.page}>
-        <SecHeader title={`ÉVOLUTION PAR FAMILLE — ${data.year} vs ${data.year - 1}`} />
+        <SecHeader title={`EVOLUTION PAR FAMILLE - ${data.year} vs ${data.year - 1}`} />
         <View style={S.chartWrap}>
           <Image src={`data:image/png;base64,${barBuffer.toString('base64')}`} style={{ width: 490, height: 360 }} />
         </View>
         <Text style={S.chartCaption}>
-          Comparaison du chiffre d'affaires par famille — Semaine {data.week_number} {data.year} vs Semaine {data.week_number} {data.year - 1}
+          Comparaison du chiffre d'affaires par famille - Semaine {data.week_number} {data.year} vs Semaine {data.week_number} {data.year - 1}
         </Text>
 
         <View style={{ paddingHorizontal: 36, marginTop: 20 }}>
           <Text style={{ fontSize: 9.5, fontFamily: 'Helvetica-Bold', color: C.navy, marginBottom: 10 }}>
-            Synthèse des écarts par famille
+            Synthese des ecarts par famille
           </Text>
           <View style={S.tHead}>
             <Text style={[S.tHeadCell, { flex: 3 }]}>FAMILLE</Text>
             <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N</Text>
             <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N-1</Text>
-            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>ÉCART €</Text>
-            <Text style={[S.tHeadCell, { flex: 1.5, textAlign: 'right' }]}>ÉCART %</Text>
+            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>ECART EUR</Text>
+            <Text style={[S.tHeadCell, { flex: 1.5, textAlign: 'right' }]}>ECART %</Text>
           </View>
           {vn.familles
             .map(fam => {
@@ -479,10 +479,10 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
               <View key={fam.id} style={i % 2 === 0 ? S.tRow : S.tRowAlt}>
                 <Text style={[S.tCellB, { flex: 3 }]}>{trunc(fam.nom, 28)}</Text>
                 <Text style={[S.tCellR, { flex: 2 }]}>{eur(fam.total_montant)}</Text>
-                <Text style={[S.tCellR, { flex: 2 }]}>{f1 ? eur(f1.total_montant) : '—'}</Text>
+                <Text style={[S.tCellR, { flex: 2 }]}>{f1 ? eur(f1.total_montant) : '-'}</Text>
                 <Text style={[ec >= 0 ? S.tCellGreen : S.tCellRed, { flex: 2 }]}>{signEur(ec)}</Text>
                 <Text style={[ec >= 0 ? S.tCellGreen : S.tCellRed, { flex: 1.5 }]}>
-                  {f1 ? signPct(ecPct) : '—'}
+                  {f1 ? signPct(ecPct) : '-'}
                 </Text>
               </View>
             ))}
@@ -491,9 +491,9 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
         <Footer page={4} week={data.week_number} year={data.year} />
       </Page>
 
-      {/* ══ PAGE 5 — CE QUI PROGRESSE / CE QUI DÉCROCHE ════════════════════ */}
+      {/* ══ PAGE 5 — CE QUI PROGRESSE / CE QUI DECROCHE ════════════════════ */}
       <Page size="A4" style={S.page}>
-        <SecHeader title="CE QUI PROGRESSE — CE QUI DÉCROCHE" />
+        <SecHeader title="CE QUI PROGRESSE - CE QUI DECROCHE" />
 
         <View style={S.topFlopWrap}>
           <View style={S.topFlopLeft}>
@@ -506,7 +506,7 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
               <Text style={[S.tHeadCell, { flex: 0.4, color: C.textLight }]}>#</Text>
               <Text style={[S.tHeadCell, { flex: 3 }]}>PRODUIT</Text>
               <Text style={[S.tHeadCell, { flex: 1.8, textAlign: 'right' }]}>CA N</Text>
-              <Text style={[S.tHeadCell, { flex: 1.2, textAlign: 'right' }]}>ÉVOL.</Text>
+              <Text style={[S.tHeadCell, { flex: 1.2, textAlign: 'right' }]}>EVOL.</Text>
             </View>
             {tops.map((t, i) => {
               const n1 = t.n - t.ecart
@@ -525,14 +525,14 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
           <View style={S.topFlopRight}>
             <View style={{ backgroundColor: C.red, paddingVertical: 9, paddingHorizontal: 8 }}>
               <Text style={{ color: C.white, fontFamily: 'Helvetica-Bold', fontSize: 9, letterSpacing: 0.5 }}>
-                CE QUI DÉCROCHE
+                CE QUI DECROCHE
               </Text>
             </View>
             <View style={{ flexDirection: 'row', backgroundColor: '#F1F5F9', paddingVertical: 5, paddingHorizontal: 8, borderBottomColor: '#CBD5E1', borderBottomWidth: 1 }}>
               <Text style={[S.tHeadCell, { flex: 0.4, color: C.textLight }]}>#</Text>
               <Text style={[S.tHeadCell, { flex: 3 }]}>PRODUIT</Text>
               <Text style={[S.tHeadCell, { flex: 1.8, textAlign: 'right' }]}>CA N</Text>
-              <Text style={[S.tHeadCell, { flex: 1.2, textAlign: 'right' }]}>ÉVOL.</Text>
+              <Text style={[S.tHeadCell, { flex: 1.2, textAlign: 'right' }]}>EVOL.</Text>
             </View>
             {flops.map((f, i) => {
               const n1 = f.n - f.ecart
@@ -554,10 +554,10 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
 
       {/* ══ PAGE 6 — ANALYSE IA & RECOMMANDATIONS ═══════════════════════════ */}
       <Page size="A4" style={S.page}>
-        <SecHeader title="ANALYSE INTELLIGENTE — INSIGHTS CLÉS" />
+        <SecHeader title="ANALYSE INTELLIGENTE - INSIGHTS CLES" />
 
         <Text style={{ paddingHorizontal: 36, fontSize: 8.5, color: C.textLight, marginBottom: 16 }}>
-          Analyse générée par intelligence artificielle · Semaine {data.week_number} {data.year}
+          Analyse generee par intelligence artificielle · Semaine {data.week_number} {data.year}
         </Text>
 
         <View style={S.insightBlock}>
@@ -677,11 +677,11 @@ function getWeekDatesHR(weekNumber: number, year: number): string[] {
 }
 
 function getSeasonalContext(weekNumber: number): string {
-  if (weekNumber >= 14 && weekNumber <= 17) return 'Semaine de Pâques — pic habituel de +20 à +40 % vs semaine standard.'
-  if (weekNumber >= 24 && weekNumber <= 30) return 'Période estivale — légère hausse attendue (+10 à +15 %).'
-  if (weekNumber >= 49 && weekNumber <= 52) return "Fin d'année — pic majeur attendu (+30 à +50 %)."
-  if (weekNumber >= 1 && weekNumber <= 7) return 'Creux de janvier-février — baisse habituelle de -15 à -25 %.'
-  return 'Semaine standard — pas de saisonnalité marquée.'
+  if (weekNumber >= 14 && weekNumber <= 17) return 'Semaine de Paques - pic habituel de +20 a +40 % vs semaine standard.'
+  if (weekNumber >= 24 && weekNumber <= 30) return 'Periode estivale - legere hausse attendue (+10 a +15 %).'
+  if (weekNumber >= 49 && weekNumber <= 52) return "Fin d'annee - pic majeur attendu (+30 a +50 %)."
+  if (weekNumber >= 1 && weekNumber <= 7) return 'Creux de janvier-fevrier - baisse habituelle de -15 a -25 %.'
+  return 'Semaine standard - pas de saisonnalite marquee.'
 }
 
 // ─── Fetch Planning HR ────────────────────────────────────────────────────────
@@ -747,13 +747,9 @@ async function fetchPlanningHR(
 
       const dayDate = weekDates[dayIdx]
 
-      // Dimanche (index 6)
       if (dayIdx === 6) costDimanche += hours * rate * 0.20
-
-      // Jour férié
       if (dayDate && holidays.has(dayDate)) costFerie += hours * rate * 1.00
 
-      // Travail de nuit (avant 6h ou après 21h)
       const sd = entry.schedule_details
       if (sd) {
         const slots: [string | undefined, string | undefined][] = [
@@ -765,12 +761,10 @@ async function fetchPlanningHR(
           const sh = parseTimeHR(start)
           const eh = parseTimeHR(end)
           const slotH = Math.max(0, eh - sh)
-          // Nuit avant 6h
           if (sh < 6) {
             const nightH = Math.min(eh, 6) - sh
             costNuit += Math.max(0, nightH) * rate * 0.25
           }
-          // Nuit après 21h
           if (eh > 21) {
             const nightH = eh - Math.max(sh, 21)
             costNuit += Math.max(0, nightH) * rate * 0.25
@@ -780,10 +774,9 @@ async function fetchPlanningHR(
       }
     }
 
-    // Alertes légales CCN
-    if (weekHours > 48) alerts.push(`${emp.name} : ${weekHours.toFixed(1)}h cette semaine — dépassement légal (max 48h)`)
+    if (weekHours > 48) alerts.push(`${emp.name} : ${weekHours.toFixed(1)}h cette semaine - depassement legal (max 48h)`)
     if ((emp.is_minor ?? false) && weekHours > 35) {
-      alerts.push(`${emp.name} (mineur) : ${weekHours.toFixed(1)}h — dépassement légal (max 35h)`)
+      alerts.push(`${emp.name} (mineur) : ${weekHours.toFixed(1)}h - depassement legal (max 35h)`)
     }
 
     const { base: costBase, hs: costHs } = calcBaseCostHR(weekHours, rate, contractH)
@@ -811,9 +804,9 @@ async function fetchPlanningHR(
 
   const ratioCa = caNet > 0 ? totalCost / caNet : 0
   if (ratioCa > 0.40) {
-    alerts.push(`Ratio masse salariale : ${(ratioCa * 100).toFixed(1)} % du CA — seuil critique de 40 % dépassé`)
+    alerts.push(`Ratio masse salariale : ${(ratioCa * 100).toFixed(1)} % du CA - seuil critique de 40 % depasse`)
   } else if (ratioCa > 0.35) {
-    alerts.push(`Ratio masse salariale : ${(ratioCa * 100).toFixed(1)} % du CA — proche du seuil d'alerte (35 %)`)
+    alerts.push(`Ratio masse salariale : ${(ratioCa * 100).toFixed(1)} % du CA - proche du seuil d'alerte (35 %)`)
   }
 
   return {
@@ -874,7 +867,7 @@ async function extractVentesData(ventes_text: string): Promise<{ total: number; 
   const response = await client.messages.create({
     model: 'claude-haiku-4-5-20251001',
     max_tokens: 2048,
-    messages: [{ role: 'user', content: `Extrais les totaux par famille du fichier CRISALID.\nRetourne UNIQUEMENT ces lignes (une par ligne), sans texte avant ou après:\nTOTAL|20742.43\nVIANDE DE BOEUF|1|3081.17\nCHARCUTERIE|2|2500.00\nPORC|3|1800.50\n\nFormat:\n- 1ère ligne: TOTAL|montant_total\n- Puis une ligne par famille: NOM_FAMILLE|ID|montant_famille\nUtilise le point (.) comme séparateur décimal. N'inclus PAS les articles individuels.\n\n${ventes_text.slice(0, 12000)}` }],
+    messages: [{ role: 'user', content: `Extrais les totaux par famille du fichier CRISALID.\nRetourne UNIQUEMENT ces lignes (une par ligne), sans texte avant ou apres:\nTOTAL|20742.43\nVIANDE DE BOEUF|1|3081.17\nCHARCUTERIE|2|2500.00\nPORC|3|1800.50\n\nFormat:\n- 1ere ligne: TOTAL|montant_total\n- Puis une ligne par famille: NOM_FAMILLE|ID|montant_famille\nUtilise le point (.) comme separateur decimal. N'inclus PAS les articles individuels.\n\n${ventes_text.slice(0, 12000)}` }],
   })
   const text = response.content[0].type === 'text' ? response.content[0].text.trim() : ''
   const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0)
@@ -954,13 +947,13 @@ async function generateInsights(data: ReportData, hr: HRData): Promise<Insights>
     const f1 = famMapI.get(f.nom.toUpperCase())
     const ec = f.total_montant - (f1?.total_montant ?? 0)
     const pctCA = data.ventes_n.total ? (f.total_montant / data.ventes_n.total * 100).toFixed(1) : '0'
-    return `${f.nom} : ${f.total_montant.toFixed(0)} EUR (${pctCA}% du CA), écart N-1 : ${ec >= 0 ? '+' : ''}${ec.toFixed(0)} EUR`
+    return `${f.nom} : ${f.total_montant.toFixed(0)} EUR (${pctCA}% du CA), ecart N-1 : ${ec >= 0 ? '+' : ''}${ec.toFixed(0)} EUR`
   }).join('\n')
 
   const seasonalCtx = getSeasonalContext(data.week_number)
 
   const hrCtx = hr.has_data
-    ? `\nDONNÉES RH :\nMasse salariale : ${hr.total_cost.toFixed(0)} EUR | Ratio CA : ${(hr.ratio_ca * 100).toFixed(1)}% (seuil alerte 35%) | Heures équipe : ${hr.total_hours.toFixed(1)}h\nAlertes RH : ${hr.alerts.length > 0 ? hr.alerts.join('; ') : 'Aucune'}`
+    ? `\nDONNEES RH :\nMasse salariale : ${hr.total_cost.toFixed(0)} EUR | Ratio CA : ${(hr.ratio_ca * 100).toFixed(1)}% (seuil alerte 35%) | Heures equipe : ${hr.total_hours.toFixed(1)}h\nAlertes RH : ${hr.alerts.length > 0 ? hr.alerts.join('; ') : 'Aucune'}`
     : ''
 
   const response = await client.messages.create({
@@ -968,7 +961,7 @@ async function generateInsights(data: ReportData, hr: HRData): Promise<Insights>
     max_tokens: 1200,
     messages: [{
       role: 'user',
-      content: `Tu es expert en gestion et analyse pour une boucherie artisanale française. Génère des insights précis et des recommandations actionnables en français professionnel.\n\nDONNÉES SEMAINE ${data.week_number} (${data.period_n}) :\nCA N : ${fn.ca_net.toFixed(2)} EUR | CA N-1 : ${fn1.ca_net.toFixed(2)} EUR | Variation : ${caVar}%\nTickets N : ${fn.nb_tickets} | Panier moyen N : ${fn.moyenne_ticket.toFixed(2)} EUR | Panier moyen N-1 : ${fn1.moyenne_ticket.toFixed(2)} EUR\n\nVENTES PAR FAMILLE :\n${famSummary}\n\nCONTEXTE SAISONNIER : ${seasonalCtx}\n${hrCtx}\n\nBENCHMARKS SECTORIELS (boucherie artisanale CCN 992) :\n- Marge brute cible : 35-45% (viande), 40-55% (charcuterie maison), 50-65% (traiteur)\n- Ratio masse salariale cible : < 35% du CA (alerte à 40%)\n- Mix CA idéal : Boucherie 55-60%, Charcuterie 20-25%, Traiteur 15-20%\n\nRetourne UNIQUEMENT ce JSON sans aucun texte avant ou après :\n{"insights":["insight 1","insight 2","insight 3","insight 4","insight 5"],"recommendations":["reco 1","reco 2","reco 3"]}\n\nRègles :\n- Insights : faits précis chiffrés, intègre la saisonnalité si pertinent, compare aux benchmarks sectoriels\n- Recommandations : actions concrètes et spécifiques (ex. "Mettre en avant...", "Renforcer le stock de...", "Vérifier le ratio masse salariale si ...")${hr.has_data && hr.ratio_ca > 0.35 ? '. IMPORTANT: inclure une recommandation RH car ratio masse salariale > 35%.' : ''}\n- Ton direct et professionnel, une phrase par bullet, tout en français`,
+      content: `Tu es expert en gestion et analyse pour une boucherie artisanale francaise. Genere des insights precis et des recommandations actionnables en francais professionnel.\n\nDONNEES SEMAINE ${data.week_number} (${data.period_n}) :\nCA N : ${fn.ca_net.toFixed(2)} EUR | CA N-1 : ${fn1.ca_net.toFixed(2)} EUR | Variation : ${caVar}%\nTickets N : ${fn.nb_tickets} | Panier moyen N : ${fn.moyenne_ticket.toFixed(2)} EUR | Panier moyen N-1 : ${fn1.moyenne_ticket.toFixed(2)} EUR\n\nVENTES PAR FAMILLE :\n${famSummary}\n\nCONTEXTE SAISONNIER : ${seasonalCtx}\n${hrCtx}\n\nBENCHMARKS SECTORIELS (boucherie artisanale CCN 992) :\n- Marge brute cible : 35-45% (viande), 40-55% (charcuterie maison), 50-65% (traiteur)\n- Ratio masse salariale cible : < 35% du CA (alerte a 40%)\n- Mix CA ideal : Boucherie 55-60%, Charcuterie 20-25%, Traiteur 15-20%\n\nRetourne UNIQUEMENT ce JSON sans aucun texte avant ou apres :\n{"insights":["insight 1","insight 2","insight 3","insight 4","insight 5"],"recommendations":["reco 1","reco 2","reco 3"]}\n\nRegles :\n- Insights : faits precis chiffres, integre la saisonnalite si pertinent, compare aux benchmarks sectoriels\n- Recommandations : actions concretes et specifiques${hr.has_data && hr.ratio_ca > 0.35 ? '. IMPORTANT: inclure une recommandation RH car ratio masse salariale > 35%.' : ''}\n- Ton direct et professionnel, une phrase par bullet, tout en francais`,
     }],
   })
 
@@ -978,7 +971,7 @@ async function generateInsights(data: ReportData, hr: HRData): Promise<Insights>
   } catch {
     return {
       insights: ['Analyse non disponible pour cette semaine.'],
-      recommendations: ['Contactez votre conseiller PILOTE pour une analyse personnalisée.'],
+      recommendations: ['Contactez votre conseiller PILOTE pour une analyse personnalisee.'],
     }
   }
 }
@@ -1004,7 +997,7 @@ async function getChartBuffers(data: ReportData): Promise<{ pieBuffer: Buffer; b
     options: {
       cutoutPercentage: 55,
       legend: { position: 'right', labels: { fontSize: 11, padding: 14, boxWidth: 14, fontColor: '#1E293B' } },
-      title: { display: true, text: "D'où vient votre CA ?", fontSize: 14, fontColor: '#1E293B', fontStyle: 'bold', padding: 18 },
+      title: { display: true, text: "D'ou vient votre CA ?", fontSize: 14, fontColor: '#1E293B', fontStyle: 'bold', padding: 18 },
       plugins: {
         datalabels: {
           display: true,
@@ -1021,8 +1014,8 @@ async function getChartBuffers(data: ReportData): Promise<{ pieBuffer: Buffer; b
     data: {
       labels: famNames,
       datasets: [
-        { label: `Année préc. (${data.year - 1})`, data: famCA1, backgroundColor: '#94A3B8', barThickness: 24 },
-        { label: `Cette année (${data.year})`, data: famCA, backgroundColor: '#2563EB', barThickness: 24 },
+        { label: `Annee prec. (${data.year - 1})`, data: famCA1, backgroundColor: '#94A3B8', barThickness: 24 },
+        { label: `Cette annee (${data.year})`, data: famCA, backgroundColor: '#2563EB', barThickness: 24 },
       ],
     },
     options: {
@@ -1070,14 +1063,14 @@ async function generatePDF(report: ComputedReport): Promise<Buffer> {
 
 // ─── POST Handler ─────────────────────────────────────────────────────────────
 
-const ADMIN_EMAIL = 'theo.nouvion@gmail.com'
+const ADMIN_EMAIL = 'nouvion.theo51@gmail.com'
 
 export async function POST(req: NextRequest) {
   try {
     const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'Non authentifie' }, { status: 401 })
-    if (user.email !== ADMIN_EMAIL) return NextResponse.json({ error: "Acces refuse — reservé à l'administrateur" }, { status: 403 })
+    if (user.email !== ADMIN_EMAIL) return NextResponse.json({ error: "Acces refuse - reserve a l'administrateur" }, { status: 403 })
     const { data: profile } = await supabase.from('profiles').select('*').eq('user_id', user.id).single()
     if (!profile) return NextResponse.json({ error: 'Profil introuvable' }, { status: 404 })
 
@@ -1138,7 +1131,7 @@ export async function POST(req: NextRequest) {
     const pdfBuffer = await generatePDF(report)
 
     // 8. Upload to Supabase storage
-    const sanitized = (clientName || 'Rapport').replace(/[^a-zA-Z0-9À-ž\s-]/g, '').trim()
+    const sanitized = (clientName || 'Rapport').replace(/[^a-zA-Z0-9\s-]/g, '').trim()
     const fileName = `Semaine ${data.week_number} ${data.year} - ${sanitized}.pdf`
     const { error: uploadError } = await serviceSupabase.storage.from('reports').upload(
       fileName, pdfBuffer, { contentType: 'application/pdf', upsert: true },
@@ -1149,7 +1142,7 @@ export async function POST(req: NextRequest) {
     const fileUrl = urlData.publicUrl
 
     // 9. Save to DB
-    const title = `Analyse S${data.week_number} - ${data.period_n}${clientName ? ' — ' + clientName : ''}`
+    const title = `Analyse S${data.week_number} - ${data.period_n}${clientName ? ' - ' + clientName : ''}`
     const { error: dbError } = await serviceSupabase.from('reports').insert({
       profile_id: profile.id, title,
       week_number: data.week_number, year: data.year,
@@ -1168,18 +1161,18 @@ export async function POST(req: NextRequest) {
       html: `<div style="font-family:sans-serif;max-width:600px;margin:0 auto">
         <div style="background:#1E3A5F;padding:32px 40px">
           <div style="color:#FF8C00;font-size:11px;letter-spacing:4px;margin-bottom:10px">PILOTE</div>
-          <h2 style="color:#FFFFFF;margin:0;font-size:22px">Votre rapport est prêt</h2>
+          <h2 style="color:#FFFFFF;margin:0;font-size:22px">Votre rapport est pret</h2>
         </div>
         <div style="padding:32px 40px;border:1px solid #E0E0E0;border-top:none">
           <p style="color:#444;margin-top:0"><strong>${title}</strong></p>
-          <p style="color:#666;font-size:14px">${hr.has_data ? '7' : '6'} pages · Analyse IA · Graphiques de répartition · Top &amp; Flop produits${hr.has_data ? ' · Masse salariale CCN 992' : ''}</p>
+          <p style="color:#666;font-size:14px">${hr.has_data ? '7' : '6'} pages · Analyse IA · Graphiques de repartition · Top &amp; Flop produits${hr.has_data ? ' · Masse salariale CCN 992' : ''}</p>
           <div style="margin:28px 0;text-align:center">
             <a href="${fileUrl}"
                style="background:#1E3A5F;color:white;padding:14px 32px;border-radius:8px;text-decoration:none;font-weight:bold;font-size:15px">
-              Télécharger le rapport PDF
+              Telecharger le rapport PDF
             </a>
           </div>
-          <p style="color:#999;font-size:11px;text-align:center">Rapport confidentiel · Généré automatiquement par PILOTE</p>
+          <p style="color:#999;font-size:11px;text-align:center">Rapport confidentiel · Genere automatiquement par PILOTE</p>
         </div>
       </div>`,
     })
