@@ -1,7 +1,9 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-import { BarChart3, FileText, Settings, LogOut, CalendarDays, Receipt } from 'lucide-react'
+import { BarChart3, FileText, Settings, LogOut, CalendarDays, Receipt, ShieldCheck } from 'lucide-react'
+
+const ADMIN_EMAIL = 'nouvion.theo51@gmail.com'
 
 async function signOut() {
   'use server'
@@ -25,6 +27,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
   if (profile && !profile.onboarding_completed && process.env.NODE_ENV !== 'development') {
     redirect('/onboarding')
   }
+
+  const isAdmin = user.email === ADMIN_EMAIL
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
@@ -69,6 +73,19 @@ export default async function DashboardLayout({ children }: { children: React.Re
             <Settings className="w-4 h-4" />
             Paramètres
           </Link>
+
+          {/* Admin shortcut — visible uniquement pour nouvion.theo51@gmail.com */}
+          {isAdmin && (
+            <div className="pt-3 mt-2 border-t border-gray-100">
+              <Link
+                href="/admin"
+                className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-semibold text-orange-600 bg-orange-50 hover:bg-orange-100 transition-colors"
+              >
+                <ShieldCheck className="w-4 h-4" />
+                Espace Admin
+              </Link>
+            </div>
+          )}
         </nav>
         <div className="p-4 border-t border-gray-200">
           <div className="px-3 py-2 mb-2">
