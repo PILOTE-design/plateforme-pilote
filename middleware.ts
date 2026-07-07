@@ -2,7 +2,7 @@ import { type NextRequest, NextResponse } from 'next/server'
 import { updateSession } from '@/lib/supabase/middleware'
 import { createServerClient } from '@supabase/ssr'
 
-const ADMIN_EMAIL = 'nouvion.theo51@gmail.com'
+const ADMIN_EMAIL = 'theo.nouvion@gmail.com'
 
 export async function middleware(request: NextRequest) {
   // Protect /admin routes — redirect non-admins to /dashboard

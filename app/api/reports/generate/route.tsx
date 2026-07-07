@@ -954,13 +954,13 @@ async function generateInsights(data: ReportData, hr: HRData): Promise<Insights>
     const f1 = famMapI.get(f.nom.toUpperCase())
     const ec = f.total_montant - (f1?.total_montant ?? 0)
     const pctCA = data.ventes_n.total ? (f.total_montant / data.ventes_n.total * 100).toFixed(1) : '0'
-    return `${f.nom} : ${f.total_montant.toFixed(0)} € (${pctCA}% du CA), écart N-1 : ${ec >= 0 ? '+' : ''}${ec.toFixed(0)} €`
+    return `${f.nom} : ${f.total_montant.toFixed(0)} EUR (${pctCA}% du CA), écart N-1 : ${ec >= 0 ? '+' : ''}${ec.toFixed(0)} EUR`
   }).join('\n')
 
   const seasonalCtx = getSeasonalContext(data.week_number)
 
   const hrCtx = hr.has_data
-    ? `\nDONNÉES RH :\nMasse salariale : ${hr.total_cost.toFixed(0)} € | Ratio CA : ${(hr.ratio_ca * 100).toFixed(1)}% (seuil alerte 35%) | Heures équipe : ${hr.total_hours.toFixed(1)}h\nAlertes RH : ${hr.alerts.length > 0 ? hr.alerts.join('; ') : 'Aucune'}`
+    ? `\nDONNÉES RH :\nMasse salariale : ${hr.total_cost.toFixed(0)} EUR | Ratio CA : ${(hr.ratio_ca * 100).toFixed(1)}% (seuil alerte 35%) | Heures équipe : ${hr.total_hours.toFixed(1)}h\nAlertes RH : ${hr.alerts.length > 0 ? hr.alerts.join('; ') : 'Aucune'}`
     : ''
 
   const response = await client.messages.create({
@@ -968,30 +968,7 @@ async function generateInsights(data: ReportData, hr: HRData): Promise<Insights>
     max_tokens: 1200,
     messages: [{
       role: 'user',
-      content: `Tu es expert en gestion et analyse pour une boucherie artisanale française. Génère des insights précis et des recommandations actionnables en français professionnel.
-
-DONNÉES SEMAINE ${data.week_number} (${data.period_n}) :
-CA N : ${fn.ca_net.toFixed(2)} € | CA N-1 : ${fn1.ca_net.toFixed(2)} € | Variation : ${caVar}%
-Tickets N : ${fn.nb_tickets} | Panier moyen N : ${fn.moyenne_ticket.toFixed(2)} € | Panier moyen N-1 : ${fn1.moyenne_ticket.toFixed(2)} €
-
-VENTES PAR FAMILLE :
-${famSummary}
-
-CONTEXTE SAISONNIER : ${seasonalCtx}
-${hrCtx}
-
-BENCHMARKS SECTORIELS (boucherie artisanale CCN 992) :
-- Marge brute cible : 35-45% (viande), 40-55% (charcuterie maison), 50-65% (traiteur)
-- Ratio masse salariale cible : < 35% du CA (alerte à 40%)
-- Mix CA idéal : Boucherie 55-60%, Charcuterie 20-25%, Traiteur 15-20%
-
-Retourne UNIQUEMENT ce JSON sans aucun texte avant ou après :
-{"insights":["insight 1","insight 2","insight 3","insight 4","insight 5"],"recommendations":["reco 1","reco 2","reco 3"]}
-
-Règles :
-• Insights : faits précis chiffrés, intègre la saisonnalité si pertinent, compare aux benchmarks sectoriels
-• Recommandations : actions concrètes et spécifiques (ex. "Mettre en avant...", "Renforcer le stock de...", "Vérifier le ratio masse salariale si ...")${hr.has_data && hr.ratio_ca > 0.35 ? '. IMPORTANT: inclure une recommandation RH car ratio masse salariale > 35%.' : ''}
-• Ton direct et professionnel, une phrase par bullet, tout en français`,
+      content: `Tu es expert en gestion et analyse pour une boucherie artisanale française. Génère des insights précis et des recommandations actionnables en français professionnel.\n\nDONNÉES SEMAINE ${data.week_number} (${data.period_n}) :\nCA N : ${fn.ca_net.toFixed(2)} EUR | CA N-1 : ${fn1.ca_net.toFixed(2)} EUR | Variation : ${caVar}%\nTickets N : ${fn.nb_tickets} | Panier moyen N : ${fn.moyenne_ticket.toFixed(2)} EUR | Panier moyen N-1 : ${fn1.moyenne_ticket.toFixed(2)} EUR\n\nVENTES PAR FAMILLE :\n${famSummary}\n\nCONTEXTE SAISONNIER : ${seasonalCtx}\n${hrCtx}\n\nBENCHMARKS SECTORIELS (boucherie artisanale CCN 992) :\n- Marge brute cible : 35-45% (viande), 40-55% (charcuterie maison), 50-65% (traiteur)\n- Ratio masse salariale cible : < 35% du CA (alerte à 40%)\n- Mix CA idéal : Boucherie 55-60%, Charcuterie 20-25%, Traiteur 15-20%\n\nRetourne UNIQUEMENT ce JSON sans aucun texte avant ou après :\n{"insights":["insight 1","insight 2","insight 3","insight 4","insight 5"],"recommendations":["reco 1","reco 2","reco 3"]}\n\nRègles :\n- Insights : faits précis chiffrés, intègre la saisonnalité si pertinent, compare aux benchmarks sectoriels\n- Recommandations : actions concrètes et spécifiques (ex. "Mettre en avant...", "Renforcer le stock de...", "Vérifier le ratio masse salariale si ...")${hr.has_data && hr.ratio_ca > 0.35 ? '. IMPORTANT: inclure une recommandation RH car ratio masse salariale > 35%.' : ''}\n- Ton direct et professionnel, une phrase par bullet, tout en français`,
     }],
   })
 
@@ -1093,7 +1070,7 @@ async function generatePDF(report: ComputedReport): Promise<Buffer> {
 
 // ─── POST Handler ─────────────────────────────────────────────────────────────
 
-const ADMIN_EMAIL = 'nouvion.theo51@gmail.com'
+const ADMIN_EMAIL = 'theo.nouvion@gmail.com'
 
 export async function POST(req: NextRequest) {
   try {
