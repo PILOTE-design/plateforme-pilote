@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import {
   ArrowLeft, FileText, Download, Plus, Mail, Calendar,
@@ -135,7 +135,8 @@ function initials(name: string) {
 function calcH(entry: PlanningEntry, ch: number): number {
   const cpH = ch >= 39 ? 7.83 : 7
   return JOURS_DB.reduce((s, j) => {
-    const type = (entry[`${j}_type` as keyof PlanningEntry] as DayType) || 'travail'
+    const typeKey = `${j}_type` as keyof PlanningEntry
+    const type = (entry[typeKey] as DayType) || 'travail'
     if (type === 'conges') return s + cpH
     if (type !== 'travail') return s
     return s + ((entry[j as keyof PlanningEntry] as number) || 0)
@@ -371,9 +372,8 @@ function PlanningTab({ clientId }: { clientId: string }) {
                       </div>
                     </td>
                     {(JOURS_DB as readonly JourDB[]).map((jour, ji) => {
-                      const type = (
-                        entry[`${jour}_type` as keyof PlanningEntry] as DayType
-                      ) ?? (ji >= 5 ? 'repos' : 'travail')
+                      const typeKey = `${jour}_type` as keyof PlanningEntry
+                      const type = (entry[typeKey] as DayType) ?? (ji >= 5 ? 'repos' : 'travail')
                       const h = (entry[jour as keyof PlanningEntry] as number) ?? 0
                       return (
                         <td key={jour} className="px-1 py-1.5 border-r border-gray-100 text-center">
@@ -418,7 +418,8 @@ function PlanningTab({ clientId }: { clientId: string }) {
                 {(JOURS_DB as readonly JourDB[]).map((jour) => {
                   const dH = employees.reduce((s, emp) => {
                     const e = getEntry(entries, emp.id, week, year)
-                    const t = (e[`${jour}_type` as keyof PlanningEntry] as DayType) || 'travail'
+                    const typeKey = `${jour}_type` as keyof PlanningEntry
+                    const t = (e[typeKey] as DayType) || 'travail'
                     const ch = CONTRACT_H[emp.contract_type] ?? emp.contract_hours ?? 35
                     if (t === 'conges') return s + (ch >= 39 ? 7.83 : 7)
                     if (t !== 'travail') return s
@@ -621,6 +622,13 @@ function FacturationTab({ clientId }: { clientId: string }) {
 
 type Tab = 'rapports' | 'planning' | 'facturation'
 
+interface TabDef {
+  key: Tab
+  label: string
+  icon: React.ElementType
+  count?: number
+}
+
 export default function ClientDetailPage({ params }: { params: { id: string } }) {
   const [tab, setTab] = useState<Tab>('rapports')
   const [client, setClient] = useState<Client | null>(null)
@@ -665,7 +673,7 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
     )
   }
 
-  const TABS: { key: Tab; label: string; icon: React.ElementType; count?: number }[] = [
+  const TABS: TabDef[] = [
     { key: 'rapports',    label: 'Rapports',    icon: FileText,    count: reports.length },
     { key: 'planning',    label: 'Planning',    icon: CalendarDays },
     { key: 'facturation', label: 'Facturation', icon: Receipt      },
@@ -673,7 +681,6 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
 
   return (
     <div className="p-8 max-w-6xl">
-      {/* Back */}
       <Link
         href="/admin/clients"
         className="inline-flex items-center gap-2 text-sm text-gray-400 hover:text-gray-600 mb-5 transition-colors"
@@ -681,7 +688,6 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
         <ArrowLeft className="w-4 h-4" />Retour aux clients
       </Link>
 
-      {/* Header */}
       <div className="flex items-start justify-between mb-6">
         <div className="flex items-center gap-4">
           <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-[#1E3A5F] to-blue-500 flex items-center justify-center shadow-md flex-shrink-0">
@@ -711,9 +717,7 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
         </div>
       </div>
 
-      {/* Tabbed panel */}
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-        {/* Tab bar */}
         <div className="flex border-b border-gray-100">
           {TABS.map(({ key, label, icon: Icon, count }) => (
             <button
@@ -739,8 +743,6 @@ export default function ClientDetailPage({ params }: { params: { id: string } })
             </button>
           ))}
         </div>
-
-        {/* Tab content */}
         <div className="p-5">
           {tab === 'rapports'    && <RapportsTab clientId={params.id} reports={reports} />}
           {tab === 'planning'    && <PlanningTab clientId={params.id} />}
