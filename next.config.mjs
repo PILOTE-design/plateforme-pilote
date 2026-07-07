@@ -1,4 +1,5 @@
 /** @type {import('next').NextConfig} */
+// Last deploy: 2026-07-07
 const nextConfig = {
   experimental: { serverComponentsExternalPackages: ["exceljs", "pdf-parse", "@react-pdf/renderer"] },
   typescript: { ignoreBuildErrors: true },
