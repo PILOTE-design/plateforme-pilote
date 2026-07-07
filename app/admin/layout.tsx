@@ -3,7 +3,7 @@ import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { Users, FileText, LogOut, ArrowLeft, ShieldCheck } from 'lucide-react'
 
-const ADMIN_EMAIL = 'theo.nouvion@gmail.com'
+const ADMIN_EMAIL = 'nouvion.theo51@gmail.com'
 
 async function signOut() {
   'use server'
