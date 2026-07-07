@@ -85,7 +85,7 @@ type ScheduleModal = {
   manualHours: string
 }
 
-// ─── Helpers ────────────────────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function getISOWeek(date: Date) {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
@@ -206,7 +206,7 @@ function calcCostFull(totalH: number, rate: number, contractH: number, chargesPc
   return { brut, charge: brut * (1 + chargesPct / 100) }
 }
 
-// ─── CCN Boucherie-Charcuterie (IDCC 992) ────────────────────────────────────────────────────
+// ─── CCN Boucherie-Charcuterie (IDCC 992) ────────────────────────────────────
 // Dimanche travaillé : +20 %
 // Jour férié travaillé : +100 % (salaire doublé)
 // Travail de nuit (avant 6h ou après 21h) : +25 %
@@ -276,7 +276,7 @@ function modalHours(m: ScheduleModal): number {
   return parseFloat(m.manualHours) || 0
 }
 
-// ─── Component ────────────────────────────────────────────────────────────────────────────
+// ─── Component ────────────────────────────────────────────────────────────────
 
 export default function PlanningPage() {
   const now = getISOWeek(new Date())
@@ -301,6 +301,8 @@ export default function PlanningPage() {
   const [showMonthly,    setShowMonthly]    = useState(false)
   const [monthlyData,    setMonthlyData]    = useState<MonthlyStat[] | null>(null)
   const [loadingMonthly, setLoadingMonthly] = useState(false)
+  const [validatingHS,   setValidatingHS]   = useState(false)
+  const [hsValidated,    setHsValidated]    = useState(false)
 
   const { week: cw, year: cy } = getISOWeek(new Date())
   const isCurrentWeek = week === cw && year === cy
@@ -516,13 +518,46 @@ export default function PlanningPage() {
   const grandH    = rowStats.reduce((s, r) => s + r.totalH, 0)
   const grandCost = rowStats.reduce((s, r) => s + r.brut, 0)
 
+  async function validateWeekHS() {
+    const toUpdate = rowStats
+      .filter(r => r.totalH > r.ch)
+      .map(r => {
+        const emp = employees.find(e => e.id === r.empId)
+        if (!emp) return null
+        return { emp, weekHS: +(r.totalH - r.ch).toFixed(2) }
+      })
+      .filter(Boolean) as { emp: Employee; weekHS: number }[]
+
+    if (toUpdate.length === 0) return
+    setValidatingHS(true)
+    try {
+      await Promise.all(toUpdate.map(async ({ emp, weekHS }) => {
+        const newBalance = +(((emp.hs_cumules ?? 0) + weekHS).toFixed(2))
+        const res = await fetch(`/api/employees/${emp.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ hs_cumules: newBalance }),
+        })
+        if (res.ok) {
+          setEmployees(prev => prev.map(e =>
+            e.id === emp.id ? { ...e, hs_cumules: newBalance } : e
+          ))
+        }
+      }))
+      setHsValidated(true)
+      setTimeout(() => setHsValidated(false), 3000)
+    } finally {
+      setValidatingHS(false)
+    }
+  }
+
   function exportPDF() {
     const dates = getWeekDates(week, year)
     const fmtD  = (d: Date) => d.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' })
     const dayHeaders = dates.map((d, i) => {
       const fName = holidays.get(d.toISOString().slice(0, 10))
       const bg    = fName ? '#d97706' : i >= 5 ? '#94a3b8' : '#1E3A5F'
-      return `<th style="background:${bg};color:white;padding:7px 5px;font-size:10px;text-align:center;">${fmtD(d)}${fName ? `<br><span style="font-size:8px;opacity:.9;">❆ ${fName}</span>` : ''}</th>`
+      return `<th style="background:${bg};color:white;padding:7px 5px;font-size:10px;text-align:center;">${fmtD(d)}${fName ? `<br><span style="font-size:8px;opacity:.9;">✦ ${fName}</span>` : ''}</th>`
     }).join('')
     const empRows = employees.map((emp, i) => {
       const pal    = EMP_PALETTES[i % EMP_PALETTES.length]
@@ -631,6 +666,13 @@ export default function PlanningPage() {
           <Copy className="w-3 h-3" />
           {copying ? 'Copie...' : `Copier S${week === 1 ? 52 : week - 1}`}
         </button>
+        {rowStats.some(r => r.totalH > r.ch) && (
+          <button onClick={validateWeekHS} disabled={validatingHS || hsValidated}
+            className={`flex items-center gap-1.5 text-xs border rounded-md px-2.5 py-1 disabled:opacity-40 transition-colors ${hsValidated ? 'bg-green-50 border-green-300 text-green-700' : 'bg-white border-purple-200 text-purple-700 hover:bg-purple-50 hover:border-purple-300'}`}>
+            <Check className="w-3 h-3" />
+            {hsValidated ? 'HS validées !' : validatingHS ? 'Validation...' : `Valider les HS S${week}`}
+          </button>
+        )}
         <div className="ml-auto flex items-center gap-4 text-xs text-gray-400">
           <span><span className="font-semibold text-gray-700">{grandH.toFixed(1)}h</span> total</span>
           <span><span className="font-semibold text-green-700">{grandCost.toFixed(0)} € brut</span> / <span className="font-semibold text-orange-600">{rowStats.reduce((s, r) => s + r.charge, 0).toFixed(0)} € chargé</span></span>
@@ -677,7 +719,7 @@ export default function PlanningPage() {
                     <div className={`text-xs font-bold uppercase tracking-wide ${isToday ? 'text-white' : fName ? 'text-amber-700' : isWE ? 'text-gray-400' : 'text-gray-500'}`}>{JOURS_SHORT[i]}</div>
                     <div className={`text-lg font-bold ${isToday ? 'text-white' : fName ? 'text-amber-800' : isWE ? 'text-gray-300' : 'text-gray-800'}`}>{date.getUTCDate()}</div>
                     <div className={`text-[10px] ${isToday ? 'text-blue-200' : 'text-gray-400'}`}>{date.toLocaleDateString('fr-FR', { month: 'short', timeZone: 'UTC' })}</div>
-                    {fName && <div className="text-[8px] font-semibold text-amber-700 bg-amber-100 px-1 py-0.5 rounded mt-0.5 leading-tight truncate" title={fName}>❆ {fName}</div>}
+                    {fName && <div className="text-[8px] font-semibold text-amber-700 bg-amber-100 px-1 py-0.5 rounded mt-0.5 leading-tight truncate" title={fName}>✦ {fName}</div>}
                   </th>
                 )
               })}
@@ -823,7 +865,7 @@ export default function PlanningPage() {
                           ) : (
                             <div className="flex-1 flex items-center justify-center">
                               <span className={`font-bold text-xl ${cellTxt}`}>
-                                {fName ? '❆' : type === 'conges' ? (ch >= 39 ? '7.83h' : '7h') : TYPE_CONFIG[type].display}
+                                {fName ? '✦' : type === 'conges' ? (ch >= 39 ? '7.83h' : '7h') : TYPE_CONFIG[type].display}
                               </span>
                             </div>
                           )}
