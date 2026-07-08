@@ -49,7 +49,8 @@ const eur = (n: number) =>
 const signEur = (n: number) => (n >= 0 ? '+' : '') + eur(n)
 const signPct = (n: number) => (n >= 0 ? '+' : '') + (n * 100).toFixed(1) + '%'
 const pctStr = (n: number) => (n * 100).toFixed(1) + '%'
-const trunc = (s: string, len: number) => (s.length > len ? s.slice(0, len - 1) + '…' : s)
+// trunc uses 3 ASCII dots — no Unicode ellipsis which can cause issues
+const trunc = (s: string, len: number) => (s.length > len ? s.slice(0, len - 1) + '...' : s)
 
 // ─── Palette ──────────────────────────────────────────────────────────────────
 const C = {
@@ -135,7 +136,7 @@ const SecHeader = ({ title }: { title: string }) => (
 
 const Footer = ({ page, week, year }: { page: number; week: number; year: number }) => (
   <View style={S.footer} fixed>
-    <Text style={S.footerText}>PILOTE · Rapport S{week}/{year} · Document confidentiel</Text>
+    <Text style={S.footerText}>PILOTE - Rapport S{week}/{year} - Document confidentiel</Text>
     <Text style={S.footerText}>Page {page}</Text>
   </View>
 )
@@ -158,7 +159,7 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
   return (
     <Document title={`Rapport S${data.week_number} - ${data.period_n}`} author="PILOTE" language="fr">
 
-      {/* PAGE 1 — COUVERTURE */}
+      {/* PAGE 1 - COUVERTURE */}
       <Page size="A4" style={{ backgroundColor: C.white }}>
         <View style={S.coverBlueBg}>
           <View style={S.coverTagRow}>
@@ -168,7 +169,7 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
           <Text style={S.coverTitle}>Rapport{'\n'}Hebdomadaire</Text>
           <Text style={S.coverSub}>Analyse comparative des ventes</Text>
           <View style={S.coverDivider} />
-          <Text style={S.coverWeek}>Semaine {data.week_number}  ·  {data.year}</Text>
+          <Text style={S.coverWeek}>Semaine {data.week_number} - {data.year}</Text>
           <Text style={S.coverPeriod}>{data.period_n}</Text>
         </View>
         <View style={S.coverWhiteBg}>
@@ -178,34 +179,34 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
               <Text style={S.coverClient}>{clientName.toUpperCase()}</Text>
             </>
           )}
-          <Text style={S.coverMeta}>Généré le {generatedOn}</Text>
-          <Text style={S.coverMeta}>Période comparée (N-1) : {data.period_n1}</Text>
-          <Text style={S.coverMeta}>Analyse IA intégrée · Graphiques de répartition · Top & Flop produits</Text>
+          <Text style={S.coverMeta}>Genere le {generatedOn}</Text>
+          <Text style={S.coverMeta}>Periode comparee (N-1) : {data.period_n1}</Text>
+          <Text style={S.coverMeta}>Analyse IA integree - Graphiques de repartition - Top & Flop produits</Text>
         </View>
       </Page>
 
-      {/* PAGE 2 — SYNTHÈSE FINANCIÈRE */}
+      {/* PAGE 2 - SYNTHESE FINANCIERE */}
       <Page size="A4" style={S.page}>
-        <SecHeader title="SYNTHÈSE FINANCIÈRE" />
+        <SecHeader title="SYNTHESE FINANCIERE" />
         <Text style={{ paddingHorizontal: 36, fontSize: 9, color: C.textLight, marginBottom: 8 }}>CHIFFRE D'AFFAIRES</Text>
         <View style={S.kpiRow}>
-          <KpiBox label="CA SEMAINE N" value={eur(fn.ca_net)} sub={`S${data.week_number} · ${data.year}`} bg={C.navy} />
-          <KpiBox label="CA SEMAINE N-1" value={eur(fn1.ca_net)} sub={`S${data.week_number} · ${data.year - 1}`} bg={C.blue} />
+          <KpiBox label="CA SEMAINE N" value={eur(fn.ca_net)} sub={`S${data.week_number} - ${data.year}`} bg={C.navy} />
+          <KpiBox label="CA SEMAINE N-1" value={eur(fn1.ca_net)} sub={`S${data.week_number} - ${data.year - 1}`} bg={C.blue} />
           <KpiBox label="VARIATION" value={signPct(caVar)} sub={signEur(fn.ca_net - fn1.ca_net)} bg={caVar >= 0 ? C.green : C.red} />
         </View>
         <Text style={{ paddingHorizontal: 36, fontSize: 9, color: C.textLight, marginTop: 4, marginBottom: 8 }}>TICKETS & PANIER</Text>
         <View style={[S.kpiRow, { marginBottom: 20 }]}>
           <KpiBox label="TICKETS N" value={String(fn.nb_tickets)} sub={`${fn.nb_tickets - fn1.nb_tickets >= 0 ? '+' : ''}${fn.nb_tickets - fn1.nb_tickets} vs N-1`} bg={fn.nb_tickets >= fn1.nb_tickets ? C.green : C.red} />
-          <KpiBox label="TICKETS N-1" value={String(fn1.nb_tickets)} sub={`S${data.week_number} · ${data.year - 1}`} bg={C.blue} />
+          <KpiBox label="TICKETS N-1" value={String(fn1.nb_tickets)} sub={`S${data.week_number} - ${data.year - 1}`} bg={C.blue} />
           <KpiBox label="PANIER MOYEN" value={eur(fn.moyenne_ticket)} sub={`N-1 : ${eur(fn1.moyenne_ticket)}`} bg={fn.moyenne_ticket >= fn1.moyenne_ticket ? C.green : C.red} />
         </View>
-        <Text style={{ paddingHorizontal: 36, fontSize: 9.5, fontFamily: 'Helvetica-Bold', color: C.navy, marginBottom: 10 }}>Récapitulatif par famille de produits</Text>
+        <Text style={{ paddingHorizontal: 36, fontSize: 9.5, fontFamily: 'Helvetica-Bold', color: C.navy, marginBottom: 10 }}>Recapitulatif par famille de produits</Text>
         <View style={S.tableWrap}>
           <View style={S.tHead}>
             <Text style={[S.tHeadCell, { flex: 3 }]}>FAMILLE</Text>
-            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N (€)</Text>
-            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N-1 (€)</Text>
-            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>ÉCART (€)</Text>
+            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N ({'€'})</Text>
+            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N-1 ({'€'})</Text>
+            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>ECART ({'€'})</Text>
             <Text style={[S.tHeadCell, { flex: 1.2, textAlign: 'right' }]}>% CA</Text>
             <Text style={[S.tHeadCell, { flex: 1, textAlign: 'center' }]}>TEND.</Text>
           </View>
@@ -217,40 +218,40 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
               <View key={fam.id} style={i % 2 === 0 ? S.tRow : S.tRowAlt}>
                 <Text style={[S.tCellB, { flex: 3 }]}>{trunc(fam.nom, 28)}</Text>
                 <Text style={[S.tCellR, { flex: 2 }]}>{eur(fam.total_montant)}</Text>
-                <Text style={[S.tCellR, { flex: 2 }]}>{f1 ? eur(f1.total_montant) : '—'}</Text>
+                <Text style={[S.tCellR, { flex: 2 }]}>{f1 ? eur(f1.total_montant) : '-'}</Text>
                 <Text style={[ec >= 0 ? S.tCellGreen : S.tCellRed, { flex: 2 }]}>{signEur(ec)}</Text>
                 <Text style={[S.tCellRB, { flex: 1.2 }]}>{pctStr(w)}</Text>
-                <Text style={[ec >= 0 ? S.tCellGreen : S.tCellRed, { flex: 1, textAlign: 'center' }]}>{ec >= 0 ? '▲' : '▼'}</Text>
+                <Text style={[ec >= 0 ? S.tCellGreen : S.tCellRed, { flex: 1, textAlign: 'center' }]}>{ec >= 0 ? '+' : '-'}</Text>
               </View>
             )
           })}
           <View style={S.tTotal}>
-            <Text style={[S.tTotalCellL, { flex: 3 }]}>TOTAL GÉNÉRAL</Text>
+            <Text style={[S.tTotalCellL, { flex: 3 }]}>TOTAL GENERAL</Text>
             <Text style={[S.tTotalCell, { flex: 2 }]}>{eur(vn.total)}</Text>
             <Text style={[S.tTotalCell, { flex: 2 }]}>{eur(vn1.total)}</Text>
             <Text style={[S.tTotalCell, { flex: 2 }]}>{signEur(vn.total - vn1.total)}</Text>
             <Text style={[S.tTotalCell, { flex: 1.2 }]}>100%</Text>
-            <Text style={[S.tTotalCell, { flex: 1, textAlign: 'center' }]}>{vn.total >= vn1.total ? '▲' : '▼'}</Text>
+            <Text style={[S.tTotalCell, { flex: 1, textAlign: 'center' }]}>{vn.total >= vn1.total ? '+' : '-'}</Text>
           </View>
         </View>
         <Footer page={2} week={data.week_number} year={data.year} />
       </Page>
 
-      {/* PAGE 3 — RÉPARTITION CA (CAMEMBERT) */}
+      {/* PAGE 3 - REPARTITION CA */}
       <Page size="A4" style={S.page}>
-        <SecHeader title="RÉPARTITION DU CA PAR FAMILLE" />
+        <SecHeader title="REPARTITION DU CA PAR FAMILLE" />
         <View style={S.chartWrap}>
           <Image src={{ data: pieBuffer, format: 'png' }} style={{ width: 490, height: 300 }} />
         </View>
-        <Text style={S.chartCaption}>Poids de chaque famille dans le chiffre d'affaires total (€ TTC) — Semaine {data.week_number} {data.year}</Text>
+        <Text style={S.chartCaption}>Poids de chaque famille dans le chiffre d'affaires total ({'€'} TTC) - Semaine {data.week_number} {data.year}</Text>
         <View style={[S.tableWrap, { marginTop: 14 }]}>
           <View style={S.tHead}>
             <Text style={[S.tHeadCell, { flex: 3 }]}>FAMILLE</Text>
-            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N (€)</Text>
+            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N ({'€'})</Text>
             <Text style={[S.tHeadCell, { flex: 1.5, textAlign: 'right' }]}>% N</Text>
-            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N-1 (€)</Text>
+            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N-1 ({'€'})</Text>
             <Text style={[S.tHeadCell, { flex: 1.5, textAlign: 'right' }]}>% N-1</Text>
-            <Text style={[S.tHeadCell, { flex: 1.5, textAlign: 'right' }]}>ÉVOL. %</Text>
+            <Text style={[S.tHeadCell, { flex: 1.5, textAlign: 'right' }]}>EVOL. %</Text>
           </View>
           {vn.familles.map((fam, i) => {
             const f1 = famMap.get(fam.nom.toUpperCase())
@@ -262,9 +263,9 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
                 <Text style={[S.tCellB, { flex: 3 }]}>{trunc(fam.nom, 28)}</Text>
                 <Text style={[S.tCellR, { flex: 2 }]}>{eur(fam.total_montant)}</Text>
                 <Text style={[S.tCellRB, { flex: 1.5 }]}>{pctStr(wN)}</Text>
-                <Text style={[S.tCellR, { flex: 2 }]}>{f1 ? eur(f1.total_montant) : '—'}</Text>
-                <Text style={[S.tCellR, { flex: 1.5 }]}>{f1 ? pctStr(wN1) : '—'}</Text>
-                <Text style={[evolPct >= 0 ? S.tCellGreen : S.tCellRed, { flex: 1.5 }]}>{f1 ? signPct(evolPct) : '—'}</Text>
+                <Text style={[S.tCellR, { flex: 2 }]}>{f1 ? eur(f1.total_montant) : '-'}</Text>
+                <Text style={[S.tCellR, { flex: 1.5 }]}>{f1 ? pctStr(wN1) : '-'}</Text>
+                <Text style={[evolPct >= 0 ? S.tCellGreen : S.tCellRed, { flex: 1.5 }]}>{f1 ? signPct(evolPct) : '-'}</Text>
               </View>
             )
           })}
@@ -272,21 +273,21 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
         <Footer page={3} week={data.week_number} year={data.year} />
       </Page>
 
-      {/* PAGE 4 — COMPARAISON N vs N-1 (BARRES) */}
+      {/* PAGE 4 - COMPARAISON N vs N-1 */}
       <Page size="A4" style={S.page}>
-        <SecHeader title={`ÉVOLUTION PAR FAMILLE — ${data.year} vs ${data.year - 1}`} />
+        <SecHeader title={`EVOLUTION PAR FAMILLE - ${data.year} vs ${data.year - 1}`} />
         <View style={S.chartWrap}>
           <Image src={{ data: barBuffer, format: 'png' }} style={{ width: 490, height: 360 }} />
         </View>
-        <Text style={S.chartCaption}>Comparaison du CA par famille (€ TTC) — S{data.week_number} {data.year} vs S{data.week_number} {data.year - 1}</Text>
+        <Text style={S.chartCaption}>Comparaison du CA par famille ({'€'} TTC) - S{data.week_number} {data.year} vs S{data.week_number} {data.year - 1}</Text>
         <View style={{ paddingHorizontal: 36, marginTop: 20 }}>
-          <Text style={{ fontSize: 9.5, fontFamily: 'Helvetica-Bold', color: C.navy, marginBottom: 10 }}>Synthèse des écarts par famille</Text>
+          <Text style={{ fontSize: 9.5, fontFamily: 'Helvetica-Bold', color: C.navy, marginBottom: 10 }}>Synthese des ecarts par famille</Text>
           <View style={S.tHead}>
             <Text style={[S.tHeadCell, { flex: 3 }]}>FAMILLE</Text>
-            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N (€)</Text>
-            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N-1 (€)</Text>
-            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>ÉCART (€)</Text>
-            <Text style={[S.tHeadCell, { flex: 1.5, textAlign: 'right' }]}>ÉCART %</Text>
+            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N ({'€'})</Text>
+            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N-1 ({'€'})</Text>
+            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>ECART ({'€'})</Text>
+            <Text style={[S.tHeadCell, { flex: 1.5, textAlign: 'right' }]}>ECART %</Text>
           </View>
           {vn.familles.map(fam => ({ fam, f1: famMap.get(fam.nom.toUpperCase()), ec: fam.total_montant - (famMap.get(fam.nom.toUpperCase())?.total_montant ?? 0) }))
             .sort((a, b) => b.ec - a.ec)
@@ -296,9 +297,9 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
                 <View key={fam.id} style={i % 2 === 0 ? S.tRow : S.tRowAlt}>
                   <Text style={[S.tCellB, { flex: 3 }]}>{trunc(fam.nom, 28)}</Text>
                   <Text style={[S.tCellR, { flex: 2 }]}>{eur(fam.total_montant)}</Text>
-                  <Text style={[S.tCellR, { flex: 2 }]}>{f1 ? eur(f1.total_montant) : '—'}</Text>
+                  <Text style={[S.tCellR, { flex: 2 }]}>{f1 ? eur(f1.total_montant) : '-'}</Text>
                   <Text style={[ec >= 0 ? S.tCellGreen : S.tCellRed, { flex: 2 }]}>{signEur(ec)}</Text>
-                  <Text style={[ec >= 0 ? S.tCellGreen : S.tCellRed, { flex: 1.5 }]}>{f1 ? signPct(ecPct) : '—'}</Text>
+                  <Text style={[ec >= 0 ? S.tCellGreen : S.tCellRed, { flex: 1.5 }]}>{f1 ? signPct(ecPct) : '-'}</Text>
                 </View>
               )
             })}
@@ -306,9 +307,9 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
         <Footer page={4} week={data.week_number} year={data.year} />
       </Page>
 
-      {/* PAGE 5 — TOP / FLOP */}
+      {/* PAGE 5 - TOP / FLOP */}
       <Page size="A4" style={S.page}>
-        <SecHeader title="CE QUI PROGRESSE — CE QUI DÉCROCHE" />
+        <SecHeader title="CE QUI PROGRESSE - CE QUI DECROCHE" />
         <View style={S.topFlopWrap}>
           <View style={S.topFlopLeft}>
             <View style={{ backgroundColor: C.green, paddingVertical: 9, paddingHorizontal: 8 }}>
@@ -317,8 +318,8 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
             <View style={{ flexDirection: 'row', backgroundColor: '#F1F5F9', paddingVertical: 5, paddingHorizontal: 8, borderBottomColor: '#CBD5E1', borderBottomWidth: 1 }}>
               <Text style={[S.tHeadCell, { flex: 0.4, color: C.textLight }]}>#</Text>
               <Text style={[S.tHeadCell, { flex: 3 }]}>PRODUIT</Text>
-              <Text style={[S.tHeadCell, { flex: 1.8, textAlign: 'right' }]}>CA N (€)</Text>
-              <Text style={[S.tHeadCell, { flex: 1.2, textAlign: 'right' }]}>ÉVOL.</Text>
+              <Text style={[S.tHeadCell, { flex: 1.8, textAlign: 'right' }]}>CA N ({'€'})</Text>
+              <Text style={[S.tHeadCell, { flex: 1.2, textAlign: 'right' }]}>EVOL.</Text>
             </View>
             {tops.map((t, i) => {
               const n1 = t.n - t.ecart
@@ -335,13 +336,13 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
           </View>
           <View style={S.topFlopRight}>
             <View style={{ backgroundColor: C.red, paddingVertical: 9, paddingHorizontal: 8 }}>
-              <Text style={{ color: C.white, fontFamily: 'Helvetica-Bold', fontSize: 9 }}>CE QUI DÉCROCHE</Text>
+              <Text style={{ color: C.white, fontFamily: 'Helvetica-Bold', fontSize: 9 }}>CE QUI DECROCHE</Text>
             </View>
             <View style={{ flexDirection: 'row', backgroundColor: '#F1F5F9', paddingVertical: 5, paddingHorizontal: 8, borderBottomColor: '#CBD5E1', borderBottomWidth: 1 }}>
               <Text style={[S.tHeadCell, { flex: 0.4, color: C.textLight }]}>#</Text>
               <Text style={[S.tHeadCell, { flex: 3 }]}>PRODUIT</Text>
-              <Text style={[S.tHeadCell, { flex: 1.8, textAlign: 'right' }]}>CA N (€)</Text>
-              <Text style={[S.tHeadCell, { flex: 1.2, textAlign: 'right' }]}>ÉVOL.</Text>
+              <Text style={[S.tHeadCell, { flex: 1.8, textAlign: 'right' }]}>CA N ({'€'})</Text>
+              <Text style={[S.tHeadCell, { flex: 1.2, textAlign: 'right' }]}>EVOL.</Text>
             </View>
             {flops.map((f, i) => {
               const n1 = f.n - f.ecart
@@ -360,10 +361,10 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
         <Footer page={5} week={data.week_number} year={data.year} />
       </Page>
 
-      {/* PAGE 6 — ANALYSE IA */}
+      {/* PAGE 6 - ANALYSE IA */}
       <Page size="A4" style={S.page}>
-        <SecHeader title="ANALYSE INTELLIGENTE — INSIGHTS CLÉS" />
-        <Text style={{ paddingHorizontal: 36, fontSize: 8.5, color: C.textLight, marginBottom: 16 }}>Analyse générée par intelligence artificielle · Semaine {data.week_number} {data.year}</Text>
+        <SecHeader title="ANALYSE INTELLIGENTE - INSIGHTS CLES" />
+        <Text style={{ paddingHorizontal: 36, fontSize: 8.5, color: C.textLight, marginBottom: 16 }}>Analyse generee par intelligence artificielle - Semaine {data.week_number} {data.year}</Text>
         <View style={S.insightBlock}>
           {insights.insights.map((txt, i) => (
             <View key={i} style={S.insightRow}>
@@ -506,15 +507,18 @@ async function generateInsights(data: ReportData): Promise<Insights> {
   }
 }
 
-// ─── QuickChart ────────────────────────────────────────────────────────────────────
-// REGLE ABSOLUE : aucun caractere non-ASCII dans la config QuickChart
-// Le symbole euro et tout caractere special cause un 400 ou EACCES dans le sandbox
-// Utiliser EUR, k, % uniquement. Le PDF (react-pdf) supporte tous les caracteres.
+// ─── QuickChart ───────────────────────────────────────────────────────────────
+// REGLE ABSOLUE : aucun caractere non-ASCII dans la config QuickChart.
+// Cela inclut les noms de familles transmis dans labels[].
+// Seuls les caracteres ASCII purs sont acceptes dans toute la config JSON.
 
 async function getChartBuffers(data: ReportData): Promise<{ pieBuffer: Buffer; barBuffer: Buffer }> {
   const famMapC = new Map<string, Famille>()
   for (const f of data.ventes_n1.familles) famMapC.set(f.nom.toUpperCase(), f)
-  const famNames = data.ventes_n.familles.map(f => trunc(f.nom, 18))
+
+  // Strip non-ASCII from labels to prevent QuickChart 400 errors
+  const toAscii = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\x00-\x7F]/g, '?')
+  const famNames = data.ventes_n.familles.map(f => trunc(toAscii(f.nom), 18))
   const famCA    = data.ventes_n.familles.map(f => +f.total_montant.toFixed(2))
   const famCA1   = data.ventes_n.familles.map(f => +(famMapC.get(f.nom.toUpperCase())?.total_montant ?? 0).toFixed(2))
 
@@ -526,7 +530,7 @@ async function getChartBuffers(data: ReportData): Promise<{ pieBuffer: Buffer; b
     options: {
       cutoutPercentage: 55,
       legend: { position: 'right', labels: { fontSize: 11, padding: 14, boxWidth: 14, fontColor: '#1E293B' } },
-      title: { display: true, text: "D'ou vient votre CA ?", fontSize: 14, fontColor: '#1E293B', fontStyle: 'bold', padding: 18 },
+      title: { display: true, text: 'CA par famille de produits', fontSize: 14, fontColor: '#1E293B', fontStyle: 'bold', padding: 18 },
       plugins: {
         datalabels: {
           display: true,
@@ -547,7 +551,6 @@ async function getChartBuffers(data: ReportData): Promise<{ pieBuffer: Buffer; b
       ],
     },
     options: {
-      // Titre sans caractere special - QuickChart rejette tout caractere non-ASCII (euro, accents...)
       title: { display: true, text: [`CA par famille - en EUR`, `Semaine ${data.week_number} : ${data.year} vs ${data.year - 1}`], fontSize: 14, fontColor: '#1E293B', fontStyle: 'bold', padding: 18 },
       legend: { position: 'top', labels: { fontSize: 11, padding: 18, boxWidth: 14, fontColor: '#1E293B' } },
       layout: { padding: { top: 24, bottom: 10, left: 10, right: 10 } },
@@ -556,17 +559,16 @@ async function getChartBuffers(data: ReportData): Promise<{ pieBuffer: Buffer; b
         yAxes: [{
           ticks: {
             beginAtZero: true, fontSize: 9, fontColor: '#64748B',
-            // Jamais de caractere non-ASCII ici — callback est evalué dans le sandbox QuickChart
-            callback: "function(v){if(v===0)return '';return v>=1000?(v/1000).toFixed(0)+'k EUR':v+' EUR';}",
+            callback: "function(v){if(v===0)return '';return v>=1000?(v/1000).toFixed(0)+'k':String(Math.round(v));}"
           },
           gridLines: { color: '#E8EDF3', drawBorder: false, lineWidth: 0.8 },
         }],
       },
       plugins: {
         datalabels: {
-          display: true, anchor: 'start', align: 'end', offset: 2, clamp: true,
+          display: true, anchor: 'end', align: 'top', offset: 2,
           formatter: "function(v){if(v<100)return '';return v>=1000?(v/1000).toFixed(1)+'k':String(Math.round(v));}",
-          font: { size: 8, weight: 'bold' }, color: 'white',
+          font: { size: 8, weight: 'bold' }, color: '#1E293B',
         },
       },
     },
@@ -578,8 +580,16 @@ async function getChartBuffers(data: ReportData): Promise<{ pieBuffer: Buffer; b
     fetch(QC, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chart: barConfig, width: 720, height: 470, backgroundColor: 'white', version: '2.9.4' }) }),
   ])
 
-  if (!pieRes.ok) throw new Error('QuickChart pie error: ' + pieRes.status)
-  if (!barRes.ok) throw new Error('QuickChart bar error: ' + barRes.status)
+  if (!pieRes.ok) {
+    const ct = pieRes.headers.get('content-type') || ''
+    const body = ct.includes('image') ? '[binary image]' : (await pieRes.text()).slice(0, 300)
+    throw new Error(`QuickChart pie ${pieRes.status} | ${body}`)
+  }
+  if (!barRes.ok) {
+    const ct = barRes.headers.get('content-type') || ''
+    const body = ct.includes('image') ? '[binary image]' : (await barRes.text()).slice(0, 300)
+    throw new Error(`QuickChart bar ${barRes.status} | ${body}`)
+  }
 
   const [pieBuffer, barBuffer] = await Promise.all([
     pieRes.arrayBuffer().then(ab => Buffer.from(ab)),
@@ -612,28 +622,23 @@ export async function POST(req: NextRequest) {
     if (!finN || !finN1 || !venN || !venN1)
       return NextResponse.json({ error: 'Les 4 fichiers PDF sont requis' }, { status: 400 })
 
-    // 1. Parse PDFs
     const [tFN, tFN1, tVN, tVN1] = await Promise.all([
       parsePDF(finN), parsePDF(finN1), parsePDF(venN), parsePDF(venN1),
     ])
 
-    // 2. Extract structured data
     const data = await extractData({ fin_n: tFN, fin_n1: tFN1, ventes_n: tVN, ventes_n1: tVN1 })
 
-    // 3. Insights + Charts in parallel
     const [insightsResult, chartsResult] = await Promise.all([
       generateInsights(data),
       getChartBuffers(data),
     ])
 
-    // 4. Pre-compute derived data
     const famMap = new Map<string, Famille>()
     for (const f of data.ventes_n1.familles) famMap.set(f.nom.toUpperCase(), f)
     const caVar = data.financier_n1.ca_net
       ? (data.financier_n.ca_net - data.financier_n1.ca_net) / data.financier_n1.ca_net
       : 0
 
-    // 5. Get client info
     let clientEmail: string | null = null
     let clientName:  string | null = null
     if (clientId) {
@@ -641,7 +646,6 @@ export async function POST(req: NextRequest) {
       if (client) { clientEmail = client.email; clientName = client.name }
     }
 
-    // 6. Generate PDF
     const report: ComputedReport = {
       data, clientName, insights: insightsResult,
       pieBuffer: chartsResult.pieBuffer, barBuffer: chartsResult.barBuffer,
@@ -649,7 +653,6 @@ export async function POST(req: NextRequest) {
     }
     const pdfBuffer = await generatePDF(report)
 
-    // 7. Upload to Supabase storage
     const fileName = `rapport-s${data.week_number}-${data.year}-${Date.now()}.pdf`
     const { error: uploadError } = await serviceSupabase.storage.from('reports').upload(
       fileName, pdfBuffer, { contentType: 'application/pdf', upsert: false },
@@ -659,8 +662,7 @@ export async function POST(req: NextRequest) {
     const { data: urlData } = serviceSupabase.storage.from('reports').getPublicUrl(fileName)
     const fileUrl = urlData.publicUrl
 
-    // 8. Save to DB
-    const title = `Analyse S${data.week_number} - ${data.period_n}${clientName ? ' — ' + clientName : ''}`
+    const title = `Analyse S${data.week_number} - ${data.period_n}${clientName ? ' - ' + clientName : ''}`
     const { error: dbError } = await serviceSupabase.from('reports').insert({
       profile_id: profile.id, title,
       week_number: data.week_number, year: data.year,
@@ -669,7 +671,6 @@ export async function POST(req: NextRequest) {
     })
     if (dbError) return NextResponse.json({ error: 'DB: ' + dbError.message }, { status: 500 })
 
-    // 9. Email
     const toEmail = clientEmail || profile.delivery_email || user.email || ''
     const resend = new Resend(process.env.RESEND_API_KEY ?? '')
     await resend.emails.send({
@@ -679,7 +680,6 @@ export async function POST(req: NextRequest) {
       html: `<div style="font-family:sans-serif;max-width:600px;margin:0 auto"><div style="background:#1E3A5F;padding:32px 40px"><div style="color:#FF8C00;font-size:11px;letter-spacing:4px;margin-bottom:10px">PILOTE</div><h2 style="color:#FFFFFF;margin:0;font-size:22px">Votre rapport est pret</h2></div><div style="padding:32px 40px;border:1px solid #E0E0E0;border-top:none"><p style="color:#444;margin-top:0"><strong>${title}</strong></p><p style="color:#666;font-size:14px">6 pages - Analyse IA - Graphiques - Top &amp; Flop produits</p><div style="margin:28px 0;text-align:center"><a href="${fileUrl}" style="background:#1E3A5F;color:white;padding:14px 32px;border-radius:8px;text-decoration:none;font-weight:bold;font-size:15px">Telecharger le rapport PDF</a></div><p style="color:#999;font-size:11px;text-align:center">Rapport confidentiel - Genere automatiquement par PILOTE</p></div></div>`,
     })
 
-    // 9b. Populate weekly_ca with real family breakdown for dashboard
     if (clientId) {
       const familiesDetail = data.ventes_n.familles.map((f: Famille) => ({ nom: f.nom, montant: f.total_montant }))
       await serviceSupabase.from('weekly_ca').delete()
