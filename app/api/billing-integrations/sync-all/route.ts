@@ -1,6 +1,7 @@
-// Route appelée par la tâche planifiée chaque dimanche 22h
+// Route appelée automatiquement par le Vercel Cron Job chaque dimanche à 22h
 // Synchronise TOUS les clients qui ont des intégrations actives
-import { NextResponse } from 'next/server'
+// Sécurisée par CRON_SECRET pour éviter les appels non autorisés
+import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/server'
 import { PROVIDERS } from '@/lib/billing-providers'
 
@@ -25,19 +26,35 @@ function getISOWeek(date: Date) {
   }
 }
 
-export async function POST() {
+export async function POST(req: NextRequest) {
+  // Vercel Cron envoie automatiquement ce header avec la valeur de CRON_SECRET
+  const authHeader = req.headers.get('authorization')
+  const cronSecret = process.env.CRON_SECRET
+
+  // Si CRON_SECRET est défini, on vérifie que l'appel vient bien de Vercel
+  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+    return NextResponse.json({ error: 'Non autorisé' }, { status: 401 })
+  }
+
   const service = createServiceClient()
   const { week, year } = getISOWeek(new Date())
   const [from, to] = getWeekBounds(week, year)
 
-  const { data: integrations } = await service
+  const { data: integrations, error: fetchError } = await service
     .from('billing_integrations')
-    .select('*, clients!inner(id)')
+    .select('*')
     .eq('is_active', true)
 
-  if (!integrations?.length) return NextResponse.json({ synced: 0 })
+  if (fetchError) {
+    return NextResponse.json({ error: fetchError.message }, { status: 500 })
+  }
+
+  if (!integrations?.length) {
+    return NextResponse.json({ success: true, synced: 0, message: 'Aucune intégration active' })
+  }
 
   let totalImported = 0
+  const results: Record<string, any> = {}
 
   for (const integ of integrations) {
     const prov = PROVIDERS[integ.provider]
@@ -74,7 +91,22 @@ export async function POST() {
       last_sync_error:  syncResult.error ?? null,
       invoices_synced:  syncResult.invoices.length,
     }).eq('id', integ.id)
+
+    results[`${integ.client_id}:${integ.provider}`] = {
+      success:  syncResult.success,
+      imported: syncResult.invoices.length,
+      error:    syncResult.error ?? null,
+    }
   }
 
-  return NextResponse.json({ success: true, week, year, totalImported, count: integrations.length })
+  console.log(`[CRON] Sync dimanche S${week}/${year} — ${integrations.length} intégration(s), ${totalImported} facture(s) importée(s)`)
+
+  return NextResponse.json({
+    success: true,
+    week,
+    year,
+    integrations: integrations.length,
+    totalImported,
+    results,
+  })
 }
