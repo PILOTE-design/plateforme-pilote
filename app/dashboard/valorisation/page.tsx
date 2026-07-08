@@ -2,7 +2,7 @@
 
 import React, { useState, useMemo, useEffect, useCallback } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { Calculator, TrendingUp, Package, Info, AlertTriangle, CheckCircle, Save, Trash2, Clock, X, Loader2, Users } from 'lucide-react'
+import { Calculator, TrendingUp, Package, Info, AlertTriangle, CheckCircle, Save, Trash2, Clock, X, Loader2, Users, BarChart2 } from 'lucide-react'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -16,6 +16,12 @@ interface SavedValo {
   purchase_per_kg: number; overhead_cost: number; labor_cost: number; target_margin: number
   purchase_date: string; notes?: string; carcass_weight: number; total_cost: number
   total_revenue: number; margin_rate: number; coefficient: number; created_at: string
+}
+interface WeekStats {
+  key: string; label: string; week: number; year: number
+  count: number; lots: number
+  totalCost: number; totalRevenue: number; marginRate: number
+  breeds: string[]
 }
 
 // ─── Données ─────────────────────────────────────────────────────────────────
@@ -74,15 +80,34 @@ const CATEGORY_COLORS: Record<CutCategory, string> = {
   troisieme: 'bg-yellow-50 text-yellow-700 border-yellow-200', abat: 'bg-purple-50 text-purple-700 border-purple-200', os: 'bg-gray-50 text-gray-600 border-gray-200',
 }
 const CATEGORIES: CutCategory[] = ['premier', 'deuxieme', 'troisieme', 'abat', 'os']
+const MONTHS_FR = ['Jan','Fév','Mar','Avr','Mai','Juin','Juil','Aoû','Sep','Oct','Nov','Déc']
 
 function eur(n: number) { return n.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 2 }) }
 function kgStr(n: number) { return n.toFixed(1) + ' kg' }
+
+// Calcul numéro semaine ISO
+function getISOWeek(dateStr: string): { week: number; year: number } {
+  const d = new Date(dateStr)
+  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()))
+  date.setUTCDate(date.getUTCDate() + 4 - (date.getUTCDay() || 7))
+  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1))
+  const weekNo = Math.ceil(((date.getTime() - yearStart.getTime()) / 86400000 + 1) / 7)
+  return { week: weekNo, year: date.getUTCFullYear() }
+}
+
+function makeWeekLabel(week: number, year: number): string {
+  const jan4 = new Date(year, 0, 4)
+  const dayOfWeek = jan4.getDay() || 7
+  const weekStart = new Date(jan4.getTime() - (dayOfWeek - 1) * 86400000 + (week - 1) * 7 * 86400000)
+  return `S${week} ${year}  ·  ${weekStart.getDate()} ${MONTHS_FR[weekStart.getMonth()]}`
+}
 
 // ─── Page ────────────────────────────────────────────────────────────────────
 
 export default function ValorisationPage() {
   const params = useSearchParams()
 
+  const [activeTab, setActiveTab]         = useState<'calc' | 'suivi'>('calc')
   const [breedId, setBreedId]             = useState('charolaise')
   const [liveWeight, setLiveWeight]       = useState('800')
   const [quantity, setQuantity]           = useState('1')
@@ -106,7 +131,7 @@ export default function ValorisationPage() {
     const amount   = params.get('amount_ht')
     if (date)     setPurchaseDate(date)
     if (supplier) setNotes(`Facture ${supplier}`)
-    if (amount)   setOverheadCost('0') // Le montant de la facture sera mis en note
+    if (amount)   setOverheadCost('0')
   }, [params])
 
   const breed    = BREEDS.find(b => b.id === breedId) ?? BREEDS[0]
@@ -125,6 +150,7 @@ export default function ValorisationPage() {
   const carcassWTotal   = carcassW1 * qty
   const purchaseTotalLot = purchaseTotal1 * qty
   const totalCostLot    = totalCost1 * qty
+  void carcassWTotal
 
   const { results, coefficient, totalMarketRevenue1 } = useMemo(() => {
     if (liveW <= 0 || ppkg <= 0) return { results: [] as CutResult[], coefficient: 1, totalMarketRevenue1: 0 }
@@ -191,6 +217,48 @@ export default function ValorisationPage() {
 
   const fromInvoice = params.get('supplier')
 
+  // ─── Suivi hebdomadaire ───────────────────────────────────────────────────
+  const weekStats: WeekStats[] = useMemo(() => {
+    const map = new Map<string, {
+      week: number; year: number; count: number; lots: number
+      totalCost: number; totalRevenue: number; breeds: Set<string>
+    }>()
+    for (const v of history) {
+      const { week, year } = getISOWeek(v.purchase_date)
+      const key = `${year}-W${String(week).padStart(2, '0')}`
+      const q = v.quantity ?? 1
+      if (!map.has(key)) {
+        map.set(key, { week, year, count: 0, lots: 0, totalCost: 0, totalRevenue: 0, breeds: new Set() })
+      }
+      const entry = map.get(key)!
+      entry.count += q
+      entry.lots += 1
+      entry.totalCost += v.total_cost
+      entry.totalRevenue += v.total_revenue
+      entry.breeds.add(v.breed_name)
+    }
+    return Array.from(map.entries())
+      .map(([key, v]) => ({
+        key,
+        label: makeWeekLabel(v.week, v.year),
+        week: v.week,
+        year: v.year,
+        count: v.count,
+        lots: v.lots,
+        totalCost: v.totalCost,
+        totalRevenue: v.totalRevenue,
+        marginRate: v.totalRevenue > 0 ? ((v.totalRevenue - v.totalCost) / v.totalRevenue) * 100 : 0,
+        breeds: Array.from(v.breeds),
+      }))
+      .sort((a, b) => b.year !== a.year ? b.year - a.year : b.week - a.week)
+  }, [history])
+
+  const totalAnimals  = weekStats.reduce((s, w) => s + w.count, 0)
+  const totalCA       = weekStats.reduce((s, w) => s + w.totalRevenue, 0)
+  const totalCostAll  = weekStats.reduce((s, w) => s + w.totalCost, 0)
+  const avgMarginAll  = totalCA > 0 ? ((totalCA - totalCostAll) / totalCA) * 100 : 0
+  const maxCA         = weekStats.length > 0 ? Math.max(...weekStats.map(w => w.totalRevenue)) : 1
+
   return (
     <div className="p-6 max-w-7xl mx-auto">
 
@@ -203,17 +271,17 @@ export default function ValorisationPage() {
       )}
 
       {/* Header */}
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-5 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 bg-red-600 rounded-xl flex items-center justify-center flex-shrink-0">
             <Calculator className="w-5 h-5 text-white" />
           </div>
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Valorisation Carcasse</h1>
-            <p className="text-sm text-gray-500">Prix de marché réels · Coefficient · Multi-animaux · Historique</p>
+            <p className="text-sm text-gray-500">Prix de marché réels · Coefficient · Multi-animaux · Suivi hebdo</p>
           </div>
         </div>
-        {totalRevenue1 > 0 && (
+        {activeTab === 'calc' && totalRevenue1 > 0 && (
           <button onClick={saveValo} disabled={saving || saved}
             className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all ${
               saved ? 'bg-green-600 text-white' : 'bg-[#1E3A5F] hover:bg-[#2a4f7c] text-white'
@@ -225,340 +293,516 @@ export default function ValorisationPage() {
         )}
       </div>
 
-      {/* Historique */}
-      {history.length > 0 && (
-        <div className="mb-6 bg-white border border-gray-200 rounded-2xl p-5">
-          <h2 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
-            <Clock className="w-4 h-4 text-gray-400" />Historique des valorisations
-          </h2>
-          <div className="flex gap-3 overflow-x-auto pb-1">
-            {history.map(v => (
-              <button key={v.id} onClick={() => setSelected(v)}
-                className="flex-shrink-0 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-xl p-3 text-left transition-colors w-56">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs font-bold text-gray-800">{v.breed_name}</span>
-                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
-                    v.margin_rate >= 35 ? 'bg-green-100 text-green-700' : v.margin_rate >= 25 ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'
-                  }`}>{v.margin_rate.toFixed(1)}%</span>
-                </div>
-                <p className="text-xs text-gray-500">
-                  {(v.quantity ?? 1) > 1 ? <span className="font-semibold text-blue-600">{v.quantity} animaux · </span> : ''}
-                  {v.live_weight} kg · {new Date(v.purchase_date).toLocaleDateString('fr-FR')}
-                </p>
-                <p className="text-sm font-bold text-[#1E3A5F] mt-1">{eur(v.total_revenue)}</p>
-                <p className="text-[10px] text-gray-400">CA estim. total · coeff. x{v.coefficient?.toFixed(3)}</p>
+      {/* Onglets */}
+      <div className="flex gap-1 mb-6 bg-gray-100 p-1 rounded-xl w-fit">
+        <button
+          onClick={() => setActiveTab('calc')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
+            activeTab === 'calc' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+          }`}>
+          <Calculator className="w-4 h-4" />Calculateur
+        </button>
+        <button
+          onClick={() => setActiveTab('suivi')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
+            activeTab === 'suivi' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+          }`}>
+          <BarChart2 className="w-4 h-4" />Suivi semaines
+          {weekStats.length > 0 && (
+            <span className="ml-1 bg-red-600 text-white text-xs font-bold px-1.5 py-0.5 rounded-full">{weekStats.length}</span>
+          )}
+        </button>
+      </div>
+
+      {/* ══ VUE SUIVI HEBDOMADAIRE ══ */}
+      {activeTab === 'suivi' && (
+        <div>
+          {weekStats.length === 0 ? (
+            <div className="bg-white border border-gray-200 rounded-2xl p-16 flex flex-col items-center justify-center text-center">
+              <BarChart2 className="w-12 h-12 text-gray-200 mb-4" />
+              <p className="text-gray-600 font-medium">Aucune donnée pour l&apos;instant</p>
+              <p className="text-sm text-gray-400 mt-1">Sauvegardez vos premières valorisations pour voir le suivi semaine par semaine</p>
+              <button onClick={() => setActiveTab('calc')}
+                className="mt-4 px-4 py-2 bg-[#1E3A5F] text-white rounded-xl text-sm font-semibold hover:bg-[#2a4f7c] transition-colors">
+                Aller au calculateur
               </button>
-            ))}
-          </div>
+            </div>
+          ) : (
+            <>
+              {/* KPIs globaux */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+                <div className="bg-white border border-gray-200 rounded-2xl p-4">
+                  <p className="text-xs text-gray-400 mb-0.5">Semaines enregistrées</p>
+                  <p className="text-2xl font-bold text-gray-900">{weekStats.length}</p>
+                  <p className="text-xs text-gray-400">depuis le début</p>
+                </div>
+                <div className="bg-white border border-gray-200 rounded-2xl p-4">
+                  <p className="text-xs text-gray-400 mb-0.5">Animaux valorisés</p>
+                  <p className="text-2xl font-bold text-gray-900">{totalAnimals}</p>
+                  <p className="text-xs text-gray-400">au total</p>
+                </div>
+                <div className="bg-white border border-gray-200 rounded-2xl p-4">
+                  <p className="text-xs text-gray-400 mb-0.5">CA total estimé</p>
+                  <p className="text-2xl font-bold text-gray-900">{eur(totalCA)}</p>
+                  <p className="text-xs text-gray-400">toutes semaines</p>
+                </div>
+                <div className={`rounded-2xl p-4 ${
+                  avgMarginAll >= 35 ? 'bg-green-600 text-white' : avgMarginAll >= 25 ? 'bg-yellow-500 text-white' : 'bg-red-600 text-white'
+                }`}>
+                  <p className="text-xs opacity-80 mb-0.5">Marge brute moy.</p>
+                  <p className="text-2xl font-bold">{avgMarginAll.toFixed(1)}%</p>
+                  <p className="text-xs opacity-70">{avgMarginAll >= 35 ? 'Bonne performance' : avgMarginAll >= 25 ? 'Marges à surveiller' : 'En dessous des seuils'}</p>
+                </div>
+              </div>
+
+              {/* Tableau semaines */}
+              <div className="bg-white border border-gray-200 rounded-2xl overflow-hidden">
+                <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+                  <h2 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
+                    <BarChart2 className="w-4 h-4 text-gray-400" />Détail par semaine
+                  </h2>
+                  <span className="text-xs text-gray-400">Du plus récent au plus ancien</span>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-gray-50 border-b border-gray-100">
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600">Semaine</th>
+                        <th className="px-3 py-3 text-right text-xs font-semibold text-gray-600">Animaux</th>
+                        <th className="px-3 py-3 text-right text-xs font-semibold text-gray-600">Coût total</th>
+                        <th className="px-3 py-3 text-right text-xs font-semibold text-gray-600">CA estimé</th>
+                        <th className="px-3 py-3 text-right text-xs font-semibold text-gray-600">Marge</th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 min-w-36">vs sem. préc.</th>
+                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600">Races</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {weekStats.map((w, i) => {
+                        const prev = weekStats[i + 1]
+                        const caEvol = prev && prev.totalRevenue > 0
+                          ? ((w.totalRevenue - prev.totalRevenue) / prev.totalRevenue) * 100
+                          : null
+                        const marginEvol = prev ? w.marginRate - prev.marginRate : null
+                        return (
+                          <tr key={w.key} className={`border-t border-gray-50 hover:bg-gray-50 transition-colors ${
+                            i === 0 ? 'bg-blue-50/30' : ''
+                          }`}>
+                            <td className="px-4 py-3">
+                              <div className="flex items-center gap-2">
+                                {i === 0 && <span className="text-[10px] font-bold bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full">Récent</span>}
+                                <span className="font-semibold text-gray-800">{w.label}</span>
+                              </div>
+                            </td>
+                            <td className="px-3 py-3 text-right tabular-nums text-gray-700">
+                              <span className="font-medium">{w.count}</span>
+                              {w.lots > 1 && <span className="text-xs text-gray-400 ml-1">({w.lots} lots)</span>}
+                            </td>
+                            <td className="px-3 py-3 text-right tabular-nums text-gray-500 text-xs">{eur(w.totalCost)}</td>
+                            <td className="px-3 py-3 text-right tabular-nums font-bold text-gray-900">
+                              <div className="flex flex-col items-end">
+                                <span>{eur(w.totalRevenue)}</span>
+                                {/* barre proportionnelle */}
+                                <div className="mt-1 h-1 bg-gray-100 rounded-full w-20 overflow-hidden">
+                                  <div className="h-1 bg-[#1E3A5F] rounded-full transition-all"
+                                    style={{ width: `${(w.totalRevenue / maxCA) * 100}%` }} />
+                                </div>
+                              </div>
+                            </td>
+                            <td className="px-3 py-3 text-right">
+                              <div className="flex flex-col items-end gap-0.5">
+                                <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                                  w.marginRate >= 35 ? 'bg-green-100 text-green-700' :
+                                  w.marginRate >= 25 ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'
+                                }`}>{w.marginRate.toFixed(1)}%</span>
+                                {marginEvol !== null && Math.abs(marginEvol) >= 0.5 && (
+                                  <span className={`text-[10px] font-medium ${
+                                    marginEvol > 0 ? 'text-green-600' : 'text-red-500'
+                                  }`}>{marginEvol > 0 ? '+' : ''}{marginEvol.toFixed(1)} pts</span>
+                                )}
+                              </div>
+                            </td>
+                            <td className="px-4 py-3">
+                              {caEvol !== null ? (
+                                <div className="flex items-center gap-1.5">
+                                  <span className={`text-lg font-bold leading-none ${
+                                    caEvol > 5 ? 'text-green-500' : caEvol < -5 ? 'text-red-400' : 'text-gray-400'
+                                  }`}>
+                                    {caEvol > 5 ? '▲' : caEvol < -5 ? '▼' : '–'}
+                                  </span>
+                                  <div>
+                                    <p className={`text-xs font-bold ${
+                                      caEvol > 5 ? 'text-green-600' : caEvol < -5 ? 'text-red-500' : 'text-gray-500'
+                                    }`}>
+                                      {caEvol > 0 ? '+' : ''}{caEvol.toFixed(0)}% CA
+                                    </p>
+                                    <p className="text-[10px] text-gray-400">vs S{prev!.week}</p>
+                                  </div>
+                                </div>
+                              ) : (
+                                <span className="text-xs text-gray-300">première semaine</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="flex flex-wrap gap-1">
+                                {w.breeds.map(b => (
+                                  <span key={b} className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded font-medium">{b}</span>
+                                ))}
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="px-5 py-3 bg-gray-50 border-t border-gray-100">
+                  <p className="text-xs text-gray-400">Marge = (CA - coût total) / CA. La comparaison "vs sem. préc." porte sur le CA estimé.</p>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       )}
 
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-
-        {/* ══ FORMULAIRE ══ */}
-        <div className="xl:col-span-1 space-y-5">
-
-          {/* 1 — Animal */}
-          <div className="bg-white border border-gray-200 rounded-2xl p-5">
-            <h2 className="text-sm font-semibold text-gray-900 mb-4 flex items-center gap-2">
-              <span className="w-5 h-5 bg-gray-900 text-white text-xs rounded-full flex items-center justify-center font-bold">1</span>Animal
-            </h2>
-            <div className="mb-4">
-              <label className="block text-xs font-medium text-gray-700 mb-1.5">Race bovine</label>
-              <select value={breedId} onChange={e => setBreedId(e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-red-500">
-                {BREEDS.map(b => <option key={b.id} value={b.id}>{b.name} — rendement {(b.carcassYield * 100).toFixed(1)}%</option>)}
-              </select>
-              <button onClick={() => setShowBreedInfo(v => !v)} className="mt-1.5 text-xs text-red-600 hover:text-red-700 flex items-center gap-1">
-                <Info className="w-3 h-3" />{showBreedInfo ? 'Masquer' : 'Caractéristiques de la race'}
-              </button>
-              {showBreedInfo && (
-                <div className="mt-2 p-3 bg-red-50 rounded-lg border border-red-100">
-                  <p className="text-xs font-semibold text-red-800">{breed.name} — {breed.origin}</p>
-                  <p className="text-xs text-red-700 leading-relaxed mt-1">{breed.description}</p>
-                  <p className="text-xs text-red-700 font-medium pt-1">Poids moyen : {breed.avgWeight}</p>
-                </div>
-              )}
-            </div>
-
-            {/* Nombre d'animaux */}
-            <div className="mb-4 p-3 bg-blue-50 border border-blue-100 rounded-xl">
-              <label className="block text-xs font-semibold text-blue-800 mb-1.5 flex items-center gap-1.5">
-                <Users className="w-3.5 h-3.5" />Nombre d&apos;animaux dans le lot
-              </label>
-              <div className="flex items-center gap-3">
-                <button onClick={() => setQuantity(q => String(Math.max(1, parseInt(q) - 1)))}
-                  className="w-8 h-8 rounded-lg bg-white border border-blue-200 text-blue-700 font-bold text-lg flex items-center justify-center hover:bg-blue-100">
-                  −
-                </button>
-                <span className="text-2xl font-extrabold text-blue-800 w-8 text-center tabular-nums">{qty}</span>
-                <button onClick={() => setQuantity(q => String(parseInt(q) + 1))}
-                  className="w-8 h-8 rounded-lg bg-white border border-blue-200 text-blue-700 font-bold text-lg flex items-center justify-center hover:bg-blue-100">
-                  +
-                </button>
-                {qty > 1 && <span className="text-xs text-blue-600 font-medium">Les résultats affichent « par animal » et le total du lot</span>}
-              </div>
-            </div>
-
-            <div className="mb-4">
-              <label className="block text-xs font-medium text-gray-700 mb-1.5">Poids vif par animal (kg)</label>
-              <input type="number" value={liveWeight} onChange={e => setLiveWeight(e.target.value)} placeholder="800"
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500" />
-              {liveW > 0 && <p className="text-xs text-gray-500 mt-1">Carcasse estimée : <strong>{carcassW1.toFixed(0)} kg/animal</strong> ({(breed.carcassYield * 100).toFixed(1)}%)</p>}
-            </div>
-            <div className="mb-4">
-              <label className="block text-xs font-medium text-gray-700 mb-1.5">Prix achat (€/kg vif)</label>
-              <input type="number" step="0.01" value={purchasePerKg} onChange={e => setPurchasePerKg(e.target.value)} placeholder="3.80"
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500" />
-              {liveW > 0 && ppkg > 0 && (
-                <p className="text-xs text-gray-500 mt-1">
-                  {qty > 1 ? <><strong>{eur(purchaseTotal1)}/animal</strong> · total lot : <strong className="text-blue-700">{eur(purchaseTotalLot)}</strong></> : <strong>{eur(purchaseTotal1)}</strong>}
-                </p>
-              )}
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1.5">Date d&apos;achat</label>
-              <input type="date" value={purchaseDate} onChange={e => setPurchaseDate(e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500" />
-            </div>
-          </div>
-
-          {/* 2 — Charges */}
-          <div className="bg-white border border-gray-200 rounded-2xl p-5">
-            <h2 className="text-sm font-semibold text-gray-900 mb-4 flex items-center gap-2">
-              <span className="w-5 h-5 bg-gray-900 text-white text-xs rounded-full flex items-center justify-center font-bold">2</span>Charges à imputer
-              <span className="text-xs font-normal text-gray-400">(par animal)</span>
-            </h2>
-            <div className="mb-4">
-              <label className="block text-xs font-medium text-gray-700 mb-1.5">Charges fixes pro-ratées (€)</label>
-              <input type="number" value={overheadCost} onChange={e => setOverheadCost(e.target.value)} placeholder="0"
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500" />
-            </div>
-            <div className="mb-4">
-              <label className="block text-xs font-medium text-gray-700 mb-1.5">Main d&apos;œuvre découpe (€)</label>
-              <input type="number" value={laborCost} onChange={e => setLaborCost(e.target.value)} placeholder="150"
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500" />
-            </div>
-            {totalCost1 > 0 && (
-              <div className="p-3 bg-gray-50 rounded-lg">
-                <p className="text-xs text-gray-500">Coût de revient {qty > 1 ? 'par animal' : 'total'}</p>
-                <p className="text-xl font-bold text-gray-900">{eur(totalCost1)}</p>
-                {qty > 1 && <p className="text-xs font-bold text-blue-700 mt-0.5">Lot ({qty} animaux) : {eur(totalCostLot)}</p>}
-                {totalMarketRevenue1 > 0 && <p className="text-xs text-gray-400 mt-1">Marge aux prix du marché : {(((totalMarketRevenue1 - totalCost1) / totalMarketRevenue1) * 100).toFixed(1)}%</p>}
-              </div>
-            )}
-          </div>
-
-          {/* 3 — Marge */}
-          <div className="bg-white border border-gray-200 rounded-2xl p-5">
-            <h2 className="text-sm font-semibold text-gray-900 mb-4 flex items-center gap-2">
-              <span className="w-5 h-5 bg-gray-900 text-white text-xs rounded-full flex items-center justify-center font-bold">3</span>Marge souhaitée
-            </h2>
-            <div className="flex items-center gap-4 mb-2">
-              <input type="range" min={10} max={70} step={1} value={targetMargin} onChange={e => setTargetMargin(Number(e.target.value))} className="flex-1 accent-red-600" />
-              <span className="text-2xl font-bold text-red-600 w-14 text-right tabular-nums">{targetMargin}%</span>
-            </div>
-            <div className="flex justify-between text-xs text-gray-400"><span>10%</span><span>40% (typique)</span><span>70%</span></div>
-          </div>
-
-          {/* 4 — Pièces */}
-          <div className="bg-white border border-gray-200 rounded-2xl p-5">
-            <h2 className="text-sm font-semibold text-gray-900 mb-4 flex items-center gap-2">
-              <span className="w-5 h-5 bg-gray-900 text-white text-xs rounded-full flex items-center justify-center font-bold">4</span>Pièces à valoriser
-            </h2>
-            <div className="space-y-2">
-              {CATEGORIES.map(cat => (
-                <label key={cat} className="flex items-center gap-3 cursor-pointer">
-                  <input type="checkbox" checked={includedCats.has(cat)} onChange={() => toggleCat(cat)} className="rounded accent-red-600" />
-                  <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${CATEGORY_COLORS[cat]}`}>{CATEGORY_LABELS[cat]}</span>
-                </label>
-              ))}
-            </div>
-          </div>
-
-          {/* Notes */}
-          {totalRevenue1 > 0 && (
-            <div className="bg-white border border-gray-200 rounded-2xl p-5">
-              <label className="block text-xs font-semibold text-gray-700 mb-1.5">Notes</label>
-              <textarea value={notes} onChange={e => setNotes(e.target.value)}
-                placeholder="Qualité, conditions d'achat, fournisseur..."
-                rows={2} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 resize-none" />
-            </div>
-          )}
-        </div>
-
-        {/* ══ RÉSULTATS ══ */}
-        <div className="xl:col-span-2 space-y-5">
-
-          {/* Bandeau lot si qty > 1 */}
-          {qty > 1 && totalRevenue1 > 0 && (
-            <div className="bg-blue-700 rounded-2xl p-4 text-white">
-              <p className="text-xs font-semibold text-blue-200 mb-2 uppercase tracking-wide">Récapitulatif lot — {qty} animaux</p>
-              <div className="grid grid-cols-3 gap-4">
-                <div>
-                  <p className="text-xs text-blue-300">Coût total lot</p>
-                  <p className="text-xl font-extrabold">{eur(totalCostLot)}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-blue-300">CA estimé total</p>
-                  <p className="text-xl font-extrabold text-yellow-300">{eur(totalRevenueLot)}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-blue-300">Marge brute lot</p>
-                  <p className="text-xl font-extrabold text-green-300">{eur(totalRevenueLot - totalCostLot)}</p>
-                  <p className="text-xs text-blue-300">{actualMargin1.toFixed(1)}% de marge</p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Coefficient */}
-          {totalRevenue1 > 0 && (
-            <div className={`rounded-2xl p-4 border ${
-              coeffStatus === 'under' ? 'bg-green-50 border-green-200' : coeffStatus === 'over' ? 'bg-orange-50 border-orange-200' : 'bg-blue-50 border-blue-200'
-            }`}>
-              <div className="flex items-start gap-3">
-                {coeffStatus === 'under' && <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />}
-                {coeffStatus === 'over'  && <AlertTriangle className="w-5 h-5 text-orange-600 flex-shrink-0 mt-0.5" />}
-                {coeffStatus === 'ok'    && <TrendingUp className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />}
-                <div className="flex-1">
-                  <div className="flex items-baseline gap-2 mb-1">
-                    <span className={`text-2xl font-bold ${
-                      coeffStatus === 'under' ? 'text-green-700' : coeffStatus === 'over' ? 'text-orange-700' : 'text-blue-700'
-                    }`}>x{coefficient.toFixed(3)}</span>
-                    <span className="text-sm font-semibold text-gray-700">Coefficient de valorisation</span>
-                  </div>
-                  <p className={`text-xs leading-relaxed ${
-                    coeffStatus === 'under' ? 'text-green-700' : coeffStatus === 'over' ? 'text-orange-700' : 'text-blue-700'
-                  }`}>
-                    {coeffStatus === 'under' && <>Vos coûts sont bas : vous pouvez être <strong>{((1-coefficient)*100).toFixed(1)}% sous le marché</strong> et atteindre {targetMargin}% de marge.</> }
-                    {coeffStatus === 'over'  && <>Pour {targetMargin}% de marge, vos prix doivent être <strong>{((coefficient-1)*100).toFixed(1)}% au-dessus du marché</strong>. Positionnement premium recommandé.</> }
-                    {coeffStatus === 'ok'    && <>Vos prix sont proches du marché ({coefficient > 1 ? '+' : ''}{((coefficient-1)*100).toFixed(1)}%). Positionnement équilibré pour {targetMargin}% de marge.</> }
-                  </p>
-                </div>
-                <div className="text-right flex-shrink-0">
-                  <p className="text-xs text-gray-500">CA marché réf.</p>
-                  <p className="text-sm font-bold text-gray-800">{eur(totalMarketRevenue1)}</p>
-                  <p className="text-xs text-gray-500">CA cible/animal</p>
-                  <p className="text-sm font-bold text-red-600">{eur(totalRevenue1)}</p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* KPIs par animal */}
-          {totalRevenue1 > 0 && (
-            <div>
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">{qty > 1 ? 'Par animal' : 'Résultat'}</p>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                {[
-                  { label: 'Poids vendable',  value: kgStr(totalSellable1), sub: `sur ${carcassW1.toFixed(0)} kg carcasse` },
-                  { label: 'Coût de revient', value: eur(totalCost1),       sub: `${eur(totalCost1 / totalSellable1)}/kg` },
-                  { label: 'CA conseillé',    value: eur(totalRevenue1),    sub: `coeff. x${coefficient.toFixed(3)}` },
-                  { label: 'Marge brute',     value: eur(totalRevenue1 - totalCost1), sub: `${actualMargin1.toFixed(1)}% réel`, highlight: true },
-                ].map(kpi => (
-                  <div key={kpi.label} className={`rounded-2xl p-4 border ${'highlight' in kpi && kpi.highlight ? 'bg-red-600 border-red-600' : 'bg-white border-gray-200'}`}>
-                    <p className={`text-xs mb-1 ${'highlight' in kpi && kpi.highlight ? 'text-red-100' : 'text-gray-500'}`}>{kpi.label}</p>
-                    <p className={`text-lg font-bold leading-tight ${'highlight' in kpi && kpi.highlight ? 'text-white' : 'text-gray-900'}`}>{kpi.value}</p>
-                    <p className={`text-xs mt-0.5 ${'highlight' in kpi && kpi.highlight ? 'text-red-200' : 'text-gray-400'}`}>{kpi.sub}</p>
-                  </div>
+      {/* ══ VUE CALCULATEUR ══ */}
+      {activeTab === 'calc' && (
+        <>
+          {/* Historique */}
+          {history.length > 0 && (
+            <div className="mb-6 bg-white border border-gray-200 rounded-2xl p-5">
+              <h2 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                <Clock className="w-4 h-4 text-gray-400" />Historique des valorisations
+              </h2>
+              <div className="flex gap-3 overflow-x-auto pb-1">
+                {history.map(v => (
+                  <button key={v.id} onClick={() => setSelected(v)}
+                    className="flex-shrink-0 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-xl p-3 text-left transition-colors w-56">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs font-bold text-gray-800">{v.breed_name}</span>
+                      <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
+                        v.margin_rate >= 35 ? 'bg-green-100 text-green-700' : v.margin_rate >= 25 ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'
+                      }`}>{v.margin_rate.toFixed(1)}%</span>
+                    </div>
+                    <p className="text-xs text-gray-500">
+                      {(v.quantity ?? 1) > 1 ? <span className="font-semibold text-blue-600">{v.quantity} animaux · </span> : ''}
+                      {v.live_weight} kg · {new Date(v.purchase_date).toLocaleDateString('fr-FR')}
+                    </p>
+                    <p className="text-sm font-bold text-[#1E3A5F] mt-1">{eur(v.total_revenue)}</p>
+                    <p className="text-[10px] text-gray-400">CA estim. total · coeff. x{v.coefficient?.toFixed(3)}</p>
+                  </button>
                 ))}
               </div>
             </div>
           )}
 
-          {/* Tableau pièces */}
-          {results.length > 0 ? (
-            <div className="bg-white border border-gray-200 rounded-2xl overflow-hidden">
-              <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-gray-900 flex items-center gap-2"><Package className="w-4 h-4 text-gray-400" />Détail par pièce {qty > 1 && <span className="text-xs font-normal text-gray-400">(par animal — ×{qty} pour le lot)</span>}</h2>
-                <span className="text-xs text-gray-400">Prix de marché France 2025</span>
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+
+            {/* ══ FORMULAIRE ══ */}
+            <div className="xl:col-span-1 space-y-5">
+
+              {/* 1 — Animal */}
+              <div className="bg-white border border-gray-200 rounded-2xl p-5">
+                <h2 className="text-sm font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                  <span className="w-5 h-5 bg-gray-900 text-white text-xs rounded-full flex items-center justify-center font-bold">1</span>Animal
+                </h2>
+                <div className="mb-4">
+                  <label className="block text-xs font-medium text-gray-700 mb-1.5">Race bovine</label>
+                  <select value={breedId} onChange={e => setBreedId(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-red-500">
+                    {BREEDS.map(b => <option key={b.id} value={b.id}>{b.name} — rendement {(b.carcassYield * 100).toFixed(1)}%</option>)}
+                  </select>
+                  <button onClick={() => setShowBreedInfo(v => !v)} className="mt-1.5 text-xs text-red-600 hover:text-red-700 flex items-center gap-1">
+                    <Info className="w-3 h-3" />{showBreedInfo ? 'Masquer' : 'Caractéristiques de la race'}
+                  </button>
+                  {showBreedInfo && (
+                    <div className="mt-2 p-3 bg-red-50 rounded-lg border border-red-100">
+                      <p className="text-xs font-semibold text-red-800">{breed.name} — {breed.origin}</p>
+                      <p className="text-xs text-red-700 leading-relaxed mt-1">{breed.description}</p>
+                      <p className="text-xs text-red-700 font-medium pt-1">Poids moyen : {breed.avgWeight}</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Nombre d'animaux */}
+                <div className="mb-4 p-3 bg-blue-50 border border-blue-100 rounded-xl">
+                  <label className="block text-xs font-semibold text-blue-800 mb-1.5 flex items-center gap-1.5">
+                    <Users className="w-3.5 h-3.5" />Nombre d&apos;animaux dans le lot
+                  </label>
+                  <div className="flex items-center gap-3">
+                    <button onClick={() => setQuantity(q => String(Math.max(1, parseInt(q) - 1)))}
+                      className="w-8 h-8 rounded-lg bg-white border border-blue-200 text-blue-700 font-bold text-lg flex items-center justify-center hover:bg-blue-100">
+                      −
+                    </button>
+                    <span className="text-2xl font-extrabold text-blue-800 w-8 text-center tabular-nums">{qty}</span>
+                    <button onClick={() => setQuantity(q => String(parseInt(q) + 1))}
+                      className="w-8 h-8 rounded-lg bg-white border border-blue-200 text-blue-700 font-bold text-lg flex items-center justify-center hover:bg-blue-100">
+                      +
+                    </button>
+                    {qty > 1 && <span className="text-xs text-blue-600 font-medium">Résultats par animal + total lot</span>}
+                  </div>
+                </div>
+
+                <div className="mb-4">
+                  <label className="block text-xs font-medium text-gray-700 mb-1.5">Poids vif par animal (kg)</label>
+                  <input type="number" value={liveWeight} onChange={e => setLiveWeight(e.target.value)} placeholder="800"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500" />
+                  {liveW > 0 && <p className="text-xs text-gray-500 mt-1">Carcasse estimée : <strong>{carcassW1.toFixed(0)} kg/animal</strong> ({(breed.carcassYield * 100).toFixed(1)}%)</p>}
+                </div>
+                <div className="mb-4">
+                  <label className="block text-xs font-medium text-gray-700 mb-1.5">Prix achat (€/kg vif)</label>
+                  <input type="number" step="0.01" value={purchasePerKg} onChange={e => setPurchasePerKg(e.target.value)} placeholder="3.80"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500" />
+                  {liveW > 0 && ppkg > 0 && (
+                    <p className="text-xs text-gray-500 mt-1">
+                      {qty > 1 ? <><strong>{eur(purchaseTotal1)}/animal</strong> · total lot : <strong className="text-blue-700">{eur(purchaseTotalLot)}</strong></> : <strong>{eur(purchaseTotal1)}</strong>}
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1.5">Date d&apos;achat</label>
+                  <input type="date" value={purchaseDate} onChange={e => setPurchaseDate(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500" />
+                </div>
               </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="bg-gray-50 border-b border-gray-100">
-                      <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 w-48">Pièce</th>
-                      <th className="px-3 py-3 text-right text-xs font-semibold text-gray-600">Poids</th>
-                      <th className="px-3 py-3 text-right text-xs font-semibold text-gray-600">Réf. marché/kg</th>
-                      <th className="px-3 py-3 text-right text-xs font-semibold text-gray-600">Prix conseillé/kg</th>
-                      <th className="px-3 py-3 text-right text-xs font-semibold text-gray-600">CA pièce</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {CATEGORIES.map(cat => {
-                      const catResults = results.filter(r => r.cut.category === cat)
-                      const catRevenue = catResults.reduce((s, r) => s + r.revenue, 0)
-                      const catWeight  = catResults.reduce((s, r) => s + r.weight, 0)
-                      const active = includedCats.has(cat)
-                      return (
-                        <React.Fragment key={cat}>
-                          <tr className="border-t border-gray-100">
-                            <td colSpan={5} className="px-4 py-2">
-                              <div className="flex items-center justify-between">
-                                <span className={`text-xs px-2 py-0.5 rounded-full border font-semibold ${CATEGORY_COLORS[cat]}`}>{CATEGORY_LABELS[cat]}</span>
-                                {active && catRevenue > 0 && <span className="text-xs text-gray-400">{kgStr(catWeight)} | {eur(catRevenue)}</span>}
-                              </div>
-                            </td>
-                          </tr>
-                          {catResults.map(r => {
-                            const pctDiff = r.sellingPrice > 0 ? ((r.sellingPrice - r.cut.marketPrice) / r.cut.marketPrice) * 100 : 0
-                            const priceColor = pctDiff < -5 ? 'text-green-600' : pctDiff > 15 ? 'text-orange-600' : 'text-gray-900'
-                            return (
-                              <tr key={r.cut.id} className={`border-t border-gray-50 ${active ? '' : 'opacity-30'}`}>
-                                <td className="px-4 py-2.5 font-medium text-gray-800">{r.cut.name}</td>
-                                <td className="px-3 py-2.5 text-right tabular-nums text-gray-600">{kgStr(r.weight)}</td>
-                                <td className="px-3 py-2.5 text-right tabular-nums text-gray-400">{eur(r.cut.marketPrice)}</td>
-                                <td className="px-3 py-2.5 text-right tabular-nums font-semibold">
-                                  {active ? <span className={priceColor}>{eur(r.sellingPrice)}{Math.abs(pctDiff) > 1 && <span className={`ml-1 text-xs font-normal ${priceColor}`}>({pctDiff > 0 ? '+' : ''}{pctDiff.toFixed(0)}%)</span>}</span> : '—'}
+
+              {/* 2 — Charges */}
+              <div className="bg-white border border-gray-200 rounded-2xl p-5">
+                <h2 className="text-sm font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                  <span className="w-5 h-5 bg-gray-900 text-white text-xs rounded-full flex items-center justify-center font-bold">2</span>Charges à imputer
+                  <span className="text-xs font-normal text-gray-400">(par animal)</span>
+                </h2>
+                <div className="mb-4">
+                  <label className="block text-xs font-medium text-gray-700 mb-1.5">Charges fixes pro-ratées (€)</label>
+                  <input type="number" value={overheadCost} onChange={e => setOverheadCost(e.target.value)} placeholder="0"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500" />
+                </div>
+                <div className="mb-4">
+                  <label className="block text-xs font-medium text-gray-700 mb-1.5">Main d&apos;œuvre découpe (€)</label>
+                  <input type="number" value={laborCost} onChange={e => setLaborCost(e.target.value)} placeholder="150"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500" />
+                </div>
+                {totalCost1 > 0 && (
+                  <div className="p-3 bg-gray-50 rounded-lg">
+                    <p className="text-xs text-gray-500">Coût de revient {qty > 1 ? 'par animal' : 'total'}</p>
+                    <p className="text-xl font-bold text-gray-900">{eur(totalCost1)}</p>
+                    {qty > 1 && <p className="text-xs font-bold text-blue-700 mt-0.5">Lot ({qty} animaux) : {eur(totalCostLot)}</p>}
+                    {totalMarketRevenue1 > 0 && <p className="text-xs text-gray-400 mt-1">Marge aux prix du marché : {(((totalMarketRevenue1 - totalCost1) / totalMarketRevenue1) * 100).toFixed(1)}%</p>}
+                  </div>
+                )}
+              </div>
+
+              {/* 3 — Marge */}
+              <div className="bg-white border border-gray-200 rounded-2xl p-5">
+                <h2 className="text-sm font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                  <span className="w-5 h-5 bg-gray-900 text-white text-xs rounded-full flex items-center justify-center font-bold">3</span>Marge souhaitée
+                </h2>
+                <div className="flex items-center gap-4 mb-2">
+                  <input type="range" min={10} max={70} step={1} value={targetMargin} onChange={e => setTargetMargin(Number(e.target.value))} className="flex-1 accent-red-600" />
+                  <span className="text-2xl font-bold text-red-600 w-14 text-right tabular-nums">{targetMargin}%</span>
+                </div>
+                <div className="flex justify-between text-xs text-gray-400"><span>10%</span><span>40% (typique)</span><span>70%</span></div>
+              </div>
+
+              {/* 4 — Pièces */}
+              <div className="bg-white border border-gray-200 rounded-2xl p-5">
+                <h2 className="text-sm font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                  <span className="w-5 h-5 bg-gray-900 text-white text-xs rounded-full flex items-center justify-center font-bold">4</span>Pièces à valoriser
+                </h2>
+                <div className="space-y-2">
+                  {CATEGORIES.map(cat => (
+                    <label key={cat} className="flex items-center gap-3 cursor-pointer">
+                      <input type="checkbox" checked={includedCats.has(cat)} onChange={() => toggleCat(cat)} className="rounded accent-red-600" />
+                      <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${CATEGORY_COLORS[cat]}`}>{CATEGORY_LABELS[cat]}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* Notes */}
+              {totalRevenue1 > 0 && (
+                <div className="bg-white border border-gray-200 rounded-2xl p-5">
+                  <label className="block text-xs font-semibold text-gray-700 mb-1.5">Notes</label>
+                  <textarea value={notes} onChange={e => setNotes(e.target.value)}
+                    placeholder="Qualité, conditions d'achat, fournisseur..."
+                    rows={2} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-500 resize-none" />
+                </div>
+              )}
+            </div>
+
+            {/* ══ RÉSULTATS ══ */}
+            <div className="xl:col-span-2 space-y-5">
+
+              {/* Bandeau lot si qty > 1 */}
+              {qty > 1 && totalRevenue1 > 0 && (
+                <div className="bg-blue-700 rounded-2xl p-4 text-white">
+                  <p className="text-xs font-semibold text-blue-200 mb-2 uppercase tracking-wide">Récapitulatif lot — {qty} animaux</p>
+                  <div className="grid grid-cols-3 gap-4">
+                    <div>
+                      <p className="text-xs text-blue-300">Coût total lot</p>
+                      <p className="text-xl font-extrabold">{eur(totalCostLot)}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-blue-300">CA estimé total</p>
+                      <p className="text-xl font-extrabold text-yellow-300">{eur(totalRevenueLot)}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-blue-300">Marge brute lot</p>
+                      <p className="text-xl font-extrabold text-green-300">{eur(totalRevenueLot - totalCostLot)}</p>
+                      <p className="text-xs text-blue-300">{actualMargin1.toFixed(1)}% de marge</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Coefficient */}
+              {totalRevenue1 > 0 && (
+                <div className={`rounded-2xl p-4 border ${
+                  coeffStatus === 'under' ? 'bg-green-50 border-green-200' : coeffStatus === 'over' ? 'bg-orange-50 border-orange-200' : 'bg-blue-50 border-blue-200'
+                }`}>
+                  <div className="flex items-start gap-3">
+                    {coeffStatus === 'under' && <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />}
+                    {coeffStatus === 'over'  && <AlertTriangle className="w-5 h-5 text-orange-600 flex-shrink-0 mt-0.5" />}
+                    {coeffStatus === 'ok'    && <TrendingUp className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />}
+                    <div className="flex-1">
+                      <div className="flex items-baseline gap-2 mb-1">
+                        <span className={`text-2xl font-bold ${
+                          coeffStatus === 'under' ? 'text-green-700' : coeffStatus === 'over' ? 'text-orange-700' : 'text-blue-700'
+                        }`}>x{coefficient.toFixed(3)}</span>
+                        <span className="text-sm font-semibold text-gray-700">Coefficient de valorisation</span>
+                      </div>
+                      <p className={`text-xs leading-relaxed ${
+                        coeffStatus === 'under' ? 'text-green-700' : coeffStatus === 'over' ? 'text-orange-700' : 'text-blue-700'
+                      }`}>
+                        {coeffStatus === 'under' && <>Vos coûts sont bas : vous pouvez être <strong>{((1-coefficient)*100).toFixed(1)}% sous le marché</strong> et atteindre {targetMargin}% de marge.</> }
+                        {coeffStatus === 'over'  && <>Pour {targetMargin}% de marge, vos prix doivent être <strong>{((coefficient-1)*100).toFixed(1)}% au-dessus du marché</strong>. Positionnement premium recommandé.</> }
+                        {coeffStatus === 'ok'    && <>Vos prix sont proches du marché ({coefficient > 1 ? '+' : ''}{((coefficient-1)*100).toFixed(1)}%). Positionnement équilibré pour {targetMargin}% de marge.</> }
+                      </p>
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      <p className="text-xs text-gray-500">CA marché réf.</p>
+                      <p className="text-sm font-bold text-gray-800">{eur(totalMarketRevenue1)}</p>
+                      <p className="text-xs text-gray-500">CA cible/animal</p>
+                      <p className="text-sm font-bold text-red-600">{eur(totalRevenue1)}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* KPIs par animal */}
+              {totalRevenue1 > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">{qty > 1 ? 'Par animal' : 'Résultat'}</p>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                    {[
+                      { label: 'Poids vendable',  value: kgStr(totalSellable1), sub: `sur ${carcassW1.toFixed(0)} kg carcasse` },
+                      { label: 'Coût de revient', value: eur(totalCost1),       sub: `${eur(totalCost1 / totalSellable1)}/kg` },
+                      { label: 'CA conseillé',    value: eur(totalRevenue1),    sub: `coeff. x${coefficient.toFixed(3)}` },
+                      { label: 'Marge brute',     value: eur(totalRevenue1 - totalCost1), sub: `${actualMargin1.toFixed(1)}% réel`, highlight: true },
+                    ].map(kpi => (
+                      <div key={kpi.label} className={`rounded-2xl p-4 border ${'highlight' in kpi && kpi.highlight ? 'bg-red-600 border-red-600' : 'bg-white border-gray-200'}`}>
+                        <p className={`text-xs mb-1 ${'highlight' in kpi && kpi.highlight ? 'text-red-100' : 'text-gray-500'}`}>{kpi.label}</p>
+                        <p className={`text-lg font-bold leading-tight ${'highlight' in kpi && kpi.highlight ? 'text-white' : 'text-gray-900'}`}>{kpi.value}</p>
+                        <p className={`text-xs mt-0.5 ${'highlight' in kpi && kpi.highlight ? 'text-red-200' : 'text-gray-400'}`}>{kpi.sub}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Tableau pièces */}
+              {results.length > 0 ? (
+                <div className="bg-white border border-gray-200 rounded-2xl overflow-hidden">
+                  <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+                    <h2 className="text-sm font-semibold text-gray-900 flex items-center gap-2"><Package className="w-4 h-4 text-gray-400" />Détail par pièce {qty > 1 && <span className="text-xs font-normal text-gray-400">(par animal — ×{qty} pour le lot)</span>}</h2>
+                    <span className="text-xs text-gray-400">Prix de marché France 2025</span>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="bg-gray-50 border-b border-gray-100">
+                          <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 w-48">Pièce</th>
+                          <th className="px-3 py-3 text-right text-xs font-semibold text-gray-600">Poids</th>
+                          <th className="px-3 py-3 text-right text-xs font-semibold text-gray-600">Réf. marché/kg</th>
+                          <th className="px-3 py-3 text-right text-xs font-semibold text-gray-600">Prix conseillé/kg</th>
+                          <th className="px-3 py-3 text-right text-xs font-semibold text-gray-600">CA pièce</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {CATEGORIES.map(cat => {
+                          const catResults = results.filter(r => r.cut.category === cat)
+                          const catRevenue = catResults.reduce((s, r) => s + r.revenue, 0)
+                          const catWeight  = catResults.reduce((s, r) => s + r.weight, 0)
+                          const active = includedCats.has(cat)
+                          return (
+                            <React.Fragment key={cat}>
+                              <tr className="border-t border-gray-100">
+                                <td colSpan={5} className="px-4 py-2">
+                                  <div className="flex items-center justify-between">
+                                    <span className={`text-xs px-2 py-0.5 rounded-full border font-semibold ${CATEGORY_COLORS[cat]}`}>{CATEGORY_LABELS[cat]}</span>
+                                    {active && catRevenue > 0 && <span className="text-xs text-gray-400">{kgStr(catWeight)} | {eur(catRevenue)}</span>}
+                                  </div>
                                 </td>
-                                <td className="px-3 py-2.5 text-right tabular-nums text-gray-700">{active ? eur(r.revenue) : '—'}</td>
                               </tr>
-                            )
-                          })}
-                        </React.Fragment>
-                      )
-                    })}
-                  </tbody>
-                  <tfoot>
-                    <tr className="border-t-2 border-gray-200 bg-gray-900 text-white">
-                      <td className="px-4 py-3 font-bold">TOTAL {qty > 1 ? '/ animal' : ''}</td>
-                      <td className="px-3 py-3 text-right font-bold">{totalSellable1 > 0 ? kgStr(totalSellable1) : '—'}</td>
-                      <td className="px-3 py-3 text-right text-gray-400">{totalMarketRevenue1 > 0 ? eur(totalMarketRevenue1) : '—'}</td>
-                      <td className="px-3 py-3" />
-                      <td className="px-3 py-3 text-right font-bold text-orange-300">{totalRevenue1 > 0 ? eur(totalRevenue1) : '—'}</td>
-                    </tr>
-                    {qty > 1 && totalRevenue1 > 0 && (
-                      <tr className="bg-blue-700 text-white">
-                        <td className="px-4 py-2.5 font-bold text-sm">TOTAL LOT ({qty} animaux)</td>
-                        <td className="px-3 py-2.5 text-right font-bold">{kgStr(totalSellable1 * qty)}</td>
-                        <td className="px-3 py-2.5" />
-                        <td className="px-3 py-2.5" />
-                        <td className="px-3 py-2.5 text-right font-bold text-yellow-300">{eur(totalRevenueLot)}</td>
-                      </tr>
-                    )}
-                  </tfoot>
-                </table>
-              </div>
-              <div className="px-5 py-3 bg-gray-50 border-t border-gray-100">
-                <p className="text-xs text-gray-400">
-                  Coefficient x{coefficient.toFixed(3)} appliqué aux prix de marché de référence.
-                  <span className="text-green-600 font-medium ml-1">Vert</span> = sous le marché.
-                  <span className="text-orange-600 font-medium ml-1">Orange</span> = +15% au-dessus.
-                </p>
-              </div>
+                              {catResults.map(r => {
+                                const pctDiff = r.sellingPrice > 0 ? ((r.sellingPrice - r.cut.marketPrice) / r.cut.marketPrice) * 100 : 0
+                                const priceColor = pctDiff < -5 ? 'text-green-600' : pctDiff > 15 ? 'text-orange-600' : 'text-gray-900'
+                                return (
+                                  <tr key={r.cut.id} className={`border-t border-gray-50 ${active ? '' : 'opacity-30'}`}>
+                                    <td className="px-4 py-2.5 font-medium text-gray-800">{r.cut.name}</td>
+                                    <td className="px-3 py-2.5 text-right tabular-nums text-gray-600">{kgStr(r.weight)}</td>
+                                    <td className="px-3 py-2.5 text-right tabular-nums text-gray-400">{eur(r.cut.marketPrice)}</td>
+                                    <td className="px-3 py-2.5 text-right tabular-nums font-semibold">
+                                      {active ? <span className={priceColor}>{eur(r.sellingPrice)}{Math.abs(pctDiff) > 1 && <span className={`ml-1 text-xs font-normal ${priceColor}`}>({pctDiff > 0 ? '+' : ''}{pctDiff.toFixed(0)}%)</span>}</span> : '—'}
+                                    </td>
+                                    <td className="px-3 py-2.5 text-right tabular-nums text-gray-700">{active ? eur(r.revenue) : '—'}</td>
+                                  </tr>
+                                )
+                              })}
+                            </React.Fragment>
+                          )
+                        })}
+                      </tbody>
+                      <tfoot>
+                        <tr className="border-t-2 border-gray-200 bg-gray-900 text-white">
+                          <td className="px-4 py-3 font-bold">TOTAL {qty > 1 ? '/ animal' : ''}</td>
+                          <td className="px-3 py-3 text-right font-bold">{totalSellable1 > 0 ? kgStr(totalSellable1) : '—'}</td>
+                          <td className="px-3 py-3 text-right text-gray-400">{totalMarketRevenue1 > 0 ? eur(totalMarketRevenue1) : '—'}</td>
+                          <td className="px-3 py-3" />
+                          <td className="px-3 py-3 text-right font-bold text-orange-300">{totalRevenue1 > 0 ? eur(totalRevenue1) : '—'}</td>
+                        </tr>
+                        {qty > 1 && totalRevenue1 > 0 && (
+                          <tr className="bg-blue-700 text-white">
+                            <td className="px-4 py-2.5 font-bold text-sm">TOTAL LOT ({qty} animaux)</td>
+                            <td className="px-3 py-2.5 text-right font-bold">{kgStr(totalSellable1 * qty)}</td>
+                            <td className="px-3 py-2.5" />
+                            <td className="px-3 py-2.5" />
+                            <td className="px-3 py-2.5 text-right font-bold text-yellow-300">{eur(totalRevenueLot)}</td>
+                          </tr>
+                        )}
+                      </tfoot>
+                    </table>
+                  </div>
+                  <div className="px-5 py-3 bg-gray-50 border-t border-gray-100">
+                    <p className="text-xs text-gray-400">
+                      Coefficient x{coefficient.toFixed(3)} appliqué aux prix de marché de référence.
+                      <span className="text-green-600 font-medium ml-1">Vert</span> = sous le marché.
+                      <span className="text-orange-600 font-medium ml-1">Orange</span> = +15% au-dessus.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-white border border-gray-200 rounded-2xl p-16 flex flex-col items-center justify-center text-center">
+                  <div className="w-14 h-14 bg-gray-100 rounded-full flex items-center justify-center mb-4">
+                    <Calculator className="w-7 h-7 text-gray-300" />
+                  </div>
+                  <p className="text-gray-600 font-medium">Renseignez les informations de l&apos;animal</p>
+                  <p className="text-sm text-gray-400 mt-1">Le détail par pièce apparaîtra ici</p>
+                </div>
+              )}
             </div>
-          ) : (
-            <div className="bg-white border border-gray-200 rounded-2xl p-16 flex flex-col items-center justify-center text-center">
-              <div className="w-14 h-14 bg-gray-100 rounded-full flex items-center justify-center mb-4">
-                <Calculator className="w-7 h-7 text-gray-300" />
-              </div>
-              <p className="text-gray-600 font-medium">Renseignez les informations de l&apos;animal</p>
-              <p className="text-sm text-gray-400 mt-1">Le détail par pièce apparaîtra ici</p>
-            </div>
-          )}
-        </div>
-      </div>
+          </div>
+        </>
+      )}
 
       {/* Modal historique */}
       {selected && (
