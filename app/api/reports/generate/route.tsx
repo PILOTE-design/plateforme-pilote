@@ -49,7 +49,7 @@ interface ComputedReport {
 const eur = (n: number) => {
   const abs = Math.abs(n)
   const [int, dec] = abs.toFixed(2).split('.')
-  const intFmt = int.replace(/\B(?=(\d{3})+(?!\d))/g, ' ')
+  const intFmt = int.replace(/\B(?=(\d{3})+(?!\d))/g, ' ')
   return (n < 0 ? '-' : '') + intFmt + ',' + dec + ' €'
 }
 const signEur = (n: number) => (n >= 0 ? '+' : '') + eur(n)
@@ -246,7 +246,8 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
       <Page size="A4" style={S.page}>
         <SecHeader title="REPARTITION DU CA PAR FAMILLE" />
         <View style={S.chartWrap}>
-          <Image src={{ data: pieBuffer, format: 'png' }} style={{ width: 490, height: 310 }} />
+          {/* outlabeledPie : 820x460 -> affiche en 490x275 dans le PDF */}
+          <Image src={{ data: pieBuffer, format: 'png' }} style={{ width: 490, height: 275 }} />
         </View>
         <Text style={S.chartCaption}>Poids de chaque famille dans le chiffre d'affaires total (€ TTC) - Semaine {data.week_number} {data.year}</Text>
         <View style={[S.tableWrap, { marginTop: 14 }]}>
@@ -515,10 +516,11 @@ async function generateInsights(data: ReportData): Promise<Insights> {
 
 // ─── QuickChart ───────────────────────────────────────────────────────────────
 // REGLES ABSOLUES QuickChart :
-// 1. Aucun caractere non-ASCII dans la config
+// 1. Aucun caractere non-ASCII dans la config JSON
 // 2. ticks.callback interdit — crash Chart.js 2.9.4 dans le sandbox
 // 3. title.text doit etre une string simple (pas un array)
-// 4. Formatter datalabels : utiliser ctx.dataset.data (pas ctx.chart.data.datasets[0].data)
+// 4. outlabeledPie : utiliser type 'outlabeledPie' pour les leader lines
+//    La legende est masquee (legend.display:false) car les labels sont deja externes
 
 async function getChartBuffers(data: ReportData): Promise<{ pieBuffer: Buffer; barBuffer: Buffer }> {
   const famMapC = new Map<string, Famille>()
@@ -533,7 +535,7 @@ async function getChartBuffers(data: ReportData): Promise<{ pieBuffer: Buffer; b
   const famCA    = data.ventes_n.familles.map(f => +f.total_montant.toFixed(2))
   const famCA1   = data.ventes_n.familles.map(f => +(famMapC.get(f.nom.toUpperCase())?.total_montant ?? 0).toFixed(2))
 
-  // Palette diversifiée pour distinguer les familles (plus de bleus similaires)
+  // Palette diversifiee : chaque famille a une couleur distincte
   const donutPalette = [
     '#1E3A5F',  // navy
     '#2563EB',  // blue
@@ -547,20 +549,41 @@ async function getChartBuffers(data: ReportData): Promise<{ pieBuffer: Buffer; b
     '#9333EA',  // purple
   ].slice(0, famNames.length)
 
+  // outlabeledPie : dessin des lignes leaders (fleches) vers les labels externes
+  // - legend masquee (les labels sont deja dehors)
+  // - text: '%l\n%p' = nom de famille + pourcentage
+  // - stretch: longueur de la ligne leader en px
+  // - font.resizable: ajuste la taille si superposition
   const pieConfig = {
-    type: 'doughnut',
-    data: { labels: famNames, datasets: [{ data: famCA, backgroundColor: donutPalette, borderWidth: 3, borderColor: '#FFFFFF' }] },
+    type: 'outlabeledPie',
+    data: {
+      labels: famNames,
+      datasets: [{
+        data: famCA,
+        backgroundColor: donutPalette,
+        borderWidth: 2,
+        borderColor: '#FFFFFF',
+      }],
+    },
     options: {
-      cutoutPercentage: 52,
-      legend: { position: 'right', labels: { fontSize: 11, padding: 16, boxWidth: 14, fontColor: '#1E293B' } },
-      title: { display: true, text: 'CA par famille de produits', fontSize: 14, fontColor: '#1E293B', fontStyle: 'bold', padding: 16 },
+      title: {
+        display: true,
+        text: 'Repartition CA - S' + data.week_number + ' ' + data.year,
+        fontSize: 14,
+        fontColor: '#1E293B',
+        fontStyle: 'bold',
+        padding: 14,
+      },
+      legend: { display: false },
       plugins: {
-        datalabels: {
-          display: true,
-          // Utiliser ctx.dataset.data (plus fiable que ctx.chart.data.datasets[0].data)
-          formatter: "function(v,ctx){var t=ctx.dataset.data.reduce(function(a,b){return a+b;},0);var p=v/t*100;return p<6?'':Math.round(p)+'%';}",
+        datalabels: { display: false },
+        outlabels: {
+          text: '%l\n%p',
           color: 'white',
-          font: { size: 11, weight: 'bold' },
+          stretch: 38,
+          font: { resizable: true, minSize: 8, maxSize: 12, size: 11, weight: 'bold' },
+          padding: { top: 4, bottom: 4, left: 7, right: 7 },
+          borderRadius: 4,
         },
       },
     },
@@ -592,7 +615,8 @@ async function getChartBuffers(data: ReportData): Promise<{ pieBuffer: Buffer; b
     },
   }
 
-  const pieBody = JSON.stringify({ chart: pieConfig, width: 720, height: 380, backgroundColor: 'white', version: '2.9.4' })
+  // outlabeledPie requiert plus d'espace autour du graphique pour les labels externes
+  const pieBody = JSON.stringify({ chart: pieConfig, width: 820, height: 460, backgroundColor: 'white', version: '2.9.4' })
   const barBody = JSON.stringify({ chart: barConfig, width: 720, height: 470, backgroundColor: 'white', version: '2.9.4' })
 
   const QC = 'https://quickchart.io/chart'
