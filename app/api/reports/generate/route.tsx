@@ -44,8 +44,14 @@ interface ComputedReport {
 }
 
 // ─── Formatters ───────────────────────────────────────────────────────────────
-const eur = (n: number) =>
-  n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'
+// NE PAS utiliser toLocaleString('fr-FR') — produit U+202F (espace fine insécable)
+// que Helvetica dans react-pdf rend comme '/'. Utiliser un espace ASCII standard.
+const eur = (n: number) => {
+  const abs = Math.abs(n)
+  const [int, dec] = abs.toFixed(2).split('.')
+  const intFmt = int.replace(/\B(?=(\d{3})+(?!\d))/g, ' ')
+  return (n < 0 ? '-' : '') + intFmt + ',' + dec + ' €'
+}
 const signEur = (n: number) => (n >= 0 ? '+' : '') + eur(n)
 const signPct = (n: number) => (n >= 0 ? '+' : '') + (n * 100).toFixed(1) + '%'
 const pctStr = (n: number) => (n * 100).toFixed(1) + '%'
@@ -203,9 +209,9 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
         <View style={S.tableWrap}>
           <View style={S.tHead}>
             <Text style={[S.tHeadCell, { flex: 3 }]}>FAMILLE</Text>
-            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N ({'€'})</Text>
-            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N-1 ({'€'})</Text>
-            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>ECART ({'€'})</Text>
+            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N (€)</Text>
+            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N-1 (€)</Text>
+            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>ECART (€)</Text>
             <Text style={[S.tHeadCell, { flex: 1.2, textAlign: 'right' }]}>% CA</Text>
             <Text style={[S.tHeadCell, { flex: 1, textAlign: 'center' }]}>TEND.</Text>
           </View>
@@ -240,23 +246,24 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
       <Page size="A4" style={S.page}>
         <SecHeader title="REPARTITION DU CA PAR FAMILLE" />
         <View style={S.chartWrap}>
-          <Image src={{ data: pieBuffer, format: 'png' }} style={{ width: 490, height: 300 }} />
+          <Image src={{ data: pieBuffer, format: 'png' }} style={{ width: 490, height: 310 }} />
         </View>
-        <Text style={S.chartCaption}>Poids de chaque famille dans le chiffre d'affaires total ({'€'} TTC) - Semaine {data.week_number} {data.year}</Text>
+        <Text style={S.chartCaption}>Poids de chaque famille dans le chiffre d'affaires total (€ TTC) - Semaine {data.week_number} {data.year}</Text>
         <View style={[S.tableWrap, { marginTop: 14 }]}>
           <View style={S.tHead}>
             <Text style={[S.tHeadCell, { flex: 3 }]}>FAMILLE</Text>
-            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N ({'€'})</Text>
-            <Text style={[S.tHeadCell, { flex: 1.5, textAlign: 'right' }]}>% N</Text>
-            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N-1 ({'€'})</Text>
-            <Text style={[S.tHeadCell, { flex: 1.5, textAlign: 'right' }]}>% N-1</Text>
-            <Text style={[S.tHeadCell, { flex: 1.5, textAlign: 'right' }]}>EVOL. %</Text>
+            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N (€)</Text>
+            <Text style={[S.tHeadCell, { flex: 1.5, textAlign: 'right' }]}>% CA N</Text>
+            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N-1 (€)</Text>
+            <Text style={[S.tHeadCell, { flex: 1.5, textAlign: 'right' }]}>% CA N-1</Text>
+            <Text style={[S.tHeadCell, { flex: 1.5, textAlign: 'right' }]}>EVOL. CA</Text>
           </View>
           {vn.familles.map((fam, i) => {
             const f1 = famMap.get(fam.nom.toUpperCase())
             const wN = vn.total ? fam.total_montant / vn.total : 0
             const wN1 = vn1.total && f1 ? f1.total_montant / vn1.total : 0
-            const evolPct = wN1 ? (wN - wN1) / wN1 : 0
+            // Evolution du CA absolu (pas des parts) : plus pertinent pour le boucher
+            const evolCA = f1?.total_montant ? (fam.total_montant - f1.total_montant) / f1.total_montant : 0
             return (
               <View key={fam.id} style={i % 2 === 0 ? S.tRow : S.tRowAlt}>
                 <Text style={[S.tCellB, { flex: 3 }]}>{trunc(fam.nom, 28)}</Text>
@@ -264,7 +271,7 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
                 <Text style={[S.tCellRB, { flex: 1.5 }]}>{pctStr(wN)}</Text>
                 <Text style={[S.tCellR, { flex: 2 }]}>{f1 ? eur(f1.total_montant) : '-'}</Text>
                 <Text style={[S.tCellR, { flex: 1.5 }]}>{f1 ? pctStr(wN1) : '-'}</Text>
-                <Text style={[evolPct >= 0 ? S.tCellGreen : S.tCellRed, { flex: 1.5 }]}>{f1 ? signPct(evolPct) : '-'}</Text>
+                <Text style={[f1 ? (evolCA >= 0 ? S.tCellGreen : S.tCellRed) : S.tCellR, { flex: 1.5 }]}>{f1 ? signPct(evolCA) : '-'}</Text>
               </View>
             )
           })}
@@ -278,14 +285,14 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
         <View style={S.chartWrap}>
           <Image src={{ data: barBuffer, format: 'png' }} style={{ width: 490, height: 360 }} />
         </View>
-        <Text style={S.chartCaption}>Comparaison du CA par famille ({'€'} TTC) - S{data.week_number} {data.year} vs S{data.week_number} {data.year - 1}</Text>
+        <Text style={S.chartCaption}>Comparaison du CA par famille (€ TTC) - S{data.week_number} {data.year} vs S{data.week_number} {data.year - 1}</Text>
         <View style={{ paddingHorizontal: 36, marginTop: 20 }}>
           <Text style={{ fontSize: 9.5, fontFamily: 'Helvetica-Bold', color: C.navy, marginBottom: 10 }}>Synthese des ecarts par famille</Text>
           <View style={S.tHead}>
             <Text style={[S.tHeadCell, { flex: 3 }]}>FAMILLE</Text>
-            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N ({'€'})</Text>
-            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N-1 ({'€'})</Text>
-            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>ECART ({'€'})</Text>
+            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N (€)</Text>
+            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N-1 (€)</Text>
+            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>ECART (€)</Text>
             <Text style={[S.tHeadCell, { flex: 1.5, textAlign: 'right' }]}>ECART %</Text>
           </View>
           {vn.familles.map(fam => ({ fam, f1: famMap.get(fam.nom.toUpperCase()), ec: fam.total_montant - (famMap.get(fam.nom.toUpperCase())?.total_montant ?? 0) }))
@@ -317,7 +324,7 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
             <View style={{ flexDirection: 'row', backgroundColor: '#F1F5F9', paddingVertical: 5, paddingHorizontal: 8, borderBottomColor: '#CBD5E1', borderBottomWidth: 1 }}>
               <Text style={[S.tHeadCell, { flex: 0.4, color: C.textLight }]}>#</Text>
               <Text style={[S.tHeadCell, { flex: 3 }]}>PRODUIT</Text>
-              <Text style={[S.tHeadCell, { flex: 1.8, textAlign: 'right' }]}>CA N ({'€'})</Text>
+              <Text style={[S.tHeadCell, { flex: 1.8, textAlign: 'right' }]}>CA N (€)</Text>
               <Text style={[S.tHeadCell, { flex: 1.2, textAlign: 'right' }]}>EVOL.</Text>
             </View>
             {tops.map((t, i) => {
@@ -340,7 +347,7 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
             <View style={{ flexDirection: 'row', backgroundColor: '#F1F5F9', paddingVertical: 5, paddingHorizontal: 8, borderBottomColor: '#CBD5E1', borderBottomWidth: 1 }}>
               <Text style={[S.tHeadCell, { flex: 0.4, color: C.textLight }]}>#</Text>
               <Text style={[S.tHeadCell, { flex: 3 }]}>PRODUIT</Text>
-              <Text style={[S.tHeadCell, { flex: 1.8, textAlign: 'right' }]}>CA N ({'€'})</Text>
+              <Text style={[S.tHeadCell, { flex: 1.8, textAlign: 'right' }]}>CA N (€)</Text>
               <Text style={[S.tHeadCell, { flex: 1.2, textAlign: 'right' }]}>EVOL.</Text>
             </View>
             {flops.map((f, i) => {
@@ -507,15 +514,17 @@ async function generateInsights(data: ReportData): Promise<Insights> {
 }
 
 // ─── QuickChart ───────────────────────────────────────────────────────────────
-// REGLE ABSOLUE : aucun caractere non-ASCII dans la config QuickChart.
-// ticks.callback interdit : cause un crash Chart.js 2.9.4 dans le sandbox QuickChart.
-// Utiliser maxTicksLimit + stepSize pour controler l'axe Y sans callback.
+// REGLES ABSOLUES QuickChart :
+// 1. Aucun caractere non-ASCII dans la config
+// 2. ticks.callback interdit — crash Chart.js 2.9.4 dans le sandbox
+// 3. title.text doit etre une string simple (pas un array)
+// 4. Formatter datalabels : utiliser ctx.dataset.data (pas ctx.chart.data.datasets[0].data)
 
 async function getChartBuffers(data: ReportData): Promise<{ pieBuffer: Buffer; barBuffer: Buffer }> {
   const famMapC = new Map<string, Famille>()
   for (const f of data.ventes_n1.familles) famMapC.set(f.nom.toUpperCase(), f)
 
-  // Strip diacritics + non-ASCII from labels
+  // Strip diacritics + non-ASCII from labels (QuickChart sandbox rule)
   const toAscii = (s: string) =>
     s.normalize('NFD')
       .replace(/[̀-ͯ]/g, '')
@@ -524,20 +533,34 @@ async function getChartBuffers(data: ReportData): Promise<{ pieBuffer: Buffer; b
   const famCA    = data.ventes_n.familles.map(f => +f.total_montant.toFixed(2))
   const famCA1   = data.ventes_n.familles.map(f => +(famMapC.get(f.nom.toUpperCase())?.total_montant ?? 0).toFixed(2))
 
-  const donutPalette = ['#1E40AF','#2563EB','#3B82F6','#60A5FA','#93C5FD','#BFDBFE','#DBEAFE','#EFF6FF','#172554','#1D4ED8'].slice(0, famNames.length)
+  // Palette diversifiée pour distinguer les familles (plus de bleus similaires)
+  const donutPalette = [
+    '#1E3A5F',  // navy
+    '#2563EB',  // blue
+    '#059669',  // green
+    '#D97706',  // amber
+    '#DC2626',  // red
+    '#7C3AED',  // violet
+    '#0891B2',  // cyan
+    '#BE185D',  // pink
+    '#65A30D',  // lime
+    '#9333EA',  // purple
+  ].slice(0, famNames.length)
 
   const pieConfig = {
     type: 'doughnut',
     data: { labels: famNames, datasets: [{ data: famCA, backgroundColor: donutPalette, borderWidth: 3, borderColor: '#FFFFFF' }] },
     options: {
-      cutoutPercentage: 55,
-      legend: { position: 'right', labels: { fontSize: 11, padding: 14, boxWidth: 14, fontColor: '#1E293B' } },
-      title: { display: true, text: 'CA par famille de produits', fontSize: 14, fontColor: '#1E293B', fontStyle: 'bold', padding: 18 },
+      cutoutPercentage: 52,
+      legend: { position: 'right', labels: { fontSize: 11, padding: 16, boxWidth: 14, fontColor: '#1E293B' } },
+      title: { display: true, text: 'CA par famille de produits', fontSize: 14, fontColor: '#1E293B', fontStyle: 'bold', padding: 16 },
       plugins: {
         datalabels: {
           display: true,
-          formatter: 'function(value,ctx){var d=ctx.chart.data.datasets[0].data;var t=d.reduce(function(a,b){return a+b;},0);var p=value/t*100;return p<5?"":p.toFixed(0)+"%";}',
-          color: 'white', font: { size: 11, weight: 'bold' },
+          // Utiliser ctx.dataset.data (plus fiable que ctx.chart.data.datasets[0].data)
+          formatter: "function(v,ctx){var t=ctx.dataset.data.reduce(function(a,b){return a+b;},0);var p=v/t*100;return p<6?'':Math.round(p)+'%';}",
+          color: 'white',
+          font: { size: 11, weight: 'bold' },
         },
       },
     },
@@ -553,14 +576,14 @@ async function getChartBuffers(data: ReportData): Promise<{ pieBuffer: Buffer; b
       ],
     },
     options: {
-      // title.text DOIT etre une string simple (pas un array) - le array cause un 400
+      // title.text : string simple uniquement (array = crash)
       title: { display: true, text: `CA par famille - S${data.week_number} ${data.year} vs ${data.year - 1} - en EUR`, fontSize: 13, fontColor: '#1E293B', fontStyle: 'bold', padding: 14 },
       legend: { position: 'top', labels: { fontSize: 11, padding: 18, boxWidth: 14, fontColor: '#1E293B' } },
       layout: { padding: { top: 20, bottom: 8, left: 8, right: 8 } },
       scales: {
         xAxes: [{ ticks: { fontSize: 10, fontColor: '#1E293B', fontStyle: 'bold' }, gridLines: { display: false } }],
+        // ticks.callback interdit — crash Chart.js 2.9.4
         yAxes: [{
-          // NO ticks.callback - causes Chart.js 2.9.4 crash in QuickChart sandbox
           ticks: { beginAtZero: true, fontSize: 9, fontColor: '#64748B', maxTicksLimit: 6 },
           gridLines: { color: '#E8EDF3', drawBorder: false, lineWidth: 0.8 },
         }],
@@ -569,7 +592,7 @@ async function getChartBuffers(data: ReportData): Promise<{ pieBuffer: Buffer; b
     },
   }
 
-  const pieBody = JSON.stringify({ chart: pieConfig, width: 720, height: 370, backgroundColor: 'white', version: '2.9.4' })
+  const pieBody = JSON.stringify({ chart: pieConfig, width: 720, height: 380, backgroundColor: 'white', version: '2.9.4' })
   const barBody = JSON.stringify({ chart: barConfig, width: 720, height: 470, backgroundColor: 'white', version: '2.9.4' })
 
   const QC = 'https://quickchart.io/chart'
