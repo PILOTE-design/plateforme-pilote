@@ -45,7 +45,6 @@ export default async function DashboardPage() {
   const clientId = await resolveClientId(serviceSupabase, user!.id, user?.email)
   const { week: currentWeek, year: currentYear } = getISOWeek(new Date())
 
-  // Semaine de référence : dernier rapport généré, ou semaine courante par défaut
   let refWeek = currentWeek
   let refYear = currentYear
   let lastReportTitle: string | null = null
@@ -54,7 +53,7 @@ export default async function DashboardPage() {
   let familiesDetail: FamilyRow[] = []
   let ca_total = 0
   let achats_ht = 0
-  let masse_salariale = 0
+  let masse_salariale_chargee = 0
   let reports: Array<{ id: string; title: string; file_url: string; created_at: string }> = []
 
   if (clientId) {
@@ -98,10 +97,11 @@ export default async function DashboardPage() {
       (s: number, inv: { amount_ht: string | number }) => s + parseFloat(String(inv.amount_ht || 0)), 0
     )
 
-    // 4. Masse salariale CCN IDCC 992 — même semaine de référence
+    // 4. Masse salariale chargée CCN IDCC 992 — même semaine de référence
+    //    Coût brut calculé avec majorations, puis multiplyé par (1 + charges_patronales/100)
     const { data: clientEmployees } = await serviceSupabase
       .from('employees')
-      .select('id, hourly_rate, contract_type, contract_hours')
+      .select('id, hourly_rate, contract_type, contract_hours, charges_patronales')
       .eq('client_id', clientId)
 
     if (clientEmployees && clientEmployees.length > 0) {
@@ -118,7 +118,12 @@ export default async function DashboardPage() {
         .eq('year', refYear)
 
       if (planningData && planningData.length > 0) {
-        const empMap: Record<string, { hourly_rate: string; contract_type: string; contract_hours: number }> = {}
+        const empMap: Record<string, {
+          hourly_rate: string
+          contract_type: string
+          contract_hours: number
+          charges_patronales: string | null
+        }> = {}
         for (const emp of clientEmployees) empMap[emp.id] = emp
 
         const CONTRACT_HOURS: Record<string, number> = { CDI_35: 35, CDI_39: 39, CDD_35: 35, CDD_39: 39 }
@@ -127,19 +132,28 @@ export default async function DashboardPage() {
         for (const entry of planningData) {
           const emp = empMap[entry.employee_id]
           if (!emp) continue
+
           const ch = CONTRACT_HOURS[emp.contract_type] ?? emp.contract_hours ?? 35
           const rate = parseFloat(emp.hourly_rate || '0')
+
           const totalH = JOURS.reduce((s: number, j: string) => {
             const t: string = (entry as Record<string, string>)[`${j}_type`] || 'travail'
             const h = parseFloat((entry as Record<string, string>)[j] || '0')
             return s + (t === 'travail' ? h : t === 'conges' ? 7 : 0)
           }, 0)
+
           const t2 = ch + 8
-          let cost = 0
-          if (totalH <= ch) cost = totalH * rate
-          else if (totalH <= t2) cost = ch * rate + (totalH - ch) * rate * 1.25
-          else cost = ch * rate + (t2 - ch) * rate * 1.25 + (totalH - t2) * rate * 1.5
-          masse_salariale += cost
+          let coutBrut = 0
+          if (totalH <= ch) coutBrut = totalH * rate
+          else if (totalH <= t2) coutBrut = ch * rate + (totalH - ch) * rate * 1.25
+          else coutBrut = ch * rate + (t2 - ch) * rate * 1.25 + (totalH - t2) * rate * 1.5
+
+          // Charges patronales : valeur stockée en % (ex: 45 = 45%)
+          // Défaut 45% si non renseigné (approximation allègements Fillon CCN 992)
+          const chargesPct = parseFloat(String(emp.charges_patronales ?? '45'))
+          const chargesCoeff = 1 + chargesPct / 100
+
+          masse_salariale_chargee += coutBrut * chargesCoeff
         }
       }
     }
@@ -221,9 +235,9 @@ export default async function DashboardPage() {
               <CardContent className="p-5">
                 <div className="flex items-center gap-1.5 mb-1">
                   <Users className="w-3.5 h-3.5 text-gray-400" />
-                  <p className="text-xs text-gray-500">Coût employés — {weekLabel}</p>
+                  <p className="text-xs text-gray-500">Coût chargé employés — {weekLabel}</p>
                 </div>
-                <p className="text-2xl font-bold text-gray-900">{fmt(masse_salariale)} €</p>
+                <p className="text-2xl font-bold text-gray-900">{fmt(masse_salariale_chargee)} €</p>
               </CardContent>
             </Card>
 
