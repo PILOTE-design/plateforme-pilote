@@ -34,6 +34,8 @@ async function resolveClientId(
 
 const fmt = (n: number) => n.toLocaleString('fr-FR', { maximumFractionDigits: 0 })
 
+const CONTRACT_HOURS: Record<string, number> = { CDI_35: 35, CDI_39: 39, CDD_35: 35, CDD_39: 39 }
+
 export default async function DashboardPage() {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -54,6 +56,7 @@ export default async function DashboardPage() {
   let ca_total = 0
   let achats_ht = 0
   let masse_salariale_chargee = 0
+  let masse_salariale_courante = 0
   let reports: Array<{ id: string; title: string; file_url: string; created_at: string }> = []
 
   if (clientId) {
@@ -121,7 +124,6 @@ export default async function DashboardPage() {
         }> = {}
         for (const emp of clientEmployees) empMap[emp.id] = emp
 
-        const CONTRACT_HOURS: Record<string, number> = { CDI_35: 35, CDI_39: 39, CDD_35: 35, CDD_39: 39 }
         const JOURS = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
 
         for (const entry of planningData) {
@@ -145,6 +147,44 @@ export default async function DashboardPage() {
 
           const chargesPct = parseFloat(String(emp.charges_patronales ?? '45'))
           masse_salariale_chargee += coutBrut * (1 + chargesPct / 100)
+        }
+      }
+    }
+
+    // Planning semaine courante (indépendant du rapport)
+    if (clientEmployees && clientEmployees.length > 0) {
+      const empIds2 = clientEmployees.map((e: { id: string }) => e.id)
+      const { data: currentPlanning } = await serviceSupabase
+        .from('planning_entries')
+        .select(
+          'lundi,mardi,mercredi,jeudi,vendredi,samedi,dimanche,' +
+          'lundi_type,mardi_type,mercredi_type,jeudi_type,vendredi_type,samedi_type,dimanche_type,employee_id'
+        )
+        .in('employee_id', empIds2)
+        .eq('week_number', currentWeek)
+        .eq('year', currentYear)
+
+      if (currentPlanning && currentPlanning.length > 0) {
+        const empMap2: Record<string, { hourly_rate: string; contract_type: string; contract_hours: number; charges_patronales: string | null }> = {}
+        for (const emp of clientEmployees) empMap2[emp.id] = emp
+        const JOURS2 = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
+        for (const entry of currentPlanning) {
+          const emp = empMap2[entry.employee_id]
+          if (!emp) continue
+          const ch = CONTRACT_HOURS[emp.contract_type] ?? emp.contract_hours ?? 35
+          const rate = parseFloat(emp.hourly_rate || '0')
+          const totalH = JOURS2.reduce((s: number, j: string) => {
+            const t: string = (entry as Record<string, string>)[`${j}_type`] || 'travail'
+            const h = parseFloat((entry as Record<string, string>)[j] || '0')
+            return s + (t === 'travail' ? h : t === 'conges' ? 7 : 0)
+          }, 0)
+          const t2 = ch + 8
+          let coutBrut = 0
+          if (totalH <= ch) coutBrut = totalH * rate
+          else if (totalH <= t2) coutBrut = ch * rate + (totalH - ch) * rate * 1.25
+          else coutBrut = ch * rate + (t2 - ch) * rate * 1.25 + (totalH - t2) * rate * 1.5
+          const chargesPct = parseFloat(String(emp.charges_patronales ?? '45'))
+          masse_salariale_courante += coutBrut * (1 + chargesPct / 100)
         }
       }
     }
@@ -229,9 +269,13 @@ export default async function DashboardPage() {
               <CardContent className="p-5">
                 <div className="flex items-center gap-1.5 mb-1">
                   <Users className="w-3.5 h-3.5 text-gray-400" />
-                  <p className="text-xs text-gray-500">Coût chargé employés — {weekLabel}</p>
+                  <p className="text-xs text-gray-500">Masse salariale chargée</p>
                 </div>
-                <p className="text-2xl font-bold text-gray-900">{fmt(masse_salariale_chargee)} €</p>
+                <p className="text-2xl font-bold text-gray-900">{fmt(masse_salariale_courante)} €</p>
+                <p className="text-xs text-gray-400 mt-0.5">S{currentWeek} (en cours)</p>
+                {refWeek !== currentWeek && masse_salariale_chargee > 0 && (
+                  <p className="text-xs text-gray-400">{weekLabel} : {fmt(masse_salariale_chargee)} €</p>
+                )}
               </CardContent>
             </Card>
 
