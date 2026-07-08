@@ -181,7 +181,7 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
           )}
           <Text style={S.coverMeta}>Genere le {generatedOn}</Text>
           <Text style={S.coverMeta}>Periode comparee (N-1) : {data.period_n1}</Text>
-          <Text style={S.coverMeta}>Analyse IA integree - Graphiques de repartition - Top & Flop produits</Text>
+          <Text style={S.coverMeta}>Analyse IA integree - Graphiques de repartition - Top &amp; Flop produits</Text>
         </View>
       </Page>
 
@@ -194,7 +194,7 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
           <KpiBox label="CA SEMAINE N-1" value={eur(fn1.ca_net)} sub={`S${data.week_number} - ${data.year - 1}`} bg={C.blue} />
           <KpiBox label="VARIATION" value={signPct(caVar)} sub={signEur(fn.ca_net - fn1.ca_net)} bg={caVar >= 0 ? C.green : C.red} />
         </View>
-        <Text style={{ paddingHorizontal: 36, fontSize: 9, color: C.textLight, marginTop: 4, marginBottom: 8 }}>TICKETS & PANIER</Text>
+        <Text style={{ paddingHorizontal: 36, fontSize: 9, color: C.textLight, marginTop: 4, marginBottom: 8 }}>TICKETS &amp; PANIER</Text>
         <View style={[S.kpiRow, { marginBottom: 20 }]}>
           <KpiBox label="TICKETS N" value={String(fn.nb_tickets)} sub={`${fn.nb_tickets - fn1.nb_tickets >= 0 ? '+' : ''}${fn.nb_tickets - fn1.nb_tickets} vs N-1`} bg={fn.nb_tickets >= fn1.nb_tickets ? C.green : C.red} />
           <KpiBox label="TICKETS N-1" value={String(fn1.nb_tickets)} sub={`S${data.week_number} - ${data.year - 1}`} bg={C.blue} />
@@ -510,14 +510,17 @@ async function generateInsights(data: ReportData): Promise<Insights> {
 // ─── QuickChart ───────────────────────────────────────────────────────────────
 // REGLE ABSOLUE : aucun caractere non-ASCII dans la config QuickChart.
 // Les noms de familles sont normalises via toAscii() avant d'etre envoyes.
-// anchor:'start'/align:'end'/clamp:true est la config datalabels validee.
+// datalabels desactives (display:false) pour diagnostiquer le 400 persistant.
 
 async function getChartBuffers(data: ReportData): Promise<{ pieBuffer: Buffer; barBuffer: Buffer }> {
   const famMapC = new Map<string, Famille>()
   for (const f of data.ventes_n1.familles) famMapC.set(f.nom.toUpperCase(), f)
 
-  // Strip diacritics + non-ASCII from labels — explicit unicode escapes to avoid encoding issues
-  const toAscii = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\x00-\x7F]/g, '?')
+  // Strip diacritics + non-ASCII from labels
+  const toAscii = (s: string) =>
+    s.normalize('NFD')
+      .replace(/[̀-ͯ]/g, '')
+      .replace(/[^\x00-\x7F]/g, '?')
   const famNames = data.ventes_n.familles.map(f => trunc(toAscii(f.nom), 18))
   const famCA    = data.ventes_n.familles.map(f => +f.total_montant.toFixed(2))
   const famCA1   = data.ventes_n.familles.map(f => +(famMapC.get(f.nom.toUpperCase())?.total_montant ?? 0).toFixed(2))
@@ -565,19 +568,21 @@ async function getChartBuffers(data: ReportData): Promise<{ pieBuffer: Buffer; b
         }],
       },
       plugins: {
-        datalabels: {
-          display: true, anchor: 'start', align: 'end', offset: 2, clamp: true,
-          formatter: "function(v){if(v<100)return '';return v>=1000?(v/1000).toFixed(1)+'k':String(Math.round(v));}",
-          font: { size: 8, weight: 'bold' }, color: 'white',
-        },
+        datalabels: { display: false },
       },
     },
   }
 
+  // Stringify bodies before fetch to enable non-ASCII scanning
+  const pieBody = JSON.stringify({ chart: pieConfig, width: 720, height: 370, backgroundColor: 'white', version: '2.9.4' })
+  const barBody = JSON.stringify({ chart: barConfig, width: 720, height: 470, backgroundColor: 'white', version: '2.9.4' })
+  // Scan for any non-ASCII that would cause QuickChart 400
+  const nonAsciiInBar = Array.from(barBody).filter((c: string) => c.charCodeAt(0) > 127).join('').slice(0, 80)
+
   const QC = 'https://quickchart.io/chart'
   const [pieRes, barRes] = await Promise.all([
-    fetch(QC, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chart: pieConfig, width: 720, height: 370, backgroundColor: 'white', version: '2.9.4' }) }),
-    fetch(QC, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chart: barConfig, width: 720, height: 470, backgroundColor: 'white', version: '2.9.4' }) }),
+    fetch(QC, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: pieBody }),
+    fetch(QC, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: barBody }),
   ])
 
   if (!pieRes.ok) {
@@ -588,7 +593,7 @@ async function getChartBuffers(data: ReportData): Promise<{ pieBuffer: Buffer; b
   if (!barRes.ok) {
     const ct = barRes.headers.get('content-type') || ''
     const body = ct.includes('image') ? '[binary image]' : (await barRes.text()).slice(0, 300)
-    throw new Error(`QuickChart bar ${barRes.status} | ${body}`)
+    throw new Error(`QuickChart bar ${barRes.status} | ${body} | labels=${JSON.stringify(famNames)} | ca1=${JSON.stringify(famCA1.slice(0, 3))} | nonAscii="${nonAsciiInBar}"`)
   }
 
   const [pieBuffer, barBuffer] = await Promise.all([
