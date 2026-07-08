@@ -68,43 +68,49 @@ export default async function DashboardPage() {
       (s: number, inv: { amount_ht: string | number }) => s + parseFloat(String(inv.amount_ht || 0)), 0
     )
 
-    // 3. Masse salariale (CCN IDCC 992)
-    const { data: planningData } = await serviceSupabase
-      .from('planning_entries')
-      .select(
-        'lundi,mardi,mercredi,jeudi,vendredi,samedi,dimanche,' +
-        'lundi_type,mardi_type,mercredi_type,jeudi_type,vendredi_type,samedi_type,dimanche_type,employee_id'
-      )
-      .eq('week_number', week).eq('year', year)
+    // 3. Masse salariale — filtrée par les employés du client
+    const { data: clientEmployees } = await serviceSupabase
+      .from('employees')
+      .select('id, hourly_rate, contract_type, contract_hours')
+      .eq('client_id', clientId)
 
-    if (planningData && planningData.length > 0) {
-      const employeeIds = [...new Set(planningData.map((p: { employee_id: string }) => p.employee_id))]
-      const { data: employees } = await serviceSupabase
-        .from('employees').select('id,hourly_rate,contract_type,contract_hours')
-        .in('id', employeeIds)
+    if (clientEmployees && clientEmployees.length > 0) {
+      const empIds = clientEmployees.map((e: { id: string }) => e.id)
 
-      const empMap: Record<string, { hourly_rate: string; contract_type: string; contract_hours: number }> = {}
-      for (const emp of employees || []) empMap[emp.id] = emp
+      const { data: planningData } = await serviceSupabase
+        .from('planning_entries')
+        .select(
+          'lundi,mardi,mercredi,jeudi,vendredi,samedi,dimanche,' +
+          'lundi_type,mardi_type,mercredi_type,jeudi_type,vendredi_type,samedi_type,dimanche_type,employee_id'
+        )
+        .in('employee_id', empIds)
+        .eq('week_number', week)
+        .eq('year', year)
 
-      const CONTRACT_HOURS: Record<string, number> = { CDI_35: 35, CDI_39: 39, CDD_35: 35, CDD_39: 39 }
-      const JOURS = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
+      if (planningData && planningData.length > 0) {
+        const empMap: Record<string, { hourly_rate: string; contract_type: string; contract_hours: number }> = {}
+        for (const emp of clientEmployees) empMap[emp.id] = emp
 
-      for (const entry of planningData) {
-        const emp = empMap[entry.employee_id]
-        if (!emp) continue
-        const ch = CONTRACT_HOURS[emp.contract_type] ?? emp.contract_hours ?? 35
-        const rate = parseFloat(emp.hourly_rate || '0')
-        const totalH = JOURS.reduce((s: number, j: string) => {
-          const t: string = (entry as Record<string, string>)[`${j}_type`] || 'travail'
-          const h = parseFloat((entry as Record<string, string>)[j] || '0')
-          return s + (t === 'travail' ? h : t === 'conges' ? 7 : 0)
-        }, 0)
-        const t2 = ch + 8
-        let cost = 0
-        if (totalH <= ch) cost = totalH * rate
-        else if (totalH <= t2) cost = ch * rate + (totalH - ch) * rate * 1.25
-        else cost = ch * rate + (t2 - ch) * rate * 1.25 + (totalH - t2) * rate * 1.5
-        masse_salariale += cost
+        const CONTRACT_HOURS: Record<string, number> = { CDI_35: 35, CDI_39: 39, CDD_35: 35, CDD_39: 39 }
+        const JOURS = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
+
+        for (const entry of planningData) {
+          const emp = empMap[entry.employee_id]
+          if (!emp) continue
+          const ch = CONTRACT_HOURS[emp.contract_type] ?? emp.contract_hours ?? 35
+          const rate = parseFloat(emp.hourly_rate || '0')
+          const totalH = JOURS.reduce((s: number, j: string) => {
+            const t: string = (entry as Record<string, string>)[`${j}_type`] || 'travail'
+            const h = parseFloat((entry as Record<string, string>)[j] || '0')
+            return s + (t === 'travail' ? h : t === 'conges' ? 7 : 0)
+          }, 0)
+          const t2 = ch + 8
+          let cost = 0
+          if (totalH <= ch) cost = totalH * rate
+          else if (totalH <= t2) cost = ch * rate + (totalH - ch) * rate * 1.25
+          else cost = ch * rate + (t2 - ch) * rate * 1.25 + (totalH - t2) * rate * 1.5
+          masse_salariale += cost
+        }
       }
     }
   }
@@ -120,7 +126,6 @@ export default async function DashboardPage() {
     { label: 'Vente', value: parseFloat(String(caData?.ca_vente || 0)), color: '#3b82f6' },
   ]
 
-  // Couleur du taux de marge
   const margeColor =
     taux_marge === null ? 'text-gray-400'
     : taux_marge >= 40 ? 'text-green-600'
