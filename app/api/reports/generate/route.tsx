@@ -44,8 +44,7 @@ interface ComputedReport {
 }
 
 // ─── Formatters ───────────────────────────────────────────────────────────────
-// NE PAS utiliser toLocaleString('fr-FR') — produit U+202F (espace fine insécable)
-// que Helvetica dans react-pdf rend comme '/'. Utiliser un espace ASCII standard.
+// NE PAS utiliser toLocaleString('fr-FR') — produit U+202F que Helvetica rend '/'
 const eur = (n: number) => {
   const abs = Math.abs(n)
   const [int, dec] = abs.toFixed(2).split('.')
@@ -249,7 +248,7 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
           {/* outlabeledPie 820x460 -> 490x275 dans le PDF */}
           <Image src={{ data: pieBuffer, format: 'png' }} style={{ width: 490, height: 275 }} />
         </View>
-        <Text style={S.chartCaption}>Top 4 familles + Autres — total 100% du CA (€ TTC) — Semaine {data.week_number} {data.year}</Text>
+        <Text style={S.chartCaption}>Repartition du CA par famille (€ TTC) — Semaine {data.week_number} {data.year}</Text>
         <View style={[S.tableWrap, { marginTop: 14 }]}>
           <View style={S.tHead}>
             <Text style={[S.tHeadCell, { flex: 3 }]}>FAMILLE</Text>
@@ -439,7 +438,8 @@ async function extractVentesData(ventes_text: string): Promise<{ total: number; 
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' })
   const r = await client.messages.create({
     model: 'claude-haiku-4-5-20251001', max_tokens: 2048,
-    messages: [{ role: 'user', content: `Extrais les totaux par famille du fichier CRISALID.\nRetourne UNIQUEMENT ces lignes (une par ligne):\nTOTAL|20742.43\nVIANDE DE BOEUF|1|3081.17\nCHARCUTERIE|2|2500.00\n\nFormat: 1ere ligne TOTAL|montant, puis NOM|ID|montant par famille. Point comme separateur decimal.\n\n${ventes_text.slice(0, 6000)}` }],
+    // Slice 12000 chars pour capturer TOUTES les familles (pas seulement les grandes)
+    messages: [{ role: 'user', content: `Extrais les totaux par famille du fichier CRISALID.\nRetourne UNIQUEMENT ces lignes (une par ligne):\nTOTAL|20742.43\nVIANDE DE BOEUF|1|3081.17\nCHARCUTERIE|2|2500.00\n\nFormat: 1ere ligne TOTAL|montant, puis NOM|ID|montant par famille. Point comme separateur decimal.\n\n${ventes_text.slice(0, 12000)}` }],
   })
   const text = r.content[0].type === 'text' ? r.content[0].text.trim() : ''
   const lines = text.split('\n').map((l: string) => l.trim()).filter((l: string) => l)
@@ -519,7 +519,7 @@ async function generateInsights(data: ReportData): Promise<Insights> {
 // 2. ticks.callback interdit — crash Chart.js 2.9.4 dans le sandbox
 // 3. title.text doit etre une string simple (pas un array)
 // 4. outlabeledPie : leader lines vers les labels externes
-// 5. PIE = top 4 + AUTRES (tri CA desc) => total = 100%
+// 5. PIE = TOUTES les familles (pas de groupement) — le dashboard fait le top4+Autres
 
 async function getChartBuffers(data: ReportData): Promise<{ pieBuffer: Buffer; barBuffer: Buffer }> {
   const famMapC = new Map<string, Famille>()
@@ -531,43 +531,25 @@ async function getChartBuffers(data: ReportData): Promise<{ pieBuffer: Buffer; b
       .replace(/[̀-ͯ]/g, '')
       .replace(/[^\x00-\x7F]/g, '?')
 
-  // ─── BAR CHART : toutes les familles ───
+  // Toutes les familles (bar + pie)
   const famNames = data.ventes_n.familles.map(f => trunc(toAscii(f.nom), 18))
   const famCA    = data.ventes_n.familles.map(f => +f.total_montant.toFixed(2))
   const famCA1   = data.ventes_n.familles.map(f => +(famMapC.get(f.nom.toUpperCase())?.total_montant ?? 0).toFixed(2))
 
-  // ─── PIE CHART : top 4 familles (tri CA desc) + AUTRES = 100% ───
-  const famSorted = [...data.ventes_n.familles].sort((a, b) => b.total_montant - a.total_montant)
-  const top4      = famSorted.slice(0, 4)
-  const autres    = famSorted.slice(4)
-  const autresTotal = +autres.reduce((sum, f) => sum + f.total_montant, 0).toFixed(2)
+  // Palette 10 couleurs distinctes pour le camembert (toutes familles)
+  const donutPalette = [
+    '#1E3A5F', '#DC2626', '#D97706', '#059669',
+    '#7C3AED', '#0891B2', '#BE185D', '#65A30D', '#9333EA', '#F59E0B',
+  ].slice(0, famNames.length)
 
-  const pieNames: string[] = [
-    ...top4.map(f => trunc(toAscii(f.nom), 16)),
-    ...(autresTotal > 0 ? ['AUTRES'] : []),
-  ]
-  const pieCA: number[] = [
-    ...top4.map(f => +f.total_montant.toFixed(2)),
-    ...(autresTotal > 0 ? [autresTotal] : []),
-  ]
-  // Palette : 4 couleurs distinctes + gris pour AUTRES
-  const piePalette = [
-    '#1E3A5F',  // 1er : navy
-    '#DC2626',  // 2e  : rouge
-    '#D97706',  // 3e  : ambre
-    '#059669',  // 4e  : vert
-    '#94A3B8',  // AUTRES : gris
-  ].slice(0, pieNames.length)
-
-  // outlabeledPie : dessine les lignes leaders (fleches) vers les labels externes
-  // text '%l\n%p' = nom de la famille + pourcentage (ex: 'CHARCUTERIE\n24%')
+  // outlabeledPie : leader lines + label + % pour chaque famille
   const pieConfig = {
     type: 'outlabeledPie',
     data: {
-      labels: pieNames,
+      labels: famNames,
       datasets: [{
-        data: pieCA,
-        backgroundColor: piePalette,
+        data: famCA,
+        backgroundColor: donutPalette,
         borderWidth: 2,
         borderColor: '#FFFFFF',
       }],
@@ -575,7 +557,7 @@ async function getChartBuffers(data: ReportData): Promise<{ pieBuffer: Buffer; b
     options: {
       title: {
         display: true,
-        text: 'Top 4 familles + Autres - S' + data.week_number + ' ' + data.year,
+        text: 'Repartition CA - S' + data.week_number + ' ' + data.year,
         fontSize: 14,
         fontColor: '#1E293B',
         fontStyle: 'bold',
@@ -588,8 +570,8 @@ async function getChartBuffers(data: ReportData): Promise<{ pieBuffer: Buffer; b
           text: '%l\n%p',
           color: 'white',
           stretch: 38,
-          font: { resizable: true, minSize: 9, maxSize: 13, size: 11, weight: 'bold' },
-          padding: { top: 5, bottom: 5, left: 8, right: 8 },
+          font: { resizable: true, minSize: 8, maxSize: 12, size: 11, weight: 'bold' },
+          padding: { top: 4, bottom: 4, left: 7, right: 7 },
           borderRadius: 4,
         },
       },
@@ -730,6 +712,7 @@ export async function POST(req: NextRequest) {
     })
 
     if (clientId) {
+      // Stocker TOUTES les familles (slice 12000 garantit qu'elles sont toutes extraites)
       const familiesDetail = data.ventes_n.familles.map((f: Famille) => ({ nom: f.nom, montant: f.total_montant }))
       await serviceSupabase.from('weekly_ca').delete()
         .eq('client_id', clientId).eq('week_number', data.week_number).eq('year', data.year)

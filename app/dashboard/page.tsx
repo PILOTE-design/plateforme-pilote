@@ -97,8 +97,7 @@ export default async function DashboardPage() {
       (s: number, inv: { amount_ht: string | number }) => s + parseFloat(String(inv.amount_ht || 0)), 0
     )
 
-    // 4. Masse salariale chargée CCN IDCC 992 — même semaine de référence
-    //    Coût brut calculé avec majorations, puis multiplyé par (1 + charges_patronales/100)
+    // 4. Masse salariale chargée CCN IDCC 992
     const { data: clientEmployees } = await serviceSupabase
       .from('employees')
       .select('id, hourly_rate, contract_type, contract_hours, charges_patronales')
@@ -148,11 +147,8 @@ export default async function DashboardPage() {
           else if (totalH <= t2) coutBrut = ch * rate + (totalH - ch) * rate * 1.25
           else coutBrut = ch * rate + (t2 - ch) * rate * 1.25 + (totalH - t2) * rate * 1.5
 
-          // Charges patronales : valeur stockée en % (ex: 45 = 45%)
-          // Défaut 45% si non renseigné (approximation allègements Fillon CCN 992)
           const chargesPct = parseFloat(String(emp.charges_patronales ?? '45'))
           const chargesCoeff = 1 + chargesPct / 100
-
           masse_salariale_chargee += coutBrut * chargesCoeff
         }
       }
@@ -168,6 +164,8 @@ export default async function DashboardPage() {
   }
 
   // Top 4 familles + Autres
+  // NOTE : on utilise la somme des segments comme dénominateur du donut
+  // (pas ca_total) pour garantir 100% même si families_detail est partiel
   const sorted = [...familiesDetail].sort((a, b) => b.montant - a.montant)
   const top4 = sorted.slice(0, 4)
   const autresTotal = sorted.slice(4).reduce((s, f) => s + f.montant, 0)
@@ -177,6 +175,9 @@ export default async function DashboardPage() {
     ...top4.map((f, i) => ({ label: f.nom, value: f.montant, color: FAMILY_COLORS[i] })),
     ...(autresTotal > 0 ? [{ label: 'Autres', value: autresTotal, color: '#9ca3af' }] : []),
   ]
+
+  // Dénominateur du donut = somme des segments (garantit 100%)
+  const segTotal = segments.reduce((s, seg) => s + seg.value, 0) || ca_total
 
   const marge_brute = ca_total > 0 ? ca_total - achats_ht : 0
   const taux_marge = ca_total > 0 ? (marge_brute / ca_total) * 100 : null
@@ -257,10 +258,10 @@ export default async function DashboardPage() {
             <Card>
               <CardHeader>
                 <CardTitle className="text-base">Répartition CA par famille</CardTitle>
-                <CardDescription>TTC · {weekLabel}</CardDescription>
+                <CardDescription>Top 4 + Autres · {weekLabel}</CardDescription>
               </CardHeader>
               <CardContent>
-                <DonutChart segments={segments} total={ca_total} />
+                <DonutChart segments={segments} total={segTotal} />
               </CardContent>
             </Card>
 
@@ -277,7 +278,7 @@ export default async function DashboardPage() {
                 ) : (
                   <div className="space-y-4">
                     {segments.map((seg) => {
-                      const pct = ca_total > 0 ? (seg.value / ca_total) * 100 : 0
+                      const pct = segTotal > 0 ? (seg.value / segTotal) * 100 : 0
                       return (
                         <div key={seg.label}>
                           <div className="flex justify-between text-sm mb-1.5">
