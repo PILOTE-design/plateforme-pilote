@@ -5,7 +5,6 @@ import { formatDate } from '@/lib/utils'
 import Link from 'next/link'
 import { DonutChart } from './DashboardChart'
 
-// ─── ISO week helper ──────────────────────────────────────────────────────────
 function getISOWeek(date: Date): { week: number; year: number } {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
   const dayNum = d.getUTCDay() || 7
@@ -35,7 +34,6 @@ async function resolveClientId(
 
 const fmt = (n: number) => n.toLocaleString('fr-FR', { maximumFractionDigits: 0 })
 
-// ─── Page ─────────────────────────────────────────────────────────────────────
 export default async function DashboardPage() {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -45,30 +43,52 @@ export default async function DashboardPage() {
 
   const serviceSupabase = createServiceClient()
   const clientId = await resolveClientId(serviceSupabase, user!.id, user?.email)
-  const { week, year } = getISOWeek(new Date())
+  const { week: currentWeek, year: currentYear } = getISOWeek(new Date())
 
-  // ── Données de la semaine ──────────────────────────────────────────────────
   let caData: Record<string, number> | null = null
   let achats_ht = 0
   let masse_salariale = 0
+  let reportWeek = currentWeek
+  let reportYear = currentYear
+  let lastReportTitle: string | null = null
+  let reports: Array<{ id: string; title: string; file_url: string; created_at: string }> = []
 
   if (clientId) {
-    // 1. CA par famille
+    // 1. Dernier rapport généré pour ce client
+    const { data: lastReport } = await serviceSupabase
+      .from('reports')
+      .select('week_number, year, title')
+      .eq('client_id', clientId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (lastReport) {
+      reportWeek = lastReport.week_number
+      reportYear = lastReport.year
+      lastReportTitle = lastReport.title
+    }
+
+    // 2. CA par famille — semaine du dernier rapport
     const { data: ca } = await serviceSupabase
       .from('weekly_ca').select('*')
-      .eq('client_id', clientId).eq('week_number', week).eq('year', year)
+      .eq('client_id', clientId)
+      .eq('week_number', reportWeek)
+      .eq('year', reportYear)
       .maybeSingle()
     caData = ca
 
-    // 2. Achats HT (factures)
+    // 3. Achats HT (factures) — semaine courante
     const { data: invoices } = await serviceSupabase
       .from('invoices').select('amount_ht')
-      .eq('client_id', clientId).eq('week_number', week).eq('year', year)
+      .eq('client_id', clientId)
+      .eq('week_number', currentWeek)
+      .eq('year', currentYear)
     achats_ht = (invoices || []).reduce(
       (s: number, inv: { amount_ht: string | number }) => s + parseFloat(String(inv.amount_ht || 0)), 0
     )
 
-    // 3. Masse salariale — filtrée par les employés du client
+    // 4. Masse salariale — employés du client, semaine courante
     const { data: clientEmployees } = await serviceSupabase
       .from('employees')
       .select('id, hourly_rate, contract_type, contract_hours')
@@ -76,7 +96,6 @@ export default async function DashboardPage() {
 
     if (clientEmployees && clientEmployees.length > 0) {
       const empIds = clientEmployees.map((e: { id: string }) => e.id)
-
       const { data: planningData } = await serviceSupabase
         .from('planning_entries')
         .select(
@@ -84,8 +103,8 @@ export default async function DashboardPage() {
           'lundi_type,mardi_type,mercredi_type,jeudi_type,vendredi_type,samedi_type,dimanche_type,employee_id'
         )
         .in('employee_id', empIds)
-        .eq('week_number', week)
-        .eq('year', year)
+        .eq('week_number', currentWeek)
+        .eq('year', currentYear)
 
       if (planningData && planningData.length > 0) {
         const empMap: Record<string, { hourly_rate: string; contract_type: string; contract_hours: number }> = {}
@@ -113,6 +132,14 @@ export default async function DashboardPage() {
         }
       }
     }
+
+    // 5. Derniers rapports par client_id
+    const { data: reps } = await serviceSupabase
+      .from('reports').select('id, title, file_url, created_at')
+      .eq('client_id', clientId)
+      .order('created_at', { ascending: false })
+      .limit(3)
+    reports = reps || []
   }
 
   const ca_total = parseFloat(String(caData?.ca_total || 0))
@@ -132,123 +159,133 @@ export default async function DashboardPage() {
     : taux_marge >= 30 ? 'text-orange-500'
     : 'text-red-600'
 
-  // Derniers rapports
-  const { data: reports } = await supabase
-    .from('reports').select('*').eq('profile_id', profile?.id)
-    .order('created_at', { ascending: false }).limit(3)
+  const hasNoData = !clientId || (!caData && reports.length === 0)
 
   return (
     <div className="p-8 max-w-6xl mx-auto">
-      {/* Header */}
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-gray-900">
           Bonjour, {profile?.business_name || 'bienvenue'} 👋
         </h1>
-        <p className="text-gray-500 mt-1">Semaine {week} · {year}</p>
+        <p className="text-gray-500 mt-1">
+          {lastReportTitle
+            ? `Dernier rapport — Semaine ${reportWeek} · ${reportYear}`
+            : `Semaine ${currentWeek} · ${currentYear}`
+          }
+        </p>
       </div>
 
-      {/* KPI cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-        <Card>
-          <CardContent className="p-5">
-            <p className="text-xs text-gray-500 mb-1">CA semaine</p>
-            <p className="text-2xl font-bold text-gray-900">{fmt(ca_total)} €</p>
+      {hasNoData ? (
+        <Card className="mb-8">
+          <CardContent className="py-12 text-center">
+            <TrendingUp className="w-10 h-10 text-gray-300 mx-auto mb-3" />
+            <p className="text-gray-500">Aucun rapport généré pour ce compte</p>
           </CardContent>
         </Card>
+      ) : (
+        <>
+          {/* KPI cards */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+            <Card>
+              <CardContent className="p-5">
+                <p className="text-xs text-gray-500 mb-1">CA semaine</p>
+                <p className="text-2xl font-bold text-gray-900">{fmt(ca_total)} €</p>
+              </CardContent>
+            </Card>
 
-        <Card>
-          <CardContent className="p-5">
-            <p className="text-xs text-gray-500 mb-1">Marge brute</p>
-            <p className={`text-2xl font-bold ${margeColor}`}>
-              {taux_marge !== null ? `${taux_marge.toFixed(1)} %` : '—'}
-            </p>
-          </CardContent>
-        </Card>
+            <Card>
+              <CardContent className="p-5">
+                <p className="text-xs text-gray-500 mb-1">Marge brute</p>
+                <p className={`text-2xl font-bold ${margeColor}`}>
+                  {taux_marge !== null ? `${taux_marge.toFixed(1)} %` : '—'}
+                </p>
+              </CardContent>
+            </Card>
 
-        <Card>
-          <CardContent className="p-5">
-            <div className="flex items-center gap-1.5 mb-1">
-              <Users className="w-3.5 h-3.5 text-gray-400" />
-              <p className="text-xs text-gray-500">Coût employés</p>
-            </div>
-            <p className="text-2xl font-bold text-gray-900">{fmt(masse_salariale)} €</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="p-5">
-            <div className="flex items-center gap-1.5 mb-1">
-              <Receipt className="w-3.5 h-3.5 text-gray-400" />
-              <p className="text-xs text-gray-500">Coût factures</p>
-            </div>
-            <p className="text-2xl font-bold text-gray-900">{fmt(achats_ht)} €</p>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Graphique + détail */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Répartition CA par famille</CardTitle>
-            <CardDescription>Semaine {week} · {year}</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <DonutChart segments={segments} total={ca_total} />
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Détail par famille</CardTitle>
-            <CardDescription>Chiffre d&apos;affaires HT</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {ca_total === 0 ? (
-              <p className="text-center text-sm text-gray-400 py-8">
-                Aucune donnée pour la semaine {week}
-              </p>
-            ) : (
-              <div className="space-y-4">
-                {segments.map((seg) => {
-                  const pct = ca_total > 0 ? (seg.value / ca_total) * 100 : 0
-                  return (
-                    <div key={seg.label}>
-                      <div className="flex justify-between text-sm mb-1.5">
-                        <div className="flex items-center gap-2">
-                          <div
-                            className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                            style={{ backgroundColor: seg.color }}
-                          />
-                          <span className="text-gray-700">{seg.label}</span>
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <span className="font-semibold text-gray-900">{fmt(seg.value)} €</span>
-                          <span className="text-gray-400 w-9 text-right">{Math.round(pct)} %</span>
-                        </div>
-                      </div>
-                      <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                        <div
-                          className="h-full rounded-full"
-                          style={{ width: `${pct}%`, backgroundColor: seg.color }}
-                        />
-                      </div>
-                    </div>
-                  )
-                })}
-
-                {/* Résumé marge */}
-                <div className="pt-3 mt-3 border-t border-gray-100 flex justify-between text-sm">
-                  <span className="text-gray-500">Marge brute estimée</span>
-                  <span className={`font-semibold ${margeColor}`}>
-                    {fmt(marge_brute)} € {taux_marge !== null ? `(${taux_marge.toFixed(1)} %)` : ''}
-                  </span>
+            <Card>
+              <CardContent className="p-5">
+                <div className="flex items-center gap-1.5 mb-1">
+                  <Users className="w-3.5 h-3.5 text-gray-400" />
+                  <p className="text-xs text-gray-500">Coût employés</p>
                 </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+                <p className="text-2xl font-bold text-gray-900">{fmt(masse_salariale)} €</p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="p-5">
+                <div className="flex items-center gap-1.5 mb-1">
+                  <Receipt className="w-3.5 h-3.5 text-gray-400" />
+                  <p className="text-xs text-gray-500">Coût factures</p>
+                </div>
+                <p className="text-2xl font-bold text-gray-900">{fmt(achats_ht)} €</p>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Graphique + détail */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Répartition CA par famille</CardTitle>
+                <CardDescription>Semaine {reportWeek} · {reportYear}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <DonutChart segments={segments} total={ca_total} />
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Détail par famille</CardTitle>
+                <CardDescription>Chiffre d&apos;affaires HT</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {ca_total === 0 ? (
+                  <p className="text-center text-sm text-gray-400 py-8">
+                    Aucune donnée CA pour la semaine {reportWeek}
+                  </p>
+                ) : (
+                  <div className="space-y-4">
+                    {segments.map((seg) => {
+                      const pct = ca_total > 0 ? (seg.value / ca_total) * 100 : 0
+                      return (
+                        <div key={seg.label}>
+                          <div className="flex justify-between text-sm mb-1.5">
+                            <div className="flex items-center gap-2">
+                              <div
+                                className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                                style={{ backgroundColor: seg.color }}
+                              />
+                              <span className="text-gray-700">{seg.label}</span>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <span className="font-semibold text-gray-900">{fmt(seg.value)} €</span>
+                              <span className="text-gray-400 w-9 text-right">{Math.round(pct)} %</span>
+                            </div>
+                          </div>
+                          <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                            <div
+                              className="h-full rounded-full"
+                              style={{ width: `${pct}%`, backgroundColor: seg.color }}
+                            />
+                          </div>
+                        </div>
+                      )
+                    })}
+                    <div className="pt-3 mt-3 border-t border-gray-100 flex justify-between text-sm">
+                      <span className="text-gray-500">Marge brute estimée</span>
+                      <span className={`font-semibold ${margeColor}`}>
+                        {fmt(marge_brute)} € {taux_marge !== null ? `(${taux_marge.toFixed(1)} %)` : ''}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </>
+      )}
 
       {/* Derniers rapports */}
       <Card>
@@ -262,7 +299,7 @@ export default async function DashboardPage() {
           </Link>
         </CardHeader>
         <CardContent>
-          {!reports || reports.length === 0 ? (
+          {reports.length === 0 ? (
             <div className="text-center py-12">
               <TrendingUp className="w-10 h-10 text-gray-300 mx-auto mb-3" />
               <p className="text-gray-500">Votre premier rapport arrivera la semaine prochaine</p>
