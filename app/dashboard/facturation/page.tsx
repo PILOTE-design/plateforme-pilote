@@ -6,8 +6,8 @@ import { Input } from '@/components/ui/input'
 import {
   Receipt, ChevronLeft, ChevronRight, Plus, Trash2,
   TrendingUp, TrendingDown, ShoppingCart, Users, Euro,
-  Save, X, Settings, Check, Mail, ShieldCheck, Copy, Loader2,
-  ArrowRight, AlertCircle, Link2, Link2Off, RefreshCw
+  Save, X, Settings, Check, Loader2, AlertCircle,
+  Link2, Link2Off, RefreshCw
 } from 'lucide-react'
 
 // ─── Types ─────────────────────────────────────────────────────────────────────────────────
@@ -46,14 +46,6 @@ type Summary = {
   ratio_ms: number | null
 }
 
-type BillingSettings = {
-  billing_email?: string
-  company_name?: string
-  siret?: string
-  billing_email_verified?: boolean
-  billing_forward_id?: string
-}
-
 type BillingIntegration = {
   provider: string
   is_active: boolean
@@ -76,17 +68,15 @@ type ProviderMeta = {
   description: string
 }
 
-type VerifyStep = 'idle' | 'sending' | 'code_sent' | 'verifying' | 'verified'
-
 // ─── Constantes ──────────────────────────────────────────────────────────────────────────
 
 const CATEGORIES = [
-  { key: 'viande',         label: 'Viande',          color: 'bg-red-100 text-red-800'      },
-  { key: 'charcuterie',    label: 'Charcuterie',     color: 'bg-orange-100 text-orange-800' },
-  { key: 'epicerie',       label: 'Épicerie',        color: 'bg-yellow-100 text-yellow-800' },
-  { key: 'emballage',      label: 'Emballage',       color: 'bg-blue-100 text-blue-800'    },
-  { key: 'frais_generaux', label: 'Frais généraux',  color: 'bg-purple-100 text-purple-800'},
-  { key: 'autre',          label: 'Autre',           color: 'bg-gray-100 text-gray-700'    },
+  { key: 'viande',         label: 'Viande',          color: 'bg-red-100 text-red-800'       },
+  { key: 'charcuterie',    label: 'Charcuterie',     color: 'bg-orange-100 text-orange-800'  },
+  { key: 'epicerie',       label: 'Épicerie',        color: 'bg-yellow-100 text-yellow-800'  },
+  { key: 'emballage',      label: 'Emballage',       color: 'bg-blue-100 text-blue-800'     },
+  { key: 'frais_generaux', label: 'Frais généraux',  color: 'bg-purple-100 text-purple-800' },
+  { key: 'autre',          label: 'Autre',           color: 'bg-gray-100 text-gray-700'     },
 ]
 
 const TVA_RATES = [0, 5.5, 10, 20]
@@ -177,197 +167,14 @@ function catInfo(key: string) {
   return CATEGORIES.find(c => c.key === key) ?? CATEGORIES[CATEGORIES.length - 1]
 }
 
-// ─── Composant : Bloc vérification email ──────────────────────────────────────────────
-
-function EmailVerificationCard({
-  settings, onVerified
-}: {
-  settings: BillingSettings
-  onVerified: (email: string, forwardAddress: string) => void
-}) {
-  const isVerified = settings.billing_email_verified && settings.billing_email
-  const forwardAddr = settings.billing_forward_id
-    ? `factures-${settings.billing_forward_id}@mail.getpilote.app`
-    : null
-
-  const [step, setStep]       = useState<VerifyStep>(isVerified ? 'verified' : 'idle')
-  const [email, setEmail]     = useState(settings.billing_email || '')
-  const [code, setCode]       = useState('')
-  const [error, setError]     = useState('')
-  const [copied, setCopied]   = useState(false)
-  const [finalAddr, setFinalAddr] = useState(isVerified ? forwardAddr : null)
-
-  useEffect(() => {
-    if (settings.billing_email_verified && settings.billing_email) {
-      setStep('verified')
-      setEmail(settings.billing_email)
-      setFinalAddr(settings.billing_forward_id
-        ? `factures-${settings.billing_forward_id}@mail.getpilote.app`
-        : null)
-    }
-  }, [settings.billing_email_verified, settings.billing_email, settings.billing_forward_id])
-
-  async function sendCode() {
-    setError('')
-    setStep('sending')
-    const res = await fetch('/api/billing-settings/send-code', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ billing_email: email })
-    })
-    const data = await res.json()
-    if (!res.ok) { setError(data.error || 'Erreur envoi'); setStep('idle'); return }
-    setStep('code_sent')
-  }
-
-  async function verifyCode() {
-    setError('')
-    setStep('verifying')
-    const res = await fetch('/api/billing-settings/verify-code', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code })
-    })
-    const data = await res.json()
-    if (!res.ok) { setError(data.error || 'Code incorrect'); setStep('code_sent'); return }
-    setFinalAddr(data.forward_address)
-    setStep('verified')
-    onVerified(data.billing_email, data.forward_address)
-  }
-
-  function copyAddr() {
-    if (!finalAddr) return
-    navigator.clipboard.writeText(finalAddr)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
-  }
-
-  if (step === 'verified' && finalAddr) {
-    return (
-      <div className="bg-white rounded-xl border border-green-200 shadow-sm p-5">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-start gap-3">
-            <div className="w-9 h-9 rounded-xl bg-green-100 flex items-center justify-center flex-shrink-0">
-              <ShieldCheck className="w-5 h-5 text-green-600" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 className="font-semibold text-gray-900 text-sm">Lecture automatique des factures activée</h3>
-                <span className="text-[10px] bg-green-100 text-green-700 font-bold px-1.5 py-0.5 rounded">ACTIF</span>
-              </div>
-              <p className="text-xs text-gray-500 mt-0.5">Connecté à <strong>{email}</strong></p>
-            </div>
-          </div>
-          <button onClick={() => setStep('idle')} className="text-xs text-gray-400 hover:text-gray-600 underline whitespace-nowrap">
-            Changer
-          </button>
-        </div>
-        <div className="mt-4 bg-[#0f172a] rounded-xl p-4">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-2">Transférez vos factures à cette adresse</p>
-          <div className="flex items-center gap-2">
-            <code className="flex-1 text-sm font-mono text-green-400 bg-[#1e293b] rounded-lg px-3 py-2 overflow-x-auto">{finalAddr}</code>
-            <button
-              onClick={copyAddr}
-              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-all ${
-                copied ? 'bg-green-500 text-white' : 'bg-[#1e293b] text-gray-300 hover:bg-[#2d3f55]'
-              }`}
-            >
-              {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-              {copied ? 'Copié !' : 'Copier'}
-            </button>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
-  if (step === 'code_sent' || step === 'verifying') {
-    return (
-      <div className="bg-white rounded-xl border border-[#1E3A5F]/20 shadow-sm p-5">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="w-9 h-9 rounded-xl bg-blue-50 flex items-center justify-center flex-shrink-0">
-            <Mail className="w-5 h-5 text-[#1E3A5F]" />
-          </div>
-          <div>
-            <h3 className="font-semibold text-gray-900 text-sm">Code de validation envoyé</h3>
-            <p className="text-xs text-gray-500">Vérifiez votre boîte <strong>{email}</strong></p>
-          </div>
-        </div>
-        <div className="flex gap-2">
-          <Input
-            value={code}
-            onChange={e => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-            placeholder="123456"
-            maxLength={6}
-            className="font-mono text-lg tracking-widest text-center"
-            autoFocus
-            onKeyDown={e => e.key === 'Enter' && code.length === 6 && verifyCode()}
-          />
-          <Button
-            onClick={verifyCode}
-            disabled={code.length !== 6 || step === 'verifying'}
-            className="bg-[#1E3A5F] hover:bg-[#2a4f7c] text-white px-4"
-          >
-            {step === 'verifying' ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />}
-          </Button>
-        </div>
-        {error && (
-          <div className="mt-2 flex items-center gap-1.5 text-xs text-red-600">
-            <AlertCircle className="w-3.5 h-3.5" />{error}
-          </div>
-        )}
-        <button onClick={() => setStep('idle')} className="mt-3 text-xs text-gray-400 hover:text-gray-600 underline">Changer d&apos;adresse</button>
-      </div>
-    )
-  }
-
-  return (
-    <div className="bg-white rounded-xl border border-dashed border-gray-300 shadow-sm p-5">
-      <div className="flex items-center gap-3 mb-3">
-        <div className="w-9 h-9 rounded-xl bg-gray-100 flex items-center justify-center flex-shrink-0">
-          <Mail className="w-5 h-5 text-gray-400" />
-        </div>
-        <div>
-          <h3 className="font-semibold text-gray-900 text-sm">Lecture automatique des factures</h3>
-          <p className="text-xs text-gray-400">Connectez votre email de facturation pour automatiser la saisie</p>
-        </div>
-      </div>
-      <div className="flex gap-2">
-        <Input
-          type="email"
-          value={email}
-          onChange={e => setEmail(e.target.value)}
-          placeholder="factures@maboucherie.fr"
-          className="flex-1"
-          onKeyDown={e => e.key === 'Enter' && email.includes('@') && sendCode()}
-        />
-        <Button
-          onClick={sendCode}
-          disabled={!email.includes('@') || step === 'sending'}
-          className="bg-[#1E3A5F] hover:bg-[#2a4f7c] text-white whitespace-nowrap"
-        >
-          {step === 'sending'
-            ? <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" />Envoi...</>
-            : <>Valider <ArrowRight className="w-3.5 h-3.5 ml-1.5" /></>}
-        </Button>
-      </div>
-      {error && (
-        <div className="mt-2 flex items-center gap-1.5 text-xs text-red-600">
-          <AlertCircle className="w-3.5 h-3.5" />{error}
-        </div>
-      )}
-    </div>
-  )
-}
-
 // ─── Composant principal ─────────────────────────────────────────────────────────────────
 
 export default function FacturationPage() {
   const now = getISOWeek(new Date())
-  const [week, setWeek]   = useState(now.week)
-  const [year, setYear]   = useState(now.year)
+  const [week, setWeek] = useState(now.week)
+  const [year, setYear] = useState(now.year)
   const [invoices,  setInvoices]  = useState<Invoice[]>([])
   const [summary,   setSummary]   = useState<Summary | null>(null)
-  const [weeklyCA,  setWeeklyCA]  = useState<Partial<WeeklyCA>>({})
-  const [settings,  setSettings]  = useState<BillingSettings>({})
   const [loading,   setLoading]   = useState(false)
   const [showAdd,   setShowAdd]   = useState(false)
   const [showCA,    setShowCA]    = useState(false)
@@ -402,10 +209,8 @@ export default function FacturationPage() {
     setInvoices(Array.isArray(invRes) ? invRes : [])
     setSummary(sumRes)
     const s = settRes || {}
-    setSettings(s)
     setSettForm({ company_name: s.company_name || '', siret: s.siret || '' })
     if (caRes) {
-      setWeeklyCA(caRes)
       setCaForm({
         ca_total:       String(caRes.ca_total       || ''),
         ca_boucherie:   String(caRes.ca_boucherie   || ''),
@@ -414,7 +219,6 @@ export default function FacturationPage() {
         ca_vente:       String(caRes.ca_vente       || ''),
       })
     } else {
-      setWeeklyCA({})
       setCaForm({ ca_total: '', ca_boucherie: '', ca_charcuterie: '', ca_traiteur: '', ca_vente: '' })
     }
     setLoading(false)
@@ -482,7 +286,6 @@ export default function FacturationPage() {
     })
     setSaving(false)
     setShowSettings(false)
-    load()
   }
 
   async function connectIntegration() {
@@ -499,11 +302,7 @@ export default function FacturationPage() {
       }),
     })
     const data = await res.json()
-    if (!res.ok) {
-      setConnectError(data.error || 'Erreur de connexion')
-      setConnecting(false)
-      return
-    }
+    if (!res.ok) { setConnectError(data.error || 'Erreur de connexion'); setConnecting(false); return }
     setShowConnect(false)
     setConnectToken('')
     setConnectCompanyId('')
@@ -586,21 +385,11 @@ export default function FacturationPage() {
 
       <div className="flex-1 px-6 py-6 space-y-6">
 
-        {/* ── Bloc email verification ── */}
-        <EmailVerificationCard
-          settings={settings}
-          onVerified={(email) => {
-            setSettings(s => ({ ...s, billing_email: email, billing_email_verified: true }))
-          }}
-        />
-
         {/* ── Intégrations comptables ── */}
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h2 className="font-semibold text-gray-900">Intégrations comptables</h2>
-              <p className="text-xs text-gray-400 mt-0.5">Connectez votre logiciel pour importer les factures fournisseurs automatiquement chaque dimanche</p>
-            </div>
+          <div className="mb-4">
+            <h2 className="font-semibold text-gray-900">Intégrations comptables</h2>
+            <p className="text-xs text-gray-400 mt-0.5">Connectez votre logiciel pour importer les factures fournisseurs automatiquement chaque dimanche</p>
           </div>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             {PROVIDERS_META.map(prov => {
@@ -616,15 +405,12 @@ export default function FacturationPage() {
                     </div>
                     <span className="font-bold text-sm text-gray-900">{prov.name}</span>
                   </div>
-
                   {integ ? (
                     <>
                       <div className="flex items-center gap-1.5 mb-2">
                         <div className="w-1.5 h-1.5 rounded-full bg-green-500 flex-shrink-0" />
                         <span className="text-xs text-green-700 font-semibold">Connecté</span>
-                        {integ.last_sync_status === 'error' && (
-                          <span className="text-[10px] text-red-500 ml-1">Erreur sync</span>
-                        )}
+                        {integ.last_sync_status === 'error' && <span className="text-[10px] text-red-500 ml-1">Erreur sync</span>}
                       </div>
                       {integ.last_sync_at ? (
                         <p className="text-[10px] text-gray-400 mb-3">
@@ -672,23 +458,17 @@ export default function FacturationPage() {
         {/* ── KPIs ── */}
         {summary !== null && (
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <KpiCard
-              icon={Euro}
-              label="CA semaine"
+            <KpiCard icon={Euro} label="CA semaine"
               value={summary.ca_total > 0 ? fmtEuro(summary.ca_total) : '—'}
               sub={summary.ca_total === 0 ? 'Cliquer sur « Saisir le CA »' : ''}
               color="bg-blue-50 text-blue-600"
             />
-            <KpiCard
-              icon={ShoppingCart}
-              label="Achats HT"
+            <KpiCard icon={ShoppingCart} label="Achats HT"
               value={fmtEuro(summary.achats_ht)}
               sub={`${invoices.length} facture${invoices.length > 1 ? 's' : ''}`}
               color="bg-orange-50 text-orange-600"
             />
-            <KpiCard
-              icon={Users}
-              label="Masse salariale"
+            <KpiCard icon={Users} label="Masse salariale"
               value={fmtEuro(summary.masse_salariale)}
               sub={summary.ratio_ms !== null ? `${summary.ratio_ms} % du CA` : 'Depuis le planning'}
               color="bg-violet-50 text-violet-600"
@@ -836,7 +616,6 @@ export default function FacturationPage() {
                   placeholder={connectProvider.tokenPlaceholder}
                   type="password"
                   autoFocus
-                  onKeyDown={e => e.key === 'Enter' && !connectProvider.needsCompanyId && connectToken && connectIntegration()}
                 />
               </div>
               {connectProvider.needsCompanyId && (
@@ -850,7 +629,7 @@ export default function FacturationPage() {
                 </div>
               )}
               <p className="text-[10px] text-gray-400">
-                Votre token est chiffré et stocké de manière sécurisée. PILOTE ne peut qu’accéder aux factures — aucune autre action n’est effectuée.{' '}
+                Votre token est chiffré et stocké de manière sécurisée.{' '}
                 <a href={connectProvider.helpUrl} target="_blank" rel="noreferrer" className="text-[#1E3A5F] underline">
                   Comment trouver mon token ?
                 </a>
@@ -997,8 +776,7 @@ export default function FacturationPage() {
               <div className="flex gap-3 pt-2">
                 <Button variant="outline" className="flex-1" onClick={() => setShowCA(false)}>Annuler</Button>
                 <Button className="flex-1 bg-[#1E3A5F] hover:bg-[#2a4f7c] text-white" onClick={saveCA} disabled={saving}>
-                  <Check className="w-4 h-4 mr-1.5" />
-                  {saving ? 'Enregistrement...' : 'Enregistrer'}
+                  <Check className="w-4 h-4 mr-1.5" />{saving ? 'Enregistrement...' : 'Enregistrer'}
                 </Button>
               </div>
             </div>
@@ -1028,8 +806,7 @@ export default function FacturationPage() {
               <div className="flex gap-3 pt-1">
                 <Button variant="outline" className="flex-1" onClick={() => setShowSettings(false)}>Annuler</Button>
                 <Button className="flex-1 bg-[#1E3A5F] hover:bg-[#2a4f7c] text-white" onClick={saveSettings} disabled={saving}>
-                  <Save className="w-4 h-4 mr-1.5" />
-                  {saving ? 'Enregistrement...' : 'Sauvegarder'}
+                  <Save className="w-4 h-4 mr-1.5" />{saving ? 'Enregistrement...' : 'Sauvegarder'}
                 </Button>
               </div>
             </div>
