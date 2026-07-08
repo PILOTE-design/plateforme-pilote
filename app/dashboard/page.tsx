@@ -57,7 +57,6 @@ export default async function DashboardPage() {
   let reports: Array<{ id: string; title: string; file_url: string; created_at: string }> = []
 
   if (clientId) {
-    // 1. Dernier rapport — détermine la semaine de référence pour TOUS les KPIs
     const { data: lastReport } = await serviceSupabase
       .from('reports')
       .select('week_number, year, title')
@@ -72,7 +71,6 @@ export default async function DashboardPage() {
       lastReportTitle = lastReport.title
     }
 
-    // 2. CA par famille — issu de families_detail (familles réelles du rapport)
     const { data: ca } = await serviceSupabase
       .from('weekly_ca').select('ca_total, families_detail')
       .eq('client_id', clientId)
@@ -87,7 +85,6 @@ export default async function DashboardPage() {
         : []
     }
 
-    // 3. Achats HT — même semaine de référence
     const { data: invoices } = await serviceSupabase
       .from('invoices').select('amount_ht')
       .eq('client_id', clientId)
@@ -97,7 +94,6 @@ export default async function DashboardPage() {
       (s: number, inv: { amount_ht: string | number }) => s + parseFloat(String(inv.amount_ht || 0)), 0
     )
 
-    // 4. Masse salariale chargée CCN IDCC 992
     const { data: clientEmployees } = await serviceSupabase
       .from('employees')
       .select('id, hourly_rate, contract_type, contract_hours, charges_patronales')
@@ -148,13 +144,11 @@ export default async function DashboardPage() {
           else coutBrut = ch * rate + (t2 - ch) * rate * 1.25 + (totalH - t2) * rate * 1.5
 
           const chargesPct = parseFloat(String(emp.charges_patronales ?? '45'))
-          const chargesCoeff = 1 + chargesPct / 100
-          masse_salariale_chargee += coutBrut * chargesCoeff
+          masse_salariale_chargee += coutBrut * (1 + chargesPct / 100)
         }
       }
     }
 
-    // 5. Derniers rapports
     const { data: reps } = await serviceSupabase
       .from('reports').select('id, title, file_url, created_at')
       .eq('client_id', clientId)
@@ -164,8 +158,6 @@ export default async function DashboardPage() {
   }
 
   // Top 4 familles + Autres
-  // NOTE : on utilise la somme des segments comme dénominateur du donut
-  // (pas ca_total) pour garantir 100% même si families_detail est partiel
   const sorted = [...familiesDetail].sort((a, b) => b.montant - a.montant)
   const top4 = sorted.slice(0, 4)
   const autresTotal = sorted.slice(4).reduce((s, f) => s + f.montant, 0)
@@ -176,7 +168,8 @@ export default async function DashboardPage() {
     ...(autresTotal > 0 ? [{ label: 'Autres', value: autresTotal, color: '#9ca3af' }] : []),
   ]
 
-  // Dénominateur du donut = somme des segments (garantit 100%)
+  // segTotal = dénominateur des proportions => garantit 100% des parts
+  // ca_total = CA réel du rapport financier => affiché au centre du donut
   const segTotal = segments.reduce((s, seg) => s + seg.value, 0) || ca_total
 
   const marge_brute = ca_total > 0 ? ca_total - achats_ht : 0
@@ -261,7 +254,8 @@ export default async function DashboardPage() {
                 <CardDescription>Top 4 + Autres · {weekLabel}</CardDescription>
               </CardHeader>
               <CardContent>
-                <DonutChart segments={segments} total={segTotal} />
+                {/* total = proportions (100%), centerTotal = vrai CA financier */}
+                <DonutChart segments={segments} total={segTotal} centerTotal={ca_total} />
               </CardContent>
             </Card>
 

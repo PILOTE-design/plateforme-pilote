@@ -2,7 +2,15 @@
 
 type Segment = { label: string; value: number; color: string }
 
-export function DonutChart({ segments, total }: { segments: Segment[]; total: number }) {
+export function DonutChart({
+  segments,
+  total,
+  centerTotal,
+}: {
+  segments: Segment[]
+  total: number        // dénominateur des proportions (= segTotal, garantit 100%)
+  centerTotal?: number // valeur affichée au centre (= ca_total du financier)
+}) {
   if (total === 0) {
     return (
       <div className="flex items-center justify-center h-48 text-gray-400 text-sm">
@@ -29,6 +37,8 @@ export function DonutChart({ segments, total }: { segments: Segment[]; total: nu
 
   const fmt = (n: number) =>
     n.toLocaleString('fr-FR', { maximumFractionDigits: 0 })
+
+  const displayValue = centerTotal ?? total
 
   return (
     <div className="flex flex-col items-center gap-4">
@@ -64,7 +74,7 @@ export function DonutChart({ segments, total }: { segments: Segment[]; total: nu
           fontWeight="bold"
           fill="#111827"
         >
-          {fmt(total)} €
+          {fmt(displayValue)} €
         </text>
       </svg>
 
