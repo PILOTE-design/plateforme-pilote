@@ -509,14 +509,14 @@ async function generateInsights(data: ReportData): Promise<Insights> {
 
 // ─── QuickChart ───────────────────────────────────────────────────────────────
 // REGLE ABSOLUE : aucun caractere non-ASCII dans la config QuickChart.
-// Cela inclut les noms de familles transmis dans labels[].
-// Seuls les caracteres ASCII purs sont acceptes dans toute la config JSON.
+// Les noms de familles sont normalises via toAscii() avant d'etre envoyes.
+// anchor:'start'/align:'end'/clamp:true est la config datalabels validee.
 
 async function getChartBuffers(data: ReportData): Promise<{ pieBuffer: Buffer; barBuffer: Buffer }> {
   const famMapC = new Map<string, Famille>()
   for (const f of data.ventes_n1.familles) famMapC.set(f.nom.toUpperCase(), f)
 
-  // Strip non-ASCII from labels to prevent QuickChart 400 errors
+  // Strip diacritics + non-ASCII from labels — explicit unicode escapes to avoid encoding issues
   const toAscii = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\x00-\x7F]/g, '?')
   const famNames = data.ventes_n.familles.map(f => trunc(toAscii(f.nom), 18))
   const famCA    = data.ventes_n.familles.map(f => +f.total_montant.toFixed(2))
@@ -566,9 +566,9 @@ async function getChartBuffers(data: ReportData): Promise<{ pieBuffer: Buffer; b
       },
       plugins: {
         datalabels: {
-          display: true, anchor: 'end', align: 'top', offset: 2,
+          display: true, anchor: 'start', align: 'end', offset: 2, clamp: true,
           formatter: "function(v){if(v<100)return '';return v>=1000?(v/1000).toFixed(1)+'k':String(Math.round(v));}",
-          font: { size: 8, weight: 'bold' }, color: '#1E293B',
+          font: { size: 8, weight: 'bold' }, color: 'white',
         },
       },
     },
