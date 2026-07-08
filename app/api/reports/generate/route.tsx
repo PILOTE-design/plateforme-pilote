@@ -203,9 +203,9 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
         <View style={S.tableWrap}>
           <View style={S.tHead}>
             <Text style={[S.tHeadCell, { flex: 3 }]}>FAMILLE</Text>
-            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N</Text>
-            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N-1</Text>
-            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>ÉCART</Text>
+            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N (€)</Text>
+            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N-1 (€)</Text>
+            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>ÉCART (€)</Text>
             <Text style={[S.tHeadCell, { flex: 1.2, textAlign: 'right' }]}>% CA</Text>
             <Text style={[S.tHeadCell, { flex: 1, textAlign: 'center' }]}>TEND.</Text>
           </View>
@@ -242,13 +242,13 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
         <View style={S.chartWrap}>
           <Image src={{ data: pieBuffer, format: 'png' }} style={{ width: 490, height: 300 }} />
         </View>
-        <Text style={S.chartCaption}>Poids de chaque famille dans le chiffre d'affaires total — Semaine {data.week_number} {data.year}</Text>
+        <Text style={S.chartCaption}>Poids de chaque famille dans le chiffre d'affaires total (€ TTC) — Semaine {data.week_number} {data.year}</Text>
         <View style={[S.tableWrap, { marginTop: 14 }]}>
           <View style={S.tHead}>
             <Text style={[S.tHeadCell, { flex: 3 }]}>FAMILLE</Text>
-            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N</Text>
+            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N (€)</Text>
             <Text style={[S.tHeadCell, { flex: 1.5, textAlign: 'right' }]}>% N</Text>
-            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N-1</Text>
+            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N-1 (€)</Text>
             <Text style={[S.tHeadCell, { flex: 1.5, textAlign: 'right' }]}>% N-1</Text>
             <Text style={[S.tHeadCell, { flex: 1.5, textAlign: 'right' }]}>ÉVOL. %</Text>
           </View>
@@ -278,14 +278,14 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
         <View style={S.chartWrap}>
           <Image src={{ data: barBuffer, format: 'png' }} style={{ width: 490, height: 360 }} />
         </View>
-        <Text style={S.chartCaption}>Comparaison du CA par famille (€) — S{data.week_number} {data.year} vs S{data.week_number} {data.year - 1}</Text>
+        <Text style={S.chartCaption}>Comparaison du CA par famille (€ TTC) — S{data.week_number} {data.year} vs S{data.week_number} {data.year - 1}</Text>
         <View style={{ paddingHorizontal: 36, marginTop: 20 }}>
           <Text style={{ fontSize: 9.5, fontFamily: 'Helvetica-Bold', color: C.navy, marginBottom: 10 }}>Synthèse des écarts par famille</Text>
           <View style={S.tHead}>
             <Text style={[S.tHeadCell, { flex: 3 }]}>FAMILLE</Text>
-            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N</Text>
-            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N-1</Text>
-            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>ÉCART EUR</Text>
+            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N (€)</Text>
+            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N-1 (€)</Text>
+            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>ÉCART (€)</Text>
             <Text style={[S.tHeadCell, { flex: 1.5, textAlign: 'right' }]}>ÉCART %</Text>
           </View>
           {vn.familles.map(fam => ({ fam, f1: famMap.get(fam.nom.toUpperCase()), ec: fam.total_montant - (famMap.get(fam.nom.toUpperCase())?.total_montant ?? 0) }))
@@ -317,7 +317,7 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
             <View style={{ flexDirection: 'row', backgroundColor: '#F1F5F9', paddingVertical: 5, paddingHorizontal: 8, borderBottomColor: '#CBD5E1', borderBottomWidth: 1 }}>
               <Text style={[S.tHeadCell, { flex: 0.4, color: C.textLight }]}>#</Text>
               <Text style={[S.tHeadCell, { flex: 3 }]}>PRODUIT</Text>
-              <Text style={[S.tHeadCell, { flex: 1.8, textAlign: 'right' }]}>CA N</Text>
+              <Text style={[S.tHeadCell, { flex: 1.8, textAlign: 'right' }]}>CA N (€)</Text>
               <Text style={[S.tHeadCell, { flex: 1.2, textAlign: 'right' }]}>ÉVOL.</Text>
             </View>
             {tops.map((t, i) => {
@@ -340,7 +340,7 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
             <View style={{ flexDirection: 'row', backgroundColor: '#F1F5F9', paddingVertical: 5, paddingHorizontal: 8, borderBottomColor: '#CBD5E1', borderBottomWidth: 1 }}>
               <Text style={[S.tHeadCell, { flex: 0.4, color: C.textLight }]}>#</Text>
               <Text style={[S.tHeadCell, { flex: 3 }]}>PRODUIT</Text>
-              <Text style={[S.tHeadCell, { flex: 1.8, textAlign: 'right' }]}>CA N</Text>
+              <Text style={[S.tHeadCell, { flex: 1.8, textAlign: 'right' }]}>CA N (€)</Text>
               <Text style={[S.tHeadCell, { flex: 1.2, textAlign: 'right' }]}>ÉVOL.</Text>
             </View>
             {flops.map((f, i) => {
@@ -507,6 +507,9 @@ async function generateInsights(data: ReportData): Promise<Insights> {
 }
 
 // ─── QuickChart ────────────────────────────────────────────────────────────────────
+// REGLE ABSOLUE : aucun caractere non-ASCII dans la config QuickChart
+// Le symbole euro et tout caractere special cause un 400 ou EACCES dans le sandbox
+// Utiliser EUR, k, % uniquement. Le PDF (react-pdf) supporte tous les caracteres.
 
 async function getChartBuffers(data: ReportData): Promise<{ pieBuffer: Buffer; barBuffer: Buffer }> {
   const famMapC = new Map<string, Famille>()
@@ -527,7 +530,6 @@ async function getChartBuffers(data: ReportData): Promise<{ pieBuffer: Buffer; b
       plugins: {
         datalabels: {
           display: true,
-          // NOTE: pas de € dans les callbacks QuickChart (cause EACCES dans le sandbox JS)
           formatter: 'function(value,ctx){var d=ctx.chart.data.datasets[0].data;var t=d.reduce(function(a,b){return a+b;},0);var p=value/t*100;return p<5?"":p.toFixed(0)+"%";}',
           color: 'white', font: { size: 11, weight: 'bold' },
         },
@@ -540,24 +542,22 @@ async function getChartBuffers(data: ReportData): Promise<{ pieBuffer: Buffer; b
     data: {
       labels: famNames,
       datasets: [
-        { label: `Annee prec. (${data.year - 1})`, data: famCA1, backgroundColor: '#94A3B8', barThickness: 24 },
-        { label: `Cette annee (${data.year})`, data: famCA, backgroundColor: '#2563EB', barThickness: 24 },
+        { label: `N-1 (${data.year - 1})`, data: famCA1, backgroundColor: '#94A3B8', barThickness: 24 },
+        { label: `N (${data.year})`, data: famCA, backgroundColor: '#2563EB', barThickness: 24 },
       ],
     },
     options: {
-      title: { display: true, text: [`Comparatif des ventes par rayon (en euros)`, `Semaine ${data.week_number} - ${data.year} vs ${data.year - 1}`], fontSize: 14, fontColor: '#1E293B', fontStyle: 'bold', padding: 18 },
+      // Titre sans caractere special - QuickChart rejette tout caractere non-ASCII (euro, accents...)
+      title: { display: true, text: [`CA par famille - en EUR`, `Semaine ${data.week_number} : ${data.year} vs ${data.year - 1}`], fontSize: 14, fontColor: '#1E293B', fontStyle: 'bold', padding: 18 },
       legend: { position: 'top', labels: { fontSize: 11, padding: 18, boxWidth: 14, fontColor: '#1E293B' } },
       layout: { padding: { top: 24, bottom: 10, left: 10, right: 10 } },
       scales: {
         xAxes: [{ ticks: { fontSize: 11, fontColor: '#1E293B', fontStyle: 'bold' }, gridLines: { display: false } }],
         yAxes: [{
-          // scaleLabel affiche 'Montant (€)' comme string statique — safe pour QuickChart (jamais évaluée)
-          scaleLabel: { display: true, labelString: 'Montant (€)', fontColor: '#64748B', fontSize: 9 },
           ticks: {
             beginAtZero: true, fontSize: 9, fontColor: '#64748B',
-            // IMPORTANT: jamais de € dans ce callback — cause EACCES dans le sandbox QuickChart
-            // L'unité € est affichée via scaleLabel ci-dessus (string statique, jamais évaluée)
-            callback: "function(v){if(v===0)return '';return v>=1000?(v/1000).toFixed(0)+'k':String(Math.round(v));}",
+            // Jamais de caractere non-ASCII ici — callback est evalué dans le sandbox QuickChart
+            callback: "function(v){if(v===0)return '';return v>=1000?(v/1000).toFixed(0)+'k EUR':v+' EUR';}",
           },
           gridLines: { color: '#E8EDF3', drawBorder: false, lineWidth: 0.8 },
         }],
