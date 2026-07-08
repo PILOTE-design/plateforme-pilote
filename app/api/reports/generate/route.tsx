@@ -509,8 +509,8 @@ async function generateInsights(data: ReportData): Promise<Insights> {
 
 // ─── QuickChart ───────────────────────────────────────────────────────────────
 // REGLE ABSOLUE : aucun caractere non-ASCII dans la config QuickChart.
-// Les noms de familles sont normalises via toAscii() avant d'etre envoyes.
-// datalabels desactives (display:false) pour diagnostiquer le 400 persistant.
+// Config barre minimale pour diagnostic : pas de callback, pas de title array,
+// pas de layout, pas de gridLines avancees.
 
 async function getChartBuffers(data: ReportData): Promise<{ pieBuffer: Buffer; barBuffer: Buffer }> {
   const famMapC = new Map<string, Famille>()
@@ -544,39 +544,30 @@ async function getChartBuffers(data: ReportData): Promise<{ pieBuffer: Buffer; b
     },
   }
 
+  // MINIMAL bar config: no callback, no title array, no layout, no advanced gridLines
   const barConfig = {
     type: 'bar',
     data: {
       labels: famNames,
       datasets: [
-        { label: `N-1 (${data.year - 1})`, data: famCA1, backgroundColor: '#94A3B8', barThickness: 24 },
-        { label: `N (${data.year})`, data: famCA, backgroundColor: '#2563EB', barThickness: 24 },
+        { label: `N-1 ${data.year - 1}`, data: famCA1, backgroundColor: '#94A3B8', barThickness: 24 },
+        { label: `N ${data.year}`, data: famCA, backgroundColor: '#2563EB', barThickness: 24 },
       ],
     },
     options: {
-      title: { display: true, text: [`CA par famille - en EUR`, `Semaine ${data.week_number} : ${data.year} vs ${data.year - 1}`], fontSize: 14, fontColor: '#1E293B', fontStyle: 'bold', padding: 18 },
+      title: { display: true, text: `CA par famille - S${data.week_number} - en EUR`, fontSize: 14, fontColor: '#1E293B', fontStyle: 'bold', padding: 18 },
       legend: { position: 'top', labels: { fontSize: 11, padding: 18, boxWidth: 14, fontColor: '#1E293B' } },
-      layout: { padding: { top: 24, bottom: 10, left: 10, right: 10 } },
       scales: {
         xAxes: [{ ticks: { fontSize: 11, fontColor: '#1E293B', fontStyle: 'bold' }, gridLines: { display: false } }],
-        yAxes: [{
-          ticks: {
-            beginAtZero: true, fontSize: 9, fontColor: '#64748B',
-            callback: "function(v){if(v===0)return '';return v>=1000?(v/1000).toFixed(0)+'k':String(Math.round(v));}"
-          },
-          gridLines: { color: '#E8EDF3', drawBorder: false, lineWidth: 0.8 },
-        }],
+        yAxes: [{ ticks: { beginAtZero: true, fontSize: 9, fontColor: '#64748B' } }],
       },
-      plugins: {
-        datalabels: { display: false },
-      },
+      plugins: { datalabels: { display: false } },
     },
   }
 
   // Stringify bodies before fetch to enable non-ASCII scanning
   const pieBody = JSON.stringify({ chart: pieConfig, width: 720, height: 370, backgroundColor: 'white', version: '2.9.4' })
   const barBody = JSON.stringify({ chart: barConfig, width: 720, height: 470, backgroundColor: 'white', version: '2.9.4' })
-  // Scan for any non-ASCII that would cause QuickChart 400
   const nonAsciiInBar = Array.from(barBody).filter((c: string) => c.charCodeAt(0) > 127).join('').slice(0, 80)
 
   const QC = 'https://quickchart.io/chart'
