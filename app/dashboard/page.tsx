@@ -45,16 +45,18 @@ export default async function DashboardPage() {
   const clientId = await resolveClientId(serviceSupabase, user!.id, user?.email)
   const { week: currentWeek, year: currentYear } = getISOWeek(new Date())
 
+  // Semaine de référence : dernier rapport généré, ou semaine courante par défaut
+  let refWeek = currentWeek
+  let refYear = currentYear
+  let lastReportTitle: string | null = null
+
   let caData: Record<string, number> | null = null
   let achats_ht = 0
   let masse_salariale = 0
-  let reportWeek = currentWeek
-  let reportYear = currentYear
-  let lastReportTitle: string | null = null
   let reports: Array<{ id: string; title: string; file_url: string; created_at: string }> = []
 
   if (clientId) {
-    // 1. Dernier rapport généré pour ce client
+    // 1. Dernier rapport — détermine la semaine de référence pour TOUS les KPIs
     const { data: lastReport } = await serviceSupabase
       .from('reports')
       .select('week_number, year, title')
@@ -64,31 +66,32 @@ export default async function DashboardPage() {
       .maybeSingle()
 
     if (lastReport) {
-      reportWeek = lastReport.week_number
-      reportYear = lastReport.year
+      refWeek = lastReport.week_number
+      refYear = lastReport.year
       lastReportTitle = lastReport.title
     }
 
-    // 2. CA par famille — semaine du dernier rapport
+    // 2. CA par famille TTC — issu du dernier rapport (weekly_ca populé à chaque génération)
     const { data: ca } = await serviceSupabase
       .from('weekly_ca').select('*')
       .eq('client_id', clientId)
-      .eq('week_number', reportWeek)
-      .eq('year', reportYear)
+      .eq('week_number', refWeek)
+      .eq('year', refYear)
       .maybeSingle()
     caData = ca
 
-    // 3. Achats HT (factures) — semaine courante
+    // 3. Achats HT (factures) — même semaine de référence
     const { data: invoices } = await serviceSupabase
       .from('invoices').select('amount_ht')
       .eq('client_id', clientId)
-      .eq('week_number', currentWeek)
-      .eq('year', currentYear)
+      .eq('week_number', refWeek)
+      .eq('year', refYear)
     achats_ht = (invoices || []).reduce(
       (s: number, inv: { amount_ht: string | number }) => s + parseFloat(String(inv.amount_ht || 0)), 0
     )
 
-    // 4. Masse salariale — employés du client, semaine courante
+    // 4. Masse salariale CCN IDCC 992 — même semaine de référence
+    //    Mise à jour immédiate : chaque modification du planning recalcule ce chiffre au rechargement
     const { data: clientEmployees } = await serviceSupabase
       .from('employees')
       .select('id, hourly_rate, contract_type, contract_hours')
@@ -96,6 +99,7 @@ export default async function DashboardPage() {
 
     if (clientEmployees && clientEmployees.length > 0) {
       const empIds = clientEmployees.map((e: { id: string }) => e.id)
+
       const { data: planningData } = await serviceSupabase
         .from('planning_entries')
         .select(
@@ -103,8 +107,8 @@ export default async function DashboardPage() {
           'lundi_type,mardi_type,mercredi_type,jeudi_type,vendredi_type,samedi_type,dimanche_type,employee_id'
         )
         .in('employee_id', empIds)
-        .eq('week_number', currentWeek)
-        .eq('year', currentYear)
+        .eq('week_number', refWeek)
+        .eq('year', refYear)
 
       if (planningData && planningData.length > 0) {
         const empMap: Record<string, { hourly_rate: string; contract_type: string; contract_hours: number }> = {}
@@ -133,7 +137,7 @@ export default async function DashboardPage() {
       }
     }
 
-    // 5. Derniers rapports par client_id
+    // 5. Derniers rapports
     const { data: reps } = await serviceSupabase
       .from('reports').select('id, title, file_url, created_at')
       .eq('client_id', clientId)
@@ -143,14 +147,20 @@ export default async function DashboardPage() {
   }
 
   const ca_total = parseFloat(String(caData?.ca_total || 0))
-  const marge_brute = ca_total - achats_ht
+  const ca_boucherie = parseFloat(String(caData?.ca_boucherie || 0))
+  const ca_charcuterie = parseFloat(String(caData?.ca_charcuterie || 0))
+  const ca_traiteur = parseFloat(String(caData?.ca_traiteur || 0))
+  const ca_vente = parseFloat(String(caData?.ca_vente || 0))
+
+  // Marge estimée = CA TTC - achats HT (approximation, taux TVA ~10% boucherie)
+  const marge_brute = ca_total > 0 ? ca_total - achats_ht : 0
   const taux_marge = ca_total > 0 ? (marge_brute / ca_total) * 100 : null
 
   const segments = [
-    { label: 'Boucherie', value: parseFloat(String(caData?.ca_boucherie || 0)), color: '#dc2626' },
-    { label: 'Charcuterie', value: parseFloat(String(caData?.ca_charcuterie || 0)), color: '#f97316' },
-    { label: 'Traiteur', value: parseFloat(String(caData?.ca_traiteur || 0)), color: '#22c55e' },
-    { label: 'Vente', value: parseFloat(String(caData?.ca_vente || 0)), color: '#3b82f6' },
+    { label: 'Boucherie', value: ca_boucherie, color: '#dc2626' },
+    { label: 'Charcuterie', value: ca_charcuterie, color: '#f97316' },
+    { label: 'Traiteur', value: ca_traiteur, color: '#22c55e' },
+    { label: 'Vente', value: ca_vente, color: '#3b82f6' },
   ]
 
   const margeColor =
@@ -160,6 +170,7 @@ export default async function DashboardPage() {
     : 'text-red-600'
 
   const hasNoData = !clientId || (!caData && reports.length === 0)
+  const weekLabel = `S${refWeek} · ${refYear}`
 
   return (
     <div className="p-8 max-w-6xl mx-auto">
@@ -169,8 +180,8 @@ export default async function DashboardPage() {
         </h1>
         <p className="text-gray-500 mt-1">
           {lastReportTitle
-            ? `Dernier rapport — Semaine ${reportWeek} · ${reportYear}`
-            : `Semaine ${currentWeek} · ${currentYear}`
+            ? `Dernier rapport publié — Semaine ${refWeek} · ${refYear}`
+            : `Semaine ${currentWeek} · ${currentYear} — Aucun rapport généré`
           }
         </p>
       </div>
@@ -188,14 +199,14 @@ export default async function DashboardPage() {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
             <Card>
               <CardContent className="p-5">
-                <p className="text-xs text-gray-500 mb-1">CA semaine</p>
+                <p className="text-xs text-gray-500 mb-1">CA TTC — {weekLabel}</p>
                 <p className="text-2xl font-bold text-gray-900">{fmt(ca_total)} €</p>
               </CardContent>
             </Card>
 
             <Card>
               <CardContent className="p-5">
-                <p className="text-xs text-gray-500 mb-1">Marge brute</p>
+                <p className="text-xs text-gray-500 mb-1">Marge brute — {weekLabel}</p>
                 <p className={`text-2xl font-bold ${margeColor}`}>
                   {taux_marge !== null ? `${taux_marge.toFixed(1)} %` : '—'}
                 </p>
@@ -206,7 +217,7 @@ export default async function DashboardPage() {
               <CardContent className="p-5">
                 <div className="flex items-center gap-1.5 mb-1">
                   <Users className="w-3.5 h-3.5 text-gray-400" />
-                  <p className="text-xs text-gray-500">Coût employés</p>
+                  <p className="text-xs text-gray-500">Coût employés — {weekLabel}</p>
                 </div>
                 <p className="text-2xl font-bold text-gray-900">{fmt(masse_salariale)} €</p>
               </CardContent>
@@ -216,19 +227,19 @@ export default async function DashboardPage() {
               <CardContent className="p-5">
                 <div className="flex items-center gap-1.5 mb-1">
                   <Receipt className="w-3.5 h-3.5 text-gray-400" />
-                  <p className="text-xs text-gray-500">Coût factures</p>
+                  <p className="text-xs text-gray-500">Achats HT — {weekLabel}</p>
                 </div>
                 <p className="text-2xl font-bold text-gray-900">{fmt(achats_ht)} €</p>
               </CardContent>
             </Card>
           </div>
 
-          {/* Graphique + détail */}
+          {/* Graphique + détail familles */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
             <Card>
               <CardHeader>
                 <CardTitle className="text-base">Répartition CA par famille</CardTitle>
-                <CardDescription>Semaine {reportWeek} · {reportYear}</CardDescription>
+                <CardDescription>TTC · {weekLabel}</CardDescription>
               </CardHeader>
               <CardContent>
                 <DonutChart segments={segments} total={ca_total} />
@@ -238,12 +249,12 @@ export default async function DashboardPage() {
             <Card>
               <CardHeader>
                 <CardTitle className="text-base">Détail par famille</CardTitle>
-                <CardDescription>Chiffre d&apos;affaires HT</CardDescription>
+                <CardDescription>Chiffre d&apos;affaires TTC · {weekLabel}</CardDescription>
               </CardHeader>
               <CardContent>
                 {ca_total === 0 ? (
                   <p className="text-center text-sm text-gray-400 py-8">
-                    Aucune donnée CA pour la semaine {reportWeek}
+                    Aucune donnée CA pour la semaine {refWeek}
                   </p>
                 ) : (
                   <div className="space-y-4">
@@ -261,7 +272,7 @@ export default async function DashboardPage() {
                             </div>
                             <div className="flex items-center gap-3">
                               <span className="font-semibold text-gray-900">{fmt(seg.value)} €</span>
-                              <span className="text-gray-400 w-9 text-right">{Math.round(pct)} %</span>
+                              <span className="text-gray-400 w-9 text-right">{Math.round(pct)} %</span>
                             </div>
                           </div>
                           <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
@@ -276,7 +287,8 @@ export default async function DashboardPage() {
                     <div className="pt-3 mt-3 border-t border-gray-100 flex justify-between text-sm">
                       <span className="text-gray-500">Marge brute estimée</span>
                       <span className={`font-semibold ${margeColor}`}>
-                        {fmt(marge_brute)} € {taux_marge !== null ? `(${taux_marge.toFixed(1)} %)` : ''}
+                        {fmt(marge_brute)} €
+                        {taux_marge !== null ? ` (${taux_marge.toFixed(1)} %)` : ''}
                       </span>
                     </div>
                   </div>
@@ -292,7 +304,7 @@ export default async function DashboardPage() {
         <CardHeader className="flex flex-row items-center justify-between">
           <div>
             <CardTitle>Derniers rapports</CardTitle>
-            <CardDescription>Vos analyses comparatives récentes</CardDescription>
+            <CardDescription>Mis à jour automatiquement à chaque publication</CardDescription>
           </div>
           <Link href="/dashboard/reports" className="text-sm text-blue-600 hover:underline">
             Voir tout
