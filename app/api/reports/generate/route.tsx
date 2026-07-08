@@ -49,7 +49,6 @@ const eur = (n: number) =>
 const signEur = (n: number) => (n >= 0 ? '+' : '') + eur(n)
 const signPct = (n: number) => (n >= 0 ? '+' : '') + (n * 100).toFixed(1) + '%'
 const pctStr = (n: number) => (n * 100).toFixed(1) + '%'
-// trunc uses 3 ASCII dots — no Unicode ellipsis which can cause issues
 const trunc = (s: string, len: number) => (s.length > len ? s.slice(0, len - 1) + '...' : s)
 
 // ─── Palette ──────────────────────────────────────────────────────────────────
@@ -509,8 +508,8 @@ async function generateInsights(data: ReportData): Promise<Insights> {
 
 // ─── QuickChart ───────────────────────────────────────────────────────────────
 // REGLE ABSOLUE : aucun caractere non-ASCII dans la config QuickChart.
-// Config barre minimale pour diagnostic : pas de callback, pas de title array,
-// pas de layout, pas de gridLines avancees.
+// ticks.callback interdit : cause un crash Chart.js 2.9.4 dans le sandbox QuickChart.
+// Utiliser maxTicksLimit + stepSize pour controler l'axe Y sans callback.
 
 async function getChartBuffers(data: ReportData): Promise<{ pieBuffer: Buffer; barBuffer: Buffer }> {
   const famMapC = new Map<string, Famille>()
@@ -544,31 +543,34 @@ async function getChartBuffers(data: ReportData): Promise<{ pieBuffer: Buffer; b
     },
   }
 
-  // MINIMAL bar config: no callback, no title array, no layout, no advanced gridLines
   const barConfig = {
     type: 'bar',
     data: {
       labels: famNames,
       datasets: [
-        { label: `N-1 ${data.year - 1}`, data: famCA1, backgroundColor: '#94A3B8', barThickness: 24 },
-        { label: `N ${data.year}`, data: famCA, backgroundColor: '#2563EB', barThickness: 24 },
+        { label: `N-1 (${data.year - 1})`, data: famCA1, backgroundColor: '#94A3B8', barThickness: 24 },
+        { label: `N (${data.year})`, data: famCA, backgroundColor: '#2563EB', barThickness: 24 },
       ],
     },
     options: {
-      title: { display: true, text: `CA par famille - S${data.week_number} - en EUR`, fontSize: 14, fontColor: '#1E293B', fontStyle: 'bold', padding: 18 },
+      // title.text DOIT etre une string simple (pas un array) - le array cause un 400
+      title: { display: true, text: `CA par famille - S${data.week_number} ${data.year} vs ${data.year - 1} - en EUR`, fontSize: 13, fontColor: '#1E293B', fontStyle: 'bold', padding: 14 },
       legend: { position: 'top', labels: { fontSize: 11, padding: 18, boxWidth: 14, fontColor: '#1E293B' } },
+      layout: { padding: { top: 20, bottom: 8, left: 8, right: 8 } },
       scales: {
-        xAxes: [{ ticks: { fontSize: 11, fontColor: '#1E293B', fontStyle: 'bold' }, gridLines: { display: false } }],
-        yAxes: [{ ticks: { beginAtZero: true, fontSize: 9, fontColor: '#64748B' } }],
+        xAxes: [{ ticks: { fontSize: 10, fontColor: '#1E293B', fontStyle: 'bold' }, gridLines: { display: false } }],
+        yAxes: [{
+          // NO ticks.callback - causes Chart.js 2.9.4 crash in QuickChart sandbox
+          ticks: { beginAtZero: true, fontSize: 9, fontColor: '#64748B', maxTicksLimit: 6 },
+          gridLines: { color: '#E8EDF3', drawBorder: false, lineWidth: 0.8 },
+        }],
       },
       plugins: { datalabels: { display: false } },
     },
   }
 
-  // Stringify bodies before fetch to enable non-ASCII scanning
   const pieBody = JSON.stringify({ chart: pieConfig, width: 720, height: 370, backgroundColor: 'white', version: '2.9.4' })
   const barBody = JSON.stringify({ chart: barConfig, width: 720, height: 470, backgroundColor: 'white', version: '2.9.4' })
-  const nonAsciiInBar = Array.from(barBody).filter((c: string) => c.charCodeAt(0) > 127).join('').slice(0, 80)
 
   const QC = 'https://quickchart.io/chart'
   const [pieRes, barRes] = await Promise.all([
@@ -584,7 +586,7 @@ async function getChartBuffers(data: ReportData): Promise<{ pieBuffer: Buffer; b
   if (!barRes.ok) {
     const ct = barRes.headers.get('content-type') || ''
     const body = ct.includes('image') ? '[binary image]' : (await barRes.text()).slice(0, 300)
-    throw new Error(`QuickChart bar ${barRes.status} | ${body} | labels=${JSON.stringify(famNames)} | ca1=${JSON.stringify(famCA1.slice(0, 3))} | nonAscii="${nonAsciiInBar}"`)
+    throw new Error(`QuickChart bar ${barRes.status} | ${body}`)
   }
 
   const [pieBuffer, barBuffer] = await Promise.all([
