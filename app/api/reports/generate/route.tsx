@@ -246,10 +246,10 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
       <Page size="A4" style={S.page}>
         <SecHeader title="REPARTITION DU CA PAR FAMILLE" />
         <View style={S.chartWrap}>
-          {/* outlabeledPie : 820x460 -> affiche en 490x275 dans le PDF */}
+          {/* outlabeledPie 820x460 -> 490x275 dans le PDF */}
           <Image src={{ data: pieBuffer, format: 'png' }} style={{ width: 490, height: 275 }} />
         </View>
-        <Text style={S.chartCaption}>Poids de chaque famille dans le chiffre d'affaires total (€ TTC) - Semaine {data.week_number} {data.year}</Text>
+        <Text style={S.chartCaption}>Top 4 familles + Autres — total 100% du CA (€ TTC) — Semaine {data.week_number} {data.year}</Text>
         <View style={[S.tableWrap, { marginTop: 14 }]}>
           <View style={S.tHead}>
             <Text style={[S.tHeadCell, { flex: 3 }]}>FAMILLE</Text>
@@ -263,7 +263,6 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
             const f1 = famMap.get(fam.nom.toUpperCase())
             const wN = vn.total ? fam.total_montant / vn.total : 0
             const wN1 = vn1.total && f1 ? f1.total_montant / vn1.total : 0
-            // Evolution du CA absolu (pas des parts) : plus pertinent pour le boucher
             const evolCA = f1?.total_montant ? (fam.total_montant - f1.total_montant) / f1.total_montant : 0
             return (
               <View key={fam.id} style={i % 2 === 0 ? S.tRow : S.tRowAlt}>
@@ -519,48 +518,56 @@ async function generateInsights(data: ReportData): Promise<Insights> {
 // 1. Aucun caractere non-ASCII dans la config JSON
 // 2. ticks.callback interdit — crash Chart.js 2.9.4 dans le sandbox
 // 3. title.text doit etre une string simple (pas un array)
-// 4. outlabeledPie : utiliser type 'outlabeledPie' pour les leader lines
-//    La legende est masquee (legend.display:false) car les labels sont deja externes
+// 4. outlabeledPie : leader lines vers les labels externes
+// 5. PIE = top 4 + AUTRES (tri CA desc) => total = 100%
 
 async function getChartBuffers(data: ReportData): Promise<{ pieBuffer: Buffer; barBuffer: Buffer }> {
   const famMapC = new Map<string, Famille>()
   for (const f of data.ventes_n1.familles) famMapC.set(f.nom.toUpperCase(), f)
 
-  // Strip diacritics + non-ASCII from labels (QuickChart sandbox rule)
+  // Strip diacritics + non-ASCII (QuickChart sandbox rule)
   const toAscii = (s: string) =>
     s.normalize('NFD')
       .replace(/[̀-ͯ]/g, '')
       .replace(/[^\x00-\x7F]/g, '?')
+
+  // ─── BAR CHART : toutes les familles ───
   const famNames = data.ventes_n.familles.map(f => trunc(toAscii(f.nom), 18))
   const famCA    = data.ventes_n.familles.map(f => +f.total_montant.toFixed(2))
   const famCA1   = data.ventes_n.familles.map(f => +(famMapC.get(f.nom.toUpperCase())?.total_montant ?? 0).toFixed(2))
 
-  // Palette diversifiee : chaque famille a une couleur distincte
-  const donutPalette = [
-    '#1E3A5F',  // navy
-    '#2563EB',  // blue
-    '#059669',  // green
-    '#D97706',  // amber
-    '#DC2626',  // red
-    '#7C3AED',  // violet
-    '#0891B2',  // cyan
-    '#BE185D',  // pink
-    '#65A30D',  // lime
-    '#9333EA',  // purple
-  ].slice(0, famNames.length)
+  // ─── PIE CHART : top 4 familles (tri CA desc) + AUTRES = 100% ───
+  const famSorted = [...data.ventes_n.familles].sort((a, b) => b.total_montant - a.total_montant)
+  const top4      = famSorted.slice(0, 4)
+  const autres    = famSorted.slice(4)
+  const autresTotal = +autres.reduce((sum, f) => sum + f.total_montant, 0).toFixed(2)
 
-  // outlabeledPie : dessin des lignes leaders (fleches) vers les labels externes
-  // - legend masquee (les labels sont deja dehors)
-  // - text: '%l\n%p' = nom de famille + pourcentage
-  // - stretch: longueur de la ligne leader en px
-  // - font.resizable: ajuste la taille si superposition
+  const pieNames: string[] = [
+    ...top4.map(f => trunc(toAscii(f.nom), 16)),
+    ...(autresTotal > 0 ? ['AUTRES'] : []),
+  ]
+  const pieCA: number[] = [
+    ...top4.map(f => +f.total_montant.toFixed(2)),
+    ...(autresTotal > 0 ? [autresTotal] : []),
+  ]
+  // Palette : 4 couleurs distinctes + gris pour AUTRES
+  const piePalette = [
+    '#1E3A5F',  // 1er : navy
+    '#DC2626',  // 2e  : rouge
+    '#D97706',  // 3e  : ambre
+    '#059669',  // 4e  : vert
+    '#94A3B8',  // AUTRES : gris
+  ].slice(0, pieNames.length)
+
+  // outlabeledPie : dessine les lignes leaders (fleches) vers les labels externes
+  // text '%l\n%p' = nom de la famille + pourcentage (ex: 'CHARCUTERIE\n24%')
   const pieConfig = {
     type: 'outlabeledPie',
     data: {
-      labels: famNames,
+      labels: pieNames,
       datasets: [{
-        data: famCA,
-        backgroundColor: donutPalette,
+        data: pieCA,
+        backgroundColor: piePalette,
         borderWidth: 2,
         borderColor: '#FFFFFF',
       }],
@@ -568,7 +575,7 @@ async function getChartBuffers(data: ReportData): Promise<{ pieBuffer: Buffer; b
     options: {
       title: {
         display: true,
-        text: 'Repartition CA - S' + data.week_number + ' ' + data.year,
+        text: 'Top 4 familles + Autres - S' + data.week_number + ' ' + data.year,
         fontSize: 14,
         fontColor: '#1E293B',
         fontStyle: 'bold',
@@ -581,8 +588,8 @@ async function getChartBuffers(data: ReportData): Promise<{ pieBuffer: Buffer; b
           text: '%l\n%p',
           color: 'white',
           stretch: 38,
-          font: { resizable: true, minSize: 8, maxSize: 12, size: 11, weight: 'bold' },
-          padding: { top: 4, bottom: 4, left: 7, right: 7 },
+          font: { resizable: true, minSize: 9, maxSize: 13, size: 11, weight: 'bold' },
+          padding: { top: 5, bottom: 5, left: 8, right: 8 },
           borderRadius: 4,
         },
       },
@@ -599,13 +606,11 @@ async function getChartBuffers(data: ReportData): Promise<{ pieBuffer: Buffer; b
       ],
     },
     options: {
-      // title.text : string simple uniquement (array = crash)
       title: { display: true, text: `CA par famille - S${data.week_number} ${data.year} vs ${data.year - 1} - en EUR`, fontSize: 13, fontColor: '#1E293B', fontStyle: 'bold', padding: 14 },
       legend: { position: 'top', labels: { fontSize: 11, padding: 18, boxWidth: 14, fontColor: '#1E293B' } },
       layout: { padding: { top: 20, bottom: 8, left: 8, right: 8 } },
       scales: {
         xAxes: [{ ticks: { fontSize: 10, fontColor: '#1E293B', fontStyle: 'bold' }, gridLines: { display: false } }],
-        // ticks.callback interdit — crash Chart.js 2.9.4
         yAxes: [{
           ticks: { beginAtZero: true, fontSize: 9, fontColor: '#64748B', maxTicksLimit: 6 },
           gridLines: { color: '#E8EDF3', drawBorder: false, lineWidth: 0.8 },
@@ -615,7 +620,6 @@ async function getChartBuffers(data: ReportData): Promise<{ pieBuffer: Buffer; b
     },
   }
 
-  // outlabeledPie requiert plus d'espace autour du graphique pour les labels externes
   const pieBody = JSON.stringify({ chart: pieConfig, width: 820, height: 460, backgroundColor: 'white', version: '2.9.4' })
   const barBody = JSON.stringify({ chart: barConfig, width: 720, height: 470, backgroundColor: 'white', version: '2.9.4' })
 
