@@ -16,8 +16,16 @@ type ScheduleDetail = {
   matin_fin?: string
   apmidi_debut?: string
   apmidi_fin?: string
+  categorie?: string
 }
 type ScheduleDetails = Partial<Record<JourDB, ScheduleDetail>>
+
+const CATEGORIES = [
+  { key: 'boucherie',   short: 'Boucherie',   color: 'bg-red-100 text-red-700',      ring: 'ring-red-300'      },
+  { key: 'charcuterie', short: 'Charcuterie', color: 'bg-orange-100 text-orange-700', ring: 'ring-orange-300'  },
+  { key: 'traiteur',    short: 'Traiteur',    color: 'bg-emerald-100 text-emerald-700', ring: 'ring-emerald-300' },
+  { key: 'vente',       short: 'Vente',       color: 'bg-sky-100 text-sky-700',       ring: 'ring-sky-300'     },
+] as const
 
 const TYPE_CONFIG: Record<DayType, {
   label: string; bg: string; text: string; dot: string; defaultHours: number; pdfColor: string; display: string
@@ -465,9 +473,11 @@ export default function PlanningPage() {
         const type   = (entry[`${j}_type` as keyof PlanningEntry] as DayType) || (idx >= 5 ? 'repos' : 'travail')
         const h      = entry[j] || 0
         const fName  = weekHolidays[idx]
+        const sd     = ((entry.schedule_details as ScheduleDetails | undefined) || {})[j] || {}
+        const catName = CATEGORIES.find(c => c.key === (sd as ScheduleDetail).categorie)?.short ?? ''
         const bg     = fName ? '#fef3c7' : type === 'travail' ? pal.lightHex : TYPE_CONFIG[type].pdfColor
         const label  = type === 'travail'
-          ? (h > 0 ? `<strong>${h}h</strong>` : '—')
+          ? (h > 0 ? `<strong>${h}h</strong>${catName ? `<br><span style="font-size:8px;">${catName}</span>` : ''}` : '—')
           : `<span style="font-size:9px;">${TYPE_CONFIG[type].label}</span>`
         return `<td style="padding:6px 4px;text-align:center;background:${bg};border-bottom:1px solid #e2e8f0;border-right:1px solid #e2e8f0;">${label}${fName ? `<br><span style="font-size:8px;color:#92400e;">Férié</span>` : ''}</td>`
       }).join('')
@@ -740,60 +750,85 @@ export default function PlanningPage() {
                                   </div>
                                 )}
                               </div>
-                              <div className="flex-1 flex items-center justify-center">
-                                {!fName && type === 'travail' ? (
-                                  isEditing ? (
-                                    <input autoFocus type="number" min="0" max="24" step="0.5"
-                                      value={hours || ''}
-                                      onChange={e => updateHours(emp.id, jour, e.target.value)}
-                                      onBlur={() => handleBlur(emp.id)}
-                                      onClick={e => e.stopPropagation()}
-                                      className={`w-16 text-center font-bold text-2xl bg-transparent focus:outline-none border-b border-current ${pal.text}`}
-                                      placeholder="0"
-                                    />
-                                  ) : (
-                                    <span onClick={e => { e.stopPropagation(); setEditingCell({ empId: emp.id, jour }) }}
-                                      className={`font-bold text-2xl ${pal.text} cursor-text`}
-                                    >
-                                      {hours > 0 ? `${hours}h` : '—'}
-                                    </span>
-                                  )
-                                ) : (
+                              {/* ── Contenu principal de la cellule ── */}
+                              {!fName && type === 'travail' ? (
+                                <div className="flex-1 flex flex-col gap-1 pt-1 pb-0.5" onClick={e => e.stopPropagation()}>
+                                  {/* Heures (petites, éditables) */}
+                                  <div className="flex items-center gap-1">
+                                    <span className="text-[9px] text-gray-400 opacity-70">h :</span>
+                                    {isEditing ? (
+                                      <input autoFocus type="number" min="0" max="24" step="0.5"
+                                        value={hours || ''}
+                                        onChange={e => updateHours(emp.id, jour, e.target.value)}
+                                        onBlur={() => handleBlur(emp.id)}
+                                        onClick={e => e.stopPropagation()}
+                                        className={`w-10 text-center text-xs font-bold bg-transparent focus:outline-none border-b border-current ${pal.text}`}
+                                        placeholder="0"
+                                      />
+                                    ) : (
+                                      <span onClick={e => { e.stopPropagation(); setEditingCell({ empId: emp.id, jour }) }}
+                                        className={`text-xs font-bold cursor-text ${pal.text}`}
+                                      >
+                                        {hours > 0 ? `${hours}h` : '—'}
+                                      </span>
+                                    )}
+                                  </div>
+                                  {/* Catégories */}
+                                  <div className="flex flex-wrap gap-0.5">
+                                    {CATEGORIES.map(cat => {
+                                      const sd = ((entry.schedule_details as ScheduleDetails | undefined) || {})[jour] || {}
+                                      const isSel = (sd as ScheduleDetail).categorie === cat.key
+                                      return (
+                                        <button key={cat.key}
+                                          onClick={e => {
+                                            e.stopPropagation()
+                                            handleScheduleDetailChange(emp.id, jour, 'categorie' as keyof ScheduleDetail, isSel ? '' : cat.key)
+                                            setTimeout(() => handleScheduleDetailBlur(emp.id), 0)
+                                          }}
+                                          className={`text-[8px] px-1 py-0.5 rounded-sm font-semibold transition-all ${
+                                            isSel ? `${cat.color} ring-1 ${cat.ring}` : 'bg-white/30 text-gray-400 hover:bg-white/60 hover:text-gray-600'
+                                          }`}
+                                        >
+                                          {cat.short}
+                                        </button>
+                                      )
+                                    })}
+                                  </div>
+                                  {/* Créneaux horaires M / S */}
+                                  <div className="border-t border-black/5 pt-0.5 space-y-0.5">
+                                    {([
+                                      { label: 'M', startF: 'matin_debut'  as keyof ScheduleDetail, endF: 'matin_fin'   as keyof ScheduleDetail },
+                                      { label: 'S', startF: 'apmidi_debut' as keyof ScheduleDetail, endF: 'apmidi_fin'  as keyof ScheduleDetail },
+                                    ]).map(({ label, startF, endF }) => {
+                                      const sd = ((entry.schedule_details as ScheduleDetails | undefined) || {})[jour] || {}
+                                      return (
+                                        <div key={label} className="flex items-center gap-0.5">
+                                          <span className={`text-[8px] font-bold w-3 text-center opacity-40 ${pal.text}`}>{label}</span>
+                                          <input
+                                            type="text" inputMode="numeric" placeholder="--:--" maxLength={5}
+                                            value={sd[startF] || ''}
+                                            onChange={e => handleScheduleDetailChange(emp.id, jour, startF, e.target.value)}
+                                            onBlur={() => handleScheduleDetailBlur(emp.id)}
+                                            className={`w-10 text-center text-[8px] rounded bg-white/50 focus:outline-none focus:bg-white/80 py-px ${pal.text}`}
+                                          />
+                                          <span className="text-[8px] text-gray-400 px-px">–</span>
+                                          <input
+                                            type="text" inputMode="numeric" placeholder="--:--" maxLength={5}
+                                            value={sd[endF] || ''}
+                                            onChange={e => handleScheduleDetailChange(emp.id, jour, endF, e.target.value)}
+                                            onBlur={() => handleScheduleDetailBlur(emp.id)}
+                                            className={`w-10 text-center text-[8px] rounded bg-white/50 focus:outline-none focus:bg-white/80 py-px ${pal.text}`}
+                                          />
+                                        </div>
+                                      )
+                                    })}
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="flex-1 flex items-center justify-center">
                                   <span className={`font-bold text-2xl ${cellTxt}`}>
                                     {fName ? '✦' : TYPE_CONFIG[type].display}
                                   </span>
-                                )}
-                              </div>
-
-                              {/* ── Créneaux horaires matin / après-midi ── */}
-                              {type === 'travail' && !fName && (
-                                <div className="pt-1.5 border-t border-black/5 space-y-0.5" onClick={e => e.stopPropagation()}>
-                                  {([
-                                    { label: 'M', startF: 'matin_debut'  as keyof ScheduleDetail, endF: 'matin_fin'   as keyof ScheduleDetail },
-                                    { label: 'S', startF: 'apmidi_debut' as keyof ScheduleDetail, endF: 'apmidi_fin'  as keyof ScheduleDetail },
-                                  ]).map(({ label, startF, endF }) => {
-                                    const sd = ((entry.schedule_details as ScheduleDetails | undefined) || {})[jour] || {}
-                                    return (
-                                      <div key={label} className="flex items-center gap-0.5">
-                                        <span className={`text-[8px] font-bold w-3 text-center opacity-40 ${pal.text}`}>{label}</span>
-                                        <input
-                                          type="text" inputMode="numeric" placeholder="--:--" maxLength={5}
-                                          value={sd[startF] || ''}
-                                          onChange={e => handleScheduleDetailChange(emp.id, jour, startF, e.target.value)}
-                                          onBlur={() => handleScheduleDetailBlur(emp.id)}
-                                          className={`w-10 text-center text-[8px] rounded bg-white/50 focus:outline-none focus:bg-white/80 py-px ${pal.text}`}
-                                        />
-                                        <span className="text-[8px] text-gray-400 px-px">–</span>
-                                        <input
-                                          type="text" inputMode="numeric" placeholder="--:--" maxLength={5}
-                                          value={sd[endF] || ''}
-                                          onChange={e => handleScheduleDetailChange(emp.id, jour, endF, e.target.value)}
-                                          onBlur={() => handleScheduleDetailBlur(emp.id)}
-                                          className={`w-10 text-center text-[8px] rounded bg-white/50 focus:outline-none focus:bg-white/80 py-px ${pal.text}`}
-                                        />
-                                      </div>
-                                    )
-                                  })}
                                 </div>
                               )}
                             </div>
