@@ -11,6 +11,14 @@ const JOURS_SHORT = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim']
 const JOURS_DB = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche'] as const
 type JourDB = typeof JOURS_DB[number]
 
+type ScheduleDetail = {
+  matin_debut?: string
+  matin_fin?: string
+  apmidi_debut?: string
+  apmidi_fin?: string
+}
+type ScheduleDetails = Partial<Record<JourDB, ScheduleDetail>>
+
 const TYPE_CONFIG: Record<DayType, {
   label: string; bg: string; text: string; dot: string; defaultHours: number; pdfColor: string; display: string
 }> = {
@@ -53,6 +61,7 @@ type PlanningEntry = {
   vendredi: number; vendredi_type: DayType
   samedi: number; samedi_type: DayType
   dimanche: number; dimanche_type: DayType
+  schedule_details?: ScheduleDetails
 }
 type EntriesMap = Record<string, PlanningEntry>
 type MonthlyStat = {
@@ -296,6 +305,21 @@ export default function PlanningPage() {
   function updateHours(empId: string, jour: JourDB, value: string) {
     const hours = value === '' ? 0 : Math.max(0, Math.min(24, parseFloat(value) || 0))
     setEntriesSync(prev => ({ ...prev, [empId]: { ...getEntry(empId), [jour]: hours } }))
+  }
+
+  function handleScheduleDetailChange(empId: string, jour: JourDB, field: keyof ScheduleDetail, value: string) {
+    const current = getEntry(empId)
+    const currentSd = ((current.schedule_details || {}) as ScheduleDetails)
+    const updated: PlanningEntry = {
+      ...current,
+      schedule_details: { ...currentSd, [jour]: { ...(currentSd[jour] || {}), [field]: value } }
+    }
+    setEntriesSync(prev => ({ ...prev, [empId]: updated }))
+  }
+
+  function handleScheduleDetailBlur(empId: string) {
+    const entry = entriesRef.current[empId] ?? emptyEntry(empId, week, year)
+    saveEntryValues(empId, entry)
   }
 
   function handleBlur(empId: string) {
@@ -559,7 +583,7 @@ export default function PlanningPage() {
                 const isWE    = i >= 5
                 const fName   = weekHolidays[i]
                 return (
-                  <th key={i} className={`px-2 py-2 text-center min-w-[110px] border-b border-r border-gray-200 ${
+                  <th key={i} className={`px-2 py-2 text-center min-w-[130px] border-b border-r border-gray-200 ${
                     isToday ? 'bg-[#1E3A5F]' : fName ? 'bg-amber-50' : isWE ? 'bg-gray-50' : 'bg-white'
                   }`}>
                     <div className={`text-xs font-bold uppercase tracking-wide ${
@@ -683,7 +707,7 @@ export default function PlanningPage() {
                         <td key={jour} className="p-0 border-b border-r border-gray-200 align-stretch group/cell">
                           <div className="relative h-full" data-cell="true" onClick={e => e.stopPropagation()}>
                             <div
-                              className={`cursor-pointer transition-colors ${cellBg} w-full h-full min-h-[80px] px-2.5 pt-2 pb-2 flex flex-col justify-between select-none hover:brightness-95`}
+                              className={`cursor-pointer transition-colors ${cellBg} w-full h-full min-h-[130px] px-2.5 pt-2 pb-2 flex flex-col justify-between select-none hover:brightness-95`}
                               onClick={() => { setContractPopover(null); setSelectedCell(isSelected ? null : { empId: emp.id, jour }) }}
                             >
                               <div className="flex items-center justify-between gap-1">
@@ -740,6 +764,38 @@ export default function PlanningPage() {
                                   </span>
                                 )}
                               </div>
+
+                              {/* ── Créneaux horaires matin / après-midi ── */}
+                              {type === 'travail' && !fName && (
+                                <div className="pt-1.5 border-t border-black/5 space-y-0.5" onClick={e => e.stopPropagation()}>
+                                  {([
+                                    { label: 'M', startF: 'matin_debut'  as keyof ScheduleDetail, endF: 'matin_fin'   as keyof ScheduleDetail },
+                                    { label: 'S', startF: 'apmidi_debut' as keyof ScheduleDetail, endF: 'apmidi_fin'  as keyof ScheduleDetail },
+                                  ]).map(({ label, startF, endF }) => {
+                                    const sd = ((entry.schedule_details as ScheduleDetails | undefined) || {})[jour] || {}
+                                    return (
+                                      <div key={label} className="flex items-center gap-0.5">
+                                        <span className={`text-[8px] font-bold w-3 text-center opacity-40 ${pal.text}`}>{label}</span>
+                                        <input
+                                          type="text" inputMode="numeric" placeholder="--:--" maxLength={5}
+                                          value={sd[startF] || ''}
+                                          onChange={e => handleScheduleDetailChange(emp.id, jour, startF, e.target.value)}
+                                          onBlur={() => handleScheduleDetailBlur(emp.id)}
+                                          className={`w-10 text-center text-[8px] rounded bg-white/50 focus:outline-none focus:bg-white/80 py-px ${pal.text}`}
+                                        />
+                                        <span className="text-[8px] text-gray-400 px-px">–</span>
+                                        <input
+                                          type="text" inputMode="numeric" placeholder="--:--" maxLength={5}
+                                          value={sd[endF] || ''}
+                                          onChange={e => handleScheduleDetailChange(emp.id, jour, endF, e.target.value)}
+                                          onBlur={() => handleScheduleDetailBlur(emp.id)}
+                                          className={`w-10 text-center text-[8px] rounded bg-white/50 focus:outline-none focus:bg-white/80 py-px ${pal.text}`}
+                                        />
+                                      </div>
+                                    )
+                                  })}
+                                </div>
+                              )}
                             </div>
 
                             {isSelected && (
