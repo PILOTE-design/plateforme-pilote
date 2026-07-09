@@ -11,7 +11,7 @@ import {
   Link2, Link2Off, RefreshCw, ArrowUpRight
 } from 'lucide-react'
 
-// ─── Types ───────────────────────────────────────────────────────────────────
+// ─── Types ─────────────────────────────────────────────────────────────────────────────
 
 type Invoice = {
   id: string; supplier_name: string; invoice_number?: string; invoice_date: string
@@ -38,7 +38,7 @@ type ProviderMeta = {
   helpUrl: string; description: string
 }
 
-// ─── Constantes ──────────────────────────────────────────────────────────────
+// ─── Constantes ────────────────────────────────────────────────────────────────────────────
 
 const CATEGORIES = [
   { key: 'viande',         label: 'Viande',         color: 'bg-red-100 text-red-800'       },
@@ -57,13 +57,13 @@ const EMPTY_INVOICE = {
 }
 
 const PROVIDERS_META: ProviderMeta[] = [
-  { id: 'pennylane', name: 'Pennylane', logo: 'PL', color: 'bg-blue-600', tokenLabel: 'Token API Pennylane', tokenPlaceholder: 'eyJhbGci...', needsCompanyId: false, helpUrl: 'https://help.pennylane.com/fr/articles/developer-api', description: 'Importation automatique des factures fournisseurs via l'API Pennylane' },
+  { id: 'pennylane', name: 'Pennylane', logo: 'PL', color: 'bg-blue-600', tokenLabel: 'Token API Pennylane', tokenPlaceholder: 'eyJhbGci...', needsCompanyId: false, helpUrl: 'https://help.pennylane.com/fr/articles/developer-api', description: 'Importation automatique des factures fournisseurs via l’API Pennylane' },
   { id: 'sage',      name: 'Sage',      logo: 'SG', color: 'bg-green-600', tokenLabel: 'Access Token Sage', tokenPlaceholder: 'Bearer token issu de Sage OAuth2', needsCompanyId: false, helpUrl: 'https://developer.sage.com/accounting/', description: 'Sage Business Cloud Comptabilité — factures achats' },
-  { id: 'cegid',     name: 'Cegid',     logo: 'CG', color: 'bg-purple-600', tokenLabel: 'Clé API Cegid', tokenPlaceholder: 'Clé depuis votre espace Cegid', needsCompanyId: true, companyIdLabel: 'ID Entreprise Cegid', helpUrl: 'https://developers.cegid.com', description: 'Cegid Loop — import automatique des factures d'achat' },
+  { id: 'cegid',     name: 'Cegid',     logo: 'CG', color: 'bg-purple-600', tokenLabel: 'Clé API Cegid', tokenPlaceholder: 'Clé depuis votre espace Cegid', needsCompanyId: true, companyIdLabel: 'ID Entreprise Cegid', helpUrl: 'https://developers.cegid.com', description: 'Cegid Loop — import automatique des factures d’achat' },
   { id: 'ebp',       name: 'EBP',       logo: 'EBP', color: 'bg-orange-500', tokenLabel: 'Token API EBP en ligne', tokenPlaceholder: 'Token depuis EBP → Paramètres → API', needsCompanyId: true, companyIdLabel: 'Identifiant dossier EBP', helpUrl: 'https://developer.ebp.com', description: 'EBP en ligne — import factures fournisseurs automatique' },
 ]
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ─── Helpers ───────────────────────────────────────────────────────────────────────────────
 
 function getISOWeek(date: Date) {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
@@ -86,7 +86,7 @@ function fmtDate(d: Date) { return d.toLocaleDateString('fr-FR', { day: 'numeric
 function fmtEuro(n: number) { return n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €' }
 function catInfo(key: string) { return CATEGORIES.find(c => c.key === key) ?? CATEGORIES[CATEGORIES.length - 1] }
 
-// ─── Composant principal ──────────────────────────────────────────────────────
+// ─── Composant principal ────────────────────────────────────────────────────────────────────
 
 export default function FacturationPage() {
   const router = useRouter()
@@ -137,6 +137,19 @@ export default function FacturationPage() {
   const loadIntegrations = useCallback(async () => {
     const res = await fetch('/api/billing-integrations').catch(() => null)
     if (res?.ok) { const data = await res.json(); setIntegrations(Array.isArray(data) ? data : []) }
+  }, [])
+
+  // Au montage : se positionner sur la semaine du dernier rapport
+  useEffect(() => {
+    fetch('/api/reports/latest-week')
+      .then(r => r.json())
+      .then((data: { week_number?: number; year?: number } | null) => {
+        if (data?.week_number && data?.year) {
+          setWeek(data.week_number)
+          setYear(data.year)
+        }
+      })
+      .catch(() => {})
   }, [])
 
   useEffect(() => { load() }, [load])
@@ -194,7 +207,6 @@ export default function FacturationPage() {
     setSyncing(null); loadIntegrations(); load()
   }
 
-  // Ouvrir la valorisation pré-remplie depuis une facture viande
   function openValorisation(inv: Invoice) {
     const qs = new URLSearchParams({
       date:      inv.invoice_date,
