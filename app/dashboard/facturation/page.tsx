@@ -11,7 +11,7 @@ import {
   Link2, Link2Off, RefreshCw, ArrowUpRight
 } from 'lucide-react'
 
-// ─── Types ─────────────────────────────────────────────────────────────────────────────
+// ─── Types ───────────────────────────────────────────────────────────────────
 
 type Invoice = {
   id: string; supplier_name: string; invoice_number?: string; invoice_date: string
@@ -38,7 +38,7 @@ type ProviderMeta = {
   helpUrl: string; description: string
 }
 
-// ─── Constantes ────────────────────────────────────────────────────────────────────────────
+// ─── Constantes ──────────────────────────────────────────────────────────────
 
 const CATEGORIES = [
   { key: 'viande',         label: 'Viande',         color: 'bg-red-100 text-red-800'       },
@@ -63,7 +63,7 @@ const PROVIDERS_META: ProviderMeta[] = [
   { id: 'ebp',       name: 'EBP',       logo: 'EBP', color: 'bg-orange-500', tokenLabel: 'Token API EBP en ligne', tokenPlaceholder: 'Token depuis EBP → Paramètres → API', needsCompanyId: true, companyIdLabel: 'Identifiant dossier EBP', helpUrl: 'https://developer.ebp.com', description: 'EBP en ligne — import factures fournisseurs automatique' },
 ]
 
-// ─── Helpers ───────────────────────────────────────────────────────────────────────────────
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function getISOWeek(date: Date) {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
@@ -86,7 +86,7 @@ function fmtDate(d: Date) { return d.toLocaleDateString('fr-FR', { day: 'numeric
 function fmtEuro(n: number) { return n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €' }
 function catInfo(key: string) { return CATEGORIES.find(c => c.key === key) ?? CATEGORIES[CATEGORIES.length - 1] }
 
-// ─── Composant principal ────────────────────────────────────────────────────────────────────
+// ─── Composant principal ──────────────────────────────────────────────────────
 
 export default function FacturationPage() {
   const router = useRouter()
@@ -207,6 +207,7 @@ export default function FacturationPage() {
     setSyncing(null); loadIntegrations(); load()
   }
 
+  // Ouvrir la valorisation pré-remplie depuis une facture viande
   function openValorisation(inv: Invoice) {
     const qs = new URLSearchParams({
       date:      inv.invoice_date,
@@ -335,7 +336,7 @@ export default function FacturationPage() {
             summary.resultat_net >= 0 ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'
           }`}>
             <div>
-              <p className="text-xs font-bold uppercase tracking-wider text-gray-500">Résultat net estimé (après charges salariales)</p>
+              <p className="text-xs font-bold uppercase tracking-wider text-gray-500">Résultat net estimé (après achats et charges salariales)</p>
               <p className="text-3xl font-extrabold mt-0.5 text-gray-900">{fmtEuro(summary.resultat_net)}</p>
               <p className="text-xs text-gray-400 mt-0.5">CA {fmtEuro(summary.ca_total)} − Achats {fmtEuro(summary.achats_ht)} − Salaires {fmtEuro(summary.masse_salariale)}</p>
             </div>
