@@ -198,8 +198,7 @@ export default function PlanningPage() {
   const [employees, setEmployees] = useState<Employee[]>([])
   const [entries, setEntries]     = useState<EntriesMap>({})
   const entriesRef = useRef<EntriesMap>({})
-  const [selectedCell,   setSelectedCell]   = useState<{ empId: string; jour: JourDB } | null>(null)
-  const [editingCell,    setEditingCell]     = useState<{ empId: string; jour: JourDB } | null>(null)
+  const [detailModal,    setDetailModal]     = useState<{ empId: string; jour: JourDB; idx: number } | null>(null)
   const [contractPopover,setContractPopover] = useState<string | null>(null)
   const [loadingEmployees, setLoadingEmployees] = useState(true)
   const [showAdd,      setShowAdd]      = useState(false)
@@ -234,7 +233,7 @@ export default function PlanningPage() {
   }
 
   useEffect(() => {
-    const close = () => { setSelectedCell(null); setContractPopover(null) }
+    const close = () => setContractPopover(null)
     document.addEventListener('click', close)
     return () => document.removeEventListener('click', close)
   }, [])
@@ -305,7 +304,6 @@ export default function PlanningPage() {
       [jour]: newType === 'travail' ? currentH : TYPE_CONFIG[newType].defaultHours,
     }
     setEntriesSync(prev => ({ ...prev, [empId]: updated }))
-    setSelectedCell(null); setEditingCell(null)
     await saveEntryValues(empId, updated)
     refreshCpUsed()
   }
@@ -332,7 +330,6 @@ export default function PlanningPage() {
 
   function handleBlur(empId: string) {
     saveEntryValues(empId, entriesRef.current[empId] ?? emptyEntry(empId, week, year))
-    setEditingCell(null)
   }
 
   async function addEmployee() {
@@ -473,11 +470,9 @@ export default function PlanningPage() {
         const type   = (entry[`${j}_type` as keyof PlanningEntry] as DayType) || (idx >= 5 ? 'repos' : 'travail')
         const h      = entry[j] || 0
         const fName  = weekHolidays[idx]
-        const sd     = ((entry.schedule_details as ScheduleDetails | undefined) || {})[j] || {}
-        const catName = CATEGORIES.find(c => c.key === (sd as ScheduleDetail).categorie)?.short ?? ''
         const bg     = fName ? '#fef3c7' : type === 'travail' ? pal.lightHex : TYPE_CONFIG[type].pdfColor
         const label  = type === 'travail'
-          ? (h > 0 ? `<strong>${h}h</strong>${catName ? `<br><span style="font-size:8px;">${catName}</span>` : ''}` : '—')
+          ? (h > 0 ? `<strong>${h}h</strong>` : '—')
           : `<span style="font-size:9px;">${TYPE_CONFIG[type].label}</span>`
         return `<td style="padding:6px 4px;text-align:center;background:${bg};border-bottom:1px solid #e2e8f0;border-right:1px solid #e2e8f0;">${label}${fName ? `<br><span style="font-size:8px;color:#92400e;">Férié</span>` : ''}</td>`
       }).join('')
@@ -701,25 +696,26 @@ export default function PlanningPage() {
 
                     {/* Day cells */}
                     {JOURS_DB.map((jour, idx) => {
-                      const typeKey = `${jour}_type` as keyof PlanningEntry
-                      const type    = (entry[typeKey] as DayType) || (idx >= 5 ? 'repos' : 'travail')
-                      const hours   = entry[jour] || 0
-                      const isSelected = selectedCell?.empId === emp.id && selectedCell?.jour === jour
-                      const isEditing  = editingCell?.empId  === emp.id && editingCell?.jour  === jour
-                      const fName   = weekHolidays[idx]
+                      const typeKey  = `${jour}_type` as keyof PlanningEntry
+                      const type     = (entry[typeKey] as DayType) || (idx >= 5 ? 'repos' : 'travail')
+                      const hours    = entry[jour] || 0
+                      const fName    = weekHolidays[idx]
+                      const sd: ScheduleDetail = ((entry.schedule_details as ScheduleDetails | undefined) || {})[jour] || {}
+                      const catSel   = CATEGORIES.find(c => c.key === sd.categorie)
 
-                      const cellBg  = fName ? 'bg-amber-50'    : type === 'travail' ? pal.bg    : TYPE_CONFIG[type].bg
-                      const cellTxt = fName ? 'text-amber-800' : type === 'travail' ? pal.text  : TYPE_CONFIG[type].text
-                      const cellDot = fName ? 'bg-amber-400'   : type === 'travail' ? pal.dot   : TYPE_CONFIG[type].dot
+                      const cellBg   = fName ? 'bg-amber-50'    : type === 'travail' ? pal.bg   : TYPE_CONFIG[type].bg
+                      const cellTxt  = fName ? 'text-amber-800' : type === 'travail' ? pal.text : TYPE_CONFIG[type].text
+                      const cellDot  = fName ? 'bg-amber-400'   : type === 'travail' ? pal.dot  : TYPE_CONFIG[type].dot
                       const typeLabel = fName ? 'Férié' : type === 'travail' ? 'Travail' : TYPE_CONFIG[type].label
 
                       return (
                         <td key={jour} className="p-0 border-b border-r border-gray-200 align-stretch group/cell">
                           <div className="relative h-full" data-cell="true" onClick={e => e.stopPropagation()}>
                             <div
-                              className={`cursor-pointer transition-colors ${cellBg} w-full h-full min-h-[130px] px-2.5 pt-2 pb-2 flex flex-col justify-between select-none hover:brightness-95`}
-                              onClick={() => { setContractPopover(null); setSelectedCell(isSelected ? null : { empId: emp.id, jour }) }}
+                              className={`cursor-pointer transition-colors ${cellBg} w-full h-full min-h-[110px] px-2 pt-2 pb-2 flex flex-col select-none hover:brightness-95`}
+                              onClick={e => { e.stopPropagation(); setContractPopover(null); setDetailModal({ empId: emp.id, jour, idx }) }}
                             >
+                              {/* ── Top: type + copy ── */}
                               <div className="flex items-center justify-between gap-1">
                                 <div className="flex items-center gap-1 min-w-0">
                                   <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cellDot}`} />
@@ -750,79 +746,23 @@ export default function PlanningPage() {
                                   </div>
                                 )}
                               </div>
-                              {/* ── Contenu principal de la cellule ── */}
+
+                              {/* ── Centre: résumé ── */}
                               {!fName && type === 'travail' ? (
-                                <div className="flex-1 flex flex-col gap-1 pt-1 pb-0.5" onClick={e => e.stopPropagation()}>
-                                  {/* Heures (petites, éditables) */}
-                                  <div className="flex items-center gap-1">
-                                    <span className="text-[9px] text-gray-400 opacity-70">h :</span>
-                                    {isEditing ? (
-                                      <input autoFocus type="number" min="0" max="24" step="0.5"
-                                        value={hours || ''}
-                                        onChange={e => updateHours(emp.id, jour, e.target.value)}
-                                        onBlur={() => handleBlur(emp.id)}
-                                        onClick={e => e.stopPropagation()}
-                                        className={`w-10 text-center text-xs font-bold bg-transparent focus:outline-none border-b border-current ${pal.text}`}
-                                        placeholder="0"
-                                      />
-                                    ) : (
-                                      <span onClick={e => { e.stopPropagation(); setEditingCell({ empId: emp.id, jour }) }}
-                                        className={`text-xs font-bold cursor-text ${pal.text}`}
-                                      >
-                                        {hours > 0 ? `${hours}h` : '—'}
-                                      </span>
-                                    )}
-                                  </div>
-                                  {/* Catégories */}
-                                  <div className="flex flex-wrap gap-0.5">
-                                    {CATEGORIES.map(cat => {
-                                      const sd = ((entry.schedule_details as ScheduleDetails | undefined) || {})[jour] || {}
-                                      const isSel = (sd as ScheduleDetail).categorie === cat.key
-                                      return (
-                                        <button key={cat.key}
-                                          onClick={e => {
-                                            e.stopPropagation()
-                                            handleScheduleDetailChange(emp.id, jour, 'categorie' as keyof ScheduleDetail, isSel ? '' : cat.key)
-                                            setTimeout(() => handleScheduleDetailBlur(emp.id), 0)
-                                          }}
-                                          className={`text-[8px] px-1 py-0.5 rounded-sm font-semibold transition-all ${
-                                            isSel ? `${cat.color} ring-1 ${cat.ring}` : 'bg-white/30 text-gray-400 hover:bg-white/60 hover:text-gray-600'
-                                          }`}
-                                        >
-                                          {cat.short}
-                                        </button>
-                                      )
-                                    })}
-                                  </div>
-                                  {/* Créneaux horaires M / S */}
-                                  <div className="border-t border-black/5 pt-0.5 space-y-0.5">
-                                    {([
-                                      { label: 'M', startF: 'matin_debut'  as keyof ScheduleDetail, endF: 'matin_fin'   as keyof ScheduleDetail },
-                                      { label: 'S', startF: 'apmidi_debut' as keyof ScheduleDetail, endF: 'apmidi_fin'  as keyof ScheduleDetail },
-                                    ]).map(({ label, startF, endF }) => {
-                                      const sd = ((entry.schedule_details as ScheduleDetails | undefined) || {})[jour] || {}
-                                      return (
-                                        <div key={label} className="flex items-center gap-0.5">
-                                          <span className={`text-[8px] font-bold w-3 text-center opacity-40 ${pal.text}`}>{label}</span>
-                                          <input
-                                            type="text" inputMode="numeric" placeholder="--:--" maxLength={5}
-                                            value={sd[startF] || ''}
-                                            onChange={e => handleScheduleDetailChange(emp.id, jour, startF, e.target.value)}
-                                            onBlur={() => handleScheduleDetailBlur(emp.id)}
-                                            className={`w-10 text-center text-[8px] rounded bg-white/50 focus:outline-none focus:bg-white/80 py-px ${pal.text}`}
-                                          />
-                                          <span className="text-[8px] text-gray-400 px-px">–</span>
-                                          <input
-                                            type="text" inputMode="numeric" placeholder="--:--" maxLength={5}
-                                            value={sd[endF] || ''}
-                                            onChange={e => handleScheduleDetailChange(emp.id, jour, endF, e.target.value)}
-                                            onBlur={() => handleScheduleDetailBlur(emp.id)}
-                                            className={`w-10 text-center text-[8px] rounded bg-white/50 focus:outline-none focus:bg-white/80 py-px ${pal.text}`}
-                                          />
-                                        </div>
-                                      )
-                                    })}
-                                  </div>
+                                <div className="flex-1 flex flex-col items-center justify-center gap-1 py-1">
+                                  {catSel && (
+                                    <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold ${catSel.color}`}>
+                                      {catSel.short}
+                                    </span>
+                                  )}
+                                  <span className={`text-sm font-bold ${pal.text}`}>
+                                    {hours > 0 ? `${hours}h` : '—'}
+                                  </span>
+                                  {(sd.matin_debut || sd.apmidi_debut) && (
+                                    <span className={`text-[8px] opacity-50 ${pal.text}`}>
+                                      {sd.matin_debut || '--:--'} → {sd.apmidi_fin || sd.matin_fin || '--:--'}
+                                    </span>
+                                  )}
                                 </div>
                               ) : (
                                 <div className="flex-1 flex items-center justify-center">
@@ -832,27 +772,6 @@ export default function PlanningPage() {
                                 </div>
                               )}
                             </div>
-
-                            {isSelected && (
-                              <div className="absolute top-full left-0 z-40 mt-1 bg-white rounded-xl shadow-2xl border border-gray-100 p-1.5 min-w-[168px]" data-cell="true" onClick={e => e.stopPropagation()}>
-                                {([
-                                  { key: 'travail' as DayType, label: 'Travail',       dot: pal.dot         },
-                                  { key: 'conges'  as DayType, label: 'Congé payé',    dot: 'bg-sky-400'    },
-                                  { key: 'maladie' as DayType, label: 'Arrêt maladie', dot: 'bg-red-400'    },
-                                  { key: 'repos'   as DayType, label: 'Repos',         dot: 'bg-gray-300'   },
-                                ]).map(opt => (
-                                  <button key={opt.key} onClick={() => changeType(emp.id, jour, opt.key)}
-                                    className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-left text-sm transition-colors ${
-                                      type === opt.key ? 'bg-gray-100 font-semibold text-gray-900' : 'hover:bg-gray-50 text-gray-600'
-                                    }`}
-                                  >
-                                    <div className={`w-2.5 h-2.5 rounded-sm flex-shrink-0 ${opt.dot}`} />
-                                    {opt.label}
-                                    {type === opt.key && <span className="ml-auto text-gray-400 text-xs">✓</span>}
-                                  </button>
-                                ))}
-                              </div>
-                            )}
                           </div>
                         </td>
                       )
@@ -924,6 +843,144 @@ export default function PlanningPage() {
           </p>
         </div>
       )}
+
+      {/* ── Detail Modal ── */}
+      {detailModal && (() => {
+        const mEmpIdx = employees.findIndex(e => e.id === detailModal.empId)
+        if (mEmpIdx < 0) return null
+        const mEmp   = employees[mEmpIdx]
+        const mPal   = EMP_PALETTES[mEmpIdx % EMP_PALETTES.length]
+        const mEntry = getEntryState(detailModal.empId)
+        const mJour  = detailModal.jour
+        const mIdx   = detailModal.idx
+        const mType  = (mEntry[`${mJour}_type` as keyof PlanningEntry] as DayType) || (mIdx >= 5 ? 'repos' : 'travail')
+        const mHours = (mEntry[mJour] as number) || 0
+        const mSd: ScheduleDetail = ((mEntry.schedule_details as ScheduleDetails | undefined) || {})[mJour] || {}
+        const mDate  = weekDates[mIdx]
+        const mFName = weekHolidays[mIdx]
+
+        return (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 backdrop-blur-sm" onClick={() => setDetailModal(null)}>
+            <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+
+              {/* Header coloré */}
+              <div className={`px-5 py-4 ${mPal.bg} border-l-4 ${mPal.lborder.split(' ').slice(1).join(' ')} flex items-center justify-between`}>
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-white/70 flex items-center justify-center flex-shrink-0">
+                    <span className={`text-sm font-bold ${mPal.text}`}>{initials(mEmp.name)}</span>
+                  </div>
+                  <div>
+                    <div className={`font-bold text-base ${mPal.text}`}>{mEmp.name}</div>
+                    <div className={`text-xs opacity-60 ${mPal.text}`}>
+                      {JOURS_SHORT[mIdx]} {mDate.getUTCDate()} {mDate.toLocaleDateString('fr-FR', { month: 'long', timeZone: 'UTC' })}
+                      {mFName && ` · ${mFName}`}
+                    </div>
+                  </div>
+                </div>
+                <button onClick={() => setDetailModal(null)} className="p-1.5 rounded-lg hover:bg-black/10 transition-colors">
+                  <X className="w-4 h-4 text-gray-600" />
+                </button>
+              </div>
+
+              <div className="p-5 space-y-5">
+                {/* Type */}
+                <div>
+                  <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-2">Type de journée</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {(['travail', 'conges', 'maladie', 'repos'] as DayType[]).map(t => (
+                      <button key={t}
+                        onClick={() => changeType(detailModal.empId, mJour, t)}
+                        className={`py-2 px-3 rounded-xl border-2 text-sm font-semibold transition-all text-left flex items-center gap-2 ${
+                          mType === t ? 'border-[#1E3A5F] bg-[#1E3A5F] text-white' : 'border-gray-200 text-gray-600 hover:border-gray-300 bg-white'
+                        }`}
+                      >
+                        <div className={`w-2 h-2 rounded-sm flex-shrink-0 ${mType === t ? 'bg-white' : t === 'travail' ? mPal.dot : TYPE_CONFIG[t].dot}`} />
+                        {t === 'travail' ? 'Travail' : TYPE_CONFIG[t].label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {mType === 'travail' && !mFName && (
+                  <>
+                    {/* Heures */}
+                    <div>
+                      <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-2">Heures travaillées</p>
+                      <div className="flex items-center gap-2">
+                        <input type="number" min="0" max="24" step="0.5"
+                          value={mHours || ''}
+                          onChange={e => updateHours(detailModal.empId, mJour, e.target.value)}
+                          onBlur={() => handleBlur(detailModal.empId)}
+                          className={`w-20 text-center text-xl font-bold border-2 border-gray-200 rounded-xl focus:outline-none focus:border-[#1E3A5F] py-2 transition-colors ${mPal.text}`}
+                          placeholder="0"
+                        />
+                        <span className="text-gray-400 text-sm">heures</span>
+                      </div>
+                    </div>
+
+                    {/* Catégorie */}
+                    <div>
+                      <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-2">Catégorie</p>
+                      <div className="flex flex-wrap gap-2">
+                        {CATEGORIES.map(cat => {
+                          const isSel = mSd.categorie === cat.key
+                          return (
+                            <button key={cat.key}
+                              onClick={() => {
+                                handleScheduleDetailChange(detailModal.empId, mJour, 'categorie' as keyof ScheduleDetail, isSel ? '' : cat.key)
+                                setTimeout(() => handleScheduleDetailBlur(detailModal.empId), 0)
+                              }}
+                              className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-all ${
+                                isSel ? `${cat.color} ring-2 ${cat.ring}` : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                              }`}
+                            >
+                              {cat.short}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Horaires */}
+                    <div>
+                      <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-3">Horaires</p>
+                      <div className="space-y-3">
+                        {([
+                          { label: 'Matin',       startF: 'matin_debut'  as keyof ScheduleDetail, endF: 'matin_fin'  as keyof ScheduleDetail },
+                          { label: 'Après-midi',  startF: 'apmidi_debut' as keyof ScheduleDetail, endF: 'apmidi_fin' as keyof ScheduleDetail },
+                        ]).map(({ label, startF, endF }) => (
+                          <div key={label} className="flex items-center gap-3">
+                            <span className="text-sm font-medium text-gray-600 w-24">{label}</span>
+                            <input type="text" inputMode="numeric" placeholder="--:--" maxLength={5}
+                              value={mSd[startF] || ''}
+                              onChange={e => handleScheduleDetailChange(detailModal.empId, mJour, startF, e.target.value)}
+                              onBlur={() => handleScheduleDetailBlur(detailModal.empId)}
+                              className="w-16 text-center text-sm border-2 border-gray-200 rounded-lg focus:outline-none focus:border-[#1E3A5F] py-1.5 transition-colors"
+                            />
+                            <span className="text-gray-400">→</span>
+                            <input type="text" inputMode="numeric" placeholder="--:--" maxLength={5}
+                              value={mSd[endF] || ''}
+                              onChange={e => handleScheduleDetailChange(detailModal.empId, mJour, endF, e.target.value)}
+                              onBlur={() => handleScheduleDetailBlur(detailModal.empId)}
+                              className="w-16 text-center text-sm border-2 border-gray-200 rounded-lg focus:outline-none focus:border-[#1E3A5F] py-1.5 transition-colors"
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              <div className="px-5 pb-5 flex justify-end">
+                <Button onClick={() => setDetailModal(null)} className="bg-[#1E3A5F] hover:bg-[#2a4f7c] text-white px-6">
+                  Fermer
+                </Button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       {/* ── Récap mensuel modal ── */}
       {showMonthly && (
