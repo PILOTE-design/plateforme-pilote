@@ -59,7 +59,6 @@ export const pennylane: BillingProvider = {
 
   async testConnection(token) {
     try {
-      // Test token validity + scope supplier_invoices en un seul appel v2
       const res = await fetch(`${BASE}/supplier_invoices?limit=1`, {
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       })
@@ -75,18 +74,15 @@ export const pennylane: BillingProvider = {
     const dateTo   = fmt(to)
 
     try {
-      // Pennylane API v2 — pagination curseur, filtres gteq/lteq
+      // Pennylane API v2 : filter doit être un JSON string (pas bracket notation)
       const allInvoices: ProviderInvoice[] = []
       let cursor: string | null = null
       let page = 0
       const MAX_PAGES = 10
 
       do {
-        const params = new URLSearchParams({
-          'filter[date][gteq]': dateFrom,
-          'filter[date][lteq]': dateTo,
-          'limit': '100',
-        })
+        const filter = JSON.stringify({ date: { gteq: dateFrom, lteq: dateTo } })
+        const params = new URLSearchParams({ filter, limit: '100' })
         if (cursor) params.set('cursor', cursor)
 
         const data = await apiFetch(token, `/supplier_invoices?${params.toString()}`)
@@ -97,7 +93,6 @@ export const pennylane: BillingProvider = {
           .filter((i: ProviderInvoice) => i.amount_ht > 0)
         allInvoices.push(...mapped)
 
-        // Récupérer le curseur de la page suivante (plusieurs formats possibles)
         cursor = data?.metadata?.next_cursor
           ?? data?.next_cursor
           ?? data?.meta?.cursor?.next
