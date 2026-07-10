@@ -211,6 +211,34 @@ function combineTime(h: string, m: string): string {
   return `${h}h${m}`
 }
 
+function parseTimeToHours(t: string): number | null {
+  if (!t) return null
+  const trimmed = t.trim()
+  const hIdx = trimmed.indexOf('h')
+  if (hIdx === -1) {
+    const n = parseFloat(trimmed)
+    return isNaN(n) ? null : n
+  }
+  const h = parseInt(trimmed.slice(0, hIdx)) || 0
+  const mStr = trimmed.slice(hIdx + 1)
+  const m = mStr ? parseInt(mStr) || 0 : 0
+  return h + m / 60
+}
+
+function calcSlotDuration(debut: string, fin: string): number | null {
+  const s = parseTimeToHours(debut)
+  const e = parseTimeToHours(fin)
+  if (s === null || e === null || e <= s) return null
+  return e - s
+}
+
+function calcHoursFromSd(sd: ScheduleDetail): number | null {
+  const matin  = calcSlotDuration(sd.matin_debut  || '', sd.matin_fin  || '')
+  const apmidi = calcSlotDuration(sd.apmidi_debut || '', sd.apmidi_fin || '')
+  if (matin === null && apmidi === null) return null
+  return (matin || 0) + (apmidi || 0)
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function PlanningPage() {
@@ -341,9 +369,12 @@ export default function PlanningPage() {
   function handleScheduleDetailChange(empId: string, jour: JourDB, field: keyof ScheduleDetail, value: string) {
     const current = getEntry(empId)
     const currentSd = ((current.schedule_details || {}) as ScheduleDetails)
+    const newDaySd = { ...(currentSd[jour] || {}), [field]: value }
+    const computedH = calcHoursFromSd(newDaySd)
     const updated: PlanningEntry = {
       ...current,
-      schedule_details: { ...currentSd, [jour]: { ...(currentSd[jour] || {}), [field]: value } }
+      schedule_details: { ...currentSd, [jour]: newDaySd },
+      ...(computedH !== null ? { [jour]: computedH } : {}),
     }
     setEntriesSync(prev => ({ ...prev, [empId]: updated }))
   }
@@ -812,9 +843,15 @@ export default function PlanningPage() {
 
                                   {/* Total heures */}
                                   <div className="flex justify-center mt-0.5">
-                                    <span className={`text-sm font-bold ${hours > 0 ? pal.text : 'text-gray-300'}`}>
-                                      {hours > 0 ? fmtH(hours) : '—'}
-                                    </span>
+                                    {(() => {
+                                      const computed = calcHoursFromSd(sd)
+                                      const displayH = computed !== null ? computed : hours
+                                      return (
+                                        <span className={`text-sm font-bold ${displayH > 0 ? pal.text : 'text-gray-300'}`}>
+                                          {displayH > 0 ? fmtH(displayH) : '—'}
+                                        </span>
+                                      )
+                                    })()}
                                   </div>
                                 </div>
                               ) : (
@@ -959,21 +996,6 @@ export default function PlanningPage() {
 
                 {mType === 'travail' && !mFName && (
                   <div className="space-y-3.5">
-
-                    {/* Durée */}
-                    <div className="flex items-center gap-3">
-                      <span className="text-xs text-gray-400 w-20 shrink-0">Durée</span>
-                      <div className="flex items-center gap-2">
-                        <input type="number" min="0" max="24" step="0.5"
-                          value={mHours || ''}
-                          onChange={e => updateHours(detailModal.empId, mJour, e.target.value)}
-                          onBlur={() => handleBlur(detailModal.empId)}
-                          className="w-14 text-center text-sm font-bold text-gray-900 border border-gray-300 rounded-lg py-1.5 focus:outline-none focus:border-gray-500 transition-colors"
-                          placeholder="0"
-                        />
-                        <span className="text-xs text-gray-400">heures</span>
-                      </div>
-                    </div>
 
                     {/* Poste */}
                     <div className="flex items-start gap-3">
