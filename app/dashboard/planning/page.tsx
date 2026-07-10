@@ -199,6 +199,18 @@ function fmtH(h: number): string {
   return `${sign}${hInt}h${String(min).padStart(2, '0')}`
 }
 
+/** Extrait la partie heures ou minutes d'un horaire stocké "8h30" */
+function parseTimePart(val: string, part: 'h' | 'm'): string {
+  if (!val) return ''
+  const idx = val.indexOf('h')
+  if (idx === -1) return part === 'h' ? val : ''
+  return part === 'h' ? val.slice(0, idx) : val.slice(idx + 1)
+}
+
+function combineTime(h: string, m: string): string {
+  return `${h}h${m}`
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function PlanningPage() {
@@ -980,26 +992,58 @@ export default function PlanningPage() {
                     {/* Horaires */}
                     <div className="flex items-start gap-3">
                       <span className="text-xs text-gray-400 w-20 shrink-0 pt-1.5">Horaires</span>
-                      <div className="space-y-2 flex-1">
+                      <div className="space-y-2">
                         {([
                           { label: 'Matin',      startF: 'matin_debut'  as keyof ScheduleDetail, endF: 'matin_fin'  as keyof ScheduleDetail },
                           { label: 'Après-midi', startF: 'apmidi_debut' as keyof ScheduleDetail, endF: 'apmidi_fin' as keyof ScheduleDetail },
                         ]).map(({ label, startF, endF }) => (
-                          <div key={label} className="flex items-center gap-2">
+                          <div key={label} className="flex items-center gap-1.5">
                             <span className="text-[11px] text-gray-500 font-medium w-16 shrink-0">{label}</span>
-                            <input type="text" inputMode="numeric" placeholder="--:--" maxLength={5}
-                              value={mSd[startF] || ''}
-                              onChange={e => handleScheduleDetailChange(detailModal.empId, mJour, startF, e.target.value)}
-                              onBlur={() => handleScheduleDetailBlur(detailModal.empId)}
-                              className="w-14 text-center text-xs text-gray-900 font-semibold border border-gray-300 rounded-lg py-1.5 focus:outline-none focus:border-gray-500 transition-colors"
-                            />
+                            {/* Début */}
+                            <div className="flex items-center border border-gray-300 rounded-lg overflow-hidden focus-within:border-gray-500 transition-colors">
+                              <input type="text" inputMode="numeric" placeholder="--" maxLength={2}
+                                value={parseTimePart(mSd[startF] || '', 'h')}
+                                onChange={e => {
+                                  const m = parseTimePart(mSd[startF] || '', 'm')
+                                  handleScheduleDetailChange(detailModal.empId, mJour, startF, combineTime(e.target.value, m))
+                                }}
+                                onBlur={() => handleScheduleDetailBlur(detailModal.empId)}
+                                className="w-6 text-right text-xs text-gray-900 font-semibold py-1.5 pl-1 focus:outline-none bg-transparent"
+                              />
+                              <span className="text-[11px] font-bold text-gray-400 select-none px-px">h</span>
+                              <input type="text" inputMode="numeric" placeholder="--" maxLength={2}
+                                value={parseTimePart(mSd[startF] || '', 'm')}
+                                onChange={e => {
+                                  const h = parseTimePart(mSd[startF] || '', 'h')
+                                  handleScheduleDetailChange(detailModal.empId, mJour, startF, combineTime(h, e.target.value))
+                                }}
+                                onBlur={() => handleScheduleDetailBlur(detailModal.empId)}
+                                className="w-7 text-left text-xs text-gray-900 font-semibold py-1.5 pr-1 focus:outline-none bg-transparent"
+                              />
+                            </div>
                             <span className="text-gray-400 text-xs">→</span>
-                            <input type="text" inputMode="numeric" placeholder="--:--" maxLength={5}
-                              value={mSd[endF] || ''}
-                              onChange={e => handleScheduleDetailChange(detailModal.empId, mJour, endF, e.target.value)}
-                              onBlur={() => handleScheduleDetailBlur(detailModal.empId)}
-                              className="w-14 text-center text-xs text-gray-900 font-semibold border border-gray-300 rounded-lg py-1.5 focus:outline-none focus:border-gray-500 transition-colors"
-                            />
+                            {/* Fin */}
+                            <div className="flex items-center border border-gray-300 rounded-lg overflow-hidden focus-within:border-gray-500 transition-colors">
+                              <input type="text" inputMode="numeric" placeholder="--" maxLength={2}
+                                value={parseTimePart(mSd[endF] || '', 'h')}
+                                onChange={e => {
+                                  const m = parseTimePart(mSd[endF] || '', 'm')
+                                  handleScheduleDetailChange(detailModal.empId, mJour, endF, combineTime(e.target.value, m))
+                                }}
+                                onBlur={() => handleScheduleDetailBlur(detailModal.empId)}
+                                className="w-6 text-right text-xs text-gray-900 font-semibold py-1.5 pl-1 focus:outline-none bg-transparent"
+                              />
+                              <span className="text-[11px] font-bold text-gray-400 select-none px-px">h</span>
+                              <input type="text" inputMode="numeric" placeholder="--" maxLength={2}
+                                value={parseTimePart(mSd[endF] || '', 'm')}
+                                onChange={e => {
+                                  const h = parseTimePart(mSd[endF] || '', 'h')
+                                  handleScheduleDetailChange(detailModal.empId, mJour, endF, combineTime(h, e.target.value))
+                                }}
+                                onBlur={() => handleScheduleDetailBlur(detailModal.empId)}
+                                className="w-7 text-left text-xs text-gray-900 font-semibold py-1.5 pr-1 focus:outline-none bg-transparent"
+                              />
+                            </div>
                           </div>
                         ))}
                       </div>
