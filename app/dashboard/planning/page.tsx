@@ -31,7 +31,7 @@ const TYPE_CONFIG: Record<DayType, {
   label: string; bg: string; text: string; dot: string; defaultHours: number; pdfColor: string; display: string
 }> = {
   travail: { label: 'Travail',        bg: '',            text: '',              dot: '',           defaultHours: 0, pdfColor: '',        display: '' },
-  conges:  { label: 'Congé payé',    bg: 'bg-sky-100',  text: 'text-sky-800',  dot: 'bg-sky-400', defaultHours: 7, pdfColor: '#bae6fd', display: '7h' },
+  conges:  { label: 'Congé payé',    bg: 'bg-sky-100',  text: 'text-sky-800',  dot: 'bg-sky-400', defaultHours: 7, pdfColor: '#bae6fd', display: 'CP' },
   maladie: { label: 'Arrêt maladie', bg: 'bg-red-100',  text: 'text-red-800',  dot: 'bg-red-400', defaultHours: 0, pdfColor: '#fecaca', display: 'AM' },
   repos:   { label: 'Repos',          bg: 'bg-gray-100', text: 'text-gray-400', dot: 'bg-gray-300', defaultHours: 0, pdfColor: '#f3f4f6', display: '—' },
 }
@@ -160,15 +160,16 @@ function contractLabel(ct: string | undefined) {
   return CONTRACT_TYPES.find(c => c.key === ct)?.short ?? (ct ?? 'CDI 35h')
 }
 
-function calcTotalH(entry: PlanningEntry) {
+function calcTotalH(entry: PlanningEntry, contractH = 35) {
+  const dailyCP = contractH / 5
   return JOURS_DB.reduce((s, j) => {
     const t = (entry[`${j}_type` as keyof PlanningEntry] as DayType) || 'travail'
-    return s + (t === 'travail' ? (entry[j] || 0) : t === 'conges' ? 7 : 0)
+    return s + (t === 'travail' ? (entry[j] || 0) : t === 'conges' ? dailyCP : 0)
   }, 0)
 }
 
 function calcCost(entry: PlanningEntry, rate: number, contractH: number) {
-  const totalH = calcTotalH(entry)
+  const totalH = calcTotalH(entry, contractH)
   const t2 = contractH + 8
   if (totalH <= contractH) return totalH * rate
   if (totalH <= t2) return contractH * rate + (totalH - contractH) * rate * 1.25
@@ -299,9 +300,12 @@ export default function PlanningPage() {
   async function changeType(empId: string, jour: JourDB, newType: DayType) {
     const typeKey = `${jour}_type` as keyof PlanningEntry
     const currentH = getEntry(empId)[jour] || 0
+    const emp = employees.find(e => e.id === empId)
+    const dailyCP = Math.round(((emp?.contract_hours || 35) / 5) * 10) / 10
+    const newH = newType === 'travail' ? currentH : newType === 'conges' ? dailyCP : TYPE_CONFIG[newType].defaultHours
     const updated: PlanningEntry = {
       ...getEntry(empId), [typeKey]: newType,
-      [jour]: newType === 'travail' ? currentH : TYPE_CONFIG[newType].defaultHours,
+      [jour]: newH,
     }
     setEntriesSync(prev => ({ ...prev, [empId]: updated }))
     await saveEntryValues(empId, updated)
@@ -427,7 +431,7 @@ export default function PlanningPage() {
           if (!stats[entry.employee_id]) stats[entry.employee_id] = { hours: 0, cost: 0, worked: 0, cp: 0, sick: 0 }
           const emp = employees.find(e => e.id === entry.employee_id)
           if (!emp) continue
-          stats[entry.employee_id].hours += calcTotalH(entry)
+          stats[entry.employee_id].hours += calcTotalH(entry, emp.contract_hours || 35)
           stats[entry.employee_id].cost  += calcCost(entry, Number(emp.hourly_rate), emp.contract_hours || 35)
           for (const jour of JOURS_DB) {
             const t = (entry[`${jour}_type`] as DayType) || 'travail'
@@ -447,7 +451,7 @@ export default function PlanningPage() {
   const rowStats  = employees.map(emp => {
     const e  = getEntryState(emp.id)
     const ch = emp.contract_hours || 35
-    return { empId: emp.id, totalH: calcTotalH(e), cost: calcCost(e, Number(emp.hourly_rate), ch) }
+    return { empId: emp.id, totalH: calcTotalH(e, ch), cost: calcCost(e, Number(emp.hourly_rate), ch) }
   })
   const grandH    = rowStats.reduce((s, r) => s + r.totalH, 0)
   const grandCost = rowStats.reduce((s, r) => s + r.cost, 0)
@@ -464,7 +468,7 @@ export default function PlanningPage() {
       const pal    = EMP_PALETTES[i % EMP_PALETTES.length]
       const entry  = getEntryState(emp.id)
       const ch     = emp.contract_hours || 35
-      const totalH = calcTotalH(entry)
+      const totalH = calcTotalH(entry, ch)
       const cost   = calcCost(entry, Number(emp.hourly_rate), ch)
       const cells  = JOURS_DB.map((j, idx) => {
         const type   = (entry[`${j}_type` as keyof PlanningEntry] as DayType) || (idx >= 5 ? 'repos' : 'travail')
@@ -494,7 +498,7 @@ export default function PlanningPage() {
   <div style="text-align:right;"><div style="font-size:10px;color:#64748b;">Coût main d'œuvre</div><div style="font-size:16px;font-weight:800;color:#15803d;">${grandCost.toFixed(2)} €</div></div>
 </div>
 <table><thead><tr><th style="background:#1E3A5F;color:white;padding:7px 10px;font-size:10px;text-align:left;width:160px;">Employé</th>${dayHeaders}<th style="background:#1E3A5F;color:white;padding:7px 5px;font-size:10px;text-align:center;">Total</th><th style="background:#1E3A5F;color:white;padding:7px 5px;font-size:10px;text-align:center;">Coût</th></tr></thead><tbody>${empRows}</tbody></table>
-<p style="margin-top:10px;font-size:9px;color:#94a3b8;">Seuils : 35h → +25 % de 36–43h · 39h → +25 % de 40–47h · +50 % au-delà · CP = 7h/jour · Généré via PILOTE</p>
+<p style="margin-top:10px;font-size:9px;color:#94a3b8;">Seuils : 35h → +25 % de 36–43h · 39h → +25 % de 40–47h · +50 % au-delà · CP = heures contrat / 5 · Généré via PILOTE</p>
 </body></html>`
     const win = window.open('', '_blank', 'width=1100,height=750')
     if (!win) return
@@ -836,7 +840,8 @@ export default function PlanningPage() {
                   const dayH = employees.reduce((s, emp) => {
                     const e = getEntryState(emp.id)
                     const t = (e[`${jour}_type` as keyof PlanningEntry] as DayType) || 'travail'
-                    return s + (t === 'travail' ? (e[jour] || 0) : t === 'conges' ? 7 : 0)
+                    const dailyCP = (emp.contract_hours || 35) / 5
+                    return s + (t === 'travail' ? (e[jour] || 0) : t === 'conges' ? dailyCP : 0)
                   }, 0)
                   const present = employees.filter(emp => {
                     const t = (getEntryState(emp.id)[`${jour}_type` as keyof PlanningEntry] as DayType) || 'travail'
@@ -865,7 +870,7 @@ export default function PlanningPage() {
             <span className="font-semibold">Majoration :</span>{' '}
             35h → +25 % de 36–43h, +50 % au-delà{' · '}
             39h → +25 % de 40–47h, +50 % au-delà{' · '}
-            CP = 7h/jour
+            CP = heures contrat ÷ 5
           </p>
         </div>
       )}
