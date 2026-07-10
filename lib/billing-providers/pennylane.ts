@@ -32,8 +32,13 @@ function parseItems(data: any): any[] {
 }
 
 function mapInvoice(inv: any, fallbackDate: string): ProviderInvoice {
-  const ht  = parseFloat(inv.amount ?? inv.total_amount ?? inv.pre_tax_amount ?? 0)
-  const ttc = parseFloat(inv.tax_inclusive_amount ?? inv.total_amount_with_tax ?? inv.total ?? 0)
+  const ht  = parseFloat(
+    inv.currency_amount ?? inv.amount ?? inv.total_amount ?? inv.pre_tax_amount ?? 0
+  )
+  const ttc = parseFloat(
+    inv.currency_tax_inclusive_amount ?? inv.tax_inclusive_amount ??
+    inv.total_amount_with_tax ?? inv.total ?? 0
+  )
   const tva = ht > 0 && ttc > ht ? parseFloat(((ttc - ht) / ht * 100).toFixed(1)) : 20
   return {
     supplier_name:  inv.supplier?.name ?? inv.third_party?.name ?? inv.vendor?.name ?? inv.label ?? 'Fournisseur inconnu',
@@ -74,36 +79,63 @@ export const pennylane: BillingProvider = {
     const dateTo   = fmt(to)
 
     try {
-      // Pennylane API v2 : filter = tableau d'objets {field, operator, value}
-      const allInvoices: ProviderInvoice[] = []
-      let cursor: string | null = null
-      let page = 0
-      const MAX_PAGES = 10
+      // Essai 1 : avec filtre de date Pennylane v2
+      const filter = JSON.stringify([
+        { field: 'date', operator: 'gteq', value: dateFrom },
+        { field: 'date', operator: 'lteq', value: dateTo },
+      ])
+      const params = new URLSearchParams({ filter, limit: '100' })
+      const data = await apiFetch(token, `/supplier_invoices?${params.toString()}`)
+      const items = parseItems(data)
 
-      do {
-        const filter = JSON.stringify([
-          { field: 'date', operator: 'gteq', value: dateFrom },
-          { field: 'date', operator: 'lteq', value: dateTo },
-        ])
-        const params = new URLSearchParams({ filter, limit: '100' })
-        if (cursor) params.set('cursor', cursor)
-
-        const data = await apiFetch(token, `/supplier_invoices?${params.toString()}`)
-        const items = parseItems(data)
-
+      if (items.length > 0) {
         const mapped = items
           .map((inv: any) => mapInvoice(inv, dateFrom))
           .filter((i: ProviderInvoice) => i.amount_ht > 0)
-        allInvoices.push(...mapped)
+        return { success: true, invoices: mapped }
+      }
 
-        cursor = data?.metadata?.next_cursor
-          ?? data?.next_cursor
-          ?? data?.meta?.cursor?.next
-          ?? null
-        page++
-      } while (cursor && page < MAX_PAGES)
+      // Essai 2 : sans filtre, pour voir la structure réelle des factures
+      const rawData = await apiFetch(token, `/supplier_invoices?limit=5&sort=-date`)
+      const rawItems = parseItems(rawData)
 
-      return { success: true, invoices: allInvoices }
+      if (rawItems.length === 0) {
+        return { success: true, invoices: [] }
+      }
+
+      // Logger la structure pour debug
+      const sample = rawItems[0]
+      const debugInfo = JSON.stringify({
+        date: sample.date,
+        invoice_date: sample.invoice_date,
+        currency_amount: sample.currency_amount,
+        amount: sample.amount,
+        pre_tax_amount: sample.pre_tax_amount,
+        total: sample.total,
+        currency_tax_inclusive_amount: sample.currency_tax_inclusive_amount,
+        deadline_at: sample.deadline_at,
+        created_at: sample.created_at,
+        updated_at: sample.updated_at,
+      })
+
+      // Filtrage côté client sur la date réelle
+      const mapped = rawItems
+        .map((inv: any) => mapInvoice(inv, dateFrom))
+        .filter((i: ProviderInvoice) => {
+          if (i.amount_ht <= 0) return false
+          if (!i.invoice_date) return true
+          return i.invoice_date >= dateFrom && i.invoice_date <= dateTo
+        })
+
+      if (mapped.length > 0) {
+        return { success: true, invoices: mapped }
+      }
+
+      return {
+        success: false,
+        invoices: [],
+        error: `0 factures pour ${dateFrom}→${dateTo}. Structure: ${debugInfo}`,
+      }
     } catch (err) {
       return { success: false, invoices: [], error: String(err) }
     }
