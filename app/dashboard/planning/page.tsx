@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Plus, ChevronLeft, ChevronRight, ChevronDown, Trash2, CalendarDays, FileDown, Copy, Clipboard, BarChart2, X } from 'lucide-react'
+import EmployeeProfileModal, { EmployeeProfile } from '@/components/EmployeeProfileModal'
 
 type DayType = 'travail' | 'conges' | 'maladie' | 'repos'
 
@@ -258,6 +259,7 @@ export default function PlanningPage() {
   const [adding,       setAdding]       = useState(false)
   const [pageError,    setPageError]    = useState<string | null>(null)
   // New
+  const [profileEmp,     setProfileEmp]     = useState<EmployeeProfile | null>(null)
   const [copying,        setCopying]        = useState(false)
   const [copiedCell,     setCopiedCell]     = useState<{ empId: string; jour: JourDB } | null>(null)
   const [cpUsed,         setCpUsed]         = useState<Record<string, number>>({})
@@ -704,7 +706,10 @@ export default function PlanningPage() {
                           <span className={`text-[10px] font-bold ${pal.text}`}>{initials(emp.name)}</span>
                         </div>
                         <div className="min-w-0 flex-1">
-                          <p className="text-sm font-semibold text-gray-900 leading-tight truncate">{emp.name}</p>
+                          <p
+                            className="text-sm font-semibold text-gray-900 leading-tight truncate cursor-pointer hover:text-[#1E3A5F] transition-colors"
+                            onClick={e => { e.stopPropagation(); setProfileEmp({ ...emp, charges_patronales: (emp as any).charges_patronales ?? 45, hs_cumules: (emp as any).hs_cumules ?? 0, position: (emp as any).position ?? null, hire_date: (emp as any).hire_date ?? null, contract_end_date: (emp as any).contract_end_date ?? null, phone: (emp as any).phone ?? null, email: (emp as any).email ?? null, notes: (emp as any).notes ?? null, is_minor: (emp as any).is_minor ?? false, cp_initial: emp.cp_initial ?? 0 }) }}
+                          >{emp.name}</p>
                           <div className="flex items-center gap-1 mt-0.5 flex-wrap">
                             <div className="relative">
                               <button
@@ -1167,6 +1172,16 @@ export default function PlanningPage() {
           </div>
         </div>
       )}
+
+      {/* ── Fiche employé modal ── */}
+      <EmployeeProfileModal
+        employee={profileEmp}
+        onClose={() => setProfileEmp(null)}
+        onSaved={updated => {
+          setEmployees(prev => prev.map(e => e.id === updated.id ? { ...e, ...updated } : e))
+          setProfileEmp(null)
+        }}
+      />
 
       {/* ── Ajout employé modal ── */}
       {showAdd && (
