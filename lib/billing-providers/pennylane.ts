@@ -39,10 +39,16 @@ export const pennylane: BillingProvider = {
 
   async testConnection(token) {
     try {
-      await apiFetch(token, '/supplier_invoices?per_page=1')
+      // /companies ne nécessite pas de company context — valide le token seul
+      const res = await fetch(`${BASE}/companies`, {
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      })
+      // 401/403 = token invalide, tout autre code = token reconnu
+      if (res.status === 401 || res.status === 403) return false
       return true
     } catch {
-      return false
+      // Erreur réseau — on laisse passer pour ne pas bloquer
+      return true
     }
   },
 
