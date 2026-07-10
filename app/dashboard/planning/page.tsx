@@ -588,7 +588,7 @@ export default function PlanningPage() {
                 const isWE    = i >= 5
                 const fName   = weekHolidays[i]
                 return (
-                  <th key={i} className={`px-2 py-2 text-center min-w-[130px] border-b border-r border-gray-200 ${
+                  <th key={i} className={`px-2 py-2 text-center min-w-[155px] border-b border-r border-gray-200 ${
                     isToday ? 'bg-[#1E3A5F]' : fName ? 'bg-amber-50' : isWE ? 'bg-gray-50' : 'bg-white'
                   }`}>
                     <div className={`text-xs font-bold uppercase tracking-wide ${
@@ -712,7 +712,7 @@ export default function PlanningPage() {
                         <td key={jour} className="p-0 border-b border-r border-gray-200 align-stretch group/cell">
                           <div className="relative h-full" data-cell="true" onClick={e => e.stopPropagation()}>
                             <div
-                              className={`cursor-pointer transition-colors ${cellBg} w-full h-full min-h-[110px] px-2 pt-2 pb-2 flex flex-col select-none hover:brightness-95`}
+                              className={`cursor-pointer transition-colors ${cellBg} w-full h-full min-h-[145px] px-2 pt-2 pb-2 flex flex-col select-none hover:brightness-95`}
                               onClick={e => { e.stopPropagation(); setContractPopover(null); setDetailModal({ empId: emp.id, jour, idx }) }}
                             >
                               {/* ── Top: type + copy ── */}
@@ -749,29 +749,46 @@ export default function PlanningPage() {
 
                               {/* ── Centre: résumé ── */}
                               {!fName && type === 'travail' ? (
-                                <div className="flex-1 flex flex-col items-center justify-center gap-1 py-1">
-                                  {catSel && (
-                                    <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold ${catSel.color}`}>
-                                      {catSel.short}
+                                <div className="flex-1 flex flex-col py-1.5 gap-1 px-1.5">
+                                  {/* Poste badge */}
+                                  <div className="flex justify-center">
+                                    {catSel ? (
+                                      <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold ${catSel.color}`}>
+                                        {catSel.short}
+                                      </span>
+                                    ) : (
+                                      <span className="text-[9px] text-gray-300 font-medium">—</span>
+                                    )}
+                                  </div>
+
+                                  {/* Matin row — toujours visible */}
+                                  <div className={`flex items-center gap-1 rounded-md px-1.5 py-[3px] ${
+                                    sd.matin_debut ? 'bg-amber-50 border border-amber-100' : 'bg-gray-50'
+                                  }`}>
+                                    <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${sd.matin_debut ? 'bg-amber-400' : 'bg-gray-200'}`} />
+                                    <span className="text-[8px] font-bold text-gray-400 w-3 shrink-0">M</span>
+                                    <span className={`text-[9px] font-semibold truncate ${sd.matin_debut ? 'text-gray-700' : 'text-gray-300'}`}>
+                                      {sd.matin_debut ? `${sd.matin_debut}→${sd.matin_fin || '?'}` : '--:--'}
                                     </span>
-                                  )}
-                                  <span className={`text-sm font-bold ${pal.text}`}>
-                                    {hours > 0 ? `${hours}h` : '—'}
-                                  </span>
-                                  {(sd.matin_debut || sd.apmidi_debut) && (
-                                    <div className="flex flex-col gap-0">
-                                      {sd.matin_debut && (
-                                        <span className={`text-[8px] opacity-60 ${pal.text} leading-tight`}>
-                                          {sd.matin_debut}→{sd.matin_fin || '--:--'}
-                                        </span>
-                                      )}
-                                      {sd.apmidi_debut && (
-                                        <span className={`text-[8px] opacity-60 ${pal.text} leading-tight`}>
-                                          {sd.apmidi_debut}→{sd.apmidi_fin || '--:--'}
-                                        </span>
-                                      )}
-                                    </div>
-                                  )}
+                                  </div>
+
+                                  {/* Après-midi row — toujours visible */}
+                                  <div className={`flex items-center gap-1 rounded-md px-1.5 py-[3px] ${
+                                    sd.apmidi_debut ? 'bg-sky-50 border border-sky-100' : 'bg-gray-50'
+                                  }`}>
+                                    <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${sd.apmidi_debut ? 'bg-sky-400' : 'bg-gray-200'}`} />
+                                    <span className="text-[8px] font-bold text-gray-400 w-3 shrink-0">AM</span>
+                                    <span className={`text-[9px] font-semibold truncate ${sd.apmidi_debut ? 'text-gray-700' : 'text-gray-300'}`}>
+                                      {sd.apmidi_debut ? `${sd.apmidi_debut}→${sd.apmidi_fin || '?'}` : '--:--'}
+                                    </span>
+                                  </div>
+
+                                  {/* Total heures */}
+                                  <div className="flex justify-center mt-0.5">
+                                    <span className={`text-sm font-bold ${hours > 0 ? pal.text : 'text-gray-300'}`}>
+                                      {hours > 0 ? `${hours}h` : '—'}
+                                    </span>
+                                  </div>
                                 </div>
                               ) : (
                                 <div className="flex-1 flex items-center justify-center">
