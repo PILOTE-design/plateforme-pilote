@@ -933,7 +933,7 @@ export default function PlanningPage() {
                           value={mHours || ''}
                           onChange={e => updateHours(detailModal.empId, mJour, e.target.value)}
                           onBlur={() => handleBlur(detailModal.empId)}
-                          className="w-14 text-center text-sm font-bold border border-gray-200 rounded-lg py-1.5 focus:outline-none focus:border-gray-400 transition-colors"
+                          className="w-14 text-center text-sm font-bold text-gray-900 border border-gray-300 rounded-lg py-1.5 focus:outline-none focus:border-gray-500 transition-colors"
                           placeholder="0"
                         />
                         <span className="text-xs text-gray-400">heures</span>
@@ -972,19 +972,19 @@ export default function PlanningPage() {
                           { label: 'Après-midi', startF: 'apmidi_debut' as keyof ScheduleDetail, endF: 'apmidi_fin' as keyof ScheduleDetail },
                         ]).map(({ label, startF, endF }) => (
                           <div key={label} className="flex items-center gap-2">
-                            <span className="text-[11px] text-gray-300 w-16 shrink-0">{label}</span>
+                            <span className="text-[11px] text-gray-500 font-medium w-16 shrink-0">{label}</span>
                             <input type="text" inputMode="numeric" placeholder="--:--" maxLength={5}
                               value={mSd[startF] || ''}
                               onChange={e => handleScheduleDetailChange(detailModal.empId, mJour, startF, e.target.value)}
                               onBlur={() => handleScheduleDetailBlur(detailModal.empId)}
-                              className="w-14 text-center text-xs border border-gray-200 rounded-lg py-1.5 focus:outline-none focus:border-gray-400 transition-colors"
+                              className="w-14 text-center text-xs text-gray-900 font-semibold border border-gray-300 rounded-lg py-1.5 focus:outline-none focus:border-gray-500 transition-colors"
                             />
-                            <span className="text-gray-200 text-xs">→</span>
+                            <span className="text-gray-400 text-xs">→</span>
                             <input type="text" inputMode="numeric" placeholder="--:--" maxLength={5}
                               value={mSd[endF] || ''}
                               onChange={e => handleScheduleDetailChange(detailModal.empId, mJour, endF, e.target.value)}
                               onBlur={() => handleScheduleDetailBlur(detailModal.empId)}
-                              className="w-14 text-center text-xs border border-gray-200 rounded-lg py-1.5 focus:outline-none focus:border-gray-400 transition-colors"
+                              className="w-14 text-center text-xs text-gray-900 font-semibold border border-gray-300 rounded-lg py-1.5 focus:outline-none focus:border-gray-500 transition-colors"
                             />
                           </div>
                         ))}
