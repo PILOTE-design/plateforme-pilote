@@ -57,9 +57,9 @@ const EMPTY_INVOICE = {
 }
 
 const PROVIDERS_META: ProviderMeta[] = [
-  { id: 'pennylane', name: 'Pennylane', logo: 'PL', color: 'bg-blue-600', tokenLabel: 'Token API Pennylane', tokenPlaceholder: 'eyJhbGci...', needsCompanyId: false, helpUrl: 'https://help.pennylane.com/fr/articles/developer-api', description: 'Importation automatique des factures fournisseurs via l’API Pennylane' },
+  { id: 'pennylane', name: 'Pennylane', logo: 'PL', color: 'bg-blue-600', tokenLabel: 'Token API Pennylane', tokenPlaceholder: 'eyJhbGci...', needsCompanyId: false, helpUrl: 'https://help.pennylane.com/fr/articles/developer-api', description: 'Importation automatique des factures fournisseurs via l\'API Pennylane' },
   { id: 'sage',      name: 'Sage',      logo: 'SG', color: 'bg-green-600', tokenLabel: 'Access Token Sage', tokenPlaceholder: 'Bearer token issu de Sage OAuth2', needsCompanyId: false, helpUrl: 'https://developer.sage.com/accounting/', description: 'Sage Business Cloud Comptabilité — factures achats' },
-  { id: 'cegid',     name: 'Cegid',     logo: 'CG', color: 'bg-purple-600', tokenLabel: 'Clé API Cegid', tokenPlaceholder: 'Clé depuis votre espace Cegid', needsCompanyId: true, companyIdLabel: 'ID Entreprise Cegid', helpUrl: 'https://developers.cegid.com', description: 'Cegid Loop — import automatique des factures d’achat' },
+  { id: 'cegid',     name: 'Cegid',     logo: 'CG', color: 'bg-purple-600', tokenLabel: 'Clé API Cegid', tokenPlaceholder: 'Clé depuis votre espace Cegid', needsCompanyId: true, companyIdLabel: 'ID Entreprise Cegid', helpUrl: 'https://developers.cegid.com', description: 'Cegid Loop — import automatique des factures d\'achat' },
   { id: 'ebp',       name: 'EBP',       logo: 'EBP', color: 'bg-orange-500', tokenLabel: 'Token API EBP en ligne', tokenPlaceholder: 'Token depuis EBP → Paramètres → API', needsCompanyId: true, companyIdLabel: 'Identifiant dossier EBP', helpUrl: 'https://developer.ebp.com', description: 'EBP en ligne — import factures fournisseurs automatique' },
 ]
 
@@ -139,7 +139,6 @@ export default function FacturationPage() {
     if (res?.ok) { const data = await res.json(); setIntegrations(Array.isArray(data) ? data : []) }
   }, [])
 
-  // Au montage : se positionner sur la semaine du dernier rapport
   useEffect(() => {
     fetch('/api/reports/latest-week')
       .then(r => r.json())
@@ -201,13 +200,17 @@ export default function FacturationPage() {
     await fetch(`/api/billing-integrations/${provider}`, { method: 'DELETE' }); loadIntegrations()
   }
 
+  // Sync : passe la semaine affichée au backend
   async function syncNow(provider: string) {
     setSyncing(provider)
-    await fetch('/api/billing-integrations/sync', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider }) })
+    await fetch('/api/billing-integrations/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider, week, year }),
+    })
     setSyncing(null); loadIntegrations(); load()
   }
 
-  // Ouvrir la valorisation pré-remplie depuis une facture viande
   function openValorisation(inv: Invoice) {
     const qs = new URLSearchParams({
       date:      inv.invoice_date,
@@ -294,7 +297,8 @@ export default function FacturationPage() {
                         <span className="text-xs text-green-700 font-semibold">Connecté</span>
                         {integ.last_sync_status === 'error' && <span className="text-[10px] text-red-500 ml-1">Erreur sync</span>}
                       </div>
-                      {integ.last_sync_at ? <p className="text-[10px] text-gray-400 mb-3">Sync : {new Date(integ.last_sync_at).toLocaleDateString('fr-FR')}{(integ.invoices_synced ?? 0) > 0 && ` · ${integ.invoices_synced} facture${(integ.invoices_synced ?? 0) > 1 ? 's' : ''}`}</p>
+                      {integ.last_sync_at
+                        ? <p className="text-[10px] text-gray-400 mb-3">Sync : {new Date(integ.last_sync_at).toLocaleDateString('fr-FR')}{(integ.invoices_synced ?? 0) > 0 && ` · ${integ.invoices_synced} facture${(integ.invoices_synced ?? 0) > 1 ? 's' : ''}`}</p>
                         : <p className="text-[10px] text-gray-400 mb-3">Jamais synchronisé</p>}
                       <div className="flex gap-1.5">
                         <button onClick={() => syncNow(prov.id)} disabled={isSyncing} className="flex-1 flex items-center justify-center gap-1 text-[11px] font-semibold bg-white border border-gray-200 rounded-lg py-1.5 hover:bg-gray-50 text-gray-600 transition-colors disabled:opacity-50">
@@ -409,11 +413,7 @@ export default function FacturationPage() {
                       <td className="px-4 py-3 text-center">
                         <div className="flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
                           {isViande && (
-                            <button
-                              onClick={() => openValorisation(inv)}
-                              className="p-1.5 rounded hover:bg-blue-50 text-gray-300 hover:text-blue-600 transition-colors"
-                              title="Valoriser cet animal"
-                            >
+                            <button onClick={() => openValorisation(inv)} className="p-1.5 rounded hover:bg-blue-50 text-gray-300 hover:text-blue-600 transition-colors" title="Valoriser cet animal">
                               <ArrowUpRight className="w-3.5 h-3.5" />
                             </button>
                           )}

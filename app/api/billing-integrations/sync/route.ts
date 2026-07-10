@@ -23,8 +23,6 @@ function getISOWeek(date: Date) {
   }
 }
 
-// POST — synchronisation manuelle ou automatique
-// Body optionnel : { provider?: string, client_id?: string }
 export async function POST(req: NextRequest) {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -32,27 +30,27 @@ export async function POST(req: NextRequest) {
 
   const service = createServiceClient()
   const body = await req.json().catch(() => ({}))
-  const { provider: filterProvider } = body
+  const { provider: filterProvider, week: bodyWeek, year: bodyYear } = body
 
-  // Résoudre client_id
+  // Utiliser la semaine envoyée par l'UI, sinon semaine courante
+  const { week, year } = (bodyWeek && bodyYear)
+    ? { week: Number(bodyWeek), year: Number(bodyYear) }
+    : getISOWeek(new Date())
+
   const { data: clientRow } = await service
     .from('clients').select('id').eq('client_user_id', user.id).maybeSingle()
   if (!clientRow) return NextResponse.json({ error: 'Client introuvable' }, { status: 404 })
 
-  // Charger les intégrations actives
   let query = service.from('billing_integrations')
     .select('*')
     .eq('client_id', clientRow.id)
     .eq('is_active', true)
-
   if (filterProvider) query = query.eq('provider', filterProvider)
   const { data: integrations } = await query
 
   if (!integrations?.length) return NextResponse.json({ error: 'Aucune intégration active' }, { status: 404 })
 
-  const { week, year } = getISOWeek(new Date())
   const [from, to] = getWeekBounds(week, year)
-
   const results: Record<string, any> = {}
 
   for (const integ of integrations) {
@@ -62,7 +60,6 @@ export async function POST(req: NextRequest) {
     const syncResult = await prov.fetchWeekInvoices(integ.api_token, from, to, integ.company_id)
 
     if (syncResult.success && syncResult.invoices.length > 0) {
-      // Insérer les factures (ignorer les doublons via external_id)
       const rows = syncResult.invoices.map(inv => ({
         client_id:      clientRow.id,
         supplier_name:  inv.supplier_name,
@@ -74,7 +71,7 @@ export async function POST(req: NextRequest) {
         amount_ttc:     inv.amount_ttc,
         week_number:    week,
         year,
-        notes:          `Importé depuis ${prov.name}${inv.external_id ? ` (${inv.external_id})` : ''}`,
+        notes: `Importé depuis ${prov.name}${inv.external_id ? ` (${inv.external_id})` : ''}`,
       }))
 
       await service.from('invoices').upsert(rows, {
@@ -83,7 +80,6 @@ export async function POST(req: NextRequest) {
       })
     }
 
-    // Mettre à jour le statut de sync
     await service.from('billing_integrations').update({
       last_sync_at:     new Date().toISOString(),
       last_sync_status: syncResult.success ? 'success' : 'error',
