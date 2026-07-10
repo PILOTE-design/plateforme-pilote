@@ -74,14 +74,17 @@ export const pennylane: BillingProvider = {
     const dateTo   = fmt(to)
 
     try {
-      // Pennylane API v2 : filter doit être un JSON string (pas bracket notation)
+      // Pennylane API v2 : filter = tableau d'objets {field, operator, value}
       const allInvoices: ProviderInvoice[] = []
       let cursor: string | null = null
       let page = 0
       const MAX_PAGES = 10
 
       do {
-        const filter = JSON.stringify({ date: { gteq: dateFrom, lteq: dateTo } })
+        const filter = JSON.stringify([
+          { field: 'date', operator: 'gteq', value: dateFrom },
+          { field: 'date', operator: 'lteq', value: dateTo },
+        ])
         const params = new URLSearchParams({ filter, limit: '100' })
         if (cursor) params.set('cursor', cursor)
 
