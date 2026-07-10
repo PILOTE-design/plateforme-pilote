@@ -17,10 +17,10 @@ export async function GET() {
 
   const { data } = await service
     .from('billing_integrations')
-    .select('provider, is_active, last_sync_at, last_sync_status, invoices_synced, company_id')
+    .select('provider, is_active, last_sync_at, last_sync_status, last_sync_error, invoices_synced, company_id')
     .eq('client_id', clientRow.id)
 
-  // Masquer le token, retourner juste les métadonnées
+  // Masquer le token, retourner les métadonnées + erreur lisible
   return NextResponse.json(data ?? [])
 }
 
