@@ -498,7 +498,9 @@ export default function PlanningPage() {
         const bg     = fName ? '#fef3c7' : type === 'travail' ? pal.lightHex : TYPE_CONFIG[type].pdfColor
         const label  = type === 'travail'
           ? (h > 0 ? `<strong>${fmtH(h)}</strong>` : '—')
-          : `<span style="font-size:9px;">${TYPE_CONFIG[type].label}</span>`
+          : type === 'conges'
+            ? `<span style="font-size:9px;">CP ${fmtH(emp.contract_hours / 5)}</span>`
+            : `<span style="font-size:9px;">${TYPE_CONFIG[type].label}</span>`
         return `<td style="padding:6px 4px;text-align:center;background:${bg};border-bottom:1px solid #e2e8f0;border-right:1px solid #e2e8f0;">${label}${fName ? `<br><span style="font-size:8px;color:#92400e;">Férié</span>` : ''}</td>`
       }).join('')
       return `<tr>
@@ -816,10 +818,17 @@ export default function PlanningPage() {
                                   </div>
                                 </div>
                               ) : (
-                                <div className="flex-1 flex items-center justify-center">
-                                  <span className={`font-bold text-2xl ${cellTxt}`}>
-                                    {fName ? '✦' : TYPE_CONFIG[type].display}
-                                  </span>
+                                <div className="flex-1 flex flex-col items-center justify-center gap-0.5">
+                                  {fName ? (
+                                    <span className={`font-bold text-2xl ${cellTxt}`}>✦</span>
+                                  ) : type === 'conges' ? (
+                                    <>
+                                      <span className={`text-[10px] font-bold uppercase tracking-wide opacity-60 ${cellTxt}`}>CP</span>
+                                      <span className={`font-bold text-xl ${cellTxt}`}>{fmtH(ch / 5)}</span>
+                                    </>
+                                  ) : (
+                                    <span className={`font-bold text-2xl ${cellTxt}`}>{TYPE_CONFIG[type].display}</span>
+                                  )}
                                 </div>
                               )}
                             </div>
