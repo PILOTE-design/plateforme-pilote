@@ -190,6 +190,15 @@ function initials(name: string) {
   return name.split(' ').map(p => p[0]).join('').toUpperCase().slice(0, 2)
 }
 
+function fmtH(h: number): string {
+  const sign = h < 0 ? '-' : ''
+  const abs = Math.abs(h)
+  const hInt = Math.floor(abs)
+  const min = Math.round((abs - hInt) * 60)
+  if (min === 0) return `${sign}${hInt}h`
+  return `${sign}${hInt}h${String(min).padStart(2, '0')}`
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function PlanningPage() {
@@ -476,7 +485,7 @@ export default function PlanningPage() {
         const fName  = weekHolidays[idx]
         const bg     = fName ? '#fef3c7' : type === 'travail' ? pal.lightHex : TYPE_CONFIG[type].pdfColor
         const label  = type === 'travail'
-          ? (h > 0 ? `<strong>${h}h</strong>` : '—')
+          ? (h > 0 ? `<strong>${fmtH(h)}</strong>` : '—')
           : `<span style="font-size:9px;">${TYPE_CONFIG[type].label}</span>`
         return `<td style="padding:6px 4px;text-align:center;background:${bg};border-bottom:1px solid #e2e8f0;border-right:1px solid #e2e8f0;">${label}${fName ? `<br><span style="font-size:8px;color:#92400e;">Férié</span>` : ''}</td>`
       }).join('')
@@ -487,7 +496,7 @@ export default function PlanningPage() {
             <div><div style="font-weight:700;font-size:12px;">${emp.name}</div><div style="font-size:9px;color:#94a3b8;">${contractLabel(emp.contract_type)} · ${Number(emp.hourly_rate).toFixed(2)} €/h</div></div>
           </div>
         </td>${cells}
-        <td style="padding:6px;text-align:center;font-weight:700;font-size:12px;color:${totalH > ch ? '#ea580c' : '#1e293b'};background:#f8fafc;border-bottom:1px solid #e2e8f0;">${totalH.toFixed(1)}h</td>
+        <td style="padding:6px;text-align:center;font-weight:700;font-size:12px;color:${totalH > ch ? '#ea580c' : '#1e293b'};background:#f8fafc;border-bottom:1px solid #e2e8f0;">${fmtH(totalH)}</td>
         <td style="padding:6px;text-align:center;font-weight:700;font-size:12px;color:#15803d;background:#f0fdf4;border-bottom:1px solid #e2e8f0;">${cost.toFixed(2)} €</td>
       </tr>`
     }).join('')
@@ -557,7 +566,7 @@ export default function PlanningPage() {
           {copying ? 'Copie...' : `Copier S${week === 1 ? isoWeeksInYear(year - 1) : week - 1}`}
         </button>
         <div className="ml-auto flex items-center gap-4 text-xs text-gray-400">
-          <span><span className="font-semibold text-gray-700">{grandH.toFixed(1)}h</span> total</span>
+          <span><span className="font-semibold text-gray-700">{fmtH(grandH)}</span> total</span>
           <span><span className="font-semibold text-green-700">{grandCost.toFixed(2)} €</span> coût</span>
         </div>
       </div>
@@ -790,7 +799,7 @@ export default function PlanningPage() {
                                   {/* Total heures */}
                                   <div className="flex justify-center mt-0.5">
                                     <span className={`text-sm font-bold ${hours > 0 ? pal.text : 'text-gray-300'}`}>
-                                      {hours > 0 ? `${hours}h` : '—'}
+                                      {hours > 0 ? fmtH(hours) : '—'}
                                     </span>
                                   </div>
                                 </div>
@@ -814,8 +823,8 @@ export default function PlanningPage() {
                       }`}>
                         <span className={`font-bold text-sm ${
                           hasOT ? 'text-orange-600' : totalH > 0 ? 'text-gray-800' : 'text-gray-300'
-                        }`}>{totalH.toFixed(1)}h</span>
-                        {hasOT && <span className="text-[9px] text-orange-400">+{(totalH - ch).toFixed(1)} sup</span>}
+                        }`}>{fmtH(totalH)}</span>
+                        {hasOT && <span className="text-[9px] text-orange-400">+{fmtH(totalH - ch)} sup</span>}
                       </div>
                     </td>
 
@@ -851,12 +860,12 @@ export default function PlanningPage() {
                   return (
                     <td key={jour} className={`px-2 py-3 text-center border-r border-gray-700 ${isFerie ? 'bg-amber-950/30' : ''}`}>
                       {dayH > 0
-                        ? <><div className="text-sm font-bold text-white">{dayH.toFixed(1)}h</div><div className="text-[10px] text-gray-500">{present} pers.</div></>
+                        ? <><div className="text-sm font-bold text-white">{fmtH(dayH)}</div><div className="text-[10px] text-gray-500">{present} pers.</div></>
                         : <span className="text-gray-700">—</span>}
                     </td>
                   )
                 })}
-                <td className="px-3 py-3 text-center border-r border-gray-700"><span className="font-bold text-white">{grandH.toFixed(1)}h</span></td>
+                <td className="px-3 py-3 text-center border-r border-gray-700"><span className="font-bold text-white">{fmtH(grandH)}</span></td>
                 <td className="px-3 py-3 text-center"><span className="font-bold text-orange-400">{grandCost.toFixed(0)} €</span></td>
               </tr>
             )}
@@ -1054,7 +1063,7 @@ export default function PlanningPage() {
                           </div>
                         </td>
                         <td className="text-center py-3">
-                          <span className={`font-bold ${hasOT ? 'text-orange-600' : 'text-gray-800'}`}>{hours.toFixed(1)}h</span>
+                          <span className={`font-bold ${hasOT ? 'text-orange-600' : 'text-gray-800'}`}>{fmtH(hours)}</span>
                         </td>
                         <td className="text-center py-3 text-gray-600">{worked > 0 ? `${worked}j` : '—'}</td>
                         <td className="text-center py-3">
@@ -1071,7 +1080,7 @@ export default function PlanningPage() {
                 <tfoot>
                   <tr className="bg-gray-900">
                     <td className="py-2.5 px-2 text-xs font-bold uppercase text-gray-400">Total mois</td>
-                    <td className="text-center py-2.5 font-bold text-white">{monthlyData.reduce((s, r) => s + r.hours, 0).toFixed(1)}h</td>
+                    <td className="text-center py-2.5 font-bold text-white">{fmtH(monthlyData.reduce((s, r) => s + r.hours, 0))}</td>
                     <td className="text-center py-2.5 text-gray-400">{monthlyData.reduce((s, r) => s + r.worked, 0)}j</td>
                     <td className="text-center py-2.5 text-sky-400">{monthlyData.reduce((s, r) => s + r.cp, 0)}j</td>
                     <td className="text-center py-2.5 text-red-400">{monthlyData.reduce((s, r) => s + r.sick, 0)}j</td>
