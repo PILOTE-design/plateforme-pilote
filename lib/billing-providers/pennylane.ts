@@ -1,6 +1,6 @@
-import type { BillingProvider, ProviderInvoice, SyncResult } from './types'
+import type { BillingProvider, ProviderInvoice } from './types'
 
-const BASE = 'https://app.pennylane.com/api/external/v1'
+const BASE = 'https://app.pennylane.com/api/external/v2'
 
 function fmt(d: Date) {
   return d.toISOString().split('T')[0]
@@ -59,7 +59,8 @@ export const pennylane: BillingProvider = {
 
   async testConnection(token) {
     try {
-      const res = await fetch(`${BASE}/companies`, {
+      // Test token validity + scope supplier_invoices en un seul appel v2
+      const res = await fetch(`${BASE}/supplier_invoices?limit=1`, {
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       })
       if (res.status === 401 || res.status === 403) return false
@@ -74,53 +75,37 @@ export const pennylane: BillingProvider = {
     const dateTo   = fmt(to)
 
     try {
-      // Étape 1 : récupérer le company_id depuis /companies
-      let companyId: string | null = null
-      try {
-        const cRes = await fetch(`${BASE}/companies`, {
-          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      // Pennylane API v2 — pagination curseur, filtres gteq/lteq
+      const allInvoices: ProviderInvoice[] = []
+      let cursor: string | null = null
+      let page = 0
+      const MAX_PAGES = 10
+
+      do {
+        const params = new URLSearchParams({
+          'filter[date][gteq]': dateFrom,
+          'filter[date][lteq]': dateTo,
+          'limit': '100',
         })
-        if (cRes.ok) {
-          const cData = await cRes.json()
-          const companies: any[] = cData.companies ?? cData.data ?? []
-          if (companies.length > 0) {
-            companyId = String(companies[0].id ?? companies[0].slug ?? '')
-          }
-        }
-      } catch { /* ignore — on tentera sans company_id */ }
+        if (cursor) params.set('cursor', cursor)
 
-      // Étape 2 : essayer successivement plusieurs URLs Pennylane
-      const candidates: string[] = []
+        const data = await apiFetch(token, `/supplier_invoices?${params.toString()}`)
+        const items = parseItems(data)
 
-      if (companyId) {
-        // URL scopée à la company (format le plus courant Pennylane external v1)
-        candidates.push(
-          `/companies/${companyId}/supplier_invoices?filter[date][gte]=${dateFrom}&filter[date][lte]=${dateTo}&per_page=100`,
-          `/companies/${companyId}/supplier_invoices?min_date=${dateFrom}&max_date=${dateTo}&per_page=100`,
-        )
-      }
-      // Fallbacks globaux
-      candidates.push(
-        `/supplier_invoices?filter[date][gte]=${dateFrom}&filter[date][lte]=${dateTo}&per_page=100`,
-        `/supplier_invoices?min_date=${dateFrom}&max_date=${dateTo}&per_page=100`,
-        `/supplier_invoices?per_page=100`,
-      )
+        const mapped = items
+          .map((inv: any) => mapInvoice(inv, dateFrom))
+          .filter((i: ProviderInvoice) => i.amount_ht > 0)
+        allInvoices.push(...mapped)
 
-      let lastError = ''
-      for (const url of candidates) {
-        try {
-          const data = await apiFetch(token, url)
-          const items = parseItems(data)
-          const invoices: ProviderInvoice[] = items
-            .map((inv: any) => mapInvoice(inv, dateFrom))
-            .filter((i: ProviderInvoice) => i.amount_ht > 0)
-          return { success: true, invoices }
-        } catch (e) {
-          lastError = String(e)
-        }
-      }
+        // Récupérer le curseur de la page suivante (plusieurs formats possibles)
+        cursor = data?.metadata?.next_cursor
+          ?? data?.next_cursor
+          ?? data?.meta?.cursor?.next
+          ?? null
+        page++
+      } while (cursor && page < MAX_PAGES)
 
-      return { success: false, invoices: [], error: `Aucune URL Pennylane n'a fonctionné. Dernier erreur : ${lastError}` }
+      return { success: true, invoices: allInvoices }
     } catch (err) {
       return { success: false, invoices: [], error: String(err) }
     }
