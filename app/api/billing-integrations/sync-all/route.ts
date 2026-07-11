@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/server'
 import { PROVIDERS } from '@/lib/billing-providers'
+import { classifyFixedCharges } from '@/lib/billing-providers/classify'
 
 function getWeekBounds(weekNumber: number, year: number): [Date, Date] {
   const jan4 = new Date(Date.UTC(year, 0, 4))
@@ -68,7 +69,10 @@ async function runSyncAll(req: NextRequest) {
     let imported = 0
 
     if (syncResult.success && syncResult.invoices.length > 0) {
-      const rows = syncResult.invoices.map(inv => ({
+      // Classification IA des charges fixes (fallback : détection mots-clés déjà appliquée)
+      const enriched = await classifyFixedCharges(syncResult.invoices)
+
+      const rows = enriched.map(inv => ({
         client_id:      integ.client_id,
         supplier_name:  inv.supplier_name,
         invoice_number: inv.invoice_number ?? null,

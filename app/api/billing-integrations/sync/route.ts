@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { PROVIDERS } from '@/lib/billing-providers'
+import { classifyFixedCharges } from '@/lib/billing-providers/classify'
 
 export const maxDuration = 60 // Vercel Pro: 60s max, Hobby: 10s (mieux que défaut)
 
@@ -65,7 +66,10 @@ export async function POST(req: NextRequest) {
     let imported = 0
 
     if (syncResult.success && syncResult.invoices.length > 0) {
-      const rows = syncResult.invoices.map(inv => ({
+      // Classification IA des charges fixes (fallback : détection mots-clés déjà appliquée)
+      const enriched = await classifyFixedCharges(syncResult.invoices)
+
+      const rows = enriched.map(inv => ({
         client_id:      clientRow.id,
         supplier_name:  inv.supplier_name,
         invoice_number: inv.invoice_number ?? null,
