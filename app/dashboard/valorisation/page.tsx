@@ -2,7 +2,7 @@
 
 import React, { useState, useMemo, useEffect, useCallback } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { Calculator, TrendingUp, Package, Info, AlertTriangle, CheckCircle, Save, Trash2, Clock, X, Loader2, Users, BarChart2 } from 'lucide-react'
+import { Calculator, TrendingUp, Package, Info, AlertTriangle, CheckCircle, Save, Trash2, Clock, X, Loader2, Users, BarChart2, RotateCcw } from 'lucide-react'
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -11,7 +11,7 @@ type AnimalType  = 'boeuf' | 'veau' | 'agneau' | 'porc' | 'volaille'
 
 interface Breed { id: string; name: string; carcassYield: number; avgWeight: string; origin: string; description: string }
 interface Cut   { id: string; name: string; category: CutCategory; yieldPct: number; marketPrice: number }
-interface CutResult { cut: Cut; weight: number; sellingPrice: number; revenue: number }
+interface CutResult { cut: Cut; weight: number; sellingPrice: number; revenue: number; active: boolean }
 interface SavedValo {
   id: string; breed_id: string; breed_name: string; live_weight: number; quantity: number
   purchase_per_kg: number; overhead_cost: number; labor_cost: number; target_margin: number
@@ -29,7 +29,7 @@ interface AnimalConfig {
   defaultWeight: string; defaultPurchaseKg: string; defaultLabor: string
 }
 
-// ─── Données Bœuf ───────────────────────────────────────────────────────────────
+// ─── Données Bœuf ─────────────────────────────────────────────────────────────────
 
 const BOEUF_BREEDS: Breed[] = [
   { id: 'charolaise',       name: 'Charolaise',         carcassYield: 0.645, avgWeight: '750-950 kg',  origin: 'Bourgogne',        description: 'Race à viande n°1 en France. Masses musculaires très développées. Viande ferme, peu persillée, idéale pour pièces à griller et rôtir.' },
@@ -66,7 +66,7 @@ const BOEUF_CUTS: Cut[] = [
   { id: 'os_moelle',        name: 'Os à moelle',             category: 'os',        yieldPct: 4.0,  marketPrice: 3  },
 ]
 
-// ─── Données Veau ───────────────────────────────────────────────────────────────
+// ─── Données Veau ─────────────────────────────────────────────────────────────────
 
 const VEAU_BREEDS: Breed[] = [
   { id: 'veau_lait_limousin', name: 'Veau de lait Limousin',   carcassYield: 0.62, avgWeight: '160-200 kg', origin: 'Limousin',  description: 'Label Rouge. Élevé sous la mère. Chair rose pâle, très tendre et fine. Le standard haut de gamme.' },
@@ -92,7 +92,7 @@ const VEAU_CUTS: Cut[] = [
   { id: 'os_veau',       name: 'Os à moelle',            category: 'os',        yieldPct: 8.0,  marketPrice: 2  },
 ]
 
-// ─── Données Agneau ────────────────────────────────────────────────────────────
+// ─── Données Agneau ────────────────────────────────────────────────────────────────
 
 const AGNEAU_BREEDS: Breed[] = [
   { id: 'berrichon',         name: 'Berrichon du Cher',          carcassYield: 0.50, avgWeight: '35-45 kg', origin: 'Centre-Val de Loire', description: 'Race bouchère par excellence. Gigot charnu, viande tendre et rosée. Label Rouge Agneau du Berry.' },
@@ -117,7 +117,7 @@ const AGNEAU_CUTS: Cut[] = [
   { id: 'rognons_agneau',    name: 'Rognons',                 category: 'abat',      yieldPct: 0.3, marketPrice: 6  },
 ]
 
-// ─── Données Porc ──────────────────────────────────────────────────────────────
+// ─── Données Porc ──────────────────────────────────────────────────────────────────
 
 const PORC_BREEDS: Breed[] = [
   { id: 'large_white',       name: 'Large White',          carcassYield: 0.77, avgWeight: '100-120 kg', origin: 'Bretagne/National', description: 'Race dominante en France. Très bon rendement. Viande maigre et tendre, idéale pour jambons et filets.' },
@@ -142,7 +142,7 @@ const PORC_CUTS: Cut[] = [
   { id: 'os_porc',           name: 'Os et crosse',             category: 'os',        yieldPct: 8,    marketPrice: 1  },
 ]
 
-// ─── Données Volaille ──────────────────────────────────────────────────────────
+// ─── Données Volaille ──────────────────────────────────────────────────────────────
 
 const VOLAILLE_BREEDS: Breed[] = [
   { id: 'poulet_fermier',  name: 'Poulet fermier Label Rouge', carcassYield: 0.75, avgWeight: '2-3 kg',   origin: 'France',    description: 'Label Rouge. Élevage 81 jours min. Chair ferme et goûteuse. Le standard de qualité en volaille artisanale.' },
@@ -163,7 +163,7 @@ const VOLAILLE_CUTS: Cut[] = [
   { id: 'carcasse_bouillon',name: 'Carcasse / Bouillon',      category: 'os',        yieldPct: 15,  marketPrice: 1.5},
 ]
 
-// ─── Config espèces ────────────────────────────────────────────────────────────
+// ─── Config espèces ────────────────────────────────────────────────────────────────
 
 const ANIMALS: Record<AnimalType, AnimalConfig> = {
   boeuf:    { label: 'Bœuf',    emoji: '🐄', accent: 'red',    breedLabel: 'Race bovine',   breeds: BOEUF_BREEDS,    cuts: BOEUF_CUTS,    defaultWeight: '800', defaultPurchaseKg: '3.80', defaultLabor: '150' },
@@ -175,7 +175,7 @@ const ANIMALS: Record<AnimalType, AnimalConfig> = {
 
 const ANIMAL_TYPES: AnimalType[] = ['boeuf', 'veau', 'agneau', 'porc', 'volaille']
 
-// ─── Catégories ───────────────────────────────────────────────────────────────
+// ─── Catégories ───────────────────────────────────────────────────────────────────
 
 const CATEGORY_LABELS: Record<CutCategory, string> = {
   premier: '1er choix', deuxieme: '2e choix',
@@ -207,6 +207,27 @@ function makeWeekLabel(week: number, year: number): string {
   return `S${week} ${year}  ·  ${weekStart.getDate()} ${MONTHS_FR[weekStart.getMonth()]}`
 }
 
+// ─── Préférences par famille (catégories cochées + pièces retirées), persistées en localStorage ─
+
+type CatsByAnimal = Record<AnimalType, CutCategory[]>
+type CutsByAnimal = Record<AnimalType, string[]>
+
+const DEFAULT_CATS = (): CatsByAnimal => ({
+  boeuf: [...CATEGORIES], veau: [...CATEGORIES], agneau: [...CATEGORIES], porc: [...CATEGORIES], volaille: [...CATEGORIES],
+})
+const DEFAULT_EXCLUDED = (): CutsByAnimal => ({
+  boeuf: [], veau: [], agneau: [], porc: [], volaille: [],
+})
+
+function loadPref<T>(key: string, fallback: T): T {
+  if (typeof window === 'undefined') return fallback
+  try {
+    const raw = window.localStorage.getItem(key)
+    if (!raw) return fallback
+    return { ...fallback, ...JSON.parse(raw) }
+  } catch { return fallback }
+}
+
 // ─── Page ──────────────────────────────────────────────────────────────────────
 
 export default function ValorisationPage() {
@@ -222,7 +243,8 @@ export default function ValorisationPage() {
   const [laborCost,     setLaborCost]     = useState('150')
   const [targetMargin,  setTargetMargin]  = useState(35)
   const [showBreedInfo, setShowBreedInfo] = useState(false)
-  const [includedCats,  setIncludedCats]  = useState<Set<CutCategory>>(new Set(CATEGORIES))
+  const [catsByAnimal,     setCatsByAnimal]     = useState<CatsByAnimal>(() => loadPref('valo_cats_v1', DEFAULT_CATS()))
+  const [excludedByAnimal, setExcludedByAnimal] = useState<CutsByAnimal>(() => loadPref('valo_excluded_v1', DEFAULT_EXCLUDED()))
   const [purchaseDate,  setPurchaseDate]  = useState(new Date().toISOString().split('T')[0])
   const [notes,         setNotes]         = useState('')
   const [history,       setHistory]       = useState<SavedValo[]>([])
@@ -234,14 +256,24 @@ export default function ValorisationPage() {
   const breeds = config.breeds
   const cuts   = config.cuts
 
-  // Reset quand on change d'espèce
+  // Préférences par famille — persistées
+  useEffect(() => {
+    try { window.localStorage.setItem('valo_cats_v1', JSON.stringify(catsByAnimal)) } catch {}
+  }, [catsByAnimal])
+  useEffect(() => {
+    try { window.localStorage.setItem('valo_excluded_v1', JSON.stringify(excludedByAnimal)) } catch {}
+  }, [excludedByAnimal])
+
+  const includedCats = useMemo(() => new Set<CutCategory>(catsByAnimal[animalType] ?? CATEGORIES), [catsByAnimal, animalType])
+  const excludedCuts = useMemo(() => new Set<string>(excludedByAnimal[animalType] ?? []), [excludedByAnimal, animalType])
+
+  // Reset quand on change d'espèce (les catégories/pièces de chaque famille sont conservées)
   useEffect(() => {
     setBreedId(config.breeds[0].id)
     setLiveWeight(config.defaultWeight)
     setPurchasePerKg(config.defaultPurchaseKg)
     setLaborCost(config.defaultLabor)
     setShowBreedInfo(false)
-    setIncludedCats(new Set(CATEGORIES))
   }, [animalType]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Pré-remplissage depuis la facturation
@@ -267,20 +299,21 @@ export default function ValorisationPage() {
 
   const { results, coefficient, totalMarketRevenue1 } = useMemo(() => {
     if (liveW <= 0 || ppkg <= 0) return { results: [] as CutResult[], coefficient: 1, totalMarketRevenue1: 0 }
-    const activeCuts  = cuts.filter(c => includedCats.has(c.category))
+    const isActive    = (c: Cut) => includedCats.has(c.category) && !excludedCuts.has(c.id)
+    const activeCuts  = cuts.filter(isActive)
     const mktRevenue  = activeCuts.reduce((s, c) => s + (carcassW1 * c.yieldPct / 100) * c.marketPrice, 0)
     const targetRev   = targetMargin < 100 && totalCost1 > 0 ? totalCost1 / (1 - targetMargin / 100) : mktRevenue
     const coeff       = mktRevenue > 0 ? targetRev / mktRevenue : 1
     const res: CutResult[] = cuts.map(cut => {
       const weight       = carcassW1 * cut.yieldPct / 100
-      const active       = includedCats.has(cut.category)
+      const active       = isActive(cut)
       const sellingPrice = active ? cut.marketPrice * coeff : 0
-      return { cut, weight, sellingPrice, revenue: sellingPrice * weight }
+      return { cut, weight, sellingPrice, revenue: sellingPrice * weight, active }
     })
     return { results: res, coefficient: coeff, totalMarketRevenue1: mktRevenue }
-  }, [animalType, breedId, liveW, ppkg, overhead, labor, targetMargin, includedCats, carcassW1, totalCost1, cuts])
+  }, [animalType, breedId, liveW, ppkg, overhead, labor, targetMargin, includedCats, excludedCuts, carcassW1, totalCost1, cuts])
 
-  const activeResults   = results.filter(r => includedCats.has(r.cut.category))
+  const activeResults   = results.filter(r => r.active)
   const totalRevenue1   = activeResults.reduce((s, r) => s + r.revenue, 0)
   const totalSellable1  = activeResults.reduce((s, r) => s + r.weight, 0)
   const actualMargin1   = totalRevenue1 > 0 ? ((totalRevenue1 - totalCost1) / totalRevenue1) * 100 : 0
@@ -295,7 +328,24 @@ export default function ValorisationPage() {
   useEffect(() => { loadHistory() }, [loadHistory])
 
   function toggleCat(cat: CutCategory) {
-    setIncludedCats(prev => { const n = new Set(prev); n.has(cat) ? n.delete(cat) : n.add(cat); return n })
+    setCatsByAnimal(prev => {
+      const cur = new Set(prev[animalType] ?? CATEGORIES)
+      if (cur.has(cat)) cur.delete(cat); else cur.add(cat)
+      return { ...prev, [animalType]: Array.from(cur) }
+    })
+  }
+
+  /** Retire ou réintègre une pièce individuelle du calcul (mémorisé par famille) */
+  function toggleCut(cutId: string) {
+    setExcludedByAnimal(prev => {
+      const cur = new Set(prev[animalType] ?? [])
+      if (cur.has(cutId)) cur.delete(cutId); else cur.add(cutId)
+      return { ...prev, [animalType]: Array.from(cur) }
+    })
+  }
+
+  function restoreAllCuts() {
+    setExcludedByAnimal(prev => ({ ...prev, [animalType]: [] }))
   }
 
   async function saveValo() {
@@ -421,6 +471,7 @@ export default function ValorisationPage() {
             porc:     'bg-orange-600 text-white shadow-md',
             volaille: 'bg-yellow-500 text-white shadow-md',
           }
+          const excludedCount = (excludedByAnimal[at] ?? []).length
           return (
             <button key={at} onClick={() => setAnimalType(at)}
               className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold border-2 transition-all ${
@@ -428,6 +479,11 @@ export default function ValorisationPage() {
               }`}>
               <span className="text-base">{a.emoji}</span>
               {a.label}
+              {excludedCount > 0 && (
+                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${isActive ? 'bg-white/25 text-white' : 'bg-gray-100 text-gray-500'}`} title={`${excludedCount} pièce(s) retirée(s) du calcul`}>
+                  −{excludedCount}
+                </span>
+              )}
             </button>
           )
         })}
@@ -714,10 +770,11 @@ export default function ValorisationPage() {
 
               {/* 4 — Pièces */}
               <div className="bg-white border border-gray-200 rounded-2xl p-5">
-                <h2 className="text-sm font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                <h2 className="text-sm font-semibold text-gray-900 mb-1 flex items-center gap-2">
                   <span className="w-5 h-5 bg-gray-900 text-white text-xs rounded-full flex items-center justify-center font-bold">4</span>
                   Pièces à valoriser
                 </h2>
+                <p className="text-[11px] text-gray-400 mb-3">Choix mémorisés pour {config.label.toLowerCase()} · retirez une pièce précise dans le tableau</p>
                 <div className="space-y-2">
                   {CATEGORIES.map(cat => (
                     <label key={cat} className="flex items-center gap-3 cursor-pointer">
@@ -726,6 +783,14 @@ export default function ValorisationPage() {
                     </label>
                   ))}
                 </div>
+                {excludedCuts.size > 0 && (
+                  <div className="mt-3 pt-3 border-t border-gray-100 flex items-center justify-between">
+                    <span className="text-xs text-gray-500">{excludedCuts.size} pièce{excludedCuts.size > 1 ? 's' : ''} retirée{excludedCuts.size > 1 ? 's' : ''} du calcul</span>
+                    <button onClick={restoreAllCuts} className="flex items-center gap-1 text-xs text-[#1E3A5F] font-medium hover:underline">
+                      <RotateCcw className="w-3 h-3" />Tout réactiver
+                    </button>
+                  </div>
+                )}
               </div>
 
               {totalRevenue1 > 0 && (
@@ -817,8 +882,8 @@ export default function ValorisationPage() {
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="bg-gray-50 border-b border-gray-100">
-                          {['Pièce','Poids','Réf. marché/kg','Prix conseillé/kg','CA pièce'].map(h => (
-                            <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-600">{h}</th>
+                          {['Pièce','Poids','Réf. marché/kg','Prix conseillé/kg','CA pièce',''].map((h, hi) => (
+                            <th key={hi} className="px-4 py-3 text-left text-xs font-semibold text-gray-600">{h}</th>
                           ))}
                         </tr>
                       </thead>
@@ -826,31 +891,51 @@ export default function ValorisationPage() {
                         {CATEGORIES.map(cat => {
                           const catResults = results.filter(r => r.cut.category === cat)
                           if (catResults.length === 0) return null
-                          const catRevenue = catResults.reduce((s, r) => s + r.revenue, 0)
-                          const catWeight  = catResults.reduce((s, r) => s + r.weight, 0)
-                          const active = includedCats.has(cat)
+                          const catActive  = catResults.filter(r => r.active)
+                          const catRevenue = catActive.reduce((s, r) => s + r.revenue, 0)
+                          const catWeight  = catActive.reduce((s, r) => s + r.weight, 0)
+                          const catChecked = includedCats.has(cat)
                           return (
                             <React.Fragment key={cat}>
                               <tr className="border-t border-gray-100">
-                                <td colSpan={5} className="px-4 py-2">
+                                <td colSpan={6} className="px-4 py-2">
                                   <div className="flex items-center justify-between">
                                     <span className={`text-xs px-2 py-0.5 rounded-full border font-semibold ${CATEGORY_COLORS[cat]}`}>{CATEGORY_LABELS[cat]}</span>
-                                    {active && catRevenue > 0 && <span className="text-xs text-gray-400">{kgStr(catWeight)} | {eur(catRevenue)}</span>}
+                                    {catChecked && catRevenue > 0 && <span className="text-xs text-gray-400">{kgStr(catWeight)} | {eur(catRevenue)}</span>}
                                   </div>
                                 </td>
                               </tr>
                               {catResults.map(r => {
+                                const isExcluded = excludedCuts.has(r.cut.id)
                                 const pctDiff = r.sellingPrice > 0 ? ((r.sellingPrice - r.cut.marketPrice) / r.cut.marketPrice) * 100 : 0
                                 const priceColor = pctDiff < -5 ? 'text-green-600' : pctDiff > 15 ? 'text-orange-600' : 'text-gray-900'
                                 return (
-                                  <tr key={r.cut.id} className={`border-t border-gray-50 ${active ? '' : 'opacity-30'}`}>
-                                    <td className="px-4 py-2.5 font-medium text-gray-800">{r.cut.name}</td>
+                                  <tr key={r.cut.id} className={`group border-t border-gray-50 transition-colors ${r.active ? 'hover:bg-gray-50' : 'opacity-40 bg-gray-50/50'}`}>
+                                    <td className="px-4 py-2.5 font-medium text-gray-800">
+                                      {r.cut.name}
+                                      {isExcluded && <span className="ml-2 text-[10px] font-semibold text-red-500 bg-red-50 px-1.5 py-0.5 rounded-full">retirée</span>}
+                                    </td>
                                     <td className="px-4 py-2.5 text-right tabular-nums text-gray-600">{kgStr(r.weight)}</td>
                                     <td className="px-4 py-2.5 text-right tabular-nums text-gray-400">{eur(r.cut.marketPrice)}</td>
                                     <td className="px-4 py-2.5 text-right tabular-nums font-semibold">
-                                      {active ? <span className={priceColor}>{eur(r.sellingPrice)}{Math.abs(pctDiff) > 1 && <span className={`ml-1 text-xs font-normal ${priceColor}`}>({pctDiff > 0 ? '+' : ''}{pctDiff.toFixed(0)}%)</span>}</span> : '—'}
+                                      {r.active ? <span className={priceColor}>{eur(r.sellingPrice)}{Math.abs(pctDiff) > 1 && <span className={`ml-1 text-xs font-normal ${priceColor}`}>({pctDiff > 0 ? '+' : ''}{pctDiff.toFixed(0)}%)</span>}</span> : '—'}
                                     </td>
-                                    <td className="px-4 py-2.5 text-right tabular-nums text-gray-700">{active ? eur(r.revenue) : '—'}</td>
+                                    <td className="px-4 py-2.5 text-right tabular-nums text-gray-700">{r.active ? eur(r.revenue) : '—'}</td>
+                                    <td className="px-2 py-2.5 text-center w-10">
+                                      {isExcluded ? (
+                                        <button onClick={() => toggleCut(r.cut.id)}
+                                          title="Réintégrer cette pièce"
+                                          className="p-1.5 rounded-lg text-[#1E3A5F] hover:bg-blue-50 transition-colors">
+                                          <RotateCcw className="w-3.5 h-3.5" />
+                                        </button>
+                                      ) : (
+                                        <button onClick={() => toggleCut(r.cut.id)}
+                                          title="Retirer cette pièce du calcul"
+                                          className="p-1.5 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all">
+                                          <Trash2 className="w-3.5 h-3.5" />
+                                        </button>
+                                      )}
+                                    </td>
                                   </tr>
                                 )
                               })}
@@ -865,6 +950,7 @@ export default function ValorisationPage() {
                           <td className="px-4 py-3 text-right text-gray-400">{totalMarketRevenue1 > 0 ? eur(totalMarketRevenue1) : '—'}</td>
                           <td className="px-4 py-3" />
                           <td className="px-4 py-3 text-right font-bold text-orange-300">{totalRevenue1 > 0 ? eur(totalRevenue1) : '—'}</td>
+                          <td className="px-4 py-3" />
                         </tr>
                         {qty > 1 && totalRevenue1 > 0 && (
                           <tr className="bg-blue-700 text-white">
@@ -872,6 +958,7 @@ export default function ValorisationPage() {
                             <td className="px-4 py-2.5 text-right font-bold">{kgStr(totalSellable1 * qty)}</td>
                             <td className="px-4 py-2.5" /><td className="px-4 py-2.5" />
                             <td className="px-4 py-2.5 text-right font-bold text-yellow-300">{eur(totalRevenueLot)}</td>
+                            <td className="px-4 py-2.5" />
                           </tr>
                         )}
                       </tfoot>
@@ -882,6 +969,7 @@ export default function ValorisationPage() {
                       Coefficient x{coefficient.toFixed(3)} appliqué aux prix de marché.
                       <span className="text-green-600 font-medium ml-1">Vert</span> = sous le marché.
                       <span className="text-orange-600 font-medium ml-1">Orange</span> = +15% au-dessus.
+                      <span className="ml-1">Corbeille au survol = retirer une pièce (mémorisé par famille).</span>
                     </p>
                   </div>
                 </div>
