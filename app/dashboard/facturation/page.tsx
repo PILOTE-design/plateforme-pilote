@@ -8,15 +8,16 @@ import {
   Receipt, ChevronLeft, ChevronRight, Plus, Trash2,
   TrendingUp, TrendingDown, ShoppingCart, Users, Euro,
   Save, X, Settings, Check, Loader2, AlertCircle,
-  Link2, Link2Off, RefreshCw, ArrowUpRight
+  Link2, Link2Off, RefreshCw, ArrowUpRight, Repeat
 } from 'lucide-react'
 
-// ─── Types ───────────────────────────────────────────────────────────────────
+// ─── Types ─────────────────────────────────────────────────────────────────
 
 type Invoice = {
   id: string; supplier_name: string; invoice_number?: string; invoice_date: string
   category: string; amount_ht: number; tva_rate: number; amount_ttc: number
   notes?: string; week_number: number; year: number
+  is_fixed_charge?: boolean; period_days?: number; prorata_ht?: number
 }
 
 type WeeklyCA = { ca_total: number; ca_boucherie: number; ca_charcuterie: number; ca_traiteur: number; ca_vente: number }
@@ -38,7 +39,7 @@ type ProviderMeta = {
   helpUrl: string; description: string
 }
 
-// ─── Constantes ──────────────────────────────────────────────────────────────
+// ─── Constantes ────────────────────────────────────────────────────────────
 
 const CATEGORIES = [
   { key: 'viande',         label: 'Viande',         color: 'bg-red-100 text-red-800'       },
@@ -63,7 +64,7 @@ const PROVIDERS_META: ProviderMeta[] = [
   { id: 'ebp',       name: 'EBP',       logo: 'EBP', color: 'bg-orange-500', tokenLabel: 'Token API EBP en ligne', tokenPlaceholder: 'Token depuis EBP → Paramètres → API', needsCompanyId: true, companyIdLabel: 'Identifiant dossier EBP', helpUrl: 'https://developer.ebp.com', description: 'EBP en ligne — import factures fournisseurs automatique' },
 ]
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ─── Helpers ───────────────────────────────────────────────────────────────────
 
 function getISOWeek(date: Date) {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
@@ -85,6 +86,15 @@ function getWeekDates(week: number, year: number): [Date, Date] {
 function fmtDate(d: Date) { return d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', timeZone: 'UTC' }) }
 function fmtEuro(n: number) { return n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €' }
 function catInfo(key: string) { return CATEGORIES.find(c => c.key === key) ?? CATEGORIES[CATEGORIES.length - 1] }
+
+/** Libellé de période d'une charge fixe d'après sa durée en jours */
+function periodLabel(days?: number) {
+  if (!days) return 'mensuel'
+  if (days >= 300) return 'annuel'
+  if (days >= 150) return 'semestriel'
+  if (days >= 80)  return 'trimestriel'
+  return 'mensuel'
+}
 
 // ─── Composant principal ──────────────────────────────────────────────────────
 
@@ -221,6 +231,10 @@ export default function FacturationPage() {
   }
 
   const ttcAmount = parseFloat(newInvoice.amount_ht || '0') * (1 + parseFloat(newInvoice.tva_rate || '20') / 100)
+
+  // Total hebdo des charges fixes détectées (prorata)
+  const fixedWeekly = invoices.reduce((s, i) => s + (i.is_fixed_charge ? (Number(i.prorata_ht) || 0) : 0), 0)
+  const fixedCount  = invoices.filter(i => i.is_fixed_charge).length
 
   function KpiCard({ icon: Icon, label, value, sub, color, warn }: any) {
     return (
@@ -362,6 +376,12 @@ export default function FacturationPage() {
                   </div>
                 )
               })}
+              {fixedWeekly > 0 && (
+                <div className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold bg-purple-50 text-purple-700 border border-purple-200" title={`${fixedCount} facture(s) de charges fixes détectée(s) — part hebdomadaire`}>
+                  <Repeat className="w-3 h-3" />
+                  <span>Charges fixes</span><span className="font-bold">≈ {fmtEuro(fixedWeekly)}/sem</span>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -370,7 +390,10 @@ export default function FacturationPage() {
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
           <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
             <h2 className="font-semibold text-gray-800">Factures de la semaine</h2>
-            <span className="text-xs text-gray-400">{invoices.length} facture{invoices.length > 1 ? 's' : ''} · {fmtEuro(invoices.reduce((s, i) => s + i.amount_ht, 0))} HT</span>
+            <span className="text-xs text-gray-400">
+              {invoices.length} facture{invoices.length > 1 ? 's' : ''} · {fmtEuro(invoices.reduce((s, i) => s + i.amount_ht, 0))} HT
+              {fixedWeekly > 0 && <span className="text-purple-500 font-medium"> · charges fixes ≈ {fmtEuro(fixedWeekly)}/sem</span>}
+            </span>
           </div>
           {loading ? (
             <div className="py-10 text-center text-sm text-gray-400">Chargement...</div>
@@ -397,6 +420,7 @@ export default function FacturationPage() {
                 {invoices.map((inv, i) => {
                   const info = catInfo(inv.category)
                   const isViande = inv.category === 'viande'
+                  const isFixed = !!inv.is_fixed_charge
                   return (
                     <tr key={inv.id} className={`border-t border-gray-100 hover:bg-gray-50 group transition-colors ${i % 2 === 0 ? '' : 'bg-gray-50/50'}`}>
                       <td className="px-4 py-3">
@@ -405,9 +429,22 @@ export default function FacturationPage() {
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-600">{new Date(inv.invoice_date).toLocaleDateString('fr-FR')}</td>
                       <td className="px-4 py-3">
-                        <span className={`text-xs font-semibold px-2 py-1 rounded-full ${info.color}`}>{info.label}</span>
+                        <div className="flex flex-col gap-1 items-start">
+                          <span className={`text-xs font-semibold px-2 py-1 rounded-full ${info.color}`}>{info.label}</span>
+                          {isFixed && (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-purple-700 bg-purple-50 border border-purple-200 px-1.5 py-0.5 rounded-full"
+                              title={`Charge fixe ${periodLabel(inv.period_days)} — répartie à la semaine sur ${inv.period_days ?? 30} jours`}>
+                              <Repeat className="w-2.5 h-2.5" />Charge fixe · {periodLabel(inv.period_days)}
+                            </span>
+                          )}
+                        </div>
                       </td>
-                      <td className="px-4 py-3 text-right font-semibold text-sm text-gray-900">{fmtEuro(inv.amount_ht)}</td>
+                      <td className="px-4 py-3 text-right">
+                        <div className="font-semibold text-sm text-gray-900">{fmtEuro(inv.amount_ht)}</div>
+                        {isFixed && Number(inv.prorata_ht) > 0 && (
+                          <div className="text-[10px] text-purple-600 font-semibold" title="Part hebdomadaire de cette charge fixe">≈ {fmtEuro(Number(inv.prorata_ht))}/sem</div>
+                        )}
+                      </td>
                       <td className="px-4 py-3 text-right text-xs text-gray-400">{inv.tva_rate} %</td>
                       <td className="px-4 py-3 text-right text-sm text-gray-600">{fmtEuro(inv.amount_ttc)}</td>
                       <td className="px-4 py-3 text-center">
