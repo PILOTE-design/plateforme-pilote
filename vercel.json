@@ -3,6 +3,10 @@
     {
       "path": "/api/billing-integrations/sync-all",
       "schedule": "0 4 * * 1"
+    },
+    {
+      "path": "/api/reports/auto",
+      "schedule": "0 5 * * 1"
     }
   ]
 }
