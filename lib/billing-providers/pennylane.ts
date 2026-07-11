@@ -31,16 +31,25 @@ function guessCategory(label: string): string {
 // ─── Détection des charges fixes ────────────────────────────────────────
 
 const FIXED_CHARGE_KEYWORDS = [
+  // Immobilier / locaux
   'loyer', 'bail', 'sci ', 'immobili',
+  // Assurances / prévoyance
   'assurance', 'mutuelle', 'prevoyance', 'prévoyance', 'axa', 'maaf', 'groupama', 'allianz',
+  // Énergie / eau
   'edf', 'engie', 'totalenergies', 'total energies', 'electricit', 'électricit', 'energie', 'énergie', 'gaz',
   'veolia', 'suez', 'saur',
+  // Télécom / logiciels / abonnements
   'orange', 'sfr', 'bouygues telecom', 'free pro', 'telecom', 'télécom', 'internet', 'fibre',
-  'abonnement', 'forfait', 'leasing', 'credit-bail', 'crédit-bail', 'credit bail', 'location longue duree',
-  'maintenance', 'entretien annuel',
-  'honoraires', 'comptable', 'expert-comptable', 'fiduciaire',
-  'logiciel', 'saas',
-  'frais bancaires', 'banque', 'cotisation',
+  'abonnement', 'forfait', 'logiciel', 'saas', 'pennylane', 'swile',
+  // Financement / leasing
+  'leasing', 'credit-bail', 'crédit-bail', 'credit bail', 'location longue duree',
+  // Services récurrents
+  'maintenance', 'entretien annuel', ' initial ', // Initial = location/entretien vêtements pro
+  // Honoraires / conseil
+  'honoraires', 'comptable', 'expert-comptable', 'fiduciaire', 'o2a', 'conseils',
+  // Banque / cotisations / collectivités
+  'frais bancaires', 'banque', 'cotisation', 'urssaf', 'redevance',
+  'communaute urbaine', 'communauté urbaine', 'tresor public', 'trésor public', 'dgfip', 'impot', 'impôt',
 ]
 
 function isFixedChargeLabel(label: string): boolean {
