@@ -1,11 +1,11 @@
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { FileText, TrendingUp, TrendingDown, Users, Receipt, Euro, AlertTriangle, CalendarDays, Calculator, ArrowRight, Repeat } from 'lucide-react'
+import { FileText, TrendingUp, TrendingDown, Users, Receipt, Euro, AlertTriangle, CalendarDays, Calculator, ArrowRight, Repeat, CheckCircle2, Circle } from 'lucide-react'
 import { formatDate } from '@/lib/utils'
 import Link from 'next/link'
 import { DonutChart } from './DashboardChart'
 
-// ─── Helpers dates ──────────────────────────────────────────────────────────
+// ─── Helpers dates ────────────────────────────────────────────────────────
 
 function getISOWeek(date: Date): { week: number; year: number } {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
@@ -174,6 +174,9 @@ export default async function DashboardPage() {
   let legalAlerts: string[] = []
   let cddAlerts: string[] = []
   let reports: Array<{ id: string; title: string; file_url: string; created_at: string }> = []
+  let hasIntegration = false
+  let anyPlanning = false
+  let employeeCount = 0
 
   if (clientId) {
     // ── CA de la semaine écoulée (fallback : dernier CA connu) ──
@@ -205,25 +208,33 @@ export default async function DashboardPage() {
       else achatsVariables += parseFloat(String(inv.amount_ht || 0))
     }
 
+    // ── Intégration comptable connectée ? (checklist de démarrage) ──
+    const { data: integ } = await serviceSupabase
+      .from('billing_integrations').select('id').eq('client_id', clientId).eq('is_active', true).limit(1)
+    hasIntegration = (integ || []).length > 0
+
     // ── Employés + plannings (semaine de référence pour la masse salariale, semaine courante pour les alertes) ──
     const { data: emps } = await serviceSupabase
       .from('employees')
       .select('id, name, hourly_rate, contract_type, contract_hours, charges_patronales, is_minor, contract_end_date')
       .eq('client_id', clientId)
     const employees = (emps || []) as EmpRow[]
+    employeeCount = employees.length
 
     if (employees.length > 0) {
       const empIds = employees.map(e => e.id)
       const cols = 'employee_id,lundi,mardi,mercredi,jeudi,vendredi,samedi,dimanche,' +
         'lundi_type,mardi_type,mercredi_type,jeudi_type,vendredi_type,samedi_type,dimanche_type'
 
-      const [{ data: refPlanning }, { data: curPlanning }] = await Promise.all([
+      const [{ data: refPlanning }, { data: curPlanning }, { data: anyPlan }] = await Promise.all([
         serviceSupabase.from('planning_entries').select(cols).in('employee_id', empIds).eq('week_number', refWeek).eq('year', refYear),
         serviceSupabase.from('planning_entries').select(cols).in('employee_id', empIds).eq('week_number', currentWeek).eq('year', currentYear),
+        serviceSupabase.from('planning_entries').select('id').in('employee_id', empIds).limit(1),
       ])
 
       payrollRef  = computeWeekPayroll((refPlanning || []) as PlanRow[], employees, refWeek, refYear)
       legalAlerts = computeLegalAlerts((curPlanning || []) as PlanRow[], employees)
+      anyPlanning = (anyPlan || []).length > 0
 
       // Fins de CDD dans les 45 jours
       for (const emp of employees) {
@@ -289,6 +300,16 @@ export default async function DashboardPage() {
     ...(ratioMS !== null && ratioMS > 40 ? [{ color: 'bg-amber-500', text: `Masse salariale à ${ratioMS.toFixed(0)} % du CA (cible < 35 %)` }] : []),
   ]
 
+  // ── Checklist de démarrage (onboarding nouveau client) ──
+  const onboardingSteps = [
+    { done: hasIntegration,      label: 'Connecter votre logiciel comptable (Pennylane...)', desc: 'Vos factures s’importeront automatiquement chaque lundi', href: '/dashboard/facturation' },
+    { done: employeeCount > 0,   label: 'Ajouter vos employés',                              desc: 'Contrats, taux horaires et charges patronales',            href: '/dashboard/planning' },
+    { done: anyPlanning,         label: 'Remplir votre premier planning',                    desc: 'Coûts CCN, heures sup et alertes légales calculés',       href: '/dashboard/planning' },
+    { done: caTrend.length > 0,  label: 'Saisir votre CA hebdomadaire',                      desc: 'Débloque la marge, le résultat et le rapport automatique', href: '/dashboard/facturation' },
+  ]
+  const stepsDone = onboardingSteps.filter(s => s.done).length
+  const showOnboarding = clientId !== null && stepsDone < onboardingSteps.length
+
   const weekLabel = `S${refWeek}`
   const hasAnyData = ca_total > 0 || achatsTotal > 0 || payrollRef > 0 || reports.length > 0
 
@@ -318,6 +339,38 @@ export default async function DashboardPage() {
           ))}
         </div>
       </div>
+
+      {/* ── Checklist de démarrage ── */}
+      {showOnboarding && (
+        <div className="mb-6 bg-white rounded-xl border border-[#1E3A5F]/20 shadow-sm overflow-hidden">
+          <div className="px-4 py-3 bg-[#1E3A5F] flex items-center justify-between">
+            <div>
+              <h2 className="text-sm font-bold text-white">Bien démarrer avec PILOTE</h2>
+              <p className="text-[11px] text-blue-200">Encore {onboardingSteps.length - stepsDone} étape{onboardingSteps.length - stepsDone > 1 ? 's' : ''} pour un pilotage 100 % automatique</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-24 h-1.5 bg-white/20 rounded-full overflow-hidden">
+                <div className="h-full bg-[#FF8C00] rounded-full" style={{ width: `${(stepsDone / onboardingSteps.length) * 100}%` }} />
+              </div>
+              <span className="text-xs font-bold text-white">{stepsDone}/{onboardingSteps.length}</span>
+            </div>
+          </div>
+          <div className="divide-y divide-gray-50">
+            {onboardingSteps.map((step, i) => (
+              <Link key={i} href={step.href} className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 transition-colors group">
+                {step.done
+                  ? <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0" />
+                  : <Circle className="w-5 h-5 text-gray-300 flex-shrink-0" />}
+                <div className="flex-1">
+                  <p className={`text-sm font-medium ${step.done ? 'text-gray-400 line-through' : 'text-gray-900'}`}>{step.label}</p>
+                  {!step.done && <p className="text-xs text-gray-400">{step.desc}</p>}
+                </div>
+                {!step.done && <ArrowRight className="w-4 h-4 text-gray-300 group-hover:text-[#1E3A5F] transition-colors" />}
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── Points d'attention ── */}
       {attention.length > 0 && (
@@ -512,7 +565,7 @@ export default async function DashboardPage() {
         <CardHeader className="flex flex-row items-center justify-between">
           <div>
             <CardTitle>Derniers rapports</CardTitle>
-            <CardDescription>Mis à jour automatiquement à chaque publication</CardDescription>
+            <CardDescription>Rapport complet publié chaque semaine · flash automatique le lundi matin</CardDescription>
           </div>
           <Link href="/dashboard/reports" className="text-sm text-[#1E3A5F] font-medium hover:underline flex items-center gap-1">
             Voir tout <ArrowRight className="w-3.5 h-3.5" />
