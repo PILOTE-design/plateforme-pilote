@@ -8,7 +8,7 @@ import {
   Receipt, ChevronLeft, ChevronRight, Plus, Trash2,
   TrendingUp, TrendingDown, ShoppingCart, Users, Euro,
   Save, X, Settings, Check, Loader2, AlertCircle,
-  Link2, Link2Off, RefreshCw, ArrowUpRight, Repeat
+  Link2, Link2Off, RefreshCw, ArrowUpRight, Repeat, Undo2
 } from 'lucide-react'
 
 // ─── Types ─────────────────────────────────────────────────────────────────
@@ -17,7 +17,7 @@ type Invoice = {
   id: string; supplier_name: string; invoice_number?: string; invoice_date: string
   category: string; amount_ht: number; tva_rate: number; amount_ttc: number
   notes?: string; week_number: number; year: number
-  is_fixed_charge?: boolean; period_days?: number; prorata_ht?: number
+  is_fixed_charge?: boolean; period_days?: number | null; prorata_ht?: number | null
 }
 
 type WeeklyCA = { ca_total: number; ca_boucherie: number; ca_charcuterie: number; ca_traiteur: number; ca_vente: number }
@@ -51,6 +51,13 @@ const CATEGORIES = [
 ]
 
 const TVA_RATES = [0, 5.5, 10, 20]
+
+const PERIOD_OPTIONS = [
+  { days: 30,  label: 'Mensuel'     },
+  { days: 91,  label: 'Trimestriel' },
+  { days: 182, label: 'Semestriel'  },
+  { days: 365, label: 'Annuel'      },
+]
 
 const EMPTY_INVOICE = {
   supplier_name: '', invoice_number: '', invoice_date: '',
@@ -87,13 +94,14 @@ function fmtDate(d: Date) { return d.toLocaleDateString('fr-FR', { day: 'numeric
 function fmtEuro(n: number) { return n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €' }
 function catInfo(key: string) { return CATEGORIES.find(c => c.key === key) ?? CATEGORIES[CATEGORIES.length - 1] }
 
-/** Libellé de période d'une charge fixe d'après sa durée en jours */
-function periodLabel(days?: number) {
-  if (!days) return 'mensuel'
-  if (days >= 300) return 'annuel'
-  if (days >= 150) return 'semestriel'
-  if (days >= 80)  return 'trimestriel'
-  return 'mensuel'
+function periodLabel(days?: number | null) {
+  if (!days) return 'Mensuel'
+  return PERIOD_OPTIONS.find(p => p.days === days)?.label
+    ?? (days >= 300 ? 'Annuel' : days >= 150 ? 'Semestriel' : days >= 80 ? 'Trimestriel' : 'Mensuel')
+}
+
+function weeklyShare(amountHt: number, days?: number | null) {
+  return Math.round((amountHt * 7 / (days || 30)) * 100) / 100
 }
 
 // ─── Composant principal ──────────────────────────────────────────────────────
@@ -182,6 +190,24 @@ export default function FacturationPage() {
     setInvoices(prev => prev.filter(i => i.id !== id)); load()
   }
 
+  /** Bascule manuelle charge fixe <-> achat variable */
+  async function toggleFixed(inv: Invoice) {
+    const makeFixed = !inv.is_fixed_charge
+    const period = inv.period_days || 30
+    const apiPatch = makeFixed
+      ? { is_fixed_charge: true, period_days: period, prorata_ht: weeklyShare(inv.amount_ht, period) }
+      : { is_fixed_charge: false, period_days: null, prorata_ht: null }
+    setInvoices(prev => prev.map(i => i.id === inv.id ? { ...i, ...apiPatch } : i))
+    await fetch(`/api/invoices/${inv.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(apiPatch) })
+  }
+
+  /** Change la période d'une charge fixe et recalcule le prorata hebdo */
+  async function setFixedPeriod(inv: Invoice, days: number) {
+    const apiPatch = { period_days: days, prorata_ht: weeklyShare(inv.amount_ht, days) }
+    setInvoices(prev => prev.map(i => i.id === inv.id ? { ...i, ...apiPatch } : i))
+    await fetch(`/api/invoices/${inv.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(apiPatch) })
+  }
+
   async function saveCA() {
     setSaving(true)
     const body = { week_number: week, year, ca_total: parseFloat(caForm.ca_total) || 0, ca_boucherie: parseFloat(caForm.ca_boucherie) || 0, ca_charcuterie: parseFloat(caForm.ca_charcuterie) || 0, ca_traiteur: parseFloat(caForm.ca_traiteur) || 0, ca_vente: parseFloat(caForm.ca_vente) || 0 }
@@ -232,9 +258,22 @@ export default function FacturationPage() {
 
   const ttcAmount = parseFloat(newInvoice.amount_ht || '0') * (1 + parseFloat(newInvoice.tva_rate || '20') / 100)
 
-  // Total hebdo des charges fixes détectées (prorata)
-  const fixedWeekly = invoices.reduce((s, i) => s + (i.is_fixed_charge ? (Number(i.prorata_ht) || 0) : 0), 0)
-  const fixedCount  = invoices.filter(i => i.is_fixed_charge).length
+  // Séparation achats variables / charges fixes + groupement par catégorie
+  const variableInvoices = invoices.filter(i => !i.is_fixed_charge)
+  const fixedInvoices    = invoices.filter(i => i.is_fixed_charge)
+    .sort((a, b) => (Number(b.prorata_ht) || 0) - (Number(a.prorata_ht) || 0))
+  const groupedVariable  = CATEGORIES
+    .map(cat => ({
+      cat,
+      items: variableInvoices
+        .filter(i => catInfo(i.category).key === cat.key)
+        .sort((a, b) => b.amount_ht - a.amount_ht),
+    }))
+    .filter(g => g.items.length > 0)
+  const variableTotalHt  = variableInvoices.reduce((s, i) => s + i.amount_ht, 0)
+  const variableTotalTtc = variableInvoices.reduce((s, i) => s + i.amount_ttc, 0)
+  const fixedTotalHt     = fixedInvoices.reduce((s, i) => s + i.amount_ht, 0)
+  const fixedWeekly      = fixedInvoices.reduce((s, i) => s + (Number(i.prorata_ht) || 0), 0)
 
   function KpiCard({ icon: Icon, label, value, sub, color, warn }: any) {
     return (
@@ -342,7 +381,7 @@ export default function FacturationPage() {
         {summary !== null && (
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             <KpiCard icon={Euro} label="CA semaine" value={summary.ca_total > 0 ? fmtEuro(summary.ca_total) : '—'} sub={summary.ca_total === 0 ? 'Cliquer sur « Saisir le CA »' : ''} color="bg-blue-50 text-blue-600" />
-            <KpiCard icon={ShoppingCart} label="Achats HT" value={fmtEuro(summary.achats_ht)} sub={`${invoices.length} facture${invoices.length > 1 ? 's' : ''}`} color="bg-orange-50 text-orange-600" />
+            <KpiCard icon={ShoppingCart} label="Achats HT" value={fmtEuro(summary.achats_ht)} sub={`${invoices.length} facture${invoices.length > 1 ? 's' : ''}${fixedWeekly > 0 ? ` · fixes ≈ ${fmtEuro(fixedWeekly)}/sem` : ''}`} color="bg-orange-50 text-orange-600" />
             <KpiCard icon={Users} label="Masse salariale" value={fmtEuro(summary.masse_salariale)} sub={summary.ratio_ms !== null ? `${summary.ratio_ms} % du CA` : 'Depuis le planning'} color="bg-violet-50 text-violet-600" />
             <KpiCard icon={summary.marge_brute >= 0 ? TrendingUp : TrendingDown} label="Marge brute" value={summary.ca_total > 0 ? fmtEuro(summary.marge_brute) : '—'} sub={summary.taux_marge !== null ? `Taux : ${summary.taux_marge} %` : 'Saisir le CA pour calculer'} color={summary.marge_brute >= 0 ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-500'} warn={summary.marge_brute < 0} />
           </div>
@@ -377,7 +416,7 @@ export default function FacturationPage() {
                 )
               })}
               {fixedWeekly > 0 && (
-                <div className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold bg-purple-50 text-purple-700 border border-purple-200" title={`${fixedCount} facture(s) de charges fixes détectée(s) — part hebdomadaire`}>
+                <div className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold bg-purple-50 text-purple-700 border border-purple-200" title={`${fixedInvoices.length} facture(s) de charges fixes — part hebdomadaire`}>
                   <Repeat className="w-3 h-3" />
                   <span>Charges fixes</span><span className="font-bold">≈ {fmtEuro(fixedWeekly)}/sem</span>
                 </div>
@@ -386,21 +425,22 @@ export default function FacturationPage() {
           </div>
         )}
 
-        {/* Liste des factures */}
+        {/* ── Achats de la semaine (variables, groupés par catégorie) ── */}
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
           <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
-            <h2 className="font-semibold text-gray-800">Factures de la semaine</h2>
-            <span className="text-xs text-gray-400">
-              {invoices.length} facture{invoices.length > 1 ? 's' : ''} · {fmtEuro(invoices.reduce((s, i) => s + i.amount_ht, 0))} HT
-              {fixedWeekly > 0 && <span className="text-purple-500 font-medium"> · charges fixes ≈ {fmtEuro(fixedWeekly)}/sem</span>}
-            </span>
+            <h2 className="font-semibold text-gray-800">Achats de la semaine</h2>
+            <span className="text-xs text-gray-400">{variableInvoices.length} facture{variableInvoices.length > 1 ? 's' : ''} · {fmtEuro(variableTotalHt)} HT</span>
           </div>
           {loading ? (
-            <div className="py-10 text-center text-sm text-gray-400">Chargement...</div>
-          ) : invoices.length === 0 ? (
+            <div className="p-6 animate-pulse space-y-3">
+              <div className="h-10 bg-gray-100 rounded-lg" />
+              <div className="h-10 bg-gray-100 rounded-lg" />
+              <div className="h-10 bg-gray-100 rounded-lg" />
+            </div>
+          ) : variableInvoices.length === 0 ? (
             <div className="py-10 text-center">
               <ShoppingCart className="w-8 h-8 text-gray-200 mx-auto mb-2" />
-              <p className="text-sm text-gray-400">Aucune facture cette semaine</p>
+              <p className="text-sm text-gray-400">Aucun achat variable cette semaine</p>
               <button onClick={() => setShowAdd(true)} className="mt-3 text-sm text-[#1E3A5F] hover:underline font-medium">+ Ajouter une facture</button>
             </div>
           ) : (
@@ -409,66 +449,151 @@ export default function FacturationPage() {
                 <tr className="bg-gray-50 text-xs font-semibold text-gray-400 uppercase tracking-wider">
                   <th className="px-4 py-2.5 text-left">Fournisseur</th>
                   <th className="px-4 py-2.5 text-left">Date</th>
-                  <th className="px-4 py-2.5 text-left">Catégorie</th>
                   <th className="px-4 py-2.5 text-right">HT</th>
                   <th className="px-4 py-2.5 text-right">TVA</th>
                   <th className="px-4 py-2.5 text-right">TTC</th>
-                  <th className="px-4 py-2.5 text-center w-20"></th>
+                  <th className="px-4 py-2.5 text-center w-24"></th>
                 </tr>
               </thead>
               <tbody>
-                {invoices.map((inv, i) => {
-                  const info = catInfo(inv.category)
-                  const isViande = inv.category === 'viande'
-                  const isFixed = !!inv.is_fixed_charge
+                {groupedVariable.map(group => {
+                  const subHt = group.items.reduce((s, i) => s + i.amount_ht, 0)
                   return (
-                    <tr key={inv.id} className={`border-t border-gray-100 hover:bg-gray-50 group transition-colors ${i % 2 === 0 ? '' : 'bg-gray-50/50'}`}>
-                      <td className="px-4 py-3">
-                        <div className="font-semibold text-sm text-gray-900">{inv.supplier_name}</div>
-                        {inv.invoice_number && <div className="text-xs text-gray-400">{inv.invoice_number}</div>}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-gray-600">{new Date(inv.invoice_date).toLocaleDateString('fr-FR')}</td>
-                      <td className="px-4 py-3">
-                        <div className="flex flex-col gap-1 items-start">
-                          <span className={`text-xs font-semibold px-2 py-1 rounded-full ${info.color}`}>{info.label}</span>
-                          {isFixed && (
-                            <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-purple-700 bg-purple-50 border border-purple-200 px-1.5 py-0.5 rounded-full"
-                              title={`Charge fixe ${periodLabel(inv.period_days)} — répartie à la semaine sur ${inv.period_days ?? 30} jours`}>
-                              <Repeat className="w-2.5 h-2.5" />Charge fixe · {periodLabel(inv.period_days)}
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <div className="font-semibold text-sm text-gray-900">{fmtEuro(inv.amount_ht)}</div>
-                        {isFixed && Number(inv.prorata_ht) > 0 && (
-                          <div className="text-[10px] text-purple-600 font-semibold" title="Part hebdomadaire de cette charge fixe">≈ {fmtEuro(Number(inv.prorata_ht))}/sem</div>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-right text-xs text-gray-400">{inv.tva_rate} %</td>
-                      <td className="px-4 py-3 text-right text-sm text-gray-600">{fmtEuro(inv.amount_ttc)}</td>
-                      <td className="px-4 py-3 text-center">
-                        <div className="flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
-                          {isViande && (
-                            <button onClick={() => openValorisation(inv)} className="p-1.5 rounded hover:bg-blue-50 text-gray-300 hover:text-blue-600 transition-colors" title="Valoriser cet animal">
-                              <ArrowUpRight className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                          <button onClick={() => deleteInvoice(inv.id)} className="p-1.5 rounded hover:bg-red-50 text-gray-300 hover:text-red-400 transition-colors">
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
+                    <>
+                      <tr key={`h-${group.cat.key}`} className="border-t border-gray-100 bg-gray-50/70">
+                        <td colSpan={6} className="px-4 py-2">
+                          <div className="flex items-center justify-between">
+                            <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${group.cat.color}`}>{group.cat.label}</span>
+                            <span className="text-xs text-gray-400">{group.items.length} facture{group.items.length > 1 ? 's' : ''} · <span className="font-semibold text-gray-600">{fmtEuro(subHt)} HT</span></span>
+                          </div>
+                        </td>
+                      </tr>
+                      {group.items.map(inv => {
+                        const isViande = catInfo(inv.category).key === 'viande'
+                        return (
+                          <tr key={inv.id} className="border-t border-gray-50 hover:bg-gray-50 group transition-colors">
+                            <td className="px-4 py-2.5">
+                              <div className="font-semibold text-sm text-gray-900">{inv.supplier_name}</div>
+                              {inv.invoice_number && <div className="text-xs text-gray-400">{inv.invoice_number}</div>}
+                            </td>
+                            <td className="px-4 py-2.5 text-sm text-gray-600">{new Date(inv.invoice_date).toLocaleDateString('fr-FR')}</td>
+                            <td className="px-4 py-2.5 text-right font-semibold text-sm text-gray-900">{fmtEuro(inv.amount_ht)}</td>
+                            <td className="px-4 py-2.5 text-right text-xs text-gray-400">{inv.tva_rate} %</td>
+                            <td className="px-4 py-2.5 text-right text-sm text-gray-600">{fmtEuro(inv.amount_ttc)}</td>
+                            <td className="px-4 py-2.5 text-center">
+                              <div className="flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                                <button onClick={() => toggleFixed(inv)} className="p-1.5 rounded hover:bg-purple-50 text-gray-300 hover:text-purple-600 transition-colors" title="Marquer comme charge fixe (prorata hebdo)">
+                                  <Repeat className="w-3.5 h-3.5" />
+                                </button>
+                                {isViande && (
+                                  <button onClick={() => openValorisation(inv)} className="p-1.5 rounded hover:bg-blue-50 text-gray-300 hover:text-blue-600 transition-colors" title="Valoriser cet animal">
+                                    <ArrowUpRight className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                                <button onClick={() => deleteInvoice(inv.id)} className="p-1.5 rounded hover:bg-red-50 text-gray-300 hover:text-red-400 transition-colors" title="Supprimer">
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </>
                   )
                 })}
               </tbody>
               <tfoot>
                 <tr className="bg-gray-900 text-white">
-                  <td colSpan={3} className="px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-gray-400">Total</td>
-                  <td className="px-4 py-2.5 text-right font-bold">{fmtEuro(invoices.reduce((s, i) => s + i.amount_ht, 0))}</td>
+                  <td colSpan={2} className="px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-gray-400">Total achats variables</td>
+                  <td className="px-4 py-2.5 text-right font-bold">{fmtEuro(variableTotalHt)}</td>
                   <td className="px-4 py-2.5"></td>
-                  <td className="px-4 py-2.5 text-right font-bold text-orange-300">{fmtEuro(invoices.reduce((s, i) => s + i.amount_ttc, 0))}</td>
+                  <td className="px-4 py-2.5 text-right font-bold text-orange-300">{fmtEuro(variableTotalTtc)}</td>
+                  <td></td>
+                </tr>
+              </tfoot>
+            </table>
+          )}
+        </div>
+
+        {/* ── Charges fixes récurrentes ── */}
+        <div className="bg-white rounded-xl border border-purple-100 shadow-sm overflow-hidden">
+          <div className="px-4 py-3 border-b border-purple-100 bg-purple-50/50 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Repeat className="w-4 h-4 text-purple-500" />
+              <div>
+                <h2 className="font-semibold text-gray-800">Charges fixes récurrentes</h2>
+                <p className="text-[11px] text-gray-400">Réparties à la semaine selon leur période — modifiez la période si besoin</p>
+              </div>
+            </div>
+            {fixedInvoices.length > 0 && (
+              <div className="text-right">
+                <p className="text-sm font-bold text-purple-700">≈ {fmtEuro(fixedWeekly)}/sem</p>
+                <p className="text-[10px] text-gray-400">{fixedInvoices.length} charge{fixedInvoices.length > 1 ? 's' : ''} · {fmtEuro(fixedTotalHt)} HT facturé</p>
+              </div>
+            )}
+          </div>
+          {loading ? (
+            <div className="p-6 animate-pulse"><div className="h-10 bg-gray-100 rounded-lg" /></div>
+          ) : fixedInvoices.length === 0 ? (
+            <div className="py-8 text-center">
+              <Repeat className="w-7 h-7 text-gray-200 mx-auto mb-2" />
+              <p className="text-sm text-gray-400">Aucune charge fixe détectée cette semaine</p>
+              <p className="text-xs text-gray-300 mt-1">Survolez une facture ci-dessus et cliquez sur l&apos;icône <Repeat className="w-3 h-3 inline text-gray-400" /> pour la marquer comme charge fixe</p>
+            </div>
+          ) : (
+            <table className="w-full">
+              <thead>
+                <tr className="bg-gray-50 text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                  <th className="px-4 py-2.5 text-left">Fournisseur</th>
+                  <th className="px-4 py-2.5 text-left">Date</th>
+                  <th className="px-4 py-2.5 text-right">Montant HT</th>
+                  <th className="px-4 py-2.5 text-center">Période</th>
+                  <th className="px-4 py-2.5 text-right">Part hebdo</th>
+                  <th className="px-4 py-2.5 text-center w-20"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {fixedInvoices.map((inv, i) => (
+                  <tr key={inv.id} className={`border-t border-gray-100 hover:bg-purple-50/30 group transition-colors ${i % 2 === 0 ? '' : 'bg-gray-50/50'}`}>
+                    <td className="px-4 py-2.5">
+                      <div className="font-semibold text-sm text-gray-900">{inv.supplier_name}</div>
+                      {inv.invoice_number && <div className="text-xs text-gray-400">{inv.invoice_number}</div>}
+                    </td>
+                    <td className="px-4 py-2.5 text-sm text-gray-600">{new Date(inv.invoice_date).toLocaleDateString('fr-FR')}</td>
+                    <td className="px-4 py-2.5 text-right font-semibold text-sm text-gray-900">{fmtEuro(inv.amount_ht)}</td>
+                    <td className="px-4 py-2.5 text-center">
+                      <select
+                        value={inv.period_days || 30}
+                        onChange={e => setFixedPeriod(inv, parseInt(e.target.value))}
+                        className="text-xs border border-purple-200 bg-purple-50 text-purple-700 font-semibold rounded-lg px-2 py-1 focus:outline-none focus:border-purple-400 cursor-pointer"
+                        title="Période couverte par cette facture"
+                      >
+                        {PERIOD_OPTIONS.map(p => <option key={p.days} value={p.days}>{p.label}</option>)}
+                      </select>
+                    </td>
+                    <td className="px-4 py-2.5 text-right">
+                      <span className="font-bold text-sm text-purple-700">≈ {fmtEuro(Number(inv.prorata_ht) || weeklyShare(inv.amount_ht, inv.period_days))}</span>
+                      <span className="text-[10px] text-gray-400">/sem</span>
+                    </td>
+                    <td className="px-4 py-2.5 text-center">
+                      <div className="flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                        <button onClick={() => toggleFixed(inv)} className="p-1.5 rounded hover:bg-gray-100 text-gray-300 hover:text-gray-600 transition-colors" title="Retirer des charges fixes (rebascule en achat variable)">
+                          <Undo2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button onClick={() => deleteInvoice(inv.id)} className="p-1.5 rounded hover:bg-red-50 text-gray-300 hover:text-red-400 transition-colors" title="Supprimer">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="bg-purple-700 text-white">
+                  <td colSpan={2} className="px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-purple-200">Total charges fixes</td>
+                  <td className="px-4 py-2.5 text-right font-bold">{fmtEuro(fixedTotalHt)}</td>
+                  <td className="px-4 py-2.5"></td>
+                  <td className="px-4 py-2.5 text-right font-bold text-yellow-300">≈ {fmtEuro(fixedWeekly)}/sem</td>
                   <td></td>
                 </tr>
               </tfoot>
