@@ -61,6 +61,9 @@ export async function POST(req: NextRequest) {
 
     const syncResult = await prov.fetchWeekInvoices(integ.api_token, from, to, integ.company_id)
 
+    let syncError: string | null = syncResult.error ?? null
+    let imported = 0
+
     if (syncResult.success && syncResult.invoices.length > 0) {
       const rows = syncResult.invoices.map(inv => ({
         client_id:      clientRow.id,
@@ -76,24 +79,32 @@ export async function POST(req: NextRequest) {
         notes: `Importé depuis ${prov.name}${inv.external_id ? ` (${inv.external_id})` : ''}`,
       }))
 
-      await service.from('invoices').upsert(rows, {
+      const { error: upsertError } = await service.from('invoices').upsert(rows, {
         onConflict: 'client_id,invoice_number,invoice_date',
         ignoreDuplicates: true,
       })
+
+      if (upsertError) {
+        syncError = `Upsert invoices a échoué: ${upsertError.message}`
+      } else {
+        imported = rows.length
+      }
     }
+
+    const ok = syncResult.success && !syncError
 
     await service.from('billing_integrations').update({
       last_sync_at:     new Date().toISOString(),
-      last_sync_status: syncResult.success ? 'success' : 'error',
-      last_sync_error:  syncResult.error ?? null,
-      invoices_synced:  syncResult.invoices.length,
+      last_sync_status: ok ? 'success' : 'error',
+      last_sync_error:  syncError,
+      invoices_synced:  imported,
       updated_at:       new Date().toISOString(),
     }).eq('id', integ.id)
 
     results[integ.provider] = {
-      success:  syncResult.success,
-      imported: syncResult.invoices.length,
-      error:    syncResult.error,
+      success:  ok,
+      imported,
+      error:    syncError,
     }
   }
 
