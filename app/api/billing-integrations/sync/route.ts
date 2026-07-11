@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { PROVIDERS } from '@/lib/billing-providers'
 
+export const maxDuration = 60 // Vercel Pro: 60s max, Hobby: 10s (mieux que défaut)
+
 function getWeekBounds(weekNumber: number, year: number): [Date, Date] {
   const jan4 = new Date(Date.UTC(year, 0, 4))
   const dow = jan4.getUTCDay() || 7

@@ -9,6 +9,7 @@ function fmt(d: Date) {
 async function apiFetch(token: string, path: string) {
   const res = await fetch(`${BASE}${path}`, {
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    signal: AbortSignal.timeout(8000), // 8s max pour rester sous le timeout Vercel
   })
   if (!res.ok) {
     const body = await res.text().catch(() => '')
@@ -66,6 +67,7 @@ export const pennylane: BillingProvider = {
     try {
       const res = await fetch(`${BASE}/supplier_invoices?limit=1`, {
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(8000),
       })
       if (res.status === 401 || res.status === 403) return false
       return true
@@ -79,47 +81,31 @@ export const pennylane: BillingProvider = {
     const dateTo   = fmt(to)
 
     try {
-      // Essai 1 : avec filtre de date Pennylane v2
-      const filter = JSON.stringify([
-        { field: 'date', operator: 'gteq', value: dateFrom },
-        { field: 'date', operator: 'lteq', value: dateTo },
-      ])
-      const params = new URLSearchParams({ filter, limit: '100' })
-      const data = await apiFetch(token, `/supplier_invoices?${params.toString()}`)
+      // Un seul appel : 100 factures les plus récentes, triées par date desc
+      // Filtrage côté client pour éviter le double appel et les timeouts Vercel
+      const data = await apiFetch(token, `/supplier_invoices?limit=100&sort=-date`)
       const items = parseItems(data)
 
-      if (items.length > 0) {
-        const mapped = items
-          .map((inv: any) => mapInvoice(inv, dateFrom))
-          .filter((i: ProviderInvoice) => i.amount_ht > 0)
-        return { success: true, invoices: mapped }
+      if (items.length === 0) {
+        return { success: true, invoices: [], error: 'Aucune facture dans Pennylane' }
       }
 
-      // Essai 2 : sans filtre, pour voir la structure réelle des factures
-      const rawData = await apiFetch(token, `/supplier_invoices?limit=5&sort=-date`)
-      const rawItems = parseItems(rawData)
-
-      if (rawItems.length === 0) {
-        return { success: true, invoices: [] }
-      }
-
-      // Logger la structure pour debug
-      const sample = rawItems[0]
-      const debugInfo = JSON.stringify({
+      // Log de la structure du premier élément pour debug
+      const sample = items[0]
+      const debugFields = {
         date: sample.date,
         invoice_date: sample.invoice_date,
+        deadline_at: sample.deadline_at,
+        created_at: sample.created_at,
         currency_amount: sample.currency_amount,
         amount: sample.amount,
         pre_tax_amount: sample.pre_tax_amount,
-        total: sample.total,
         currency_tax_inclusive_amount: sample.currency_tax_inclusive_amount,
-        deadline_at: sample.deadline_at,
-        created_at: sample.created_at,
-        updated_at: sample.updated_at,
-      })
+        supplier: sample.supplier?.name ?? sample.third_party?.name ?? null,
+      }
 
-      // Filtrage côté client sur la date réelle
-      const mapped = rawItems
+      // Filtrage côté client sur la plage de dates
+      const mapped = items
         .map((inv: any) => mapInvoice(inv, dateFrom))
         .filter((i: ProviderInvoice) => {
           if (i.amount_ht <= 0) return false
@@ -131,10 +117,12 @@ export const pennylane: BillingProvider = {
         return { success: true, invoices: mapped }
       }
 
+      // Aucune facture dans la plage — on stocke les infos de debug
+      const datesFound = items.slice(0, 10).map((inv: any) => inv.date ?? inv.invoice_date ?? '?').join(', ')
       return {
         success: false,
         invoices: [],
-        error: `0 factures pour ${dateFrom}→${dateTo}. Structure: ${debugInfo}`,
+        error: `0 factures pour ${dateFrom}→${dateTo}. Dates trouvées: ${datesFound}. Structure: ${JSON.stringify(debugFields)}`,
       }
     } catch (err) {
       return { success: false, invoices: [], error: String(err) }
