@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Plus, ChevronLeft, ChevronRight, ChevronDown, Trash2, CalendarDays, FileDown, Copy, Clipboard, BarChart2, X } from 'lucide-react'
+import { Plus, ChevronLeft, ChevronRight, Trash2, CalendarDays, FileDown, Copy, Clipboard, BarChart2, X, AlertTriangle } from 'lucide-react'
 import EmployeeProfileModal, { EmployeeProfile } from '@/components/EmployeeProfileModal'
 
 type DayType = 'travail' | 'conges' | 'maladie' | 'repos'
@@ -60,6 +60,9 @@ type Employee = {
   id: string; name: string; hourly_rate: number
   contract_hours: number; contract_type: string
   cp_initial?: number; created_at: string
+  position?: string | null; hire_date?: string | null; contract_end_date?: string | null
+  phone?: string | null; email?: string | null; notes?: string | null
+  is_minor?: boolean; charges_patronales?: number; hs_cumules?: number
 }
 type PlanningEntry = {
   id?: string; employee_id: string; week_number: number; year: number
@@ -74,7 +77,7 @@ type PlanningEntry = {
 }
 type EntriesMap = Record<string, PlanningEntry>
 type MonthlyStat = {
-  emp: Employee; hours: number; cost: number; worked: number; cp: number; sick: number
+  emp: Employee; hours: number; cost: number; charged: number; ot: number; worked: number; cp: number; sick: number
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -147,7 +150,7 @@ function getWeeksInMonth(year: number, month: number): { week: number; year: num
   const lastDay  = new Date(Date.UTC(year, month, 0))
   const weeks: { week: number; year: number }[] = []
   const seen = new Set<string>()
-  let d = new Date(firstDay)
+  const d = new Date(firstDay)
   while (d <= lastDay) {
     const { week: w, year: y } = getISOWeek(d)
     const key = `${y}-${w}`
@@ -169,12 +172,66 @@ function calcTotalH(entry: PlanningEntry, contractH = 35) {
   }, 0)
 }
 
-function calcCost(entry: PlanningEntry, rate: number, contractH: number) {
+/** Coût de base avec heures sup hebdo : +25 % de contractH à contractH+8, +50 % au-delà */
+function calcBaseCost(entry: PlanningEntry, rate: number, contractH: number) {
   const totalH = calcTotalH(entry, contractH)
   const t2 = contractH + 8
   if (totalH <= contractH) return totalH * rate
   if (totalH <= t2) return contractH * rate + (totalH - contractH) * rate * 1.25
   return contractH * rate + (t2 - contractH) * rate * 1.25 + (totalH - t2) * rate * 1.5
+}
+
+/** Primes CCN 992 : dimanche travaillé +20 %, jour férié travaillé +100 % */
+function calcPremiums(entry: PlanningEntry, rate: number, holidayFlags: boolean[]) {
+  let sundayH = 0, holidayH = 0
+  JOURS_DB.forEach((j, idx) => {
+    const t = (entry[`${j}_type` as keyof PlanningEntry] as DayType) || 'travail'
+    if (t !== 'travail') return
+    const h = (entry[j] as number) || 0
+    if (holidayFlags[idx]) holidayH += h
+    else if (idx === 6) sundayH += h
+  })
+  return sundayH * rate * 0.20 + holidayH * rate * 1.00
+}
+
+/** Coût brut complet CCN : base + heures sup + majorations dimanche/férié */
+function calcCostCCN(entry: PlanningEntry, rate: number, contractH: number, holidayFlags: boolean[]) {
+  return calcBaseCost(entry, rate, contractH) + calcPremiums(entry, rate, holidayFlags)
+}
+
+/** Multiplicateur charges patronales (défaut 45 %) */
+function chargeMult(emp: Employee) {
+  return 1 + (Number(emp.charges_patronales ?? 45) / 100)
+}
+
+/** Alertes légales Code du travail / CCN 992 pour la semaine */
+function getEmployeeAlerts(emp: Employee, entry: PlanningEntry): string[] {
+  const msgs: string[] = []
+  const ch = emp.contract_hours || 35
+  const maxDay = emp.is_minor ? 8 : 10
+  let workedDays = 0
+  JOURS_DB.forEach((j, idx) => {
+    const t = (entry[`${j}_type` as keyof PlanningEntry] as DayType) || 'travail'
+    const h = (entry[j] as number) || 0
+    if (t === 'travail' && h > 0) {
+      workedDays++
+      if (h > maxDay) msgs.push(`${JOURS_SHORT[idx]} : ${fmtH(h)} — max légal ${maxDay}h/jour${emp.is_minor ? ' (mineur)' : ''}`)
+    }
+  })
+  const total = calcTotalH(entry, ch)
+  const maxWeek = emp.is_minor ? 35 : 48
+  if (total > maxWeek) msgs.push(`${fmtH(total)} sur la semaine — max légal ${maxWeek}h${emp.is_minor ? ' (mineur)' : ''}`)
+  if (workedDays === 7) msgs.push('7 jours travaillés — repos hebdomadaire de 35h consécutives obligatoire')
+  return msgs
+}
+
+/** Badge fin de CDD si le contrat se termine dans les 45 jours */
+function cddEndInfo(emp: Employee): { label: string; urgent: boolean } | null {
+  if (!emp.contract_end_date) return null
+  const end = new Date(emp.contract_end_date)
+  const days = Math.ceil((end.getTime() - Date.now()) / 86400000)
+  if (isNaN(days) || days < 0 || days > 45) return null
+  return { label: `CDD fin ${end.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' })}`, urgent: days <= 15 }
 }
 
 function emptyEntry(empId: string, week: number, year: number): PlanningEntry {
@@ -270,11 +327,15 @@ export default function PlanningPage() {
   const { week: cw, year: cy } = getISOWeek(new Date())
   const isCurrentWeek = week === cw && year === cy
   const weekDates     = getWeekDates(week, year)
-  const today         = new Date()
+
+  // Date du jour au format ISO local (évite le mélange UTC/local)
+  const tNow = new Date()
+  const todayISO = `${tNow.getFullYear()}-${String(tNow.getMonth() + 1).padStart(2, '0')}-${String(tNow.getDate()).padStart(2, '0')}`
 
   // Jours fériés pour l'année affichée
   const holidays     = getFrenchHolidays(year)
   const weekHolidays = weekDates.map(d => holidays.get(d.toISOString().slice(0, 10)) ?? null)
+  const holidayFlags = weekHolidays.map(h => h !== null)
 
   const setEntriesSync = (updater: (prev: EntriesMap) => EntriesMap) => {
     setEntries(prev => {
@@ -455,11 +516,14 @@ export default function PlanningPage() {
     const fromEntry = getEntryState(copiedCell.empId)
     const fromType  = (fromEntry[`${copiedCell.jour}_type` as keyof PlanningEntry] as DayType) || 'travail'
     const fromHours = (fromEntry[copiedCell.jour as keyof PlanningEntry] as number) || 0
+    const fromSd    = ((fromEntry.schedule_details as ScheduleDetails | undefined) || {})[copiedCell.jour]
     const toEntry   = getEntryState(toEmpId)
+    const toSd      = ((toEntry.schedule_details as ScheduleDetails | undefined) || {})
     const updated: PlanningEntry = {
       ...toEntry,
       [`${toJour}_type`]: fromType,
       [toJour]: fromHours,
+      ...(fromSd ? { schedule_details: { ...toSd, [toJour]: { ...fromSd } } } : {}),
     }
     setEntriesSync(prev => ({ ...prev, [toEmpId]: updated }))
     saveEntryValues(toEmpId, updated)
@@ -478,15 +542,25 @@ export default function PlanningPage() {
           fetch(`/api/planning?week=${w}&year=${y}`).then(r => r.json()).catch(() => [])
         )
       )
-      const stats: Record<string, { hours: number; cost: number; worked: number; cp: number; sick: number }> = {}
-      for (const weekEntries of allResults) {
-        if (!Array.isArray(weekEntries)) continue
+      const holidayCache: Record<number, Map<string, string>> = {}
+      const stats: Record<string, { hours: number; cost: number; charged: number; ot: number; worked: number; cp: number; sick: number }> = {}
+      allResults.forEach((weekEntries, wi) => {
+        if (!Array.isArray(weekEntries)) return
+        const { week: w, year: y } = weeks[wi]
+        if (!holidayCache[y]) holidayCache[y] = getFrenchHolidays(y)
+        const wDates = getWeekDates(w, y)
+        const wFlags = wDates.map(d => holidayCache[y].has(d.toISOString().slice(0, 10)))
         for (const entry of weekEntries) {
-          if (!stats[entry.employee_id]) stats[entry.employee_id] = { hours: 0, cost: 0, worked: 0, cp: 0, sick: 0 }
+          if (!stats[entry.employee_id]) stats[entry.employee_id] = { hours: 0, cost: 0, charged: 0, ot: 0, worked: 0, cp: 0, sick: 0 }
           const emp = employees.find(e => e.id === entry.employee_id)
           if (!emp) continue
-          stats[entry.employee_id].hours += calcTotalH(entry, emp.contract_hours || 35)
-          stats[entry.employee_id].cost  += calcCost(entry, Number(emp.hourly_rate), emp.contract_hours || 35)
+          const ch = emp.contract_hours || 35
+          const weekH = calcTotalH(entry, ch)
+          const weekCost = calcCostCCN(entry, Number(emp.hourly_rate), ch, wFlags)
+          stats[entry.employee_id].hours   += weekH
+          stats[entry.employee_id].cost    += weekCost
+          stats[entry.employee_id].charged += weekCost * chargeMult(emp)
+          stats[entry.employee_id].ot      += Math.max(0, weekH - ch)
           for (const jour of JOURS_DB) {
             const t = (entry[`${jour}_type`] as DayType) || 'travail'
             const h = (entry[jour] as number) || 0
@@ -495,20 +569,28 @@ export default function PlanningPage() {
             else if (t === 'travail' && h > 0) stats[entry.employee_id].worked++
           }
         }
-      }
-      setMonthlyData(employees.map(emp => ({ emp, ...(stats[emp.id] || { hours: 0, cost: 0, worked: 0, cp: 0, sick: 0 }) })))
+      })
+      setMonthlyData(employees.map(emp => ({ emp, ...(stats[emp.id] || { hours: 0, cost: 0, charged: 0, ot: 0, worked: 0, cp: 0, sick: 0 }) })))
     } finally {
       setLoadingMonthly(false)
     }
   }
 
-  const rowStats  = employees.map(emp => {
+  const rowStats = employees.map(emp => {
     const e  = getEntryState(emp.id)
     const ch = emp.contract_hours || 35
-    return { empId: emp.id, totalH: calcTotalH(e, ch), cost: calcCost(e, Number(emp.hourly_rate), ch) }
+    const cost = calcCostCCN(e, Number(emp.hourly_rate), ch, holidayFlags)
+    return {
+      empId: emp.id, name: emp.name,
+      totalH: calcTotalH(e, ch), cost,
+      charged: cost * chargeMult(emp),
+      alerts: getEmployeeAlerts(emp, e),
+    }
   })
-  const grandH    = rowStats.reduce((s, r) => s + r.totalH, 0)
-  const grandCost = rowStats.reduce((s, r) => s + r.cost, 0)
+  const grandH       = rowStats.reduce((s, r) => s + r.totalH, 0)
+  const grandCost    = rowStats.reduce((s, r) => s + r.cost, 0)
+  const grandCharged = rowStats.reduce((s, r) => s + r.charged, 0)
+  const weekAlerts   = rowStats.flatMap(r => r.alerts.map(msg => ({ name: r.name, msg })))
 
   function exportPDF() {
     const dates = getWeekDates(week, year)
@@ -518,23 +600,35 @@ export default function PlanningPage() {
       const bg    = fName ? '#d97706' : i >= 5 ? '#94a3b8' : '#1E3A5F'
       return `<th style="background:${bg};color:white;padding:7px 5px;font-size:10px;text-align:center;">${fmtD(d)}${fName ? `<br><span style="font-size:8px;opacity:.9;">✦ ${fName}</span>` : ''}</th>`
     }).join('')
+    const catHex: Record<string, string> = { boucherie: '#b91c1c', charcuterie: '#c2410c', traiteur: '#047857', vente: '#0369a1' }
     const empRows = employees.map((emp, i) => {
       const pal    = EMP_PALETTES[i % EMP_PALETTES.length]
       const entry  = getEntryState(emp.id)
       const ch     = emp.contract_hours || 35
       const totalH = calcTotalH(entry, ch)
-      const cost   = calcCost(entry, Number(emp.hourly_rate), ch)
+      const cost   = calcCostCCN(entry, Number(emp.hourly_rate), ch, holidayFlags)
+      const charged = cost * chargeMult(emp)
       const cells  = JOURS_DB.map((j, idx) => {
         const type   = (entry[`${j}_type` as keyof PlanningEntry] as DayType) || (idx >= 5 ? 'repos' : 'travail')
         const h      = entry[j] || 0
         const fName  = weekHolidays[idx]
+        const sd: ScheduleDetail = ((entry.schedule_details as ScheduleDetails | undefined) || {})[j] || {}
+        const cat    = CATEGORIES.find(c => c.key === sd.categorie)
         const bg     = fName ? '#fef3c7' : type === 'travail' ? pal.lightHex : TYPE_CONFIG[type].pdfColor
-        const label  = type === 'travail'
-          ? (h > 0 ? `<strong>${fmtH(h)}</strong>` : '—')
-          : type === 'conges'
-            ? `<span style="font-size:9px;">CP ${fmtH(emp.contract_hours / 5)}</span>`
-            : `<span style="font-size:9px;">${TYPE_CONFIG[type].label}</span>`
-        return `<td style="padding:6px 4px;text-align:center;background:${bg};border-bottom:1px solid #e2e8f0;border-right:1px solid #e2e8f0;">${label}${fName ? `<br><span style="font-size:8px;color:#92400e;">Férié</span>` : ''}</td>`
+        let label = ''
+        if (type === 'travail') {
+          const lines: string[] = []
+          if (cat) lines.push(`<div style=\"font-size:7.5px;font-weight:700;color:${catHex[cat.key] || '#334155'};text-transform:uppercase;letter-spacing:.3px;\">${cat.short}</div>`)
+          if (sd.matin_debut)  lines.push(`<div style=\"font-size:8px;color:#475569;\">M ${sd.matin_debut}–${sd.matin_fin || '?'}</div>`)
+          if (sd.apmidi_debut) lines.push(`<div style=\"font-size:8px;color:#475569;\">AM ${sd.apmidi_debut}–${sd.apmidi_fin || '?'}</div>`)
+          lines.push(h > 0 ? `<strong style=\"font-size:11px;\">${fmtH(h)}</strong>` : '—')
+          label = lines.join('')
+        } else if (type === 'conges') {
+          label = `<span style=\"font-size:9px;\">CP ${fmtH(ch / 5)}</span>`
+        } else {
+          label = `<span style=\"font-size:9px;\">${TYPE_CONFIG[type].label}</span>`
+        }
+        return `<td style="padding:5px 4px;text-align:center;background:${bg};border-bottom:1px solid #e2e8f0;border-right:1px solid #e2e8f0;vertical-align:middle;">${label}${fName ? `<br><span style="font-size:8px;color:#92400e;">Férié</span>` : ''}</td>`
       }).join('')
       return `<tr>
         <td style="padding:7px 10px;border-bottom:1px solid #e2e8f0;border-left:3px solid ${pal.hex};background:#fafafa;">
@@ -544,17 +638,17 @@ export default function PlanningPage() {
           </div>
         </td>${cells}
         <td style="padding:6px;text-align:center;font-weight:700;font-size:12px;color:${totalH > ch ? '#ea580c' : '#1e293b'};background:#f8fafc;border-bottom:1px solid #e2e8f0;">${fmtH(totalH)}</td>
-        <td style="padding:6px;text-align:center;font-weight:700;font-size:12px;color:#15803d;background:#f0fdf4;border-bottom:1px solid #e2e8f0;">${cost.toFixed(2)} €</td>
+        <td style="padding:6px;text-align:center;background:#f0fdf4;border-bottom:1px solid #e2e8f0;"><div style="font-weight:700;font-size:11px;color:#15803d;">${cost.toFixed(2)} €</div><div style="font-size:8px;color:#64748b;">${charged.toFixed(0)} € chargé</div></td>
       </tr>`
     }).join('')
     const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"><title>Planning S${week}</title>
 <style>@page{size:A4 landscape;margin:1.2cm 1.5cm}*{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial,sans-serif;color:#1e293b}table{width:100%;border-collapse:collapse}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}</style></head><body>
 <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:14px;padding-bottom:10px;border-bottom:2px solid #1E3A5F;">
   <div><div style="font-size:18px;font-weight:800;color:#1E3A5F;">Planning — Semaine ${week}</div><div style="font-size:11px;color:#64748b;margin-top:2px;">${getWeekLabel(week, year)}</div></div>
-  <div style="text-align:right;"><div style="font-size:10px;color:#64748b;">Coût main d'œuvre</div><div style="font-size:16px;font-weight:800;color:#15803d;">${grandCost.toFixed(2)} €</div></div>
+  <div style="text-align:right;"><div style="font-size:10px;color:#64748b;">Coût main d'œuvre</div><div style="font-size:16px;font-weight:800;color:#15803d;">${grandCost.toFixed(2)} € <span style="font-size:10px;color:#64748b;font-weight:600;">brut</span></div><div style="font-size:11px;font-weight:700;color:#334155;">${grandCharged.toFixed(2)} € chargé</div></div>
 </div>
 <table><thead><tr><th style="background:#1E3A5F;color:white;padding:7px 10px;font-size:10px;text-align:left;width:160px;">Employé</th>${dayHeaders}<th style="background:#1E3A5F;color:white;padding:7px 5px;font-size:10px;text-align:center;">Total</th><th style="background:#1E3A5F;color:white;padding:7px 5px;font-size:10px;text-align:center;">Coût</th></tr></thead><tbody>${empRows}</tbody></table>
-<p style="margin-top:10px;font-size:9px;color:#94a3b8;">Seuils : 35h → +25 % de 36–43h · 39h → +25 % de 40–47h · +50 % au-delà · CP = heures contrat / 5 · Généré via PILOTE</p>
+<p style="margin-top:10px;font-size:9px;color:#94a3b8;">Seuils : 35h → +25 % de 36–43h · 39h → +25 % de 40–47h · +50 % au-delà · Dimanche +20 % · Férié +100 % · CP = heures contrat / 5 · Coût chargé = brut + charges patronales · Généré via PILOTE</p>
 </body></html>`
     const win = window.open('', '_blank', 'width=1100,height=750')
     if (!win) return
@@ -595,12 +689,13 @@ export default function PlanningPage() {
 
       {/* ── Week nav ── */}
       <div className="bg-white border-b border-gray-100 px-6 py-2.5 flex items-center gap-3">
-        <button onClick={prevWeek} className="p-1.5 rounded hover:bg-gray-100"><ChevronLeft className="w-4 h-4 text-gray-500" /></button>
+        <button onClick={prevWeek} className="p-1.5 rounded hover:bg-gray-100 transition-colors"><ChevronLeft className="w-4 h-4 text-gray-500" /></button>
         <div className="flex items-center gap-2">
           <span className="font-semibold text-gray-900 text-sm">Semaine {week}</span>
+          <span className="hidden md:inline text-xs text-gray-400">{getWeekLabel(week, year)}</span>
           {isCurrentWeek && <span className="text-[10px] bg-[#1E3A5F] text-white px-1.5 py-0.5 rounded font-medium">Actuelle</span>}
         </div>
-        <button onClick={nextWeek} className="p-1.5 rounded hover:bg-gray-100"><ChevronRight className="w-4 h-4 text-gray-500" /></button>
+        <button onClick={nextWeek} className="p-1.5 rounded hover:bg-gray-100 transition-colors"><ChevronRight className="w-4 h-4 text-gray-500" /></button>
         {!isCurrentWeek && (
           <button onClick={() => { setWeek(cw); setYear(cy) }} className="text-xs text-[#1E3A5F] hover:underline">← Semaine actuelle</button>
         )}
@@ -614,12 +709,13 @@ export default function PlanningPage() {
         </button>
         <div className="ml-auto flex items-center gap-4 text-xs text-gray-400">
           <span><span className="font-semibold text-gray-700">{fmtH(grandH)}</span> total</span>
-          <span><span className="font-semibold text-green-700">{grandCost.toFixed(2)} €</span> coût</span>
+          <span><span className="font-semibold text-green-700">{grandCost.toFixed(0)} €</span> brut</span>
+          <span title="Brut + charges patronales"><span className="font-semibold text-gray-800">{grandCharged.toFixed(0)} €</span> chargé</span>
         </div>
       </div>
 
       {/* ── Legend ── */}
-      <div className="bg-white border-b border-gray-100 px-6 py-2 flex items-center gap-5">
+      <div className="bg-white border-b border-gray-100 px-6 py-2 flex items-center gap-5 flex-wrap">
         <span className="text-xs font-medium text-gray-400">Types :</span>
         {([
           { label: 'Travail',       dot: 'bg-violet-400' },
@@ -627,6 +723,7 @@ export default function PlanningPage() {
           { label: 'Arrêt maladie',dot: 'bg-red-400'    },
           { label: 'Repos',        dot: 'bg-gray-300'   },
           { label: 'Jour férié',   dot: 'bg-amber-400'  },
+          { label: 'Alerte légale',dot: 'bg-red-500'    },
         ]).map(t => (
           <div key={t.label} className="flex items-center gap-1.5">
             <div className={`w-2.5 h-2.5 rounded-sm ${t.dot}`} />
@@ -637,6 +734,23 @@ export default function PlanningPage() {
 
       {pageError && <div className="mx-6 mt-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">{pageError}</div>}
 
+      {/* ── Alertes légales ── */}
+      {weekAlerts.length > 0 && (
+        <div className="mx-6 mt-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" />
+            <div className="min-w-0">
+              <p className="text-xs font-semibold text-red-700 mb-0.5">
+                {weekAlerts.length} alerte{weekAlerts.length > 1 ? 's' : ''} légale{weekAlerts.length > 1 ? 's' : ''} sur cette semaine
+              </p>
+              {weekAlerts.map((a, i) => (
+                <p key={i} className="text-xs text-red-600">{a.name} — {a.msg}</p>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Grid ── */}
       <div className="overflow-x-auto">
         <table className="w-full min-w-[860px] border-collapse">
@@ -644,7 +758,7 @@ export default function PlanningPage() {
             <tr className="bg-white">
               <th className="w-52 px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider sticky left-0 bg-white z-10 border-b border-r border-gray-200">Employé</th>
               {weekDates.map((date, i) => {
-                const isToday = date.getUTCDate() === today.getDate() && date.getUTCMonth() === today.getMonth() && date.getUTCFullYear() === today.getFullYear()
+                const isToday = date.toISOString().slice(0, 10) === todayISO
                 const isWE    = i >= 5
                 const fName   = weekHolidays[i]
                 return (
@@ -674,13 +788,22 @@ export default function PlanningPage() {
           </thead>
           <tbody>
             {loadingEmployees ? (
-              <tr><td colSpan={11} className="py-12 text-center text-sm text-gray-400">Chargement...</td></tr>
+              <tr>
+                <td colSpan={10} className="p-6">
+                  <div className="animate-pulse space-y-3">
+                    <div className="h-14 bg-gray-100 rounded-lg" />
+                    <div className="h-14 bg-gray-100 rounded-lg" />
+                    <div className="h-14 bg-gray-100 rounded-lg" />
+                  </div>
+                </td>
+              </tr>
             ) : employees.length === 0 && !pageError ? (
               <tr>
-                <td colSpan={11} className="py-16 text-center">
-                  <CalendarDays className="w-8 h-8 text-gray-300 mx-auto mb-2" />
-                  <p className="text-sm text-gray-400 mb-3">Aucun employé. Ajoutez votre équipe pour commencer.</p>
-                  <Button onClick={() => setShowAdd(true)} variant="outline" className="h-8 text-sm px-3">
+                <td colSpan={10} className="py-16 text-center">
+                  <CalendarDays className="w-10 h-10 text-gray-300 mx-auto mb-3" />
+                  <p className="text-sm font-medium text-gray-500 mb-1">Aucun employé pour l'instant</p>
+                  <p className="text-xs text-gray-400 mb-4">Ajoutez votre équipe pour construire le planning de la semaine.</p>
+                  <Button onClick={() => setShowAdd(true)} variant="outline" className="h-8 text-sm px-4">
                     <Plus className="w-3.5 h-3.5 mr-1.5" />Ajouter un employé
                   </Button>
                 </td>
@@ -690,12 +813,15 @@ export default function PlanningPage() {
                 const pal    = EMP_PALETTES[empIdx % EMP_PALETTES.length]
                 const entry  = getEntryState(emp.id)
                 const ch     = emp.contract_hours || 35
-                const { totalH, cost } = rowStats.find(r => r.empId === emp.id) || { totalH: 0, cost: 0 }
+                const stat   = rowStats.find(r => r.empId === emp.id) || { totalH: 0, cost: 0, charged: 0, alerts: [] as string[] }
+                const { totalH, cost, charged, alerts } = stat
                 const hasOT  = totalH > ch
                 const showContractPop = contractPopover === emp.id
                 const cpInitial   = emp.cp_initial ?? 25
                 const cpUsedCount = cpUsed[emp.id] || 0
                 const cpRemaining = cpInitial - cpUsedCount
+                const hsCumul     = Number(emp.hs_cumules ?? 0)
+                const cddEnd      = cddEndInfo(emp)
 
                 return (
                   <tr key={emp.id} className="group">
@@ -706,10 +832,18 @@ export default function PlanningPage() {
                           <span className={`text-[10px] font-bold ${pal.text}`}>{initials(emp.name)}</span>
                         </div>
                         <div className="min-w-0 flex-1">
-                          <p
-                            className="text-sm font-semibold text-gray-900 leading-tight truncate cursor-pointer hover:text-[#1E3A5F] transition-colors"
-                            onClick={e => { e.stopPropagation(); setProfileEmp({ ...emp, charges_patronales: (emp as any).charges_patronales ?? 45, hs_cumules: (emp as any).hs_cumules ?? 0, position: (emp as any).position ?? null, hire_date: (emp as any).hire_date ?? null, contract_end_date: (emp as any).contract_end_date ?? null, phone: (emp as any).phone ?? null, email: (emp as any).email ?? null, notes: (emp as any).notes ?? null, is_minor: (emp as any).is_minor ?? false, cp_initial: emp.cp_initial ?? 0 }) }}
-                          >{emp.name}</p>
+                          <div className="flex items-center gap-1">
+                            <p
+                              className="text-sm font-semibold text-gray-900 leading-tight truncate cursor-pointer hover:text-[#1E3A5F] transition-colors"
+                              title="Ouvrir la fiche employé"
+                              onClick={e => { e.stopPropagation(); setProfileEmp({ ...emp, charges_patronales: emp.charges_patronales ?? 45, hs_cumules: emp.hs_cumules ?? 0, position: emp.position ?? null, hire_date: emp.hire_date ?? null, contract_end_date: emp.contract_end_date ?? null, phone: emp.phone ?? null, email: emp.email ?? null, notes: emp.notes ?? null, is_minor: emp.is_minor ?? false, cp_initial: emp.cp_initial ?? 0 }) }}
+                            >{emp.name}</p>
+                            {alerts.length > 0 && (
+                              <span title={alerts.join('\n')} className="flex-shrink-0">
+                                <AlertTriangle className="w-3.5 h-3.5 text-red-500" />
+                              </span>
+                            )}
+                          </div>
                           <div className="flex items-center gap-1 mt-0.5 flex-wrap">
                             <div className="relative">
                               <button
@@ -738,20 +872,32 @@ export default function PlanningPage() {
                               )}
                             </div>
                             <span className="text-[10px] text-gray-400">{Number(emp.hourly_rate).toFixed(2)} €/h</span>
+                            {cddEnd && (
+                              <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${cddEnd.urgent ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}>
+                                {cddEnd.label}
+                              </span>
+                            )}
                             <button onClick={() => deleteEmployee(emp.id)}
                               className="ml-auto opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-red-50 text-gray-300 hover:text-red-400 transition-all"
                             >
                               <Trash2 className="w-3 h-3" />
                             </button>
                           </div>
-                          {/* CP balance */}
-                          <div className="flex items-center gap-1 mt-1">
-                            <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                              cpRemaining < 0 ? 'bg-red-400' : cpRemaining <= 3 ? 'bg-orange-400' : 'bg-sky-300'
-                            }`} />
-                            <span className={`text-[9px] ${
-                              cpRemaining < 0 ? 'text-red-500 font-semibold' : cpRemaining <= 3 ? 'text-orange-500' : 'text-gray-400'
-                            }`}>{cpRemaining}j CP restants</span>
+                          {/* CP + HS */}
+                          <div className="flex items-center gap-2 mt-1">
+                            <div className="flex items-center gap-1">
+                              <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                                cpRemaining < 0 ? 'bg-red-400' : cpRemaining <= 3 ? 'bg-orange-400' : 'bg-sky-300'
+                              }`} />
+                              <span className={`text-[9px] ${
+                                cpRemaining < 0 ? 'text-red-500 font-semibold' : cpRemaining <= 3 ? 'text-orange-500' : 'text-gray-400'
+                              }`}>{cpRemaining}j CP restants</span>
+                            </div>
+                            {hsCumul > 0 && (
+                              <span className="text-[9px] text-orange-500 font-medium" title="Heures supplémentaires cumulées (fiche employé)">
+                                {fmtH(hsCumul)} HS cumulées
+                              </span>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -765,6 +911,8 @@ export default function PlanningPage() {
                       const fName    = weekHolidays[idx]
                       const sd: ScheduleDetail = ((entry.schedule_details as ScheduleDetails | undefined) || {})[jour] || {}
                       const catSel   = CATEGORIES.find(c => c.key === sd.categorie)
+                      const maxDay   = emp.is_minor ? 8 : 10
+                      const overDay  = type === 'travail' && hours > maxDay
 
                       const cellBg   = fName ? 'bg-amber-50'    : type === 'travail' ? pal.bg   : TYPE_CONFIG[type].bg
                       const cellTxt  = fName ? 'text-amber-800' : type === 'travail' ? pal.text : TYPE_CONFIG[type].text
@@ -775,13 +923,13 @@ export default function PlanningPage() {
                         <td key={jour} className="p-0 border-b border-r border-gray-200 align-stretch group/cell">
                           <div className="relative h-full" data-cell="true" onClick={e => e.stopPropagation()}>
                             <div
-                              className={`cursor-pointer transition-colors ${cellBg} w-full h-full min-h-[145px] px-2 pt-2 pb-2 flex flex-col select-none hover:brightness-95`}
+                              className={`cursor-pointer transition-all ${cellBg} ${overDay ? 'ring-2 ring-inset ring-red-400' : ''} w-full h-full min-h-[145px] px-2 pt-2 pb-2 flex flex-col select-none hover:brightness-95`}
                               onClick={e => { e.stopPropagation(); setContractPopover(null); setDetailModal({ empId: emp.id, jour, idx }) }}
                             >
                               {/* ── Top: type + copy ── */}
                               <div className="flex items-center justify-between gap-1">
                                 <div className="flex items-center gap-1 min-w-0">
-                                  <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${cellDot}`} />
+                                  <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${overDay ? 'bg-red-500' : cellDot}`} />
                                   <span className={`text-[10px] font-semibold truncate ${cellTxt}`}>{typeLabel}</span>
                                 </div>
                                 {!fName && (
@@ -852,7 +1000,7 @@ export default function PlanningPage() {
                                       const computed = calcHoursFromSd(sd)
                                       const displayH = computed !== null ? computed : hours
                                       return (
-                                        <span className={`text-sm font-bold ${displayH > 0 ? pal.text : 'text-gray-300'}`}>
+                                        <span className={`text-sm font-bold ${overDay ? 'text-red-600' : displayH > 0 ? pal.text : 'text-gray-300'}`}>
                                           {displayH > 0 ? fmtH(displayH) : '—'}
                                         </span>
                                       )
@@ -882,20 +1030,25 @@ export default function PlanningPage() {
                     {/* Total */}
                     <td className="px-2 py-3 text-center border-b border-r border-gray-200">
                       <div className={`inline-flex flex-col items-center px-2 py-1 rounded-lg ${
-                        hasOT ? 'bg-orange-50' : totalH > 0 ? 'bg-gray-50' : ''
+                        alerts.length > 0 ? 'bg-red-50 ring-1 ring-red-200' : hasOT ? 'bg-orange-50' : totalH > 0 ? 'bg-gray-50' : ''
                       }`}>
                         <span className={`font-bold text-sm ${
-                          hasOT ? 'text-orange-600' : totalH > 0 ? 'text-gray-800' : 'text-gray-300'
+                          alerts.length > 0 ? 'text-red-600' : hasOT ? 'text-orange-600' : totalH > 0 ? 'text-gray-800' : 'text-gray-300'
                         }`}>{fmtH(totalH)}</span>
-                        {hasOT && <span className="text-[9px] text-orange-400">+{fmtH(totalH - ch)} sup</span>}
+                        {hasOT && <span className={`text-[9px] ${alerts.length > 0 ? 'text-red-400' : 'text-orange-400'}`}>+{fmtH(totalH - ch)} sup</span>}
                       </div>
                     </td>
 
                     {/* Cost */}
                     <td className="px-2 py-3 text-center border-b border-gray-200">
-                      <span className={`font-bold text-sm ${cost > 0 ? 'text-green-700' : 'text-gray-300'}`}>
-                        {cost > 0 ? `${cost.toFixed(0)} €` : '—'}
-                      </span>
+                      {cost > 0 ? (
+                        <div className="flex flex-col items-center">
+                          <span className="font-bold text-sm text-green-700">{cost.toFixed(0)} €</span>
+                          <span className="text-[9px] text-gray-400" title="Brut + charges patronales">{charged.toFixed(0)} € chargé</span>
+                        </div>
+                      ) : (
+                        <span className="font-bold text-sm text-gray-300">—</span>
+                      )}
                     </td>
                   </tr>
                 )
@@ -929,7 +1082,10 @@ export default function PlanningPage() {
                   )
                 })}
                 <td className="px-3 py-3 text-center border-r border-gray-700"><span className="font-bold text-white">{fmtH(grandH)}</span></td>
-                <td className="px-3 py-3 text-center"><span className="font-bold text-orange-400">{grandCost.toFixed(0)} €</span></td>
+                <td className="px-3 py-3 text-center">
+                  <div className="font-bold text-orange-400">{grandCost.toFixed(0)} €</div>
+                  <div className="text-[10px] text-gray-500">{grandCharged.toFixed(0)} € chargé</div>
+                </td>
               </tr>
             )}
           </tbody>
@@ -939,10 +1095,13 @@ export default function PlanningPage() {
       {employees.length > 0 && (
         <div className="px-6 py-2.5 bg-amber-50 border-t border-amber-100">
           <p className="text-xs text-amber-700">
-            <span className="font-semibold">Majoration :</span>{' '}
+            <span className="font-semibold">Majorations CCN 992 :</span>{' '}
             35h → +25 % de 36–43h, +50 % au-delà{' · '}
             39h → +25 % de 40–47h, +50 % au-delà{' · '}
-            CP = heures contrat ÷ 5
+            Dimanche +20 %{' · '}
+            Férié +100 %{' · '}
+            CP = heures contrat ÷ 5{' · '}
+            Coût chargé = brut + charges patronales (modifiable dans la fiche employé)
           </p>
         </div>
       )}
@@ -961,6 +1120,9 @@ export default function PlanningPage() {
         const mSd: ScheduleDetail = ((mEntry.schedule_details as ScheduleDetails | undefined) || {})[mJour] || {}
         const mDate  = weekDates[mIdx]
         const mFName = weekHolidays[mIdx]
+        const mComputed = calcHoursFromSd(mSd)
+        const mMaxDay = mEmp.is_minor ? 8 : 10
+        const mEffH   = mComputed !== null ? mComputed : mHours
 
         return (
           <div className="fixed inset-0 bg-black/20 flex items-center justify-center z-50 backdrop-blur-[2px]" onClick={() => setDetailModal(null)}>
@@ -1085,6 +1247,40 @@ export default function PlanningPage() {
                       </div>
                     </div>
 
+                    {/* Heures du jour — saisie rapide si pas d'horaires détaillés */}
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs text-gray-400 w-20 shrink-0">Heures</span>
+                      {mComputed !== null ? (
+                        <div className="flex items-baseline gap-1.5">
+                          <span className="text-sm font-bold text-gray-900">{fmtH(mComputed)}</span>
+                          <span className="text-[10px] text-gray-400">calculées depuis les horaires</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            type="number" min="0" max="24" step="0.5"
+                            value={mHours || ''}
+                            onChange={e => updateHours(detailModal.empId, mJour, e.target.value)}
+                            onBlur={() => handleBlur(detailModal.empId)}
+                            placeholder="0"
+                            className="w-16 border border-gray-300 rounded-lg px-2 py-1.5 text-sm font-semibold text-gray-900 text-center focus:outline-none focus:border-gray-500 transition-colors"
+                          />
+                          <span className="text-xs text-gray-400">h</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Alertes du jour */}
+                    {mEffH > mMaxDay && (
+                      <p className="text-[11px] text-red-600 flex items-center gap-1">
+                        <AlertTriangle className="w-3 h-3 flex-shrink-0" />
+                        Dépasse la durée max légale de {mMaxDay}h/jour{mEmp.is_minor ? ' (mineur)' : ''}
+                      </p>
+                    )}
+                    {mEffH > 6 && mEffH <= mMaxDay && (
+                      <p className="text-[10px] text-amber-600">Pause de 20 min minimum obligatoire au-delà de 6h de travail</p>
+                    )}
+
                   </div>
                 )}
 
@@ -1097,7 +1293,7 @@ export default function PlanningPage() {
       {/* ── Récap mensuel modal ── */}
       {showMonthly && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 backdrop-blur-sm" onClick={() => setShowMonthly(false)}>
-          <div className="bg-white rounded-2xl p-6 w-full max-w-2xl shadow-2xl max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+          <div className="bg-white rounded-2xl p-6 w-full max-w-3xl shadow-2xl max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-5">
               <div>
                 <h2 className="text-base font-bold text-gray-900">Récapitulatif mensuel</h2>
@@ -1111,26 +1307,30 @@ export default function PlanningPage() {
             </div>
 
             {loadingMonthly ? (
-              <div className="py-12 text-center text-sm text-gray-400">Chargement des données...</div>
+              <div className="animate-pulse space-y-3 py-4">
+                <div className="h-10 bg-gray-100 rounded-lg" />
+                <div className="h-10 bg-gray-100 rounded-lg" />
+                <div className="h-10 bg-gray-100 rounded-lg" />
+              </div>
             ) : monthlyData ? (
               <table className="w-full border-collapse text-sm">
                 <thead>
                   <tr className="border-b-2 border-gray-200">
                     <th className="text-left py-2.5 font-semibold text-gray-500 text-xs uppercase">Employé</th>
                     <th className="text-center py-2.5 font-semibold text-gray-500 text-xs uppercase">Heures</th>
+                    <th className="text-center py-2.5 font-semibold text-orange-500 text-xs uppercase" title="Heures supplémentaires (au-delà des heures contrat, par semaine)">HS</th>
                     <th className="text-center py-2.5 font-semibold text-gray-500 text-xs uppercase">Jours trav.</th>
                     <th className="text-center py-2.5 font-semibold text-sky-600 text-xs uppercase">CP</th>
                     <th className="text-center py-2.5 font-semibold text-red-500 text-xs uppercase">Arrêt</th>
-                    <th className="text-center py-2.5 font-semibold text-green-700 text-xs uppercase">Coût</th>
+                    <th className="text-center py-2.5 font-semibold text-green-700 text-xs uppercase">Brut</th>
+                    <th className="text-center py-2.5 font-semibold text-gray-700 text-xs uppercase" title="Brut + charges patronales">Chargé</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {monthlyData.map(({ emp, hours, cost, worked, cp, sick }, i) => {
+                  {monthlyData.map(({ emp, hours, cost, charged, ot, worked, cp, sick }, i) => {
                     const pal  = EMP_PALETTES[i % EMP_PALETTES.length]
-                    const ch   = emp.contract_hours || 35
-                    const hasOT = hours > ch * 4
                     return (
-                      <tr key={emp.id} className="border-b border-gray-100 hover:bg-gray-50">
+                      <tr key={emp.id} className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
                         <td className="py-3">
                           <div className="flex items-center gap-2">
                             <div className={`w-6 h-6 rounded-full ${pal.bg} flex items-center justify-center flex-shrink-0`}>
@@ -1143,7 +1343,10 @@ export default function PlanningPage() {
                           </div>
                         </td>
                         <td className="text-center py-3">
-                          <span className={`font-bold ${hasOT ? 'text-orange-600' : 'text-gray-800'}`}>{fmtH(hours)}</span>
+                          <span className="font-bold text-gray-800">{fmtH(hours)}</span>
+                        </td>
+                        <td className="text-center py-3">
+                          {ot > 0 ? <span className="text-orange-600 font-bold">{fmtH(ot)}</span> : <span className="text-gray-300">—</span>}
                         </td>
                         <td className="text-center py-3 text-gray-600">{worked > 0 ? `${worked}j` : '—'}</td>
                         <td className="text-center py-3">
@@ -1153,6 +1356,7 @@ export default function PlanningPage() {
                           {sick > 0 ? <span className="text-red-600 font-medium">{sick}j</span> : <span className="text-gray-300">—</span>}
                         </td>
                         <td className="text-center py-3 font-bold text-green-700">{cost.toFixed(0)} €</td>
+                        <td className="text-center py-3 font-bold text-gray-800">{charged.toFixed(0)} €</td>
                       </tr>
                     )
                   })}
@@ -1161,10 +1365,12 @@ export default function PlanningPage() {
                   <tr className="bg-gray-900">
                     <td className="py-2.5 px-2 text-xs font-bold uppercase text-gray-400">Total mois</td>
                     <td className="text-center py-2.5 font-bold text-white">{fmtH(monthlyData.reduce((s, r) => s + r.hours, 0))}</td>
+                    <td className="text-center py-2.5 font-bold text-orange-400">{fmtH(monthlyData.reduce((s, r) => s + r.ot, 0))}</td>
                     <td className="text-center py-2.5 text-gray-400">{monthlyData.reduce((s, r) => s + r.worked, 0)}j</td>
                     <td className="text-center py-2.5 text-sky-400">{monthlyData.reduce((s, r) => s + r.cp, 0)}j</td>
                     <td className="text-center py-2.5 text-red-400">{monthlyData.reduce((s, r) => s + r.sick, 0)}j</td>
-                    <td className="text-center py-2.5 font-bold text-orange-400">{monthlyData.reduce((s, r) => s + r.cost, 0).toFixed(0)} €</td>
+                    <td className="text-center py-2.5 font-bold text-green-400">{monthlyData.reduce((s, r) => s + r.cost, 0).toFixed(0)} €</td>
+                    <td className="text-center py-2.5 font-bold text-orange-400">{monthlyData.reduce((s, r) => s + r.charged, 0).toFixed(0)} €</td>
                   </tr>
                 </tfoot>
               </table>
