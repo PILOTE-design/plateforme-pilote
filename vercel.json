@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/api/billing-integrations/sync-all",
-      "schedule": "0 22 * * 0"
+      "schedule": "0 20 * * 0"
     }
   ]
 }

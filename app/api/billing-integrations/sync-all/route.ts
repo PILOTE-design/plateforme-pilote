@@ -1,4 +1,6 @@
-// Route appelée automatiquement par le Vercel Cron Job chaque dimanche à 22h
+// Route appelée automatiquement par le Vercel Cron Job chaque dimanche soir
+// (cron: 0 20 * * 0 UTC — Vercel Hobby peut déclencher n'importe quand dans l'heure)
+// ATTENTION : Vercel Cron invoque en GET — les deux méthodes sont exportées.
 // Synchronise TOUS les clients qui ont des intégrations actives
 // Sécurisée par CRON_SECRET pour éviter les appels non autorisés
 import { NextRequest, NextResponse } from 'next/server'
@@ -26,7 +28,7 @@ function getISOWeek(date: Date) {
   }
 }
 
-export async function POST(req: NextRequest) {
+async function runSyncAll(req: NextRequest) {
   // Vercel Cron envoie automatiquement ce header avec la valeur de CRON_SECRET
   const authHeader = req.headers.get('authorization')
   const cronSecret = process.env.CRON_SECRET
@@ -119,4 +121,14 @@ export async function POST(req: NextRequest) {
     totalImported,
     results,
   })
+}
+
+// Vercel Cron → GET
+export async function GET(req: NextRequest) {
+  return runSyncAll(req)
+}
+
+// Appels manuels / outils → POST
+export async function POST(req: NextRequest) {
+  return runSyncAll(req)
 }
