@@ -2,16 +2,13 @@
 @tailwind components;
 @tailwind utilities;
 
+/* PILOTE est une interface claire uniquement : on verrouille le schéma clair
+   pour que le mode sombre du navigateur/OS ne rende jamais les champs
+   de saisie en blanc sur blanc. */
 :root {
+  color-scheme: light;
   --background: #ffffff;
   --foreground: #171717;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
 }
 
 body {
@@ -28,13 +25,24 @@ body {
 
 /* ── Visibilité globale des champs de formulaire ──────────────────────────
    Règles unlayered = priorité plus haute que les classes @layer utilities
-   de Tailwind. Couvre automatiquement tous les <select> et <textarea>
-   du site, quelle que soit leur classe Tailwind. ───────────────────────── */
+   de Tailwind. Tout texte saisi par l'utilisateur est en noir, partout,
+   quel que soit le thème du navigateur. ───────────────────────────────── */
+input,
+select,
+textarea {
+  color: #0f172a;              /* slate-900 — texte saisi toujours noir   */
+  caret-color: #0f172a;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #94a3b8;              /* slate-400 — placeholder lisible          */
+}
+
 select,
 textarea {
   border: 1px solid #94a3b8;   /* slate-400 — bien visible sur fond blanc */
   background-color: #f8fafc;   /* slate-50  — léger contraste             */
-  color: #0f172a;
 }
 
 select:focus,
@@ -42,4 +50,11 @@ textarea:focus {
   border-color: #1E3A5F;
   outline: none;
   box-shadow: 0 0 0 3px rgba(30, 58, 95, 0.08);
+}
+
+/* Champs date/heure : les icônes et le texte restent sombres */
+input[type='date'],
+input[type='time'],
+input[type='number'] {
+  color: #0f172a;
 }
