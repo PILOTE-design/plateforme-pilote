@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, Fragment } from 'react'
+import { useState, useEffect, useCallback, useRef, Fragment } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -39,7 +39,7 @@ type ProviderMeta = {
   helpUrl: string; description: string
 }
 
-// ─── Constantes ────────────────────────────────────────────────────────────
+// ─── Constantes ──────────────────────────────────────────────────────────
 
 const CATEGORIES = [
   { key: 'viande',         label: 'Viande',         color: 'bg-red-100 text-red-800'       },
@@ -144,6 +144,10 @@ export default function FacturationPage() {
   const [connectError,     setConnectError]     = useState('')
   const [syncing,          setSyncing]          = useState<string | null>(null)
 
+  // Garde anti-réponses obsolètes : si l'utilisateur change de semaine pendant qu'un
+  // chargement est en cours, la réponse de l'ancienne semaine ne doit PAS écraser l'affichage
+  const reqIdRef = useRef(0)
+
   const [mon, sun] = getWeekDates(week, year)
   const monISO = mon.toISOString().slice(0, 10)
   const sunISO = sun.toISOString().slice(0, 10)
@@ -152,26 +156,29 @@ export default function FacturationPage() {
   const isLastWeek    = week === lastWeek.week && year === lastWeek.year
 
   const load = useCallback(async () => {
+    const reqId = ++reqIdRef.current
     setLoading(true)
+    const noStore: RequestInit = { cache: 'no-store' }
     const [invRes, fixedRes, sumRes, caRes, settRes] = await Promise.all([
-      fetch(`/api/invoices?week=${week}&year=${year}`).then(r => r.json()).catch(() => []),
-      fetch(`/api/invoices?fixed=all`).then(r => r.json()).catch(() => []),
-      fetch(`/api/facturation/summary?week=${week}&year=${year}`).then(r => r.json()).catch(() => null),
-      fetch(`/api/weekly-ca?week=${week}&year=${year}`).then(r => r.json()).catch(() => null),
-      fetch('/api/billing-settings').then(r => r.json()).catch(() => ({})),
+      fetch(`/api/invoices?week=${week}&year=${year}`, noStore).then(r => r.json()).catch(() => []),
+      fetch(`/api/invoices?fixed=all`, noStore).then(r => r.json()).catch(() => []),
+      fetch(`/api/facturation/summary?week=${week}&year=${year}`, noStore).then(r => r.json()).catch(() => null),
+      fetch(`/api/weekly-ca?week=${week}&year=${year}`, noStore).then(r => r.json()).catch(() => null),
+      fetch('/api/billing-settings', noStore).then(r => r.json()).catch(() => ({})),
     ])
+    if (reqId !== reqIdRef.current) return // une navigation plus récente a eu lieu — on jette cette réponse
     setInvoices(Array.isArray(invRes) ? invRes : [])
     setFixedAll(Array.isArray(fixedRes) ? fixedRes : [])
     setSummary(sumRes)
     const s = settRes || {}
     setSettForm({ company_name: s.company_name || '', siret: s.siret || '' })
-    if (caRes) setCaForm({ ca_total: String(caRes.ca_total || ''), ca_boucherie: String(caRes.ca_boucherie || ''), ca_charcuterie: String(caRes.ca_charcuterie || ''), ca_traiteur: String(caRes.ca_traiteur || ''), ca_vente: String(caRes.ca_vente || '') })
+    if (caRes && !caRes.error) setCaForm({ ca_total: String(caRes.ca_total || ''), ca_boucherie: String(caRes.ca_boucherie || ''), ca_charcuterie: String(caRes.ca_charcuterie || ''), ca_traiteur: String(caRes.ca_traiteur || ''), ca_vente: String(caRes.ca_vente || '') })
     else setCaForm({ ca_total: '', ca_boucherie: '', ca_charcuterie: '', ca_traiteur: '', ca_vente: '' })
     setLoading(false)
   }, [week, year])
 
   const loadIntegrations = useCallback(async () => {
-    const res = await fetch('/api/billing-integrations').catch(() => null)
+    const res = await fetch('/api/billing-integrations', { cache: 'no-store' }).catch(() => null)
     if (res?.ok) { const data = await res.json(); setIntegrations(Array.isArray(data) ? data : []) }
   }, [])
 
