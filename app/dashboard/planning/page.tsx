@@ -17,15 +17,17 @@ type ScheduleDetail = {
   matin_fin?: string
   apmidi_debut?: string
   apmidi_fin?: string
-  categorie?: string
+  categorie?: string        // legacy : poste pour toute la journée
+  categorie_matin?: string  // poste du créneau matin
+  categorie_apmidi?: string // poste du créneau après-midi
 }
 type ScheduleDetails = Partial<Record<JourDB, ScheduleDetail>>
 
 const CATEGORIES = [
-  { key: 'boucherie',   short: 'Boucherie',   color: 'bg-red-100 text-red-700',      ring: 'ring-red-300'      },
-  { key: 'charcuterie', short: 'Charcuterie', color: 'bg-orange-100 text-orange-700', ring: 'ring-orange-300'  },
-  { key: 'traiteur',    short: 'Traiteur',    color: 'bg-emerald-100 text-emerald-700', ring: 'ring-emerald-300' },
-  { key: 'vente',       short: 'Vente',       color: 'bg-sky-100 text-sky-700',       ring: 'ring-sky-300'     },
+  { key: 'boucherie',   short: 'Boucherie',   abbr: 'Bouch.', color: 'bg-red-100 text-red-700',      ring: 'ring-red-300'      },
+  { key: 'charcuterie', short: 'Charcuterie', abbr: 'Charc.', color: 'bg-orange-100 text-orange-700', ring: 'ring-orange-300'  },
+  { key: 'traiteur',    short: 'Traiteur',    abbr: 'Trait.', color: 'bg-emerald-100 text-emerald-700', ring: 'ring-emerald-300' },
+  { key: 'vente',       short: 'Vente',       abbr: 'Vente',  color: 'bg-sky-100 text-sky-700',       ring: 'ring-sky-300'     },
 ] as const
 
 const TYPE_CONFIG: Record<DayType, {
@@ -455,6 +457,19 @@ export default function PlanningPage() {
     setEntriesSync(prev => ({ ...prev, [empId]: updated }))
   }
 
+  /** Sélectionne le poste d'un créneau (matin/après-midi) et efface l'ancien poste global */
+  function setSlotCategory(empId: string, jour: JourDB, slot: 'categorie_matin' | 'categorie_apmidi', value: string) {
+    const current = getEntry(empId)
+    const currentSd = ((current.schedule_details || {}) as ScheduleDetails)
+    const newDaySd: ScheduleDetail = { ...(currentSd[jour] || {}), [slot]: value, categorie: '' }
+    const updated: PlanningEntry = {
+      ...current,
+      schedule_details: { ...currentSd, [jour]: newDaySd },
+    }
+    setEntriesSync(prev => ({ ...prev, [empId]: updated }))
+    saveEntryValues(empId, updated)
+  }
+
   function handleScheduleDetailBlur(empId: string) {
     const entry = entriesRef.current[empId] ?? emptyEntry(empId, week, year)
     saveEntryValues(empId, entry)
@@ -630,14 +645,16 @@ export default function PlanningPage() {
         const h      = entry[j] || 0
         const fName  = weekHolidays[idx]
         const sd: ScheduleDetail = ((entry.schedule_details as ScheduleDetails | undefined) || {})[j] || {}
-        const cat    = CATEGORIES.find(c => c.key === sd.categorie)
+        const catM   = CATEGORIES.find(c => c.key === sd.categorie_matin)
+        const catA   = CATEGORIES.find(c => c.key === sd.categorie_apmidi)
+        const catG   = (!catM && !catA) ? CATEGORIES.find(c => c.key === sd.categorie) : undefined
         const bg     = fName ? '#fef3c7' : type === 'travail' ? pal.lightHex : TYPE_CONFIG[type].pdfColor
         let label = ''
         if (type === 'travail') {
           const lines: string[] = []
-          if (cat) lines.push(`<div style=\"font-size:7.5px;font-weight:700;color:${catHex[cat.key] || '#334155'};text-transform:uppercase;letter-spacing:.3px;\">${cat.short}</div>`)
-          if (sd.matin_debut)  lines.push(`<div style=\"font-size:8px;color:#475569;\">M ${sd.matin_debut}–${sd.matin_fin || '?'}</div>`)
-          if (sd.apmidi_debut) lines.push(`<div style=\"font-size:8px;color:#475569;\">AM ${sd.apmidi_debut}–${sd.apmidi_fin || '?'}</div>`)
+          if (catG) lines.push(`<div style=\"font-size:7.5px;font-weight:700;color:${catHex[catG.key] || '#334155'};text-transform:uppercase;letter-spacing:.3px;\">${catG.short}</div>`)
+          if (sd.matin_debut || catM) lines.push(`<div style=\"font-size:8px;color:#475569;\">M ${sd.matin_debut ? `${sd.matin_debut}–${sd.matin_fin || '?'}` : ''}${catM ? ` <span style=\"font-weight:700;color:${catHex[catM.key]};\">${catM.abbr}</span>` : ''}</div>`)
+          if (sd.apmidi_debut || catA) lines.push(`<div style=\"font-size:8px;color:#475569;\">AM ${sd.apmidi_debut ? `${sd.apmidi_debut}–${sd.apmidi_fin || '?'}` : ''}${catA ? ` <span style=\"font-weight:700;color:${catHex[catA.key]};\">${catA.abbr}</span>` : ''}</div>`)
           lines.push(h > 0 ? `<strong style=\"font-size:11px;\">${fmtH(h)}</strong>` : '—')
           label = lines.join('')
         } else if (type === 'conges') {
@@ -733,9 +750,14 @@ export default function PlanningPage() {
 
       {/* ── Legend ── */}
       <div className="bg-white border-b border-gray-100 px-6 py-2 flex items-center gap-5 flex-wrap">
-        <span className="text-xs font-medium text-gray-400">Types :</span>
+        <span className="text-xs font-medium text-gray-400">Postes :</span>
+        {CATEGORIES.map(c => (
+          <div key={c.key} className="flex items-center gap-1.5">
+            <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${c.color}`}>{c.short}</span>
+          </div>
+        ))}
+        <span className="text-xs font-medium text-gray-400 ml-3">Types :</span>
         {([
-          { label: 'Travail',       dot: 'bg-violet-400' },
           { label: 'Congé payé',   dot: 'bg-sky-400'    },
           { label: 'Arrêt maladie',dot: 'bg-red-400'    },
           { label: 'Repos',        dot: 'bg-gray-300'   },
@@ -927,7 +949,9 @@ export default function PlanningPage() {
                       const hours    = entry[jour] || 0
                       const fName    = weekHolidays[idx]
                       const sd: ScheduleDetail = ((entry.schedule_details as ScheduleDetails | undefined) || {})[jour] || {}
-                      const catSel   = CATEGORIES.find(c => c.key === sd.categorie)
+                      const catM     = CATEGORIES.find(c => c.key === sd.categorie_matin)
+                      const catA     = CATEGORIES.find(c => c.key === sd.categorie_apmidi)
+                      const catSel   = (!catM && !catA) ? CATEGORIES.find(c => c.key === sd.categorie) : undefined
                       const maxDay   = emp.is_minor ? 8 : 10
                       const overDay  = type === 'travail' && hours > maxDay
 
@@ -978,37 +1002,41 @@ export default function PlanningPage() {
                               {/* ── Centre: résumé ── */}
                               {!fName && type === 'travail' ? (
                                 <div className="flex-1 flex flex-col py-1.5 gap-1 px-1.5">
-                                  {/* Poste badge */}
-                                  <div className="flex justify-center">
-                                    {catSel ? (
+                                  {/* Poste global (legacy — uniquement si pas de poste par créneau) */}
+                                  {catSel && (
+                                    <div className="flex justify-center">
                                       <span className={`text-[9px] px-2 py-0.5 rounded-full font-bold ${catSel.color}`}>
                                         {catSel.short}
                                       </span>
-                                    ) : (
-                                      <span className="text-[9px] text-gray-300 font-medium">—</span>
-                                    )}
-                                  </div>
+                                    </div>
+                                  )}
 
-                                  {/* Matin row — toujours visible */}
+                                  {/* Matin row — horaires + poste du créneau */}
                                   <div className={`flex items-center gap-1 rounded-md px-1.5 py-[3px] ${
-                                    sd.matin_debut ? 'bg-amber-50 border border-amber-100' : 'bg-gray-50'
+                                    sd.matin_debut || catM ? 'bg-amber-50 border border-amber-100' : 'bg-gray-50'
                                   }`}>
-                                    <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${sd.matin_debut ? 'bg-amber-400' : 'bg-gray-200'}`} />
+                                    <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${sd.matin_debut || catM ? 'bg-amber-400' : 'bg-gray-200'}`} />
                                     <span className="text-[8px] font-bold text-gray-400 w-3 shrink-0">M</span>
                                     <span className={`text-[9px] font-semibold truncate ${sd.matin_debut ? 'text-gray-700' : 'text-gray-300'}`}>
                                       {sd.matin_debut ? `${sd.matin_debut}→${sd.matin_fin || '?'}` : '--:--'}
                                     </span>
+                                    {catM && (
+                                      <span className={`ml-auto text-[8px] px-1 py-px rounded font-bold shrink-0 ${catM.color}`}>{catM.abbr}</span>
+                                    )}
                                   </div>
 
-                                  {/* Après-midi row — toujours visible */}
+                                  {/* Après-midi row — horaires + poste du créneau */}
                                   <div className={`flex items-center gap-1 rounded-md px-1.5 py-[3px] ${
-                                    sd.apmidi_debut ? 'bg-sky-50 border border-sky-100' : 'bg-gray-50'
+                                    sd.apmidi_debut || catA ? 'bg-sky-50 border border-sky-100' : 'bg-gray-50'
                                   }`}>
-                                    <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${sd.apmidi_debut ? 'bg-sky-400' : 'bg-gray-200'}`} />
+                                    <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${sd.apmidi_debut || catA ? 'bg-sky-400' : 'bg-gray-200'}`} />
                                     <span className="text-[8px] font-bold text-gray-400 w-3 shrink-0">AM</span>
                                     <span className={`text-[9px] font-semibold truncate ${sd.apmidi_debut ? 'text-gray-700' : 'text-gray-300'}`}>
                                       {sd.apmidi_debut ? `${sd.apmidi_debut}→${sd.apmidi_fin || '?'}` : '--:--'}
                                     </span>
+                                    {catA && (
+                                      <span className={`ml-auto text-[8px] px-1 py-px rounded font-bold shrink-0 ${catA.color}`}>{catA.abbr}</span>
+                                    )}
                                   </div>
 
                                   {/* Total heures */}
@@ -1144,7 +1172,7 @@ export default function PlanningPage() {
 
         return (
           <div className="fixed inset-0 bg-black/20 flex items-center justify-center z-50 backdrop-blur-[2px]" onClick={() => setDetailModal(null)}>
-            <div className="bg-white rounded-2xl w-full max-w-xs shadow-xl overflow-hidden" onClick={e => e.stopPropagation()}>
+            <div className="bg-white rounded-2xl w-full max-w-sm shadow-xl overflow-hidden" onClick={e => e.stopPropagation()}>
 
               {/* Barre couleur fine */}
               <div className="h-[3px]" style={{ background: mPal.hex }} />
@@ -1182,18 +1210,35 @@ export default function PlanningPage() {
                 {mType === 'travail' && !mFName && (
                   <div className="space-y-3.5">
 
-                    {/* Poste */}
+                    {/* Poste matin */}
                     <div className="flex items-start gap-3">
-                      <span className="text-xs text-gray-400 w-20 shrink-0 pt-1">Poste</span>
+                      <span className="text-xs text-gray-400 w-20 shrink-0 pt-1">Poste matin</span>
                       <div className="flex flex-wrap gap-1.5">
                         {CATEGORIES.map(cat => {
-                          const isSel = mSd.categorie === cat.key
+                          const isSel = (mSd.categorie_matin || mSd.categorie) === cat.key && (mSd.categorie_matin ? mSd.categorie_matin === cat.key : true) && (mSd.categorie_matin || mSd.categorie) !== undefined && (mSd.categorie_matin ?? mSd.categorie) === cat.key
                           return (
                             <button key={cat.key}
-                              onClick={() => {
-                                handleScheduleDetailChange(detailModal.empId, mJour, 'categorie' as keyof ScheduleDetail, isSel ? '' : cat.key)
-                                setTimeout(() => handleScheduleDetailBlur(detailModal.empId), 0)
-                              }}
+                              onClick={() => setSlotCategory(detailModal.empId, mJour, 'categorie_matin', isSel ? '' : cat.key)}
+                              className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
+                                isSel ? cat.color : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                              }`}
+                            >
+                              {cat.short}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Poste après-midi */}
+                    <div className="flex items-start gap-3">
+                      <span className="text-xs text-gray-400 w-20 shrink-0 pt-1">Poste a.-midi</span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {CATEGORIES.map(cat => {
+                          const isSel = (mSd.categorie_apmidi ?? mSd.categorie) === cat.key
+                          return (
+                            <button key={cat.key}
+                              onClick={() => setSlotCategory(detailModal.empId, mJour, 'categorie_apmidi', isSel ? '' : cat.key)}
                               className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
                                 isSel ? cat.color : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
                               }`}
