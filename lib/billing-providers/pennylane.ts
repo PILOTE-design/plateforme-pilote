@@ -31,23 +31,15 @@ function guessCategory(label: string): string {
 // ─── Détection des charges fixes ────────────────────────────────────────
 
 const FIXED_CHARGE_KEYWORDS = [
-  // Immobilier / locaux
   'loyer', 'bail', 'sci ', 'immobili',
-  // Assurances / prévoyance
   'assurance', 'mutuelle', 'prevoyance', 'prévoyance', 'axa', 'maaf', 'groupama', 'allianz',
-  // Énergie / eau
   'edf', 'engie', 'totalenergies', 'total energies', 'electricit', 'électricit', 'energie', 'énergie', 'gaz',
   'veolia', 'suez', 'saur',
-  // Télécom / logiciels / abonnements
   'orange', 'sfr', 'bouygues telecom', 'free pro', 'telecom', 'télécom', 'internet', 'fibre',
   'abonnement', 'forfait', 'logiciel', 'saas', 'pennylane', 'swile',
-  // Financement / leasing
   'leasing', 'credit-bail', 'crédit-bail', 'credit bail', 'location longue duree',
-  // Services récurrents
-  'maintenance', 'entretien annuel', ' initial ', // Initial = location/entretien vêtements pro
-  // Honoraires / conseil
+  'maintenance', 'entretien annuel', ' initial ',
   'honoraires', 'comptable', 'expert-comptable', 'fiduciaire', 'o2a', 'conseils',
-  // Banque / cotisations / collectivités
   'frais bancaires', 'banque', 'cotisation', 'urssaf', 'redevance',
   'communaute urbaine', 'communauté urbaine', 'tresor public', 'trésor public', 'dgfip', 'impot', 'impôt',
 ]
@@ -57,7 +49,6 @@ function isFixedChargeLabel(label: string): boolean {
   return FIXED_CHARGE_KEYWORDS.some(k => l.includes(k))
 }
 
-/** Durée couverte estimée par la facture, d'après son libellé. Défaut : mensuel (30 j). */
 function detectPeriodDays(label: string): number {
   const l = label.toLowerCase()
   if (l.includes('annuel') || l.includes('/an') || l.includes('12 mois') || l.includes('année')) return 365
@@ -76,10 +67,8 @@ function parseItems(data: any): any[] {
   return []
 }
 
-/** Extrait la date de FACTURE (date du document) — PAS la date de saisie comptable ni l'échéance.
- *  Constat terrain : `date` chez Pennylane correspond souvent à la date de comptabilisation
- *  (les factures scannées en batch le lundi sortent toutes datées du lundi).
- *  On privilégie donc les champs explicites du document quand ils existent. */
+/** Date de facture si un champ exploitable existe dans le payload (souvent absent chez Pennylane v2 :
+ *  seul created_at/updated_at sont renvoyés — d'où le filtrage par date CÔTÉ SERVEUR ci-dessous). */
 function pickInvoiceDate(inv: any): string | null {
   const candidates = [
     inv.invoice_date, inv.emission_date, inv.emitted_at, inv.issue_date, inv.issued_at,
@@ -89,17 +78,6 @@ function pickInvoiceDate(inv: any): string | null {
     if (typeof c === 'string' && /^\d{4}-\d{2}-\d{2}/.test(c)) return c.split('T')[0]
   }
   return null
-}
-
-/** Diagnostic : liste les champs du 1er item dont la valeur ressemble à une date,
- *  pour identifier une fois pour toutes le bon champ côté API. Stocké dans last_sync_error (non bloquant). */
-function buildDateDebug(sample: any): string {
-  if (!sample || typeof sample !== 'object') return ''
-  const entries: string[] = []
-  for (const [k, v] of Object.entries(sample)) {
-    if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v)) entries.push(`${k}=${v.slice(0, 10)}`)
-  }
-  return entries.length ? `DEBUG dates API: ${entries.join(', ')}` : ''
 }
 
 function mapInvoice(inv: any, fallbackDate: string): ProviderInvoice {
@@ -162,10 +140,33 @@ export const pennylane: BillingProvider = {
     const dateTo   = fmt(to)
 
     try {
-      const data = await apiFetch(token, `/supplier_invoices?limit=100&sort=-date`)
+      // ── FILTRAGE PAR DATE CÔTÉ SERVEUR ──
+      // Le payload des factures ne contient AUCUNE date de document (seulement created_at/updated_at),
+      // mais le champ `date` est filtrable/triable côté API. On demande donc directement à Pennylane
+      // les factures dont la date est dans la semaine — c'est la seule source de vérité fiable.
+      const filter = encodeURIComponent(JSON.stringify([
+        { field: 'date', operator: 'gteq', value: dateFrom },
+        { field: 'date', operator: 'lteq', value: dateTo },
+      ]))
+      let data: any
+      let serverFiltered = true
+      try {
+        data = await apiFetch(token, `/supplier_invoices?limit=100&filter=${filter}`)
+      } catch {
+        serverFiltered = false
+        data = await apiFetch(token, `/supplier_invoices?limit=100&sort=-date`)
+      }
       const items = parseItems(data)
 
+      const debug = items.length > 0
+        ? `DEBUG ${serverFiltered ? 'filtre serveur OK' : 'filtre serveur KO (fallback tri)'} | item[0]: ${JSON.stringify(items[0]).slice(0, 450)}`
+        : undefined
+
       if (items.length === 0) {
+        if (serverFiltered) {
+          // Semaine sans facture : c'est un résultat valide, pas une erreur
+          return { success: true, invoices: [], debug: `Aucune facture datée entre ${dateFrom} et ${dateTo} (filtre serveur)` }
+        }
         const topLevelKeys = Object.keys(data ?? {})
         const firstValue = topLevelKeys.length > 0 ? JSON.stringify(data[topLevelKeys[0]]).slice(0, 200) : 'vide'
         return {
@@ -175,15 +176,11 @@ export const pennylane: BillingProvider = {
         }
       }
 
-      const debug = buildDateDebug(items[0])
+      let mapped = items.map((inv: any) => mapInvoice(inv, dateFrom)).filter((i: ProviderInvoice) => i.amount_ht > 0)
 
-      // Filtrage côté client sur la plage de dates.
-      // Les charges fixes sont TOUJOURS conservées même hors plage : leur prorata hebdo
-      // s'applique à chaque semaine tant que la facture couvre la période.
-      const mapped = items
-        .map((inv: any) => mapInvoice(inv, dateFrom))
-        .filter((i: ProviderInvoice) => {
-          if (i.amount_ht <= 0) return false
+      // Sans filtre serveur (fallback), on filtre côté client sur les dates disponibles
+      if (!serverFiltered) {
+        mapped = mapped.filter((i: ProviderInvoice) => {
           if (i.is_fixed_charge) {
             if (!i.invoice_date) return true
             const age = (new Date(dateTo).getTime() - new Date(i.invoice_date).getTime()) / 86400000
@@ -192,18 +189,16 @@ export const pennylane: BillingProvider = {
           if (!i.invoice_date) return true
           return i.invoice_date >= dateFrom && i.invoice_date <= dateTo
         })
+      }
 
       if (mapped.length > 0) {
         return { success: true, invoices: mapped, debug }
       }
 
-      const datesFound = items.slice(0, 10).map((inv: any) => pickInvoiceDate(inv) ?? '?').join(', ')
-      const sample = items[0]
       return {
-        success: false,
+        success: true,
         invoices: [],
-        error: `${items.length} factures trouvées, 0 dans ${dateFrom}→${dateTo}. Dates: ${datesFound}. Champs: ${JSON.stringify(Object.keys(sample))}`,
-        debug,
+        debug: debug ?? `0 facture retenue entre ${dateFrom} et ${dateTo}`,
       }
     } catch (err) {
       return { success: false, invoices: [], error: String(err) }
