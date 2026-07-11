@@ -103,7 +103,8 @@ export async function POST(req: NextRequest) {
     await service.from('billing_integrations').update({
       last_sync_at:     new Date().toISOString(),
       last_sync_status: ok ? 'success' : 'error',
-      last_sync_error:  syncError,
+      // En succès, on stocke l'éventuel diagnostic (champs de date côté API) — non bloquant
+      last_sync_error:  syncError ?? syncResult.debug ?? null,
       invoices_synced:  imported,
       updated_at:       new Date().toISOString(),
     }).eq('id', integ.id)
@@ -112,6 +113,7 @@ export async function POST(req: NextRequest) {
       success:  ok,
       imported,
       error:    syncError,
+      debug:    syncResult.debug ?? null,
     }
   }
 

@@ -16,6 +16,7 @@ export interface SyncResult {
   success: boolean
   invoices: ProviderInvoice[]
   error?: string
+  debug?: string          // diagnostic non bloquant (ex: champs de date disponibles côté API)
 }
 
 export interface BillingProvider {

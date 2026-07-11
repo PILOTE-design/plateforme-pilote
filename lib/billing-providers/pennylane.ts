@@ -67,7 +67,6 @@ function detectPeriodDays(label: string): number {
 }
 
 function parseItems(data: any): any[] {
-  // Essai dans l'ordre le plus probable pour l'API Pennylane v2
   if (Array.isArray(data?.supplier_invoices)) return data.supplier_invoices
   if (Array.isArray(data?.invoices))          return data.invoices
   if (Array.isArray(data?.data))              return data.data
@@ -75,6 +74,32 @@ function parseItems(data: any): any[] {
   if (Array.isArray(data?.results))           return data.results
   if (Array.isArray(data))                   return data
   return []
+}
+
+/** Extrait la date de FACTURE (date du document) — PAS la date de saisie comptable ni l'échéance.
+ *  Constat terrain : `date` chez Pennylane correspond souvent à la date de comptabilisation
+ *  (les factures scannées en batch le lundi sortent toutes datées du lundi).
+ *  On privilégie donc les champs explicites du document quand ils existent. */
+function pickInvoiceDate(inv: any): string | null {
+  const candidates = [
+    inv.invoice_date, inv.emission_date, inv.emitted_at, inv.issue_date, inv.issued_at,
+    inv.document_date, inv.billing_date, inv.date,
+  ]
+  for (const c of candidates) {
+    if (typeof c === 'string' && /^\d{4}-\d{2}-\d{2}/.test(c)) return c.split('T')[0]
+  }
+  return null
+}
+
+/** Diagnostic : liste les champs du 1er item dont la valeur ressemble à une date,
+ *  pour identifier une fois pour toutes le bon champ côté API. Stocké dans last_sync_error (non bloquant). */
+function buildDateDebug(sample: any): string {
+  if (!sample || typeof sample !== 'object') return ''
+  const entries: string[] = []
+  for (const [k, v] of Object.entries(sample)) {
+    if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v)) entries.push(`${k}=${v.slice(0, 10)}`)
+  }
+  return entries.length ? `DEBUG dates API: ${entries.join(', ')}` : ''
 }
 
 function mapInvoice(inv: any, fallbackDate: string): ProviderInvoice {
@@ -89,8 +114,6 @@ function mapInvoice(inv: any, fallbackDate: string): ProviderInvoice {
   const supplierName = inv.supplier?.name ?? inv.third_party?.name ?? inv.vendor?.name ?? inv.label ?? 'Fournisseur inconnu'
   const category     = guessCategory(`${supplierName} ${inv.label ?? ''}`)
 
-  // Charges fixes : détectées par catégorie frais généraux ou mots-clés du libellé/fournisseur.
-  // Le prorata hebdo répartit la facture sur sa durée (défaut mensuel) : ht × 7 / durée_jours.
   const detectText   = `${supplierName} ${inv.label ?? ''} ${inv.invoice_number ?? ''}`
   const isFixed      = category === 'frais_generaux' || isFixedChargeLabel(detectText)
   const periodDays   = isFixed ? detectPeriodDays(detectText) : undefined
@@ -99,7 +122,7 @@ function mapInvoice(inv: any, fallbackDate: string): ProviderInvoice {
   return {
     supplier_name:  supplierName,
     invoice_number: inv.invoice_number ?? inv.number ?? inv.reference ?? undefined,
-    invoice_date:   inv.date?.split('T')[0] ?? inv.invoice_date?.split('T')[0] ?? fallbackDate,
+    invoice_date:   pickInvoiceDate(inv) ?? fallbackDate,
     amount_ht:      ht,
     tva_rate:       tva,
     amount_ttc:     ttc || +(ht * (1 + tva / 100)).toFixed(2),
@@ -142,7 +165,6 @@ export const pennylane: BillingProvider = {
       const data = await apiFetch(token, `/supplier_invoices?limit=100&sort=-date`)
       const items = parseItems(data)
 
-      // Si on n'a rien trouvé, loguer la structure brute de la réponse pour identifier la bonne clé
       if (items.length === 0) {
         const topLevelKeys = Object.keys(data ?? {})
         const firstValue = topLevelKeys.length > 0 ? JSON.stringify(data[topLevelKeys[0]]).slice(0, 200) : 'vide'
@@ -153,6 +175,8 @@ export const pennylane: BillingProvider = {
         }
       }
 
+      const debug = buildDateDebug(items[0])
+
       // Filtrage côté client sur la plage de dates.
       // Les charges fixes sont TOUJOURS conservées même hors plage : leur prorata hebdo
       // s'applique à chaque semaine tant que la facture couvre la période.
@@ -161,7 +185,6 @@ export const pennylane: BillingProvider = {
         .filter((i: ProviderInvoice) => {
           if (i.amount_ht <= 0) return false
           if (i.is_fixed_charge) {
-            // garder si la facture date de moins de period_days avant la fin de semaine
             if (!i.invoice_date) return true
             const age = (new Date(dateTo).getTime() - new Date(i.invoice_date).getTime()) / 86400000
             return age >= 0 ? age <= (i.period_days ?? 30) : i.invoice_date <= dateTo
@@ -171,16 +194,16 @@ export const pennylane: BillingProvider = {
         })
 
       if (mapped.length > 0) {
-        return { success: true, invoices: mapped }
+        return { success: true, invoices: mapped, debug }
       }
 
-      // Factures trouvées mais aucune dans la plage de dates
-      const datesFound = items.slice(0, 10).map((inv: any) => inv.date ?? inv.invoice_date ?? '?').join(', ')
+      const datesFound = items.slice(0, 10).map((inv: any) => pickInvoiceDate(inv) ?? '?').join(', ')
       const sample = items[0]
       return {
         success: false,
         invoices: [],
         error: `${items.length} factures trouvées, 0 dans ${dateFrom}→${dateTo}. Dates: ${datesFound}. Champs: ${JSON.stringify(Object.keys(sample))}`,
+        debug,
       }
     } catch (err) {
       return { success: false, invoices: [], error: String(err) }
