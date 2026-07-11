@@ -164,6 +164,7 @@ function contractLabel(ct: string | undefined) {
   return CONTRACT_TYPES.find(c => c.key === ct)?.short ?? (ct ?? 'CDI 35h')
 }
 
+/** Heures payées de la semaine : travail + CP (les CP sont payés à heures contrat ÷ 5 par jour) */
 function calcTotalH(entry: PlanningEntry, contractH = 35) {
   const dailyCP = contractH / 5
   return JOURS_DB.reduce((s, j) => {
@@ -172,13 +173,26 @@ function calcTotalH(entry: PlanningEntry, contractH = 35) {
   }, 0)
 }
 
-/** Coût de base avec heures sup hebdo : +25 % de contractH à contractH+8, +50 % au-delà */
+/** Heures réellement travaillées — temps de travail effectif : exclut CP, maladie, repos.
+ *  C'est LA base légale du calcul des heures supplémentaires : les CP ne génèrent pas de HS. */
+function calcWorkedH(entry: PlanningEntry) {
+  return JOURS_DB.reduce((s, j) => {
+    const t = (entry[`${j}_type` as keyof PlanningEntry] as DayType) || 'travail'
+    return s + (t === 'travail' ? (entry[j] || 0) : 0)
+  }, 0)
+}
+
+/** Coût de base : CP payés au taux normal ; majorations HS (+25 %/+50 %) calculées
+ *  uniquement sur les heures travaillées (temps de travail effectif). */
 function calcBaseCost(entry: PlanningEntry, rate: number, contractH: number) {
-  const totalH = calcTotalH(entry, contractH)
+  const workedH = calcWorkedH(entry)
+  const cpH     = calcTotalH(entry, contractH) - workedH
   const t2 = contractH + 8
-  if (totalH <= contractH) return totalH * rate
-  if (totalH <= t2) return contractH * rate + (totalH - contractH) * rate * 1.25
-  return contractH * rate + (t2 - contractH) * rate * 1.25 + (totalH - t2) * rate * 1.5
+  let workCost: number
+  if (workedH <= contractH)      workCost = workedH * rate
+  else if (workedH <= t2)        workCost = contractH * rate + (workedH - contractH) * rate * 1.25
+  else                           workCost = contractH * rate + (t2 - contractH) * rate * 1.25 + (workedH - t2) * rate * 1.5
+  return workCost + cpH * rate
 }
 
 /** Primes CCN 992 : dimanche travaillé +20 %, jour férié travaillé +100 % */
@@ -204,10 +218,9 @@ function chargeMult(emp: Employee) {
   return 1 + (Number(emp.charges_patronales ?? 45) / 100)
 }
 
-/** Alertes légales Code du travail / CCN 992 pour la semaine */
+/** Alertes légales Code du travail / CCN 992 pour la semaine (basées sur le travail effectif) */
 function getEmployeeAlerts(emp: Employee, entry: PlanningEntry): string[] {
   const msgs: string[] = []
-  const ch = emp.contract_hours || 35
   const maxDay = emp.is_minor ? 8 : 10
   let workedDays = 0
   JOURS_DB.forEach((j, idx) => {
@@ -218,9 +231,9 @@ function getEmployeeAlerts(emp: Employee, entry: PlanningEntry): string[] {
       if (h > maxDay) msgs.push(`${JOURS_SHORT[idx]} : ${fmtH(h)} — max légal ${maxDay}h/jour${emp.is_minor ? ' (mineur)' : ''}`)
     }
   })
-  const total = calcTotalH(entry, ch)
+  const workedH = calcWorkedH(entry)
   const maxWeek = emp.is_minor ? 35 : 48
-  if (total > maxWeek) msgs.push(`${fmtH(total)} sur la semaine — max légal ${maxWeek}h${emp.is_minor ? ' (mineur)' : ''}`)
+  if (workedH > maxWeek) msgs.push(`${fmtH(workedH)} travaillées sur la semaine — max légal ${maxWeek}h${emp.is_minor ? ' (mineur)' : ''}`)
   if (workedDays === 7) msgs.push('7 jours travaillés — repos hebdomadaire de 35h consécutives obligatoire')
   return msgs
 }
@@ -556,11 +569,12 @@ export default function PlanningPage() {
           if (!emp) continue
           const ch = emp.contract_hours || 35
           const weekH = calcTotalH(entry, ch)
+          const weekWorkedH = calcWorkedH(entry)
           const weekCost = calcCostCCN(entry, Number(emp.hourly_rate), ch, wFlags)
           stats[entry.employee_id].hours   += weekH
           stats[entry.employee_id].cost    += weekCost
           stats[entry.employee_id].charged += weekCost * chargeMult(emp)
-          stats[entry.employee_id].ot      += Math.max(0, weekH - ch)
+          stats[entry.employee_id].ot      += Math.max(0, weekWorkedH - ch)
           for (const jour of JOURS_DB) {
             const t = (entry[`${jour}_type`] as DayType) || 'travail'
             const h = (entry[jour] as number) || 0
@@ -582,7 +596,9 @@ export default function PlanningPage() {
     const cost = calcCostCCN(e, Number(emp.hourly_rate), ch, holidayFlags)
     return {
       empId: emp.id, name: emp.name,
-      totalH: calcTotalH(e, ch), cost,
+      totalH: calcTotalH(e, ch),
+      workedH: calcWorkedH(e),
+      cost,
       charged: cost * chargeMult(emp),
       alerts: getEmployeeAlerts(emp, e),
     }
@@ -606,6 +622,7 @@ export default function PlanningPage() {
       const entry  = getEntryState(emp.id)
       const ch     = emp.contract_hours || 35
       const totalH = calcTotalH(entry, ch)
+      const workedH = calcWorkedH(entry)
       const cost   = calcCostCCN(entry, Number(emp.hourly_rate), ch, holidayFlags)
       const charged = cost * chargeMult(emp)
       const cells  = JOURS_DB.map((j, idx) => {
@@ -637,7 +654,7 @@ export default function PlanningPage() {
             <div><div style="font-weight:700;font-size:12px;">${emp.name}</div><div style="font-size:9px;color:#94a3b8;">${contractLabel(emp.contract_type)} · ${Number(emp.hourly_rate).toFixed(2)} €/h</div></div>
           </div>
         </td>${cells}
-        <td style="padding:6px;text-align:center;font-weight:700;font-size:12px;color:${totalH > ch ? '#ea580c' : '#1e293b'};background:#f8fafc;border-bottom:1px solid #e2e8f0;">${fmtH(totalH)}</td>
+        <td style="padding:6px;text-align:center;font-weight:700;font-size:12px;color:${workedH > ch ? '#ea580c' : '#1e293b'};background:#f8fafc;border-bottom:1px solid #e2e8f0;">${fmtH(totalH)}</td>
         <td style="padding:6px;text-align:center;background:#f0fdf4;border-bottom:1px solid #e2e8f0;"><div style="font-weight:700;font-size:11px;color:#15803d;">${cost.toFixed(2)} €</div><div style="font-size:8px;color:#64748b;">${charged.toFixed(0)} € chargé</div></td>
       </tr>`
     }).join('')
@@ -648,7 +665,7 @@ export default function PlanningPage() {
   <div style="text-align:right;"><div style="font-size:10px;color:#64748b;">Coût main d'œuvre</div><div style="font-size:16px;font-weight:800;color:#15803d;">${grandCost.toFixed(2)} € <span style="font-size:10px;color:#64748b;font-weight:600;">brut</span></div><div style="font-size:11px;font-weight:700;color:#334155;">${grandCharged.toFixed(2)} € chargé</div></div>
 </div>
 <table><thead><tr><th style="background:#1E3A5F;color:white;padding:7px 10px;font-size:10px;text-align:left;width:160px;">Employé</th>${dayHeaders}<th style="background:#1E3A5F;color:white;padding:7px 5px;font-size:10px;text-align:center;">Total</th><th style="background:#1E3A5F;color:white;padding:7px 5px;font-size:10px;text-align:center;">Coût</th></tr></thead><tbody>${empRows}</tbody></table>
-<p style="margin-top:10px;font-size:9px;color:#94a3b8;">Seuils : 35h → +25 % de 36–43h · 39h → +25 % de 40–47h · +50 % au-delà · Dimanche +20 % · Férié +100 % · CP = heures contrat / 5 · Coût chargé = brut + charges patronales · Généré via PILOTE</p>
+<p style="margin-top:10px;font-size:9px;color:#94a3b8;">Seuils : 35h → +25 % de 36–43h · 39h → +25 % de 40–47h · +50 % au-delà · HS calculées sur les heures travaillées uniquement (CP exclus) · Dimanche +20 % · Férié +100 % · CP = heures contrat / 5 · Coût chargé = brut + charges patronales · Généré via PILOTE</p>
 </body></html>`
     const win = window.open('', '_blank', 'width=1100,height=750')
     if (!win) return
@@ -813,9 +830,9 @@ export default function PlanningPage() {
                 const pal    = EMP_PALETTES[empIdx % EMP_PALETTES.length]
                 const entry  = getEntryState(emp.id)
                 const ch     = emp.contract_hours || 35
-                const stat   = rowStats.find(r => r.empId === emp.id) || { totalH: 0, cost: 0, charged: 0, alerts: [] as string[] }
-                const { totalH, cost, charged, alerts } = stat
-                const hasOT  = totalH > ch
+                const stat   = rowStats.find(r => r.empId === emp.id) || { totalH: 0, workedH: 0, cost: 0, charged: 0, alerts: [] as string[] }
+                const { totalH, workedH, cost, charged, alerts } = stat
+                const hasOT  = workedH > ch
                 const showContractPop = contractPopover === emp.id
                 const cpInitial   = emp.cp_initial ?? 25
                 const cpUsedCount = cpUsed[emp.id] || 0
@@ -1035,7 +1052,7 @@ export default function PlanningPage() {
                         <span className={`font-bold text-sm ${
                           alerts.length > 0 ? 'text-red-600' : hasOT ? 'text-orange-600' : totalH > 0 ? 'text-gray-800' : 'text-gray-300'
                         }`}>{fmtH(totalH)}</span>
-                        {hasOT && <span className={`text-[9px] ${alerts.length > 0 ? 'text-red-400' : 'text-orange-400'}`}>+{fmtH(totalH - ch)} sup</span>}
+                        {hasOT && <span className={`text-[9px] ${alerts.length > 0 ? 'text-red-400' : 'text-orange-400'}`}>+{fmtH(workedH - ch)} sup</span>}
                       </div>
                     </td>
 
@@ -1098,9 +1115,10 @@ export default function PlanningPage() {
             <span className="font-semibold">Majorations CCN 992 :</span>{' '}
             35h → +25 % de 36–43h, +50 % au-delà{' · '}
             39h → +25 % de 40–47h, +50 % au-delà{' · '}
+            HS calculées sur les heures travaillées uniquement (CP exclus){' · '}
             Dimanche +20 %{' · '}
             Férié +100 %{' · '}
-            CP = heures contrat ÷ 5{' · '}
+            CP = heures contrat ÷ 5, payés au taux normal{' · '}
             Coût chargé = brut + charges patronales (modifiable dans la fiche employé)
           </p>
         </div>
@@ -1318,7 +1336,7 @@ export default function PlanningPage() {
                   <tr className="border-b-2 border-gray-200">
                     <th className="text-left py-2.5 font-semibold text-gray-500 text-xs uppercase">Employé</th>
                     <th className="text-center py-2.5 font-semibold text-gray-500 text-xs uppercase">Heures</th>
-                    <th className="text-center py-2.5 font-semibold text-orange-500 text-xs uppercase" title="Heures supplémentaires (au-delà des heures contrat, par semaine)">HS</th>
+                    <th className="text-center py-2.5 font-semibold text-orange-500 text-xs uppercase" title="Heures supplémentaires — heures travaillées au-delà du contrat, par semaine (CP exclus)">HS</th>
                     <th className="text-center py-2.5 font-semibold text-gray-500 text-xs uppercase">Jours trav.</th>
                     <th className="text-center py-2.5 font-semibold text-sky-600 text-xs uppercase">CP</th>
                     <th className="text-center py-2.5 font-semibold text-red-500 text-xs uppercase">Arrêt</th>
