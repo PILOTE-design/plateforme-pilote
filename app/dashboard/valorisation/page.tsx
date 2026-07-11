@@ -228,6 +228,24 @@ function loadPref<T>(key: string, fallback: T): T {
   } catch { return fallback }
 }
 
+/** Supabase renvoie les colonnes numeric en chaînes — normalise une valorisation en nombres */
+function normalizeValo(v: any): SavedValo {
+  return {
+    ...v,
+    live_weight:     Number(v.live_weight)     || 0,
+    quantity:        Number(v.quantity)        || 1,
+    purchase_per_kg: Number(v.purchase_per_kg) || 0,
+    overhead_cost:   Number(v.overhead_cost)   || 0,
+    labor_cost:      Number(v.labor_cost)      || 0,
+    target_margin:   Number(v.target_margin)   || 0,
+    carcass_weight:  Number(v.carcass_weight)  || 0,
+    total_cost:      Number(v.total_cost)      || 0,
+    total_revenue:   Number(v.total_revenue)   || 0,
+    margin_rate:     Number(v.margin_rate)     || 0,
+    coefficient:     Number(v.coefficient)     || 1,
+  }
+}
+
 // ─── Page ──────────────────────────────────────────────────────────────────────
 
 export default function ValorisationPage() {
@@ -250,6 +268,7 @@ export default function ValorisationPage() {
   const [purchaseDate,  setPurchaseDate]  = useState(new Date().toISOString().split('T')[0])
   const [notes,         setNotes]         = useState('')
   const [history,       setHistory]       = useState<SavedValo[]>([])
+  const [historyError,  setHistoryError]  = useState<string | null>(null)
   const [saving,        setSaving]        = useState(false)
   const [saved,         setSaved]         = useState(false)
   const [selected,      setSelected]      = useState<SavedValo | null>(null)
@@ -325,8 +344,20 @@ export default function ValorisationPage() {
   const coeffStatus     = coefficient < 0.95 ? 'under' : coefficient > 1.15 ? 'over' : 'ok'
 
   const loadHistory = useCallback(async () => {
-    const res = await fetch('/api/valorisations').catch(() => null)
-    if (res?.ok) setHistory(await res.json())
+    try {
+      const res = await fetch('/api/valorisations')
+      if (!res.ok) {
+        const err = await res.json().catch(() => null)
+        setHistoryError(err?.error || `Erreur ${res.status} au chargement de l'historique`)
+        return
+      }
+      const raw = await res.json()
+      if (!Array.isArray(raw)) { setHistoryError('Réponse inattendue du serveur'); return }
+      setHistory(raw.map(normalizeValo))
+      setHistoryError(null)
+    } catch {
+      setHistoryError('Erreur réseau au chargement de l\'historique')
+    }
   }, [])
 
   useEffect(() => { loadHistory() }, [loadHistory])
@@ -389,7 +420,9 @@ export default function ValorisationPage() {
   const weekStats: WeekStats[] = useMemo(() => {
     const map = new Map<string, { week: number; year: number; count: number; lots: number; totalCost: number; totalRevenue: number; breeds: Set<string> }>()
     for (const v of history) {
+      if (!v.purchase_date) continue
       const { week, year } = getISOWeek(v.purchase_date)
+      if (!week || !year || isNaN(week)) continue
       const key = `${year}-W${String(week).padStart(2, '0')}`
       const q = v.quantity ?? 1
       if (!map.has(key)) map.set(key, { week, year, count: 0, lots: 0, totalCost: 0, totalRevenue: 0, breeds: new Set() })
@@ -438,6 +471,14 @@ export default function ValorisationPage() {
         <div className="mb-4 flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5 text-sm text-blue-800">
           <CheckCircle className="w-4 h-4 text-blue-500 flex-shrink-0" />
           Pré-rempli depuis la facture <strong>{fromInvoice}</strong> — ajoutez le poids carcasse pour calculer.
+        </div>
+      )}
+
+      {historyError && (
+        <div className="mb-4 flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-2.5 text-sm text-red-700">
+          <AlertTriangle className="w-4 h-4 text-red-500 flex-shrink-0" />
+          {historyError}
+          <button onClick={loadHistory} className="ml-auto text-xs font-semibold underline hover:no-underline">Réessayer</button>
         </div>
       )}
 
@@ -656,7 +697,7 @@ export default function ValorisationPage() {
                       </div>
                       <p className="text-xs text-gray-500">
                         {(v.quantity ?? 1) > 1 ? <span className="font-semibold text-blue-600">{v.quantity} animaux · </span> : ''}
-                        {v.carcass_weight ?? v.live_weight} kg carc. · {new Date(v.purchase_date).toLocaleDateString('fr-FR')}
+                        {v.carcass_weight || v.live_weight} kg carc. · {new Date(v.purchase_date).toLocaleDateString('fr-FR')}
                       </p>
                       <p className="text-sm font-bold text-[#1E3A5F] mt-1">{eur(v.total_revenue)}</p>
                       <p className="text-[10px] text-gray-400">CA estim. total · coeff. x{v.coefficient?.toFixed(3)}</p>
@@ -1002,7 +1043,7 @@ export default function ValorisationPage() {
                   {ANIMALS[selected.animal_type as AnimalType]?.emoji} {selected.breed_name}
                   {(selected.quantity ?? 1) > 1 && <span className="ml-2 text-sm font-normal text-blue-600">× {selected.quantity}</span>}
                 </h2>
-                <p className="text-xs text-gray-400">{new Date(selected.purchase_date).toLocaleDateString('fr-FR')} · {selected.carcass_weight ?? selected.live_weight} kg carcasse/animal</p>
+                <p className="text-xs text-gray-400">{new Date(selected.purchase_date).toLocaleDateString('fr-FR')} · {selected.carcass_weight || selected.live_weight} kg carcasse/animal</p>
               </div>
               <div className="flex items-center gap-2">
                 <button onClick={() => deleteValo(selected.id)} className="p-1.5 rounded-lg hover:bg-red-50 text-gray-300 hover:text-red-400 transition-colors"><Trash2 className="w-4 h-4" /></button>
