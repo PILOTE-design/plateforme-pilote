@@ -76,6 +76,9 @@ export async function POST(req: NextRequest) {
         amount_ttc:     inv.amount_ttc,
         week_number:    week,
         year,
+        is_fixed_charge: inv.is_fixed_charge ?? false,
+        period_days:     inv.period_days ?? null,
+        prorata_ht:      inv.prorata_ht ?? null,
         notes: `Importé depuis ${prov.name}${inv.external_id ? ` (${inv.external_id})` : ''}`,
       }))
 

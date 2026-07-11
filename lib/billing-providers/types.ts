@@ -7,6 +7,9 @@ export interface ProviderInvoice {
   amount_ttc: number
   category?: string      // viande / charcuterie / epicerie / emballage / frais_generaux / autre
   external_id?: string   // ID côté plateforme (pour déduplication)
+  is_fixed_charge?: boolean // facture de charge fixe (loyer, assurance, énergie, télécom…)
+  period_days?: number      // durée couverte estimée (30 mensuel, 91 trimestriel, 182 semestriel, 365 annuel)
+  prorata_ht?: number       // part hebdomadaire HT = amount_ht × 7 / period_days
 }
 
 export interface SyncResult {

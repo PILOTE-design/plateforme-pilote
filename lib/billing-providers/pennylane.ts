@@ -28,6 +28,35 @@ function guessCategory(label: string): string {
   return 'autre'
 }
 
+// ─── Détection des charges fixes ────────────────────────────────────────
+
+const FIXED_CHARGE_KEYWORDS = [
+  'loyer', 'bail', 'sci ', 'immobili',
+  'assurance', 'mutuelle', 'prevoyance', 'prévoyance', 'axa', 'maaf', 'groupama', 'allianz',
+  'edf', 'engie', 'totalenergies', 'total energies', 'electricit', 'électricit', 'energie', 'énergie', 'gaz',
+  'veolia', 'suez', 'saur',
+  'orange', 'sfr', 'bouygues telecom', 'free pro', 'telecom', 'télécom', 'internet', 'fibre',
+  'abonnement', 'forfait', 'leasing', 'credit-bail', 'crédit-bail', 'credit bail', 'location longue duree',
+  'maintenance', 'entretien annuel',
+  'honoraires', 'comptable', 'expert-comptable', 'fiduciaire',
+  'logiciel', 'saas',
+  'frais bancaires', 'banque', 'cotisation',
+]
+
+function isFixedChargeLabel(label: string): boolean {
+  const l = ` ${label.toLowerCase()} `
+  return FIXED_CHARGE_KEYWORDS.some(k => l.includes(k))
+}
+
+/** Durée couverte estimée par la facture, d'après son libellé. Défaut : mensuel (30 j). */
+function detectPeriodDays(label: string): number {
+  const l = label.toLowerCase()
+  if (l.includes('annuel') || l.includes('/an') || l.includes('12 mois') || l.includes('année')) return 365
+  if (l.includes('semestr') || l.includes('6 mois')) return 182
+  if (l.includes('trimestr') || l.includes('3 mois')) return 91
+  return 30
+}
+
 function parseItems(data: any): any[] {
   // Essai dans l'ordre le plus probable pour l'API Pennylane v2
   if (Array.isArray(data?.supplier_invoices)) return data.supplier_invoices
@@ -48,15 +77,28 @@ function mapInvoice(inv: any, fallbackDate: string): ProviderInvoice {
     inv.total_amount_with_tax ?? inv.total ?? 0
   )
   const tva = ht > 0 && ttc > ht ? parseFloat(((ttc - ht) / ht * 100).toFixed(1)) : 20
+  const supplierName = inv.supplier?.name ?? inv.third_party?.name ?? inv.vendor?.name ?? inv.label ?? 'Fournisseur inconnu'
+  const category     = guessCategory(`${supplierName} ${inv.label ?? ''}`)
+
+  // Charges fixes : détectées par catégorie frais généraux ou mots-clés du libellé/fournisseur.
+  // Le prorata hebdo répartit la facture sur sa durée (défaut mensuel) : ht × 7 / durée_jours.
+  const detectText   = `${supplierName} ${inv.label ?? ''} ${inv.invoice_number ?? ''}`
+  const isFixed      = category === 'frais_generaux' || isFixedChargeLabel(detectText)
+  const periodDays   = isFixed ? detectPeriodDays(detectText) : undefined
+  const prorataHt    = isFixed && periodDays && ht > 0 ? Math.round((ht * 7 / periodDays) * 100) / 100 : undefined
+
   return {
-    supplier_name:  inv.supplier?.name ?? inv.third_party?.name ?? inv.vendor?.name ?? inv.label ?? 'Fournisseur inconnu',
+    supplier_name:  supplierName,
     invoice_number: inv.invoice_number ?? inv.number ?? inv.reference ?? undefined,
     invoice_date:   inv.date?.split('T')[0] ?? inv.invoice_date?.split('T')[0] ?? fallbackDate,
     amount_ht:      ht,
     tva_rate:       tva,
     amount_ttc:     ttc || +(ht * (1 + tva / 100)).toFixed(2),
-    category:       guessCategory(inv.supplier?.name ?? inv.vendor?.name ?? inv.label ?? ''),
+    category,
     external_id:    String(inv.id ?? ''),
+    is_fixed_charge: isFixed,
+    period_days:     periodDays,
+    prorata_ht:      prorataHt,
   }
 }
 
@@ -102,11 +144,19 @@ export const pennylane: BillingProvider = {
         }
       }
 
-      // Filtrage côté client sur la plage de dates
+      // Filtrage côté client sur la plage de dates.
+      // Les charges fixes sont TOUJOURS conservées même hors plage : leur prorata hebdo
+      // s'applique à chaque semaine tant que la facture couvre la période.
       const mapped = items
         .map((inv: any) => mapInvoice(inv, dateFrom))
         .filter((i: ProviderInvoice) => {
           if (i.amount_ht <= 0) return false
+          if (i.is_fixed_charge) {
+            // garder si la facture date de moins de period_days avant la fin de semaine
+            if (!i.invoice_date) return true
+            const age = (new Date(dateTo).getTime() - new Date(i.invoice_date).getTime()) / 86400000
+            return age >= 0 ? age <= (i.period_days ?? 30) : i.invoice_date <= dateTo
+          }
           if (!i.invoice_date) return true
           return i.invoice_date >= dateFrom && i.invoice_date <= dateTo
         })
