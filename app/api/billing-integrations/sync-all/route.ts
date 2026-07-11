@@ -1,7 +1,7 @@
-// Route appelée automatiquement par le Vercel Cron Job chaque dimanche soir
-// (cron: 0 20 * * 0 UTC — Vercel Hobby peut déclencher n'importe quand dans l'heure)
+// Route appelée automatiquement par le Vercel Cron Job chaque LUNDI matin (04h UTC = 6h Paris été)
+// et synchronise la SEMAINE PRÉCÉDENTE (celle qui vient de se terminer) — le gérant retrouve
+// toutes les factures de la semaine écoulée en arrivant le lundi.
 // ATTENTION : Vercel Cron invoque en GET — les deux méthodes sont exportées.
-// Synchronise TOUS les clients qui ont des intégrations actives
 // Sécurisée par CRON_SECRET pour éviter les appels non autorisés
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/server'
@@ -40,7 +40,11 @@ async function runSyncAll(req: NextRequest) {
   }
 
   const service = createServiceClient()
-  const { week, year } = getISOWeek(new Date())
+
+  // SEMAINE PRÉCÉDENTE : le cron tourne le lundi matin, on synchronise la semaine qui vient de se terminer
+  const ref = new Date()
+  ref.setUTCDate(ref.getUTCDate() - 7)
+  const { week, year } = getISOWeek(ref)
   const [from, to] = getWeekBounds(week, year)
 
   const { data: integrations, error: fetchError } = await service
@@ -118,7 +122,7 @@ async function runSyncAll(req: NextRequest) {
     }
   }
 
-  console.log(`[CRON] Sync dimanche S${week}/${year} — ${integrations.length} intégration(s), ${totalImported} facture(s) importée(s)`)
+  console.log(`[CRON] Sync lundi — semaine écoulée S${week}/${year} — ${integrations.length} intégration(s), ${totalImported} facture(s) importée(s)`)
 
   return NextResponse.json({
     success: true,
