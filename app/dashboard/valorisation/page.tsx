@@ -28,6 +28,7 @@ interface AnimalConfig {
   breeds: Breed[]; cuts: Cut[]
   defaultWeight: string; defaultPurchaseKg: string; defaultLabor: string
 }
+interface WeekLabor { hours: number; cost: number; rate: number; week: number; year: number }
 
 // ─── Données Bœuf ─────────────────────────────────────────────────────────────────
 
@@ -207,6 +208,60 @@ function makeWeekLabel(week: number, year: number): string {
   return `S${week} ${year}  ·  ${weekStart.getDate()} ${MONTHS_FR[weekStart.getMonth()]}`
 }
 
+// ─── Main d'œuvre boucherie depuis le planning ─────────────────────────────────
+
+const JOURS_PLANNING = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
+
+function timeToHours(t?: string): number | null {
+  if (!t) return null
+  const trimmed = String(t).trim()
+  const hIdx = trimmed.indexOf('h')
+  if (hIdx === -1) {
+    const n = parseFloat(trimmed)
+    return isNaN(n) ? null : n
+  }
+  const h = parseInt(trimmed.slice(0, hIdx)) || 0
+  const mStr = trimmed.slice(hIdx + 1)
+  const m = mStr ? parseInt(mStr) || 0 : 0
+  return h + m / 60
+}
+
+function slotHours(debut?: string, fin?: string): number {
+  const s = timeToHours(debut)
+  const e = timeToHours(fin)
+  if (s === null || e === null || e <= s) return 0
+  return e - s
+}
+
+/** Heures et coût CHARGÉ de la main d'œuvre taguée "boucherie" dans le planning de la semaine */
+function computeBoucherieLabor(entries: any[], emps: any[]): { hours: number; cost: number } {
+  const empMap = new Map(emps.map((e: any) => [e.id, e]))
+  let hours = 0, cost = 0
+  for (const en of entries) {
+    const emp: any = empMap.get(en.employee_id)
+    if (!emp) continue
+    const rate = (Number(emp.hourly_rate) || 0) * (1 + (Number(emp.charges_patronales ?? 45) / 100))
+    const sds = en.schedule_details || {}
+    for (const j of JOURS_PLANNING) {
+      const t = en[`${j}_type`] || 'travail'
+      if (t !== 'travail') continue
+      const sd = sds[j] || {}
+      const catM = sd.categorie_matin || sd.categorie
+      const catA = sd.categorie_apmidi || sd.categorie
+      const m = slotHours(sd.matin_debut, sd.matin_fin)
+      const a = slotHours(sd.apmidi_debut, sd.apmidi_fin)
+      let h = 0
+      if (catM === 'boucherie') h += m
+      if (catA === 'boucherie') h += a
+      // Poste boucherie sur la journée sans horaires détaillés : on prend les heures du jour
+      if (h === 0 && m === 0 && a === 0 && sd.categorie === 'boucherie') h = Number(en[j]) || 0
+      hours += h
+      cost  += h * rate
+    }
+  }
+  return { hours, cost }
+}
+
 // ─── Préférences par famille (catégories cochées + pièces retirées), persistées en localStorage ─
 
 type CatsByAnimal = Record<AnimalType, CutCategory[]>
@@ -261,6 +316,8 @@ export default function ValorisationPage() {
   const [purchasePerKg, setPurchasePerKg] = useState('6.00')
   const [overheadCost,  setOverheadCost]  = useState('0')
   const [laborCost,     setLaborCost]     = useState('150')
+  const [decoupeHours,  setDecoupeHours]  = useState('')
+  const [weekLabor,     setWeekLabor]     = useState<WeekLabor | null>(null)
   const [targetMargin,  setTargetMargin]  = useState(35)
   const [showBreedInfo, setShowBreedInfo] = useState(false)
   const [catsByAnimal,     setCatsByAnimal]     = useState<CatsByAnimal>(() => loadPref('valo_cats_v1', DEFAULT_CATS()))
@@ -294,6 +351,7 @@ export default function ValorisationPage() {
     setCarcassWeight(config.defaultWeight)
     setPurchasePerKg(config.defaultPurchaseKg)
     setLaborCost(config.defaultLabor)
+    setDecoupeHours('')
     setShowBreedInfo(false)
   }, [animalType]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -304,6 +362,29 @@ export default function ValorisationPage() {
     if (date)     setPurchaseDate(date)
     if (supplier) setNotes(`Facture ${supplier}`)
   }, [params])
+
+  // Main d'œuvre boucherie réelle de la semaine d'achat (depuis le planning)
+  useEffect(() => {
+    const { week: w, year: y } = getISOWeek(purchaseDate)
+    if (!w || !y || isNaN(w)) { setWeekLabor(null); return }
+    Promise.all([
+      fetch(`/api/planning?week=${w}&year=${y}`).then(r => r.json()).catch(() => []),
+      fetch('/api/employees').then(r => r.json()).catch(() => []),
+    ]).then(([entries, emps]) => {
+      if (!Array.isArray(entries) || !Array.isArray(emps)) { setWeekLabor(null); return }
+      const { hours, cost } = computeBoucherieLabor(entries, emps)
+      setWeekLabor({ hours, cost, rate: hours > 0 ? cost / hours : 0, week: w, year: y })
+    }).catch(() => setWeekLabor(null))
+  }, [purchaseDate])
+
+  /** Saisie du temps de découpe : impute automatiquement la main d'œuvre au taux réel du planning */
+  function setDecoupe(h: string) {
+    setDecoupeHours(h)
+    const hours = parseFloat(h) || 0
+    if (weekLabor && weekLabor.rate > 0 && hours > 0) {
+      setLaborCost(String(Math.round(hours * weekLabor.rate * 100) / 100))
+    }
+  }
 
   const breed    = breeds.find(b => b.id === breedId) ?? breeds[0]
   const carcW    = parseFloat(carcassWeight) || 0
@@ -386,27 +467,38 @@ export default function ValorisationPage() {
   async function saveValo() {
     if (!carcW || !ppkg) return
     setSaving(true)
-    await fetch('/api/valorisations', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        animal_type: animalType,
-        breed_id: breed.id, breed_name: breed.name,
-        live_weight: Math.round(liveEstimate * 10) / 10,
-        quantity: qty,
-        purchase_per_kg: ppkg, overhead_cost: overhead, labor_cost: labor,
-        target_margin: targetMargin, purchase_date: purchaseDate,
-        notes: notes || null,
-        carcass_weight: Math.round(carcassW1 * 10) / 10,
-        total_cost: Math.round(totalCostLot * 100) / 100,
-        total_revenue: Math.round(totalRevenueLot * 100) / 100,
-        margin_rate: Math.round(actualMargin1 * 100) / 100,
-        coefficient: Math.round(coefficient * 10000) / 10000,
-      }),
-    })
-    setSaving(false); setSaved(true)
-    setTimeout(() => setSaved(false), 2500)
-    loadHistory()
+    try {
+      const res = await fetch('/api/valorisations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          animal_type: animalType,
+          breed_id: breed.id, breed_name: breed.name,
+          live_weight: Math.round(liveEstimate * 10) / 10,
+          quantity: qty,
+          purchase_per_kg: ppkg, overhead_cost: overhead, labor_cost: labor,
+          target_margin: targetMargin, purchase_date: purchaseDate,
+          notes: notes || null,
+          carcass_weight: Math.round(carcassW1 * 10) / 10,
+          total_cost: Math.round(totalCostLot * 100) / 100,
+          total_revenue: Math.round(totalRevenueLot * 100) / 100,
+          margin_rate: Math.round(actualMargin1 * 100) / 100,
+          coefficient: Math.round(coefficient * 10000) / 10000,
+        }),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => null)
+        alert(`Enregistrement impossible : ${err?.error || 'erreur ' + res.status}`)
+        return
+      }
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2500)
+      loadHistory()
+    } catch {
+      alert("Erreur réseau : la valorisation n'a pas été enregistrée.")
+    } finally {
+      setSaving(false)
+    }
   }
 
   async function deleteValo(id: string) {
@@ -490,7 +582,7 @@ export default function ValorisationPage() {
           </div>
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Valorisation Carcasse</h1>
-            <p className="text-sm text-gray-500">Achat au kg de carcasse · Prix de marché réels · Coefficient · Suivi hebdo</p>
+            <p className="text-sm text-gray-500">Achat au kg de carcasse · Main d'œuvre réelle du planning · Coefficient · Suivi hebdo</p>
           </div>
         </div>
         {activeTab === 'calc' && totalRevenue1 > 0 && (
@@ -786,8 +878,33 @@ export default function ValorisationPage() {
                   <input type="number" value={overheadCost} onChange={e => setOverheadCost(e.target.value)}
                     className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 ${accentRing[animalType]}`} />
                 </div>
+
+                {/* Main d'œuvre boucherie réelle du planning */}
+                {weekLabor && weekLabor.hours > 0 ? (
+                  <div className="mb-3 p-2.5 bg-indigo-50 border border-indigo-100 rounded-lg">
+                    <p className="text-[11px] font-semibold text-indigo-800">
+                      Main d'œuvre boucherie S{weekLabor.week} : {weekLabor.hours.toFixed(1)}h · {eur(weekLabor.cost)} chargé
+                    </p>
+                    <p className="text-[10px] text-indigo-500 mt-0.5">
+                      Taux réel : {eur(weekLabor.rate)}/h — saisissez le temps de découpe ci-dessous pour l'imputer automatiquement
+                    </p>
+                  </div>
+                ) : (
+                  <p className="mb-3 text-[10px] text-gray-400">
+                    Astuce : taguez les postes « Boucherie » dans le planning de la semaine pour imputer la main d'œuvre au taux réel.
+                  </p>
+                )}
                 <div className="mb-4">
-                  <label className="block text-xs font-medium text-gray-700 mb-1.5">Main d&apos;œuvre découpe (€)</label>
+                  <label className="block text-xs font-medium text-gray-700 mb-1.5">Temps de découpe par animal (h)</label>
+                  <input type="number" step="0.25" min="0" value={decoupeHours} onChange={e => setDecoupe(e.target.value)}
+                    placeholder="ex : 3.5"
+                    className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 ${accentRing[animalType]}`} />
+                  {decoupeHours && weekLabor && weekLabor.rate > 0 && (
+                    <p className="text-xs text-indigo-600 mt-1 font-medium">= {eur((parseFloat(decoupeHours) || 0) * weekLabor.rate)} imputés au taux réel du planning</p>
+                  )}
+                </div>
+                <div className="mb-4">
+                  <label className="block text-xs font-medium text-gray-700 mb-1.5">Main d'œuvre découpe (€) <span className="text-gray-400 font-normal">— auto si temps saisi, modifiable</span></label>
                   <input type="number" value={laborCost} onChange={e => setLaborCost(e.target.value)}
                     className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 ${accentRing[animalType]}`} />
                 </div>
@@ -1059,7 +1176,7 @@ export default function ValorisationPage() {
                 { label: 'Carcasse/animal', value: `${selected.carcass_weight} kg`,                   highlight: false },
                 { label: 'Coefficient',     value: `x${selected.coefficient?.toFixed(3)}`,            highlight: false },
                 { label: 'Prix achat/kg',   value: `${selected.purchase_per_kg} €/kg carcasse`,      highlight: false },
-                { label: 'Nb animaux',      value: String(selected.quantity ?? 1),                    highlight: false },
+                { label: 'Main d\'œuvre',   value: eur(selected.labor_cost),                          highlight: false },
               ].map(kpi => (
                 <div key={kpi.label} className={`rounded-xl p-3 ${kpi.highlight ? 'bg-[#1E3A5F]' : 'bg-gray-50'}`}>
                   <p className={`text-xs ${kpi.highlight ? 'text-blue-200' : 'text-gray-400'}`}>{kpi.label}</p>
