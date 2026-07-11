@@ -94,14 +94,18 @@ function fmtDate(d: Date) { return d.toLocaleDateString('fr-FR', { day: 'numeric
 function fmtEuro(n: number) { return n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €' }
 function catInfo(key: string) { return CATEGORIES.find(c => c.key === key) ?? CATEGORIES[CATEGORIES.length - 1] }
 
-function periodLabel(days?: number | null) {
-  if (!days) return 'Mensuel'
-  return PERIOD_OPTIONS.find(p => p.days === days)?.label
-    ?? (days >= 300 ? 'Annuel' : days >= 150 ? 'Semestriel' : days >= 80 ? 'Trimestriel' : 'Mensuel')
-}
-
 function weeklyShare(amountHt: number, days?: number | null) {
   return Math.round((amountHt * 7 / (days || 30)) * 100) / 100
+}
+
+/** Une charge structurelle couvre la semaine si sa période (date → date + period_days) chevauche la semaine */
+function coversWeek(inv: Invoice, monISO: string, sunISO: string): boolean {
+  if (!inv.invoice_date) return false
+  const start = inv.invoice_date
+  const end = new Date(inv.invoice_date)
+  end.setUTCDate(end.getUTCDate() + (inv.period_days || 30))
+  const endISO = end.toISOString().slice(0, 10)
+  return start <= sunISO && endISO > monISO
 }
 
 /** Semaine écoulée (ISO) : celle que le gérant doit voir en arrivant le lundi */
@@ -115,16 +119,17 @@ function getLastWeek() {
 
 export default function FacturationPage() {
   const router = useRouter()
-  // Par défaut : la SEMAINE ÉCOULÉE — le lundi, le gérant voit toutes les factures de la semaine précédente
   const lastWeek = getLastWeek()
   const [week, setWeek] = useState(lastWeek.week)
   const [year, setYear] = useState(lastWeek.year)
   const [invoices,  setInvoices]  = useState<Invoice[]>([])
+  const [fixedAll,  setFixedAll]  = useState<Invoice[]>([])
   const [summary,   setSummary]   = useState<Summary | null>(null)
   const [loading,   setLoading]   = useState(false)
   const [showAdd,   setShowAdd]   = useState(false)
   const [showCA,    setShowCA]    = useState(false)
   const [showSettings, setShowSettings] = useState(false)
+  const [showProviders, setShowProviders] = useState(false)
   const [newInvoice, setNewInvoice] = useState<any>(EMPTY_INVOICE)
   const [saving,    setSaving]    = useState(false)
   const [caForm,    setCaForm]    = useState({ ca_total: '', ca_boucherie: '', ca_charcuterie: '', ca_traiteur: '', ca_vente: '' })
@@ -140,19 +145,23 @@ export default function FacturationPage() {
   const [syncing,          setSyncing]          = useState<string | null>(null)
 
   const [mon, sun] = getWeekDates(week, year)
+  const monISO = mon.toISOString().slice(0, 10)
+  const sunISO = sun.toISOString().slice(0, 10)
   const { week: cw, year: cy } = getISOWeek(new Date())
   const isCurrentWeek = week === cw && year === cy
   const isLastWeek    = week === lastWeek.week && year === lastWeek.year
 
   const load = useCallback(async () => {
     setLoading(true)
-    const [invRes, sumRes, caRes, settRes] = await Promise.all([
+    const [invRes, fixedRes, sumRes, caRes, settRes] = await Promise.all([
       fetch(`/api/invoices?week=${week}&year=${year}`).then(r => r.json()).catch(() => []),
+      fetch(`/api/invoices?fixed=all`).then(r => r.json()).catch(() => []),
       fetch(`/api/facturation/summary?week=${week}&year=${year}`).then(r => r.json()).catch(() => null),
       fetch(`/api/weekly-ca?week=${week}&year=${year}`).then(r => r.json()).catch(() => null),
       fetch('/api/billing-settings').then(r => r.json()).catch(() => ({})),
     ])
     setInvoices(Array.isArray(invRes) ? invRes : [])
+    setFixedAll(Array.isArray(fixedRes) ? fixedRes : [])
     setSummary(sumRes)
     const s = settRes || {}
     setSettForm({ company_name: s.company_name || '', siret: s.siret || '' })
@@ -177,14 +186,16 @@ export default function FacturationPage() {
     setSaving(true)
     const res = await fetch('/api/invoices', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...newInvoice, week_number: week, year }) })
     const data = await res.json()
-    if (data.id) { setInvoices(prev => [data, ...prev]); setShowAdd(false); setNewInvoice(EMPTY_INVOICE); load() }
+    if (data.id) { setShowAdd(false); setNewInvoice(EMPTY_INVOICE); load() }
     setSaving(false)
   }
 
   async function deleteInvoice(id: string) {
     if (!confirm('Supprimer cette facture ?')) return
     await fetch(`/api/invoices/${id}`, { method: 'DELETE' })
-    setInvoices(prev => prev.filter(i => i.id !== id)); load()
+    setInvoices(prev => prev.filter(i => i.id !== id))
+    setFixedAll(prev => prev.filter(i => i.id !== id))
+    load()
   }
 
   /** Bascule manuelle charge fixe <-> achat variable */
@@ -195,6 +206,9 @@ export default function FacturationPage() {
       ? { is_fixed_charge: true, period_days: period, prorata_ht: weeklyShare(inv.amount_ht, period) }
       : { is_fixed_charge: false, period_days: null, prorata_ht: null }
     setInvoices(prev => prev.map(i => i.id === inv.id ? { ...i, ...apiPatch } : i))
+    setFixedAll(prev => makeFixed
+      ? [...prev.filter(i => i.id !== inv.id), { ...inv, ...apiPatch }]
+      : prev.filter(i => i.id !== inv.id))
     await fetch(`/api/invoices/${inv.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(apiPatch) })
   }
 
@@ -202,6 +216,7 @@ export default function FacturationPage() {
   async function setFixedPeriod(inv: Invoice, days: number) {
     const apiPatch = { period_days: days, prorata_ht: weeklyShare(inv.amount_ht, days) }
     setInvoices(prev => prev.map(i => i.id === inv.id ? { ...i, ...apiPatch } : i))
+    setFixedAll(prev => prev.map(i => i.id === inv.id ? { ...i, ...apiPatch } : i))
     await fetch(`/api/invoices/${inv.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(apiPatch) })
   }
 
@@ -225,7 +240,7 @@ export default function FacturationPage() {
     const res = await fetch('/api/billing-integrations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider: connectProvider.id, api_token: connectToken, company_id: connectCompanyId || undefined }) })
     const data = await res.json()
     if (!res.ok) { setConnectError(data.error || 'Erreur de connexion'); setConnecting(false); return }
-    setShowConnect(false); setConnectToken(''); setConnectCompanyId(''); setConnectProvider(null); setConnecting(false); loadIntegrations()
+    setShowConnect(false); setConnectToken(''); setConnectCompanyId(''); setConnectProvider(null); setConnecting(false); setShowProviders(false); loadIntegrations()
   }
 
   async function disconnectIntegration(provider: string) {
@@ -233,7 +248,6 @@ export default function FacturationPage() {
     await fetch(`/api/billing-integrations/${provider}`, { method: 'DELETE' }); loadIntegrations()
   }
 
-  // Sync : passe la semaine affichée au backend
   async function syncNow(provider: string) {
     setSyncing(provider)
     await fetch('/api/billing-integrations/sync', {
@@ -255,9 +269,10 @@ export default function FacturationPage() {
 
   const ttcAmount = parseFloat(newInvoice.amount_ht || '0') * (1 + parseFloat(newInvoice.tva_rate || '20') / 100)
 
-  // Séparation achats variables / charges fixes + groupement par catégorie
+  // ── Achats variables de la semaine + charges structurelles couvrant la semaine ──
   const variableInvoices = invoices.filter(i => !i.is_fixed_charge)
-  const fixedInvoices    = invoices.filter(i => i.is_fixed_charge)
+  const fixedInvoices    = fixedAll
+    .filter(i => coversWeek(i, monISO, sunISO))
     .sort((a, b) => (Number(b.prorata_ht) || 0) - (Number(a.prorata_ht) || 0))
   const groupedVariable  = CATEGORIES
     .map(cat => ({
@@ -320,67 +335,64 @@ export default function FacturationPage() {
         <button onClick={nextWeek} className="p-1.5 rounded hover:bg-gray-100"><ChevronRight className="w-4 h-4 text-gray-500" /></button>
         {!isLastWeek && <button onClick={() => { setWeek(lastWeek.week); setYear(lastWeek.year) }} className="text-xs text-[#1E3A5F] hover:underline">← Semaine écoulée</button>}
         {!isCurrentWeek && <button onClick={() => { setWeek(cw); setYear(cy) }} className="text-xs text-gray-400 hover:underline">Semaine en cours →</button>}
+
+        {/* Intégrations compactes */}
+        <div className="ml-auto flex items-center gap-2">
+          {integrations.map(integ => {
+            const meta = PROVIDERS_META.find(p => p.id === integ.provider)
+            if (!meta) return null
+            const isSyncing = syncing === integ.provider
+            return (
+              <div key={integ.provider} className="flex items-center gap-1.5 bg-green-50 border border-green-200 rounded-lg pl-2 pr-1 py-1">
+                <div className={`w-5 h-5 rounded ${meta.color} flex items-center justify-center text-white text-[8px] font-extrabold`}>{meta.logo}</div>
+                <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                {integ.last_sync_status === 'error' && <span className="text-[9px] text-red-500 font-semibold">erreur</span>}
+                <button onClick={() => syncNow(integ.provider)} disabled={isSyncing}
+                  className="flex items-center gap-1 text-[11px] font-semibold text-green-800 hover:text-green-900 px-1.5 py-0.5 rounded hover:bg-green-100 transition-colors disabled:opacity-50"
+                  title={`Synchroniser la semaine ${week}`}>
+                  <RefreshCw className={`w-3 h-3 ${isSyncing ? 'animate-spin' : ''}`} />{isSyncing ? '...' : `Sync S${week}`}
+                </button>
+                <button onClick={() => disconnectIntegration(integ.provider)} className="p-1 rounded hover:bg-red-50 text-gray-300 hover:text-red-400 transition-colors" title="Déconnecter">
+                  <Link2Off className="w-3 h-3" />
+                </button>
+              </div>
+            )
+          })}
+          <button onClick={() => setShowProviders(v => !v)}
+            className="flex items-center gap-1 text-xs font-semibold text-[#1E3A5F] border border-dashed border-gray-300 rounded-lg px-2.5 py-1.5 hover:border-[#1E3A5F] transition-colors">
+            <Link2 className="w-3 h-3" />{integrations.length === 0 ? 'Connecter un logiciel' : 'Ajouter'}
+          </button>
+        </div>
       </div>
 
-      <div className="flex-1 px-6 py-6 space-y-6">
-
-        {/* Intégrations comptables */}
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
-          <div className="mb-4">
-            <h2 className="font-semibold text-gray-900">Intégrations comptables</h2>
-            <p className="text-xs text-gray-400 mt-0.5">Connectez votre logiciel — import automatique de la semaine écoulée chaque lundi matin</p>
-          </div>
+      {/* Panneau intégrations (replié par défaut) */}
+      {showProviders && (
+        <div className="bg-white border-b border-gray-100 px-6 py-4">
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            {PROVIDERS_META.map(prov => {
-              const integ = integrations.find(i => i.provider === prov.id)
-              const isSyncing = syncing === prov.id
-              return (
-                <div key={prov.id} className={`rounded-xl border-2 p-4 transition-all ${
-                  integ ? 'border-green-200 bg-green-50/50' : 'border-dashed border-gray-200 hover:border-gray-300 bg-gray-50/30'
-                }`}>
-                  <div className="flex items-center gap-2 mb-3">
-                    <div className={`w-8 h-8 rounded-lg ${prov.color} flex items-center justify-center text-white text-[10px] font-extrabold flex-shrink-0`}>{prov.logo}</div>
-                    <span className="font-bold text-sm text-gray-900">{prov.name}</span>
-                  </div>
-                  {integ ? (
-                    <>
-                      <div className="flex items-center gap-1.5 mb-2">
-                        <div className="w-1.5 h-1.5 rounded-full bg-green-500 flex-shrink-0" />
-                        <span className="text-xs text-green-700 font-semibold">Connecté</span>
-                        {integ.last_sync_status === 'error' && <span className="text-[10px] text-red-500 ml-1">Erreur sync</span>}
-                      </div>
-                      {integ.last_sync_at
-                        ? <p className="text-[10px] text-gray-400 mb-3">Sync : {new Date(integ.last_sync_at).toLocaleDateString('fr-FR')}{(integ.invoices_synced ?? 0) > 0 && ` · ${integ.invoices_synced} facture${(integ.invoices_synced ?? 0) > 1 ? 's' : ''}`}</p>
-                        : <p className="text-[10px] text-gray-400 mb-3">Jamais synchronisé</p>}
-                      <div className="flex gap-1.5">
-                        <button onClick={() => syncNow(prov.id)} disabled={isSyncing} className="flex-1 flex items-center justify-center gap-1 text-[11px] font-semibold bg-white border border-gray-200 rounded-lg py-1.5 hover:bg-gray-50 text-gray-600 transition-colors disabled:opacity-50" title={`Synchronise la semaine affichée (S${week})`}>
-                          <RefreshCw className={`w-3 h-3 ${isSyncing ? 'animate-spin' : ''}`} />{isSyncing ? 'Sync...' : `Sync S${week}`}
-                        </button>
-                        <button onClick={() => disconnectIntegration(prov.id)} className="flex items-center justify-center p-1.5 rounded-lg border border-red-100 hover:bg-red-50 text-red-400 transition-colors" title="Déconnecter">
-                          <Link2Off className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <p className="text-[10px] text-gray-400 mb-3 leading-relaxed">{prov.description}</p>
-                      <button onClick={() => { setConnectProvider(prov); setConnectToken(''); setConnectCompanyId(''); setConnectError(''); setShowConnect(true) }}
-                        className="w-full flex items-center justify-center gap-1.5 text-xs font-semibold bg-[#1E3A5F] text-white rounded-lg py-1.5 hover:bg-[#2a4f7c] transition-colors">
-                        <Link2 className="w-3 h-3" />Connecter
-                      </button>
-                    </>
-                  )}
+            {PROVIDERS_META.filter(p => !integrations.find(i => i.provider === p.id)).map(prov => (
+              <div key={prov.id} className="rounded-xl border-2 border-dashed border-gray-200 hover:border-gray-300 bg-gray-50/30 p-4 transition-all">
+                <div className="flex items-center gap-2 mb-2">
+                  <div className={`w-8 h-8 rounded-lg ${prov.color} flex items-center justify-center text-white text-[10px] font-extrabold flex-shrink-0`}>{prov.logo}</div>
+                  <span className="font-bold text-sm text-gray-900">{prov.name}</span>
                 </div>
-              )
-            })}
+                <p className="text-[10px] text-gray-400 mb-3 leading-relaxed">{prov.description}</p>
+                <button onClick={() => { setConnectProvider(prov); setConnectToken(''); setConnectCompanyId(''); setConnectError(''); setShowConnect(true) }}
+                  className="w-full flex items-center justify-center gap-1.5 text-xs font-semibold bg-[#1E3A5F] text-white rounded-lg py-1.5 hover:bg-[#2a4f7c] transition-colors">
+                  <Link2 className="w-3 h-3" />Connecter
+                </button>
+              </div>
+            ))}
           </div>
         </div>
+      )}
+
+      <div className="flex-1 px-6 py-6 space-y-6">
 
         {/* KPIs */}
         {summary !== null && (
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             <KpiCard icon={Euro} label="CA semaine" value={summary.ca_total > 0 ? fmtEuro(summary.ca_total) : '—'} sub={summary.ca_total === 0 ? 'Cliquer sur « Saisir le CA »' : ''} color="bg-blue-50 text-blue-600" />
-            <KpiCard icon={ShoppingCart} label="Achats HT" value={fmtEuro(summary.achats_ht)} sub={`${invoices.length} facture${invoices.length > 1 ? 's' : ''}${fixedWeekly > 0 ? ` · fixes ≈ ${fmtEuro(fixedWeekly)}/sem` : ''}`} color="bg-orange-50 text-orange-600" />
+            <KpiCard icon={ShoppingCart} label="Achats HT" value={fmtEuro(variableTotalHt + fixedWeekly)} sub={`${variableInvoices.length} facture${variableInvoices.length > 1 ? 's' : ''} + fixes ≈ ${fmtEuro(fixedWeekly)}/sem`} color="bg-orange-50 text-orange-600" />
             <KpiCard icon={Users} label="Masse salariale" value={fmtEuro(summary.masse_salariale)} sub={summary.ratio_ms !== null ? `${summary.ratio_ms} % du CA` : 'Depuis le planning'} color="bg-violet-50 text-violet-600" />
             <KpiCard icon={summary.marge_brute >= 0 ? TrendingUp : TrendingDown} label="Marge brute" value={summary.ca_total > 0 ? fmtEuro(summary.marge_brute) : '—'} sub={summary.taux_marge !== null ? `Taux : ${summary.taux_marge} %` : 'Saisir le CA pour calculer'} color={summary.marge_brute >= 0 ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-500'} warn={summary.marge_brute < 0} />
           </div>
@@ -415,9 +427,9 @@ export default function FacturationPage() {
                 )
               })}
               {fixedWeekly > 0 && (
-                <div className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold bg-purple-50 text-purple-700 border border-purple-200" title={`${fixedInvoices.length} facture(s) de charges fixes — part hebdomadaire`}>
+                <div className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold bg-purple-50 text-purple-700 border border-purple-200" title={`${fixedInvoices.length} charge(s) structurelle(s) couvrant cette semaine`}>
                   <Repeat className="w-3 h-3" />
-                  <span>Charges fixes</span><span className="font-bold">≈ {fmtEuro(fixedWeekly)}/sem</span>
+                  <span>Charges structurelles</span><span className="font-bold">≈ {fmtEuro(fixedWeekly)}/sem</span>
                 </div>
               )}
             </div>
@@ -440,7 +452,7 @@ export default function FacturationPage() {
             <div className="py-10 text-center">
               <ShoppingCart className="w-8 h-8 text-gray-200 mx-auto mb-2" />
               <p className="text-sm text-gray-400">Aucun achat variable sur la semaine {week}</p>
-              <p className="text-xs text-gray-300 mt-1">Lancez un sync Pennylane pour importer les factures de cette semaine</p>
+              <p className="text-xs text-gray-300 mt-1">Lancez un sync pour importer les factures de cette semaine</p>
               <button onClick={() => setShowAdd(true)} className="mt-3 text-sm text-[#1E3A5F] hover:underline font-medium">+ Ajouter une facture manuellement</button>
             </div>
           ) : (
@@ -477,12 +489,12 @@ export default function FacturationPage() {
                               {inv.invoice_number && <div className="text-xs text-gray-400">{inv.invoice_number}</div>}
                             </td>
                             <td className="px-4 py-2.5 text-sm text-gray-600">{new Date(inv.invoice_date).toLocaleDateString('fr-FR')}</td>
-                            <td className="px-4 py-2.5 text-right font-semibold text-sm text-gray-900">{fmtEuro(inv.amount_ht)}</td>
+                            <td className={`px-4 py-2.5 text-right font-semibold text-sm ${inv.amount_ht < 0 ? 'text-green-600' : 'text-gray-900'}`}>{fmtEuro(inv.amount_ht)}</td>
                             <td className="px-4 py-2.5 text-right text-xs text-gray-400">{inv.tva_rate} %</td>
                             <td className="px-4 py-2.5 text-right text-sm text-gray-600">{fmtEuro(inv.amount_ttc)}</td>
                             <td className="px-4 py-2.5 text-center">
                               <div className="flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
-                                <button onClick={() => toggleFixed(inv)} className="p-1.5 rounded hover:bg-purple-50 text-gray-300 hover:text-purple-600 transition-colors" title="Marquer comme charge fixe (prorata hebdo)">
+                                <button onClick={() => toggleFixed(inv)} className="p-1.5 rounded hover:bg-purple-50 text-gray-300 hover:text-purple-600 transition-colors" title="Marquer comme charge structurelle (prorata hebdo)">
                                   <Repeat className="w-3.5 h-3.5" />
                                 </button>
                                 {isViande && (
@@ -515,14 +527,14 @@ export default function FacturationPage() {
           )}
         </div>
 
-        {/* ── Charges fixes récurrentes ── */}
+        {/* ── Charges structurelles couvrant la semaine ── */}
         <div className="bg-white rounded-xl border border-purple-100 shadow-sm overflow-hidden">
           <div className="px-4 py-3 border-b border-purple-100 bg-purple-50/50 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Repeat className="w-4 h-4 text-purple-500" />
               <div>
-                <h2 className="font-semibold text-gray-800">Charges fixes récurrentes</h2>
-                <p className="text-[11px] text-gray-400">Réparties à la semaine selon leur période — modifiez la période si besoin</p>
+                <h2 className="font-semibold text-gray-800">Charges structurelles</h2>
+                <p className="text-[11px] text-gray-400">Toutes les charges fixes dont la période couvre la semaine {week} — quelle que soit leur date de facture</p>
               </div>
             </div>
             {fixedInvoices.length > 0 && (
@@ -537,7 +549,7 @@ export default function FacturationPage() {
           ) : fixedInvoices.length === 0 ? (
             <div className="py-8 text-center">
               <Repeat className="w-7 h-7 text-gray-200 mx-auto mb-2" />
-              <p className="text-sm text-gray-400">Aucune charge fixe détectée cette semaine</p>
+              <p className="text-sm text-gray-400">Aucune charge structurelle ne couvre cette semaine</p>
               <p className="text-xs text-gray-300 mt-1">Survolez une facture ci-dessus et cliquez sur l&apos;icône de récurrence pour la marquer comme charge fixe</p>
             </div>
           ) : (
@@ -545,7 +557,7 @@ export default function FacturationPage() {
               <thead>
                 <tr className="bg-gray-50 text-xs font-semibold text-gray-400 uppercase tracking-wider">
                   <th className="px-4 py-2.5 text-left">Fournisseur</th>
-                  <th className="px-4 py-2.5 text-left">Date</th>
+                  <th className="px-4 py-2.5 text-left">Facturée le</th>
                   <th className="px-4 py-2.5 text-right">Montant HT</th>
                   <th className="px-4 py-2.5 text-center">Période</th>
                   <th className="px-4 py-2.5 text-right">Part hebdo</th>
@@ -577,7 +589,7 @@ export default function FacturationPage() {
                     </td>
                     <td className="px-4 py-2.5 text-center">
                       <div className="flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
-                        <button onClick={() => toggleFixed(inv)} className="p-1.5 rounded hover:bg-gray-100 text-gray-300 hover:text-gray-600 transition-colors" title="Retirer des charges fixes (rebascule en achat variable)">
+                        <button onClick={() => toggleFixed(inv)} className="p-1.5 rounded hover:bg-gray-100 text-gray-300 hover:text-gray-600 transition-colors" title="Retirer des charges structurelles (rebascule en achat variable)">
                           <Undo2 className="w-3.5 h-3.5" />
                         </button>
                         <button onClick={() => deleteInvoice(inv.id)} className="p-1.5 rounded hover:bg-red-50 text-gray-300 hover:text-red-400 transition-colors" title="Supprimer">
@@ -590,7 +602,7 @@ export default function FacturationPage() {
               </tbody>
               <tfoot>
                 <tr className="bg-purple-700 text-white">
-                  <td colSpan={2} className="px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-purple-200">Total charges fixes</td>
+                  <td colSpan={2} className="px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-purple-200">Total charges structurelles</td>
                   <td className="px-4 py-2.5 text-right font-bold">{fmtEuro(fixedTotalHt)}</td>
                   <td className="px-4 py-2.5"></td>
                   <td className="px-4 py-2.5 text-right font-bold text-yellow-300">≈ {fmtEuro(fixedWeekly)}/sem</td>
@@ -675,7 +687,7 @@ export default function FacturationPage() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-gray-600 mb-1">Montant HT *</label>
-                  <Input type="number" step="0.01" min="0" value={newInvoice.amount_ht} onChange={e => setNewInvoice((p: any) => ({ ...p, amount_ht: e.target.value }))} placeholder="0.00" />
+                  <Input type="number" step="0.01" value={newInvoice.amount_ht} onChange={e => setNewInvoice((p: any) => ({ ...p, amount_ht: e.target.value }))} placeholder="0.00" />
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-gray-600 mb-1">Taux TVA (%)</label>

@@ -17,16 +17,24 @@ export async function GET(request: NextRequest) {
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { searchParams } = new URL(request.url)
-  const week = searchParams.get('week')
-  const year = searchParams.get('year')
+  const week  = searchParams.get('week')
+  const year  = searchParams.get('year')
+  const fixed = searchParams.get('fixed')
 
   const serviceSupabase = createServiceClient()
   const clientId = await resolveClientId(serviceSupabase, user.id, user.email)
   if (!clientId) return NextResponse.json([])
 
   let query = serviceSupabase.from('invoices').select('*').eq('client_id', clientId)
-  if (week) query = query.eq('week_number', parseInt(week))
-  if (year) query = query.eq('year', parseInt(year))
+
+  if (fixed === 'all') {
+    // Toutes les charges fixes, quelle que soit leur semaine — la page filtre celles dont la
+    // période couvre la semaine affichée (une charge structurelle vit au-delà de sa date de facture)
+    query = query.eq('is_fixed_charge', true)
+  } else {
+    if (week) query = query.eq('week_number', parseInt(week))
+    if (year) query = query.eq('year', parseInt(year))
+  }
   query = query.order('invoice_date', { ascending: false })
 
   const { data, error } = await query
