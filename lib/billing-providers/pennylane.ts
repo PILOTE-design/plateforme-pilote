@@ -9,7 +9,7 @@ function fmt(d: Date) {
 async function apiFetch(token: string, path: string) {
   const res = await fetch(`${BASE}${path}`, {
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    signal: AbortSignal.timeout(8000), // 8s max pour rester sous le timeout Vercel
+    signal: AbortSignal.timeout(8000),
   })
   if (!res.ok) {
     const body = await res.text().catch(() => '')
@@ -29,7 +29,14 @@ function guessCategory(label: string): string {
 }
 
 function parseItems(data: any): any[] {
-  return data?.supplier_invoices ?? data?.invoices ?? data?.data ?? []
+  // Essai dans l'ordre le plus probable pour l'API Pennylane v2
+  if (Array.isArray(data?.supplier_invoices)) return data.supplier_invoices
+  if (Array.isArray(data?.invoices))          return data.invoices
+  if (Array.isArray(data?.data))              return data.data
+  if (Array.isArray(data?.items))             return data.items
+  if (Array.isArray(data?.results))           return data.results
+  if (Array.isArray(data))                   return data
+  return []
 }
 
 function mapInvoice(inv: any, fallbackDate: string): ProviderInvoice {
@@ -81,27 +88,18 @@ export const pennylane: BillingProvider = {
     const dateTo   = fmt(to)
 
     try {
-      // Un seul appel : 100 factures les plus récentes, triées par date desc
-      // Filtrage côté client pour éviter le double appel et les timeouts Vercel
       const data = await apiFetch(token, `/supplier_invoices?limit=100&sort=-date`)
       const items = parseItems(data)
 
+      // Si on n'a rien trouvé, loguer la structure brute de la réponse pour identifier la bonne clé
       if (items.length === 0) {
-        return { success: true, invoices: [], error: 'Aucune facture dans Pennylane' }
-      }
-
-      // Log de la structure du premier élément pour debug
-      const sample = items[0]
-      const debugFields = {
-        date: sample.date,
-        invoice_date: sample.invoice_date,
-        deadline_at: sample.deadline_at,
-        created_at: sample.created_at,
-        currency_amount: sample.currency_amount,
-        amount: sample.amount,
-        pre_tax_amount: sample.pre_tax_amount,
-        currency_tax_inclusive_amount: sample.currency_tax_inclusive_amount,
-        supplier: sample.supplier?.name ?? sample.third_party?.name ?? null,
+        const topLevelKeys = Object.keys(data ?? {})
+        const firstValue = topLevelKeys.length > 0 ? JSON.stringify(data[topLevelKeys[0]]).slice(0, 200) : 'vide'
+        return {
+          success: false,
+          invoices: [],
+          error: `parseItems=0. Clés de réponse: [${topLevelKeys.join(', ')}]. Premier champ: ${firstValue}`,
+        }
       }
 
       // Filtrage côté client sur la plage de dates
@@ -117,12 +115,13 @@ export const pennylane: BillingProvider = {
         return { success: true, invoices: mapped }
       }
 
-      // Aucune facture dans la plage — on stocke les infos de debug
+      // Factures trouvées mais aucune dans la plage de dates
       const datesFound = items.slice(0, 10).map((inv: any) => inv.date ?? inv.invoice_date ?? '?').join(', ')
+      const sample = items[0]
       return {
         success: false,
         invoices: [],
-        error: `0 factures pour ${dateFrom}→${dateTo}. Dates trouvées: ${datesFound}. Structure: ${JSON.stringify(debugFields)}`,
+        error: `${items.length} factures trouvées, 0 dans ${dateFrom}→${dateTo}. Dates: ${datesFound}. Champs: ${JSON.stringify(Object.keys(sample))}`,
       }
     } catch (err) {
       return { success: false, invoices: [], error: String(err) }
