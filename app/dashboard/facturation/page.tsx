@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, Fragment } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -459,8 +459,8 @@ export default function FacturationPage() {
                 {groupedVariable.map(group => {
                   const subHt = group.items.reduce((s, i) => s + i.amount_ht, 0)
                   return (
-                    <>
-                      <tr key={`h-${group.cat.key}`} className="border-t border-gray-100 bg-gray-50/70">
+                    <Fragment key={group.cat.key}>
+                      <tr className="border-t border-gray-100 bg-gray-50/70">
                         <td colSpan={6} className="px-4 py-2">
                           <div className="flex items-center justify-between">
                             <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${group.cat.color}`}>{group.cat.label}</span>
@@ -498,7 +498,7 @@ export default function FacturationPage() {
                           </tr>
                         )
                       })}
-                    </>
+                    </Fragment>
                   )
                 })}
               </tbody>
@@ -538,7 +538,7 @@ export default function FacturationPage() {
             <div className="py-8 text-center">
               <Repeat className="w-7 h-7 text-gray-200 mx-auto mb-2" />
               <p className="text-sm text-gray-400">Aucune charge fixe détectée cette semaine</p>
-              <p className="text-xs text-gray-300 mt-1">Survolez une facture ci-dessus et cliquez sur l&apos;icône <Repeat className="w-3 h-3 inline text-gray-400" /> pour la marquer comme charge fixe</p>
+              <p className="text-xs text-gray-300 mt-1">Survolez une facture ci-dessus et cliquez sur l&apos;icône de récurrence pour la marquer comme charge fixe</p>
             </div>
           ) : (
             <table className="w-full">
