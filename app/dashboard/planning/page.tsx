@@ -623,6 +623,8 @@ export default function PlanningPage() {
   const grandCharged = rowStats.reduce((s, r) => s + r.charged, 0)
   const weekAlerts   = rowStats.flatMap(r => r.alerts.map(msg => ({ name: r.name, msg })))
 
+  /** PDF = FEUILLE D'ÉMARGEMENT à afficher et faire signer.
+   *  AUCUN montant, aucun taux horaire, aucun coût : l'argent reste sur la plateforme. */
   function exportPDF() {
     const dates = getWeekDates(week, year)
     const fmtD  = (d: Date) => d.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' })
@@ -637,9 +639,6 @@ export default function PlanningPage() {
       const entry  = getEntryState(emp.id)
       const ch     = emp.contract_hours || 35
       const totalH = calcTotalH(entry, ch)
-      const workedH = calcWorkedH(entry)
-      const cost   = calcCostCCN(entry, Number(emp.hourly_rate), ch, holidayFlags)
-      const charged = cost * chargeMult(emp)
       const cells  = JOURS_DB.map((j, idx) => {
         const type   = (entry[`${j}_type` as keyof PlanningEntry] as DayType) || (idx >= 5 ? 'repos' : 'travail')
         const h      = entry[j] || 0
@@ -668,21 +667,24 @@ export default function PlanningPage() {
         <td style="padding:7px 10px;border-bottom:1px solid #e2e8f0;border-left:3px solid ${pal.hex};background:#fafafa;">
           <div style="display:flex;align-items:center;gap:7px;">
             <div style="width:26px;height:26px;border-radius:50%;background:${pal.hex};display:flex;align-items:center;justify-content:center;"><span style="color:white;font-size:9px;font-weight:700;">${initials(emp.name)}</span></div>
-            <div><div style="font-weight:700;font-size:12px;">${emp.name}</div><div style="font-size:9px;color:#94a3b8;">${contractLabel(emp.contract_type)} · ${Number(emp.hourly_rate).toFixed(2)} €/h</div></div>
+            <div><div style="font-weight:700;font-size:12px;">${emp.name}</div><div style="font-size:9px;color:#94a3b8;">${contractLabel(emp.contract_type)}</div></div>
           </div>
         </td>${cells}
-        <td style="padding:6px;text-align:center;font-weight:700;font-size:12px;color:${workedH > ch ? '#ea580c' : '#1e293b'};background:#f8fafc;border-bottom:1px solid #e2e8f0;">${fmtH(totalH)}</td>
-        <td style="padding:6px;text-align:center;background:#f0fdf4;border-bottom:1px solid #e2e8f0;"><div style="font-weight:700;font-size:11px;color:#15803d;">${cost.toFixed(2)} €</div><div style="font-size:8px;color:#64748b;">${charged.toFixed(0)} € chargé</div></td>
+        <td style="padding:6px;text-align:center;font-weight:700;font-size:12px;color:#1e293b;background:#f8fafc;border-bottom:1px solid #e2e8f0;">${fmtH(totalH)}</td>
+        <td style="padding:6px 8px;background:#ffffff;border-bottom:1px solid #e2e8f0;border-left:1px solid #e2e8f0;vertical-align:bottom;"><div style="height:30px;"></div><div style="border-top:1px dotted #94a3b8;font-size:7px;color:#94a3b8;padding-top:2px;text-align:center;">Signature</div></td>
       </tr>`
     }).join('')
-    const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"><title>Planning S${week}</title>
+    const html = `<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"><title>Emargement S${week}</title>
 <style>@page{size:A4 landscape;margin:1.2cm 1.5cm}*{box-sizing:border-box;margin:0;padding:0}body{font-family:Arial,sans-serif;color:#1e293b}table{width:100%;border-collapse:collapse}@media print{body{-webkit-print-color-adjust:exact;print-color-adjust:exact}}</style></head><body>
 <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:14px;padding-bottom:10px;border-bottom:2px solid #1E3A5F;">
-  <div><div style="font-size:18px;font-weight:800;color:#1E3A5F;">Planning — Semaine ${week}</div><div style="font-size:11px;color:#64748b;margin-top:2px;">${getWeekLabel(week, year)}</div></div>
-  <div style="text-align:right;"><div style="font-size:10px;color:#64748b;">Coût main d'œuvre</div><div style="font-size:16px;font-weight:800;color:#15803d;">${grandCost.toFixed(2)} € <span style="font-size:10px;color:#64748b;font-weight:600;">brut</span></div><div style="font-size:11px;font-weight:700;color:#334155;">${grandCharged.toFixed(2)} € chargé</div></div>
+  <div><div style="font-size:18px;font-weight:800;color:#1E3A5F;">Planning &amp; Emargement — Semaine ${week}</div><div style="font-size:11px;color:#64748b;margin-top:2px;">${getWeekLabel(week, year)}</div></div>
+  <div style="text-align:right;"><div style="font-size:10px;color:#64748b;">Total heures equipe</div><div style="font-size:16px;font-weight:800;color:#1E3A5F;">${fmtH(grandH)}</div></div>
 </div>
-<table><thead><tr><th style="background:#1E3A5F;color:white;padding:7px 10px;font-size:10px;text-align:left;width:160px;">Employé</th>${dayHeaders}<th style="background:#1E3A5F;color:white;padding:7px 5px;font-size:10px;text-align:center;">Total</th><th style="background:#1E3A5F;color:white;padding:7px 5px;font-size:10px;text-align:center;">Coût</th></tr></thead><tbody>${empRows}</tbody></table>
-<p style="margin-top:10px;font-size:9px;color:#94a3b8;">Seuils : 35h → +25 % de 36–43h · 39h → +25 % de 40–47h · +50 % au-delà · HS calculées sur les heures travaillées uniquement (CP exclus) · Dimanche +20 % · Férié +100 % · CP = heures contrat / 5 · Coût chargé = brut + charges patronales · Généré via PILOTE</p>
+<table><thead><tr><th style="background:#1E3A5F;color:white;padding:7px 10px;font-size:10px;text-align:left;width:150px;">Employé</th>${dayHeaders}<th style="background:#1E3A5F;color:white;padding:7px 5px;font-size:10px;text-align:center;width:50px;">Total</th><th style="background:#1E3A5F;color:white;padding:7px 5px;font-size:10px;text-align:center;width:110px;">Emargement</th></tr></thead><tbody>${empRows}</tbody></table>
+<div style="display:flex;justify-content:space-between;margin-top:14px;">
+  <p style="font-size:9px;color:#94a3b8;">Document a afficher — chaque employe emarge pour attester de ses horaires · CP = heures contrat / 5 · Genere via PILOTE le ${new Date().toLocaleDateString('fr-FR')}</p>
+  <div style="text-align:right;"><div style="font-size:9px;color:#64748b;margin-bottom:22px;">Visa de la direction :</div><div style="border-top:1px dotted #94a3b8;width:160px;"></div></div>
+</div>
 </body></html>`
     const win = window.open('', '_blank', 'width=1100,height=750')
     if (!win) return
@@ -710,8 +712,8 @@ export default function PlanningPage() {
               <Button onClick={openMonthly} variant="outline" className="h-8 text-sm px-3 border-gray-300 text-gray-600 hover:bg-gray-50">
                 <BarChart2 className="w-3.5 h-3.5 mr-1.5" />Récap du mois
               </Button>
-              <Button onClick={exportPDF} variant="outline" className="h-8 text-sm px-3 border-[#1E3A5F] text-[#1E3A5F] hover:bg-blue-50">
-                <FileDown className="w-3.5 h-3.5 mr-1.5" />Enregistrer en PDF
+              <Button onClick={exportPDF} variant="outline" className="h-8 text-sm px-3 border-[#1E3A5F] text-[#1E3A5F] hover:bg-blue-50" title="Feuille d'émargement à imprimer et faire signer — sans données financières">
+                <FileDown className="w-3.5 h-3.5 mr-1.5" />Feuille d'émargement
               </Button>
             </>
           )}
@@ -1215,7 +1217,7 @@ export default function PlanningPage() {
                       <span className="text-xs text-gray-400 w-20 shrink-0 pt-1">Poste matin</span>
                       <div className="flex flex-wrap gap-1.5">
                         {CATEGORIES.map(cat => {
-                          const isSel = (mSd.categorie_matin || mSd.categorie) === cat.key && (mSd.categorie_matin ? mSd.categorie_matin === cat.key : true) && (mSd.categorie_matin || mSd.categorie) !== undefined && (mSd.categorie_matin ?? mSd.categorie) === cat.key
+                          const isSel = (mSd.categorie_matin || mSd.categorie) === cat.key
                           return (
                             <button key={cat.key}
                               onClick={() => setSlotCategory(detailModal.empId, mJour, 'categorie_matin', isSel ? '' : cat.key)}
@@ -1235,7 +1237,7 @@ export default function PlanningPage() {
                       <span className="text-xs text-gray-400 w-20 shrink-0 pt-1">Poste a.-midi</span>
                       <div className="flex flex-wrap gap-1.5">
                         {CATEGORIES.map(cat => {
-                          const isSel = (mSd.categorie_apmidi ?? mSd.categorie) === cat.key
+                          const isSel = (mSd.categorie_apmidi || mSd.categorie) === cat.key
                           return (
                             <button key={cat.key}
                               onClick={() => setSlotCategory(detailModal.empId, mJour, 'categorie_apmidi', isSel ? '' : cat.key)}
