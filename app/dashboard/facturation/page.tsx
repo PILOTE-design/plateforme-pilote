@@ -104,13 +104,21 @@ function weeklyShare(amountHt: number, days?: number | null) {
   return Math.round((amountHt * 7 / (days || 30)) * 100) / 100
 }
 
+/** Semaine écoulée (ISO) : celle que le gérant doit voir en arrivant le lundi */
+function getLastWeek() {
+  const ref = new Date()
+  ref.setDate(ref.getDate() - 7)
+  return getISOWeek(ref)
+}
+
 // ─── Composant principal ──────────────────────────────────────────────────────
 
 export default function FacturationPage() {
   const router = useRouter()
-  const now = getISOWeek(new Date())
-  const [week, setWeek] = useState(now.week)
-  const [year, setYear] = useState(now.year)
+  // Par défaut : la SEMAINE ÉCOULÉE — le lundi, le gérant voit toutes les factures de la semaine précédente
+  const lastWeek = getLastWeek()
+  const [week, setWeek] = useState(lastWeek.week)
+  const [year, setYear] = useState(lastWeek.year)
   const [invoices,  setInvoices]  = useState<Invoice[]>([])
   const [summary,   setSummary]   = useState<Summary | null>(null)
   const [loading,   setLoading]   = useState(false)
@@ -134,6 +142,7 @@ export default function FacturationPage() {
   const [mon, sun] = getWeekDates(week, year)
   const { week: cw, year: cy } = getISOWeek(new Date())
   const isCurrentWeek = week === cw && year === cy
+  const isLastWeek    = week === lastWeek.week && year === lastWeek.year
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -155,18 +164,6 @@ export default function FacturationPage() {
   const loadIntegrations = useCallback(async () => {
     const res = await fetch('/api/billing-integrations').catch(() => null)
     if (res?.ok) { const data = await res.json(); setIntegrations(Array.isArray(data) ? data : []) }
-  }, [])
-
-  useEffect(() => {
-    fetch('/api/reports/latest-week')
-      .then(r => r.json())
-      .then((data: { week_number?: number; year?: number } | null) => {
-        if (data?.week_number && data?.year) {
-          setWeek(data.week_number)
-          setYear(data.year)
-        }
-      })
-      .catch(() => {})
   }, [])
 
   useEffect(() => { load() }, [load])
@@ -317,10 +314,12 @@ export default function FacturationPage() {
           <span className="font-semibold text-gray-900 text-sm">Semaine {week}</span>
           <span className="text-gray-300 text-sm">·</span>
           <span className="text-xs text-gray-500">{fmtDate(mon)} – {fmtDate(sun)}</span>
-          {isCurrentWeek && <span className="text-[10px] bg-[#1E3A5F] text-white px-1.5 py-0.5 rounded font-medium">Actuelle</span>}
+          {isCurrentWeek && <span className="text-[10px] bg-[#1E3A5F] text-white px-1.5 py-0.5 rounded font-medium">En cours</span>}
+          {isLastWeek && !isCurrentWeek && <span className="text-[10px] bg-amber-500 text-white px-1.5 py-0.5 rounded font-medium">Semaine écoulée</span>}
         </div>
         <button onClick={nextWeek} className="p-1.5 rounded hover:bg-gray-100"><ChevronRight className="w-4 h-4 text-gray-500" /></button>
-        {!isCurrentWeek && <button onClick={() => { setWeek(cw); setYear(cy) }} className="text-xs text-[#1E3A5F] hover:underline">← Semaine actuelle</button>}
+        {!isLastWeek && <button onClick={() => { setWeek(lastWeek.week); setYear(lastWeek.year) }} className="text-xs text-[#1E3A5F] hover:underline">← Semaine écoulée</button>}
+        {!isCurrentWeek && <button onClick={() => { setWeek(cw); setYear(cy) }} className="text-xs text-gray-400 hover:underline">Semaine en cours →</button>}
       </div>
 
       <div className="flex-1 px-6 py-6 space-y-6">
@@ -329,7 +328,7 @@ export default function FacturationPage() {
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
           <div className="mb-4">
             <h2 className="font-semibold text-gray-900">Intégrations comptables</h2>
-            <p className="text-xs text-gray-400 mt-0.5">Connectez votre logiciel pour importer les factures fournisseurs automatiquement chaque dimanche</p>
+            <p className="text-xs text-gray-400 mt-0.5">Connectez votre logiciel — import automatique de la semaine écoulée chaque lundi matin</p>
           </div>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             {PROVIDERS_META.map(prov => {
@@ -354,8 +353,8 @@ export default function FacturationPage() {
                         ? <p className="text-[10px] text-gray-400 mb-3">Sync : {new Date(integ.last_sync_at).toLocaleDateString('fr-FR')}{(integ.invoices_synced ?? 0) > 0 && ` · ${integ.invoices_synced} facture${(integ.invoices_synced ?? 0) > 1 ? 's' : ''}`}</p>
                         : <p className="text-[10px] text-gray-400 mb-3">Jamais synchronisé</p>}
                       <div className="flex gap-1.5">
-                        <button onClick={() => syncNow(prov.id)} disabled={isSyncing} className="flex-1 flex items-center justify-center gap-1 text-[11px] font-semibold bg-white border border-gray-200 rounded-lg py-1.5 hover:bg-gray-50 text-gray-600 transition-colors disabled:opacity-50">
-                          <RefreshCw className={`w-3 h-3 ${isSyncing ? 'animate-spin' : ''}`} />{isSyncing ? 'Sync...' : 'Sync'}
+                        <button onClick={() => syncNow(prov.id)} disabled={isSyncing} className="flex-1 flex items-center justify-center gap-1 text-[11px] font-semibold bg-white border border-gray-200 rounded-lg py-1.5 hover:bg-gray-50 text-gray-600 transition-colors disabled:opacity-50" title={`Synchronise la semaine affichée (S${week})`}>
+                          <RefreshCw className={`w-3 h-3 ${isSyncing ? 'animate-spin' : ''}`} />{isSyncing ? 'Sync...' : `Sync S${week}`}
                         </button>
                         <button onClick={() => disconnectIntegration(prov.id)} className="flex items-center justify-center p-1.5 rounded-lg border border-red-100 hover:bg-red-50 text-red-400 transition-colors" title="Déconnecter">
                           <Link2Off className="w-3.5 h-3.5" />
@@ -428,7 +427,7 @@ export default function FacturationPage() {
         {/* ── Achats de la semaine (variables, groupés par catégorie) ── */}
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
           <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
-            <h2 className="font-semibold text-gray-800">Achats de la semaine</h2>
+            <h2 className="font-semibold text-gray-800">Achats de la semaine {week}</h2>
             <span className="text-xs text-gray-400">{variableInvoices.length} facture{variableInvoices.length > 1 ? 's' : ''} · {fmtEuro(variableTotalHt)} HT</span>
           </div>
           {loading ? (
@@ -440,8 +439,9 @@ export default function FacturationPage() {
           ) : variableInvoices.length === 0 ? (
             <div className="py-10 text-center">
               <ShoppingCart className="w-8 h-8 text-gray-200 mx-auto mb-2" />
-              <p className="text-sm text-gray-400">Aucun achat variable cette semaine</p>
-              <button onClick={() => setShowAdd(true)} className="mt-3 text-sm text-[#1E3A5F] hover:underline font-medium">+ Ajouter une facture</button>
+              <p className="text-sm text-gray-400">Aucun achat variable sur la semaine {week}</p>
+              <p className="text-xs text-gray-300 mt-1">Lancez un sync Pennylane pour importer les factures de cette semaine</p>
+              <button onClick={() => setShowAdd(true)} className="mt-3 text-sm text-[#1E3A5F] hover:underline font-medium">+ Ajouter une facture manuellement</button>
             </div>
           ) : (
             <table className="w-full">
