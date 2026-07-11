@@ -67,13 +67,10 @@ function parseItems(data: any): any[] {
   return []
 }
 
-/** Date de facture si un champ exploitable existe dans le payload (souvent absent chez Pennylane v2 :
- *  seul created_at/updated_at sont renvoyés — d'où le filtrage par date CÔTÉ SERVEUR ci-dessous). */
+/** Date de facture. Schéma v2 confirmé (debug 11/07/2026) : le champ `date` est la date du document
+ *  quand il est renseigné (sinon null — le filtre serveur garantit de toute façon la bonne semaine). */
 function pickInvoiceDate(inv: any): string | null {
-  const candidates = [
-    inv.invoice_date, inv.emission_date, inv.emitted_at, inv.issue_date, inv.issued_at,
-    inv.document_date, inv.billing_date, inv.date,
-  ]
+  const candidates = [inv.date, inv.invoice_date, inv.emission_date, inv.issue_date, inv.document_date]
   for (const c of candidates) {
     if (typeof c === 'string' && /^\d{4}-\d{2}-\d{2}/.test(c)) return c.split('T')[0]
   }
@@ -81,21 +78,24 @@ function pickInvoiceDate(inv: any): string | null {
 }
 
 function mapInvoice(inv: any, fallbackDate: string): ProviderInvoice {
+  // Schéma v2 confirmé : currency_amount_before_tax = HT, currency_amount = TTC, currency_tax = TVA.
+  // Les montants peuvent être NÉGATIFS (avoirs) — ils viennent en déduction des achats.
   const ht  = parseFloat(
-    inv.currency_amount ?? inv.amount ?? inv.total_amount ?? inv.pre_tax_amount ?? 0
+    inv.currency_amount_before_tax ?? inv.amount_before_tax ?? inv.pre_tax_amount ??
+    inv.currency_amount ?? inv.amount ?? 0
   )
   const ttc = parseFloat(
-    inv.currency_tax_inclusive_amount ?? inv.tax_inclusive_amount ??
-    inv.total_amount_with_tax ?? inv.total ?? 0
+    inv.currency_amount ?? inv.amount ??
+    inv.currency_tax_inclusive_amount ?? inv.tax_inclusive_amount ?? 0
   )
-  const tva = ht > 0 && ttc > ht ? parseFloat(((ttc - ht) / ht * 100).toFixed(1)) : 20
+  const tva = ht !== 0 ? Math.round(Math.abs((ttc - ht) / ht) * 1000) / 10 : 20
   const supplierName = inv.supplier?.name ?? inv.third_party?.name ?? inv.vendor?.name ?? inv.label ?? 'Fournisseur inconnu'
   const category     = guessCategory(`${supplierName} ${inv.label ?? ''}`)
 
   const detectText   = `${supplierName} ${inv.label ?? ''} ${inv.invoice_number ?? ''}`
   const isFixed      = category === 'frais_generaux' || isFixedChargeLabel(detectText)
   const periodDays   = isFixed ? detectPeriodDays(detectText) : undefined
-  const prorataHt    = isFixed && periodDays && ht > 0 ? Math.round((ht * 7 / periodDays) * 100) / 100 : undefined
+  const prorataHt    = isFixed && periodDays && ht !== 0 ? Math.round((ht * 7 / periodDays) * 100) / 100 : undefined
 
   return {
     supplier_name:  supplierName,
@@ -103,7 +103,7 @@ function mapInvoice(inv: any, fallbackDate: string): ProviderInvoice {
     invoice_date:   pickInvoiceDate(inv) ?? fallbackDate,
     amount_ht:      ht,
     tva_rate:       tva,
-    amount_ttc:     ttc || +(ht * (1 + tva / 100)).toFixed(2),
+    amount_ttc:     ttc || +(ht * 1.2).toFixed(2),
     category,
     external_id:    String(inv.id ?? ''),
     is_fixed_charge: isFixed,
@@ -140,10 +140,7 @@ export const pennylane: BillingProvider = {
     const dateTo   = fmt(to)
 
     try {
-      // ── FILTRAGE PAR DATE CÔTÉ SERVEUR ──
-      // Le payload des factures ne contient AUCUNE date de document (seulement created_at/updated_at),
-      // mais le champ `date` est filtrable/triable côté API. On demande donc directement à Pennylane
-      // les factures dont la date est dans la semaine — c'est la seule source de vérité fiable.
+      // FILTRAGE PAR DATE CÔTÉ SERVEUR — seule source de vérité fiable (confirmé en production)
       const filter = encodeURIComponent(JSON.stringify([
         { field: 'date', operator: 'gteq', value: dateFrom },
         { field: 'date', operator: 'lteq', value: dateTo },
@@ -158,13 +155,8 @@ export const pennylane: BillingProvider = {
       }
       const items = parseItems(data)
 
-      const debug = items.length > 0
-        ? `DEBUG ${serverFiltered ? 'filtre serveur OK' : 'filtre serveur KO (fallback tri)'} | item[0]: ${JSON.stringify(items[0]).slice(0, 450)}`
-        : undefined
-
       if (items.length === 0) {
         if (serverFiltered) {
-          // Semaine sans facture : c'est un résultat valide, pas une erreur
           return { success: true, invoices: [], debug: `Aucune facture datée entre ${dateFrom} et ${dateTo} (filtre serveur)` }
         }
         const topLevelKeys = Object.keys(data ?? {})
@@ -176,9 +168,9 @@ export const pennylane: BillingProvider = {
         }
       }
 
-      let mapped = items.map((inv: any) => mapInvoice(inv, dateFrom)).filter((i: ProviderInvoice) => i.amount_ht > 0)
+      // Avoirs inclus (montants négatifs) — seuls les montants nuls sont écartés
+      let mapped = items.map((inv: any) => mapInvoice(inv, dateFrom)).filter((i: ProviderInvoice) => i.amount_ht !== 0)
 
-      // Sans filtre serveur (fallback), on filtre côté client sur les dates disponibles
       if (!serverFiltered) {
         mapped = mapped.filter((i: ProviderInvoice) => {
           if (i.is_fixed_charge) {
@@ -191,15 +183,7 @@ export const pennylane: BillingProvider = {
         })
       }
 
-      if (mapped.length > 0) {
-        return { success: true, invoices: mapped, debug }
-      }
-
-      return {
-        success: true,
-        invoices: [],
-        debug: debug ?? `0 facture retenue entre ${dateFrom} et ${dateTo}`,
-      }
+      return { success: true, invoices: mapped }
     } catch (err) {
       return { success: false, invoices: [], error: String(err) }
     }
