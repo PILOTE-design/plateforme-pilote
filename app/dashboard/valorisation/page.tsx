@@ -163,14 +163,14 @@ const VOLAILLE_CUTS: Cut[] = [
   { id: 'carcasse_bouillon',name: 'Carcasse / Bouillon',      category: 'os',        yieldPct: 15,  marketPrice: 1.5},
 ]
 
-// ─── Config espèces ────────────────────────────────────────────────────────────────
+// ─── Config espèces ─── poids et prix par défaut exprimés en CARCASSE ───────────────
 
 const ANIMALS: Record<AnimalType, AnimalConfig> = {
-  boeuf:    { label: 'Bœuf',    emoji: '🐄', accent: 'red',    breedLabel: 'Race bovine',   breeds: BOEUF_BREEDS,    cuts: BOEUF_CUTS,    defaultWeight: '800', defaultPurchaseKg: '3.80', defaultLabor: '150' },
-  veau:     { label: 'Veau',    emoji: '🐮', accent: 'pink',   breedLabel: 'Type de veau',  breeds: VEAU_BREEDS,     cuts: VEAU_CUTS,     defaultWeight: '200', defaultPurchaseKg: '5.50', defaultLabor: '80'  },
-  agneau:   { label: 'Agneau',  emoji: '🐑', accent: 'green',  breedLabel: 'Race ovine',    breeds: AGNEAU_BREEDS,   cuts: AGNEAU_CUTS,   defaultWeight: '40',  defaultPurchaseKg: '5.00', defaultLabor: '30'  },
-  porc:     { label: 'Porc',    emoji: '🐖', accent: 'orange', breedLabel: 'Race porcine',  breeds: PORC_BREEDS,     cuts: PORC_CUTS,     defaultWeight: '110', defaultPurchaseKg: '2.20', defaultLabor: '60'  },
-  volaille: { label: 'Volaille',emoji: '🐔', accent: 'yellow', breedLabel: 'Variété',       breeds: VOLAILLE_BREEDS, cuts: VOLAILLE_CUTS, defaultWeight: '2.5', defaultPurchaseKg: '2.80', defaultLabor: '5'   },
+  boeuf:    { label: 'Bœuf',    emoji: '🐄', accent: 'red',    breedLabel: 'Race bovine',   breeds: BOEUF_BREEDS,    cuts: BOEUF_CUTS,    defaultWeight: '520', defaultPurchaseKg: '6.00',  defaultLabor: '150' },
+  veau:     { label: 'Veau',    emoji: '🐮', accent: 'pink',   breedLabel: 'Type de veau',  breeds: VEAU_BREEDS,     cuts: VEAU_CUTS,     defaultWeight: '125', defaultPurchaseKg: '9.00',  defaultLabor: '80'  },
+  agneau:   { label: 'Agneau',  emoji: '🐑', accent: 'green',  breedLabel: 'Race ovine',    breeds: AGNEAU_BREEDS,   cuts: AGNEAU_CUTS,   defaultWeight: '20',  defaultPurchaseKg: '10.00', defaultLabor: '30'  },
+  porc:     { label: 'Porc',    emoji: '🐖', accent: 'orange', breedLabel: 'Race porcine',  breeds: PORC_BREEDS,     cuts: PORC_CUTS,     defaultWeight: '85',  defaultPurchaseKg: '2.90',  defaultLabor: '60'  },
+  volaille: { label: 'Volaille',emoji: '🐔', accent: 'yellow', breedLabel: 'Variété',       breeds: VOLAILLE_BREEDS, cuts: VOLAILLE_CUTS, defaultWeight: '1.9', defaultPurchaseKg: '3.70',  defaultLabor: '5'   },
 }
 
 const ANIMAL_TYPES: AnimalType[] = ['boeuf', 'veau', 'agneau', 'porc', 'volaille']
@@ -236,9 +236,11 @@ export default function ValorisationPage() {
   const [animalType,    setAnimalType]    = useState<AnimalType>('boeuf')
   const [activeTab,     setActiveTab]     = useState<'calc' | 'suivi'>('calc')
   const [breedId,       setBreedId]       = useState('charolaise')
-  const [liveWeight,    setLiveWeight]    = useState('800')
+  // Poids CARCASSE par animal (kg) — le boucher achète au kg de carcasse
+  const [carcassWeight, setCarcassWeight] = useState('520')
   const [quantity,      setQuantity]      = useState('1')
-  const [purchasePerKg, setPurchasePerKg] = useState('3.80')
+  // Prix d'achat en €/kg de CARCASSE
+  const [purchasePerKg, setPurchasePerKg] = useState('6.00')
   const [overheadCost,  setOverheadCost]  = useState('0')
   const [laborCost,     setLaborCost]     = useState('150')
   const [targetMargin,  setTargetMargin]  = useState(35)
@@ -270,7 +272,7 @@ export default function ValorisationPage() {
   // Reset quand on change d'espèce (les catégories/pièces de chaque famille sont conservées)
   useEffect(() => {
     setBreedId(config.breeds[0].id)
-    setLiveWeight(config.defaultWeight)
+    setCarcassWeight(config.defaultWeight)
     setPurchasePerKg(config.defaultPurchaseKg)
     setLaborCost(config.defaultLabor)
     setShowBreedInfo(false)
@@ -285,20 +287,22 @@ export default function ValorisationPage() {
   }, [params])
 
   const breed    = breeds.find(b => b.id === breedId) ?? breeds[0]
-  const liveW    = parseFloat(liveWeight)   || 0
+  const carcW    = parseFloat(carcassWeight) || 0
   const qty      = Math.max(1, parseInt(quantity) || 1)
   const ppkg     = parseFloat(purchasePerKg)  || 0
   const overhead = parseFloat(overheadCost)   || 0
   const labor    = parseFloat(laborCost)      || 0
 
-  const carcassW1       = liveW * breed.carcassYield
-  const purchaseTotal1  = liveW * ppkg
+  // Le poids saisi EST le poids carcasse ; le poids vif est estimé via le rendement (indicatif)
+  const carcassW1       = carcW
+  const liveEstimate    = breed.carcassYield > 0 ? carcW / breed.carcassYield : carcW
+  const purchaseTotal1  = carcW * ppkg
   const totalCost1      = purchaseTotal1 + overhead + labor
   const purchaseTotalLot = purchaseTotal1 * qty
   const totalCostLot    = totalCost1 * qty
 
   const { results, coefficient, totalMarketRevenue1 } = useMemo(() => {
-    if (liveW <= 0 || ppkg <= 0) return { results: [] as CutResult[], coefficient: 1, totalMarketRevenue1: 0 }
+    if (carcW <= 0 || ppkg <= 0) return { results: [] as CutResult[], coefficient: 1, totalMarketRevenue1: 0 }
     const isActive    = (c: Cut) => includedCats.has(c.category) && !excludedCuts.has(c.id)
     const activeCuts  = cuts.filter(isActive)
     const mktRevenue  = activeCuts.reduce((s, c) => s + (carcassW1 * c.yieldPct / 100) * c.marketPrice, 0)
@@ -311,7 +315,7 @@ export default function ValorisationPage() {
       return { cut, weight, sellingPrice, revenue: sellingPrice * weight, active }
     })
     return { results: res, coefficient: coeff, totalMarketRevenue1: mktRevenue }
-  }, [animalType, breedId, liveW, ppkg, overhead, labor, targetMargin, includedCats, excludedCuts, carcassW1, totalCost1, cuts])
+  }, [animalType, breedId, carcW, ppkg, overhead, labor, targetMargin, includedCats, excludedCuts, carcassW1, totalCost1, cuts])
 
   const activeResults   = results.filter(r => r.active)
   const totalRevenue1   = activeResults.reduce((s, r) => s + r.revenue, 0)
@@ -349,7 +353,7 @@ export default function ValorisationPage() {
   }
 
   async function saveValo() {
-    if (!liveW || !ppkg) return
+    if (!carcW || !ppkg) return
     setSaving(true)
     await fetch('/api/valorisations', {
       method: 'POST',
@@ -357,7 +361,8 @@ export default function ValorisationPage() {
       body: JSON.stringify({
         animal_type: animalType,
         breed_id: breed.id, breed_name: breed.name,
-        live_weight: liveW, quantity: qty,
+        live_weight: Math.round(liveEstimate * 10) / 10,
+        quantity: qty,
         purchase_per_kg: ppkg, overhead_cost: overhead, labor_cost: labor,
         target_margin: targetMargin, purchase_date: purchaseDate,
         notes: notes || null,
@@ -432,7 +437,7 @@ export default function ValorisationPage() {
       {fromInvoice && (
         <div className="mb-4 flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5 text-sm text-blue-800">
           <CheckCircle className="w-4 h-4 text-blue-500 flex-shrink-0" />
-          Pré-rempli depuis la facture <strong>{fromInvoice}</strong> — ajoutez le poids vif pour calculer.
+          Pré-rempli depuis la facture <strong>{fromInvoice}</strong> — ajoutez le poids carcasse pour calculer.
         </div>
       )}
 
@@ -444,7 +449,7 @@ export default function ValorisationPage() {
           </div>
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Valorisation Carcasse</h1>
-            <p className="text-sm text-gray-500">Prix de marché réels · Coefficient · Multi-animaux · Suivi hebdo</p>
+            <p className="text-sm text-gray-500">Achat au kg de carcasse · Prix de marché réels · Coefficient · Suivi hebdo</p>
           </div>
         </div>
         {activeTab === 'calc' && totalRevenue1 > 0 && (
@@ -651,7 +656,7 @@ export default function ValorisationPage() {
                       </div>
                       <p className="text-xs text-gray-500">
                         {(v.quantity ?? 1) > 1 ? <span className="font-semibold text-blue-600">{v.quantity} animaux · </span> : ''}
-                        {v.live_weight} kg · {new Date(v.purchase_date).toLocaleDateString('fr-FR')}
+                        {v.carcass_weight ?? v.live_weight} kg carc. · {new Date(v.purchase_date).toLocaleDateString('fr-FR')}
                       </p>
                       <p className="text-sm font-bold text-[#1E3A5F] mt-1">{eur(v.total_revenue)}</p>
                       <p className="text-[10px] text-gray-400">CA estim. total · coeff. x{v.coefficient?.toFixed(3)}</p>
@@ -686,7 +691,7 @@ export default function ValorisationPage() {
                     <div className="mt-2 p-3 bg-gray-50 rounded-lg border border-gray-100">
                       <p className="text-xs font-semibold text-gray-800">{breed.name} — {breed.origin}</p>
                       <p className="text-xs text-gray-600 leading-relaxed mt-1">{breed.description}</p>
-                      <p className="text-xs text-gray-600 font-medium pt-1">Poids moyen : {breed.avgWeight}</p>
+                      <p className="text-xs text-gray-600 font-medium pt-1">Poids vif moyen : {breed.avgWeight}</p>
                     </div>
                   )}
                 </div>
@@ -707,16 +712,16 @@ export default function ValorisationPage() {
                 </div>
 
                 <div className="mb-4">
-                  <label className="block text-xs font-medium text-gray-700 mb-1.5">Poids vif par animal (kg)</label>
-                  <input type="number" value={liveWeight} onChange={e => setLiveWeight(e.target.value)}
+                  <label className="block text-xs font-medium text-gray-700 mb-1.5">Poids carcasse par animal (kg)</label>
+                  <input type="number" value={carcassWeight} onChange={e => setCarcassWeight(e.target.value)}
                     className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 ${accentRing[animalType]}`} />
-                  {liveW > 0 && <p className="text-xs text-gray-500 mt-1">Carcasse estimée : <strong>{carcassW1.toFixed(1)} kg</strong> ({(breed.carcassYield * 100).toFixed(1)}%)</p>}
+                  {carcW > 0 && <p className="text-xs text-gray-500 mt-1">Poids vif estimé : <strong>{liveEstimate.toFixed(0)} kg</strong> (rendement {(breed.carcassYield * 100).toFixed(1)}%)</p>}
                 </div>
                 <div className="mb-4">
-                  <label className="block text-xs font-medium text-gray-700 mb-1.5">Prix achat (€/kg vif)</label>
+                  <label className="block text-xs font-medium text-gray-700 mb-1.5">Prix achat (€/kg carcasse)</label>
                   <input type="number" step="0.01" value={purchasePerKg} onChange={e => setPurchasePerKg(e.target.value)}
                     className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 ${accentRing[animalType]}`} />
-                  {liveW > 0 && ppkg > 0 && (
+                  {carcW > 0 && ppkg > 0 && (
                     <p className="text-xs text-gray-500 mt-1">
                       {qty > 1 ? <><strong>{eur(purchaseTotal1)}/animal</strong> · lot : <strong className="text-blue-700">{eur(purchaseTotalLot)}</strong></> : <strong>{eur(purchaseTotal1)}</strong>}
                     </p>
@@ -997,7 +1002,7 @@ export default function ValorisationPage() {
                   {ANIMALS[selected.animal_type as AnimalType]?.emoji} {selected.breed_name}
                   {(selected.quantity ?? 1) > 1 && <span className="ml-2 text-sm font-normal text-blue-600">× {selected.quantity}</span>}
                 </h2>
-                <p className="text-xs text-gray-400">{new Date(selected.purchase_date).toLocaleDateString('fr-FR')} · {selected.live_weight} kg vif/animal</p>
+                <p className="text-xs text-gray-400">{new Date(selected.purchase_date).toLocaleDateString('fr-FR')} · {selected.carcass_weight ?? selected.live_weight} kg carcasse/animal</p>
               </div>
               <div className="flex items-center gap-2">
                 <button onClick={() => deleteValo(selected.id)} className="p-1.5 rounded-lg hover:bg-red-50 text-gray-300 hover:text-red-400 transition-colors"><Trash2 className="w-4 h-4" /></button>
@@ -1012,7 +1017,7 @@ export default function ValorisationPage() {
                 { label: 'Taux de marge',   value: `${selected.margin_rate.toFixed(1)} %`,            highlight: selected.margin_rate >= 35 },
                 { label: 'Carcasse/animal', value: `${selected.carcass_weight} kg`,                   highlight: false },
                 { label: 'Coefficient',     value: `x${selected.coefficient?.toFixed(3)}`,            highlight: false },
-                { label: 'Prix achat/kg',   value: `${selected.purchase_per_kg} €/kg vif`,           highlight: false },
+                { label: 'Prix achat/kg',   value: `${selected.purchase_per_kg} €/kg carcasse`,      highlight: false },
                 { label: 'Nb animaux',      value: String(selected.quantity ?? 1),                    highlight: false },
               ].map(kpi => (
                 <div key={kpi.label} className={`rounded-xl p-3 ${kpi.highlight ? 'bg-[#1E3A5F]' : 'bg-gray-50'}`}>
