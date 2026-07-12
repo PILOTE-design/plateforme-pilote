@@ -12,6 +12,16 @@ async function signOut() {
   redirect('/login')
 }
 
+const NAV = [
+  { href: '/dashboard',              icon: BarChart3,    label: 'Tableau de bord', short: 'Accueil' },
+  { href: '/dashboard/reports',      icon: FileText,     label: 'Mes rapports',    short: 'Rapports' },
+  { href: '/dashboard/tendances',    icon: LineChart,    label: 'Tendances',       short: 'Tendances' },
+  { href: '/dashboard/planning',     icon: CalendarDays, label: 'Planning',        short: 'Planning' },
+  { href: '/dashboard/facturation',  icon: Receipt,      label: 'Facturation',     short: 'Factures' },
+  { href: '/dashboard/valorisation', icon: Scale,        label: 'Valorisation',    short: 'Valo' },
+  { href: '/dashboard/settings',     icon: Settings,     label: 'Parametres',      short: 'Réglages' },
+]
+
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -33,39 +43,18 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   return (
     <div className="min-h-screen bg-gray-50 flex">
-      <aside className="w-64 bg-white border-r border-gray-200 flex flex-col">
+      {/* Sidebar — desktop uniquement */}
+      <aside className="hidden md:flex w-64 bg-white border-r border-gray-200 flex-col">
         <div className="h-16 flex items-center px-6 border-b border-gray-200">
           <span className="text-lg font-bold text-blue-600">PILOTE</span>
         </div>
         <nav className="flex-1 p-4 space-y-1">
-          <Link href="/dashboard" className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-100 transition-colors">
-            <BarChart3 className="w-4 h-4" />
-            Tableau de bord
-          </Link>
-          <Link href="/dashboard/reports" className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-100 transition-colors">
-            <FileText className="w-4 h-4" />
-            Mes rapports
-          </Link>
-          <Link href="/dashboard/tendances" className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-100 transition-colors">
-            <LineChart className="w-4 h-4" />
-            Tendances
-          </Link>
-          <Link href="/dashboard/planning" className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-100 transition-colors">
-            <CalendarDays className="w-4 h-4" />
-            Planning
-          </Link>
-          <Link href="/dashboard/facturation" className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-100 transition-colors">
-            <Receipt className="w-4 h-4" />
-            Facturation
-          </Link>
-          <Link href="/dashboard/valorisation" className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-100 transition-colors">
-            <Scale className="w-4 h-4" />
-            Valorisation
-          </Link>
-          <Link href="/dashboard/settings" className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-100 transition-colors">
-            <Settings className="w-4 h-4" />
-            Parametres
-          </Link>
+          {NAV.map(item => (
+            <Link key={item.href} href={item.href} className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-100 transition-colors">
+              <item.icon className="w-4 h-4" />
+              {item.label}
+            </Link>
+          ))}
         </nav>
         <div className="p-4 border-t border-gray-200">
           <div className="px-3 py-2 mb-2">
@@ -80,9 +69,35 @@ export default async function DashboardLayout({ children }: { children: React.Re
           </form>
         </div>
       </aside>
-      <main className="flex-1 overflow-auto">
-        {children}
-      </main>
+
+      <div className="flex-1 flex flex-col min-w-0">
+        {/* En-tête — mobile uniquement */}
+        <header className="md:hidden h-14 bg-white border-b border-gray-200 flex items-center justify-between px-4 sticky top-0 z-40">
+          <span className="text-base font-bold text-blue-600">PILOTE</span>
+          <div className="flex items-center gap-3">
+            <span className="text-xs font-medium text-gray-500 truncate max-w-[140px]">{profile?.business_name || user.email}</span>
+            <form action={signOut}>
+              <button type="submit" className="p-2 rounded-lg text-gray-400 hover:bg-gray-100" title="Deconnexion">
+                <LogOut className="w-4 h-4" />
+              </button>
+            </form>
+          </div>
+        </header>
+
+        <main className="flex-1 overflow-auto pb-20 md:pb-0">
+          {children}
+        </main>
+      </div>
+
+      {/* Barre d'onglets — mobile uniquement */}
+      <nav className="md:hidden fixed bottom-0 inset-x-0 z-50 bg-white border-t border-gray-200 grid grid-cols-5 pb-[env(safe-area-inset-bottom)]">
+        {NAV.filter(i => !['/dashboard/reports', '/dashboard/settings'].includes(i.href)).map(item => (
+          <Link key={item.href} href={item.href} className="flex flex-col items-center justify-center gap-0.5 py-2 text-gray-500 hover:text-[#1E3A5F] active:bg-gray-50">
+            <item.icon className="w-5 h-5" />
+            <span className="text-[10px] font-medium">{item.short}</span>
+          </Link>
+        ))}
+      </nav>
     </div>
   )
 }
