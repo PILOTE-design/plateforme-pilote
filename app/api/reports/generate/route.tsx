@@ -637,7 +637,6 @@ async function extractFinancials(fin_n: string, fin_n1: string): Promise<{
 // ─── Semaine ISO deterministe ─────────────────────────────────────────────────
 // La semaine du rapport est TOUJOURS calculee en code a partir des dates de la
 // periode extraite (ex: "29 juin - 5 juillet 2026" => S27), jamais par l'IA.
-// C'est cette semaine qui alimente weekly_ca, le dashboard et la facturation.
 
 const MONTHS_FR: Record<string, number> = {
   janvier: 0, fevrier: 1, mars: 2, avril: 3, mai: 4, juin: 5,
@@ -687,7 +686,7 @@ function parseNum(s: string): number {
 async function extractVentesData(ventes_text: string): Promise<{ total: number; familles: Famille[] }> {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' })
   const r = await client.messages.create({
-    model: 'claude-haiku-4-5-20251001', max_tokens: 2048,
+    model: 'claude-haiku-4-5-20251001', max_tokens: 1024,
     // Slice 12000 chars pour capturer TOUTES les familles (pas seulement les grandes)
     messages: [{ role: 'user', content: `Extrais les totaux par famille du fichier CRISALID.\nRetourne UNIQUEMENT ces lignes (une par ligne):\nTOTAL|20742.43\nVIANDE DE BOEUF|1|3081.17\nCHARCUTERIE|2|2500.00\n\nFormat: 1ere ligne TOTAL|montant, puis NOM|ID|montant par famille. Point comme separateur decimal.\n\n${ventes_text.slice(0, 12000)}` }],
   })
@@ -708,17 +707,19 @@ async function extractVentesData(ventes_text: string): Promise<{ total: number; 
 
 /** Extrait le CA TOTAL par produit d'un fichier ventes CRISALID.
  *  IMPORTANT : on extrait N et N-1 séparément puis on calcule les écarts en code —
- *  l'IA ne fait AUCUNE comparaison ni aucun calcul, elle ne peut donc pas se tromper d'écart. */
+ *  l'IA ne fait AUCUNE comparaison ni aucun calcul.
+ *  PERF : plafonne aux ~60 plus gros produits (max_tokens 2200) pour tenir sous les 60s Vercel. */
 async function extractProductAmounts(text: string): Promise<Map<string, number>> {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' })
   const r = await client.messages.create({
-    model: 'claude-haiku-4-5-20251001', max_tokens: 4000,
+    model: 'claude-haiku-4-5-20251001', max_tokens: 2200,
     messages: [{ role: 'user', content: `Extrais du fichier de ventes CRISALID le CA TOTAL de CHAQUE produit sur la semaine.\n` +
       `ATTENTION CRITIQUE : la valeur a extraire est le MONTANT TOTAL en euros des ventes du produit (colonne montant/total/CA), JAMAIS le prix unitaire, JAMAIS le prix au kilo, JAMAIS la quantite.\n` +
       `Un produit courant fait typiquement des dizaines a des centaines d'euros de CA hebdomadaire.\n` +
       `Ignore les lignes de famille/sous-total/total general : uniquement les produits individuels.\n` +
+      `Limite-toi aux 60 produits au plus gros CA (ignore les tout petits montants).\n` +
       `Retourne UNIQUEMENT des lignes au format NOM|MONTANT (point decimal, une ligne par produit, aucun autre texte) :\n` +
-      `STEAK HACHE|412.35\nROTI DE PORC|187.20\n\n${text.slice(0, 12000)}` }],
+      `STEAK HACHE|412.35\nROTI DE PORC|187.20\n\n${text.slice(0, 9000)}` }],
   })
   const out = new Map<string, number>()
   const raw = r.content[0].type === 'text' ? r.content[0].text : ''
@@ -758,8 +759,7 @@ async function extractData(texts: { fin_n: string; fin_n1: string; ventes_n: str
     extractProductAmounts(texts.ventes_n1),
   ])
   const topFlop = computeTopFlop(prodN, prodN1)
-  // Semaine ISO recalculee en code depuis les dates de la periode — la valeur IA
-  // ne sert que de secours si la periode est illisible
+  // Semaine ISO recalculee en code depuis les dates de la periode
   const isoFixed = weekFromPeriod(String(financials.period_n || ''))
   return {
     period_n: String(financials.period_n || ''), period_n1: String(financials.period_n1 || ''),
@@ -772,8 +772,6 @@ async function extractData(texts: { fin_n: string; fin_n1: string; ventes_n: str
 }
 
 // ─── Historisation caisse ─────────────────────────────────────────────────────
-// A chaque generation : archive CA + familles + tickets (weekly_ca) et CA par
-// produit (weekly_sales_products) pour N ET N-1.
 
 async function archiveWeekData(
   serviceSupabase: ReturnType<typeof createServiceClient>,
@@ -852,6 +850,7 @@ function buildExecSummary(data: ReportData, famRows: FamRow[], caVar: number): s
   return sanitize(`${p1} ${p2} ${p3}`.trim())
 }
 
+/** Insights via Haiku (rapide) — Sonnet depassait le budget 60s de Vercel Hobby */
 async function generateInsights(data: ReportData, famRows: FamRow[]): Promise<Insights> {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' })
   const fn = data.financier_n, fn1 = data.financier_n1
@@ -863,7 +862,7 @@ async function generateInsights(data: ReportData, famRows: FamRow[]): Promise<In
   const topsStr  = data.tops.slice(0, 5).map(t => `${t.designation} (+${Math.abs(t.ecart).toFixed(0)} EUR)`).join(', ')
   const flopsStr = data.flops.slice(0, 5).map(f => `${f.designation} (${f.ecart.toFixed(0)} EUR)`).join(', ')
   const r = await client.messages.create({
-    model: 'claude-sonnet-4-6', max_tokens: 1400,
+    model: 'claude-haiku-4-5-20251001', max_tokens: 900,
     messages: [{ role: 'user', content: `Tu es expert en analyse de ventes pour une boucherie artisanale francaise. Ton : positif d'abord, chiffre et concret, actionnable, respectueux du metier (le boucher connait son metier, tu confirmes et enrichis).\n\nDONNEES SEMAINE ${data.week_number} (${data.period_n}) :\nCA N : ${fn.ca_net.toFixed(2)} EUR | CA N-1 : ${fn1.ca_net.toFixed(2)} EUR | Variation : ${caVar}%\nTickets N : ${fn.nb_tickets} (N-1 : ${fn1.nb_tickets}) | Panier moyen N : ${fn.moyenne_ticket.toFixed(2)} EUR (N-1 : ${fn1.moyenne_ticket.toFixed(2)} EUR)\n\nVENTES PAR FAMILLE :\n${famSummary}\n\nTOP PRODUITS EN PROGRESSION : ${topsStr || 'n/a'}\nPRODUITS EN BAISSE : ${flopsStr || 'n/a'}\n\nRappels metier : une semaine avec jour ferie fait mecaniquement -15 a -20% de CA ; saisonnalite boucherie (pic Paques S15-16, ete, fetes S50-51, creux janvier-fevrier) ; le traiteur a la meilleure marge (50-65%) ; variation > +-25% sans explication saisonniere = a investiguer.\n\nRetourne UNIQUEMENT ce JSON :\n{"resume":"2 phrases max qui resument la semaine","insights":["insight 1","insight 2","insight 3","insight 4","insight 5"],"vigilance":["point de vigilance 1","point de vigilance 2"],"recommendations":["reco 1","reco 2","reco 3"]}\n\nInsights : faits precis avec chiffres (une phrase chacun). Vigilance : risques ou anomalies a surveiller (2 max, une phrase). Recommandations : actions concretes de boucherie pour la semaine prochaine, la premiere etant LA priorite. Tout en francais.` }],
   })
   try {
@@ -1037,14 +1036,21 @@ export async function POST(req: NextRequest) {
     })
     if (dbError) return NextResponse.json({ error: 'DB: ' + dbError.message }, { status: 500 })
 
-    const toEmail = clientEmail || profile.delivery_email || user.email || ''
-    const resend = new Resend(process.env.RESEND_API_KEY ?? '')
-    await resend.emails.send({
-      from: 'PILOTE <onboarding@resend.dev>',
-      to: toEmail,
-      subject: `Rapport hebdomadaire ${title}`,
-      html: `<div style="font-family:sans-serif;max-width:600px;margin:0 auto"><div style="background:#1E3A5F;padding:32px 40px"><div style="color:#FF8C00;font-size:11px;letter-spacing:4px;margin-bottom:10px">PILOTE</div><h2 style="color:#FFFFFF;margin:0;font-size:22px">Votre rapport est pret</h2></div><div style="padding:32px 40px;border:1px solid #E0E0E0;border-top:none"><p style="color:#444;margin-top:0"><strong>${title}</strong></p><p style="color:#666;font-size:14px">7 pages - Analyse IA - Graphique - Top &amp; Flop produits - Synthese de la semaine</p><div style="margin:28px 0;text-align:center"><a href="${fileUrl}" style="background:#1E3A5F;color:white;padding:14px 32px;border-radius:8px;text-decoration:none;font-weight:bold;font-size:15px">Telecharger le rapport PDF</a></div><p style="color:#999;font-size:11px;text-align:center">Rapport confidentiel - Genere automatiquement par PILOTE</p></div></div>`,
-    })
+    // Email non bloquant : un echec Resend ne doit ni planter ni ralentir la generation
+    try {
+      const toEmail = clientEmail || profile.delivery_email || user.email || ''
+      if (toEmail) {
+        const resend = new Resend(process.env.RESEND_API_KEY ?? '')
+        await resend.emails.send({
+          from: 'PILOTE <onboarding@resend.dev>',
+          to: toEmail,
+          subject: `Rapport hebdomadaire ${title}`,
+          html: `<div style="font-family:sans-serif;max-width:600px;margin:0 auto"><div style="background:#1E3A5F;padding:32px 40px"><div style="color:#FF8C00;font-size:11px;letter-spacing:4px;margin-bottom:10px">PILOTE</div><h2 style="color:#FFFFFF;margin:0;font-size:22px">Votre rapport est pret</h2></div><div style="padding:32px 40px;border:1px solid #E0E0E0;border-top:none"><p style="color:#444;margin-top:0"><strong>${title}</strong></p><p style="color:#666;font-size:14px">7 pages - Analyse IA - Graphique - Top &amp; Flop produits - Synthese de la semaine</p><div style="margin:28px 0;text-align:center"><a href="${fileUrl}" style="background:#1E3A5F;color:white;padding:14px 32px;border-radius:8px;text-decoration:none;font-weight:bold;font-size:15px">Telecharger le rapport PDF</a></div><p style="color:#999;font-size:11px;text-align:center">Rapport confidentiel - Genere automatiquement par PILOTE</p></div></div>`,
+        })
+      }
+    } catch (emailErr) {
+      console.error('Email rapport non envoye:', emailErr)
+    }
 
     if (clientId) {
       // Historisation : semaine N ET semaine N-1 (meme semaine, annee precedente).
