@@ -608,6 +608,20 @@ function extractJSONObject(text: string): string {
   throw new Error('Unclosed JSON')
 }
 
+// Coercition robuste : l'IA peut renvoyer null/chaines si le mauvais fichier est
+// fourni — on ne laisse JAMAIS un null atteindre .toFixed
+function toNum(v: unknown): number {
+  const n = typeof v === 'number' ? v : parseFloat(String(v ?? ''))
+  return Number.isFinite(n) ? n : 0
+}
+function cleanFin(f: any): FinancierData {
+  return {
+    ca_net: toNum(f?.ca_net),
+    nb_tickets: Math.round(toNum(f?.nb_tickets)),
+    moyenne_ticket: toNum(f?.moyenne_ticket),
+  }
+}
+
 async function extractFinancials(fin_n: string, fin_n1: string): Promise<{
   period_n: string; period_n1: string; week_number: number; year: number
   financier_n: FinancierData; financier_n1: FinancierData
@@ -746,12 +760,12 @@ async function extractData(texts: { fin_n: string; fin_n1: string; ventes_n: str
   const topFlop = computeTopFlop(prodN, prodN1)
   // Semaine ISO recalculee en code depuis les dates de la periode — la valeur IA
   // ne sert que de secours si la periode est illisible
-  const isoFixed = weekFromPeriod(financials.period_n)
+  const isoFixed = weekFromPeriod(String(financials.period_n || ''))
   return {
-    period_n: financials.period_n, period_n1: financials.period_n1,
-    week_number: isoFixed?.week ?? financials.week_number,
-    year: isoFixed?.year ?? financials.year,
-    financier_n: financials.financier_n, financier_n1: financials.financier_n1,
+    period_n: String(financials.period_n || ''), period_n1: String(financials.period_n1 || ''),
+    week_number: isoFixed?.week ?? toNum(financials.week_number),
+    year: isoFixed?.year ?? toNum(financials.year),
+    financier_n: cleanFin(financials.financier_n), financier_n1: cleanFin(financials.financier_n1),
     ventes_n, ventes_n1, tops: topFlop.tops, flops: topFlop.flops,
     prodN, prodN1,
   }
@@ -759,8 +773,7 @@ async function extractData(texts: { fin_n: string; fin_n1: string; ventes_n: str
 
 // ─── Historisation caisse ─────────────────────────────────────────────────────
 // A chaque generation : archive CA + familles + tickets (weekly_ca) et CA par
-// produit (weekly_sales_products) pour N ET N-1. A terme : comparaison N-1 sans
-// fichiers et tendances produits multi-semaines.
+// produit (weekly_sales_products) pour N ET N-1.
 
 async function archiveWeekData(
   serviceSupabase: ReturnType<typeof createServiceClient>,
@@ -972,6 +985,14 @@ export async function POST(req: NextRequest) {
 
     const data = await extractData({ fin_n: tFN, fin_n1: tFN1, ventes_n: tVN, ventes_n1: tVN1 })
 
+    // Garde-fou : si aucun CA n'est detecte dans le Releve Financier, le fichier est
+    // probablement le mauvais (souvent une inversion Financier <-> Ventes par familles)
+    if (data.financier_n.ca_net <= 0) {
+      return NextResponse.json({
+        error: 'Aucun chiffre d\'affaires detecte dans le " Releve Financier - Semaine N ". Verifiez que les fichiers ne sont pas inverses : le Releve Financier va dans les 2 premiers champs, les Ventes par familles dans les 2 derniers.',
+      }, { status: 400 })
+    }
+
     const famRows = buildFamRows(data.ventes_n, data.ventes_n1)
     const caVar = data.financier_n1.ca_net
       ? (data.financier_n.ca_net - data.financier_n1.ca_net) / data.financier_n1.ca_net
@@ -1027,8 +1048,6 @@ export async function POST(req: NextRequest) {
 
     if (clientId) {
       // Historisation : semaine N ET semaine N-1 (meme semaine, annee precedente).
-      // Le CA hebdo se met a jour automatiquement, et l'historique produits permettra
-      // a terme la comparaison N-1 sans fichiers + les tendances multi-semaines.
       await archiveWeekData(serviceSupabase, clientId, data.week_number, data.year, data.financier_n, data.ventes_n.familles, data.prodN)
       await archiveWeekData(serviceSupabase, clientId, data.week_number, data.year - 1, data.financier_n1, data.ventes_n1.familles, data.prodN1)
     }
