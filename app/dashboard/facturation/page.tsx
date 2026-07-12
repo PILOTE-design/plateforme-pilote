@@ -11,7 +11,7 @@ import {
   Link2, Link2Off, RefreshCw, ArrowUpRight, Repeat, Undo2
 } from 'lucide-react'
 
-// ─── Types ─────────────────────────────────────────────────────────────────
+// ─── Types ─────────────────────────────────────────────────────────────
 
 type Invoice = {
   id: string; supplier_name: string; invoice_number?: string; invoice_date: string
@@ -39,7 +39,7 @@ type ProviderMeta = {
   helpUrl: string; description: string
 }
 
-// ─── Constantes ──────────────────────────────────────────────────────────
+// ─── Constantes ────────────────────────────────────────────────────────
 
 const CATEGORIES = [
   { key: 'viande',         label: 'Viande',         color: 'bg-red-100 text-red-800'       },
@@ -71,7 +71,7 @@ const PROVIDERS_META: ProviderMeta[] = [
   { id: 'ebp',       name: 'EBP',       logo: 'EBP', color: 'bg-orange-500', tokenLabel: 'Token API EBP en ligne', tokenPlaceholder: 'Token depuis EBP → Paramètres → API', needsCompanyId: true, companyIdLabel: 'Identifiant dossier EBP', helpUrl: 'https://developer.ebp.com', description: 'EBP en ligne — import factures fournisseurs automatique' },
 ]
 
-// ─── Helpers ───────────────────────────────────────────────────────────────────
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function getISOWeek(date: Date) {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
@@ -115,7 +115,7 @@ function getLastWeek() {
   return getISOWeek(ref)
 }
 
-// ─── Composant principal ──────────────────────────────────────────────────────
+// ─── Composant principal ────────────────────────────────────────────────────────────
 
 export default function FacturationPage() {
   const router = useRouter()
@@ -296,12 +296,12 @@ export default function FacturationPage() {
 
   function KpiCard({ icon: Icon, label, value, sub, color, warn }: any) {
     return (
-      <div className={`bg-white rounded-xl border p-4 flex flex-col gap-1 ${warn ? 'border-red-200' : 'border-gray-100'} shadow-sm`}>
+      <div className={`bg-white rounded-xl border p-4 flex flex-col gap-1 ${warn ? 'border-red-200' : 'border-gray-200/80'} shadow-card`}>
         <div className="flex items-center justify-between">
-          <span className="text-xs font-semibold text-gray-400 uppercase tracking-wide">{label}</span>
+          <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">{label}</span>
           <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${color}`}><Icon className="w-4 h-4" /></div>
         </div>
-        <p className={`text-2xl font-bold mt-1 ${warn ? 'text-red-600' : 'text-gray-900'}`}>{value}</p>
+        <p className={`text-2xl font-bold tracking-tight mt-1 ${warn ? 'text-red-600' : 'text-gray-900'}`}>{value}</p>
         {sub && <p className="text-xs text-gray-400">{sub}</p>}
       </div>
     )
@@ -313,14 +313,14 @@ export default function FacturationPage() {
       {/* Header */}
       <div className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-2.5">
-          <Receipt className="w-5 h-5 text-[#1E3A5F]" />
-          <h1 className="text-lg font-bold text-gray-900">Facturation &amp; Achats</h1>
+          <Receipt className="w-5 h-5 text-pilote" />
+          <h1 className="text-lg font-bold tracking-tight text-gray-900">Facturation &amp; Achats</h1>
         </div>
         <div className="flex items-center gap-2">
-          <Button onClick={() => setShowCA(true)} variant="outline" className="h-8 text-sm px-3 border-[#1E3A5F] text-[#1E3A5F] hover:bg-blue-50">
+          <Button onClick={() => setShowCA(true)} variant="outline" className="h-8 text-sm px-3 border-pilote text-pilote hover:bg-pilote-50">
             <Euro className="w-3.5 h-3.5 mr-1.5" />Saisir le CA
           </Button>
-          <Button onClick={() => setShowAdd(true)} className="bg-[#1E3A5F] hover:bg-[#2a4f7c] text-white h-8 text-sm px-3">
+          <Button onClick={() => setShowAdd(true)} className="bg-pilote hover:bg-pilote-hover text-white h-8 text-sm px-3">
             <Plus className="w-3.5 h-3.5 mr-1.5" />Ajouter une facture
           </Button>
           <button onClick={() => setShowSettings(true)} className="p-2 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-700">
@@ -336,11 +336,11 @@ export default function FacturationPage() {
           <span className="font-semibold text-gray-900 text-sm">Semaine {week}</span>
           <span className="text-gray-300 text-sm">·</span>
           <span className="text-xs text-gray-500">{fmtDate(mon)} – {fmtDate(sun)}</span>
-          {isCurrentWeek && <span className="text-[10px] bg-[#1E3A5F] text-white px-1.5 py-0.5 rounded font-medium">En cours</span>}
+          {isCurrentWeek && <span className="text-[10px] bg-pilote text-white px-1.5 py-0.5 rounded font-medium">En cours</span>}
           {isLastWeek && !isCurrentWeek && <span className="text-[10px] bg-amber-500 text-white px-1.5 py-0.5 rounded font-medium">Semaine écoulée</span>}
         </div>
         <button onClick={nextWeek} className="p-1.5 rounded hover:bg-gray-100"><ChevronRight className="w-4 h-4 text-gray-500" /></button>
-        {!isLastWeek && <button onClick={() => { setWeek(lastWeek.week); setYear(lastWeek.year) }} className="text-xs text-[#1E3A5F] hover:underline">← Semaine écoulée</button>}
+        {!isLastWeek && <button onClick={() => { setWeek(lastWeek.week); setYear(lastWeek.year) }} className="text-xs text-pilote hover:underline">← Semaine écoulée</button>}
         {!isCurrentWeek && <button onClick={() => { setWeek(cw); setYear(cy) }} className="text-xs text-gray-400 hover:underline">Semaine en cours →</button>}
 
         {/* Intégrations compactes */}
@@ -366,7 +366,7 @@ export default function FacturationPage() {
             )
           })}
           <button onClick={() => setShowProviders(v => !v)}
-            className="flex items-center gap-1 text-xs font-semibold text-[#1E3A5F] border border-dashed border-gray-300 rounded-lg px-2.5 py-1.5 hover:border-[#1E3A5F] transition-colors">
+            className="flex items-center gap-1 text-xs font-semibold text-pilote border border-dashed border-gray-300 rounded-lg px-2.5 py-1.5 hover:border-pilote transition-colors">
             <Link2 className="w-3 h-3" />{integrations.length === 0 ? 'Connecter un logiciel' : 'Ajouter'}
           </button>
         </div>
@@ -384,7 +384,7 @@ export default function FacturationPage() {
                 </div>
                 <p className="text-[10px] text-gray-400 mb-3 leading-relaxed">{prov.description}</p>
                 <button onClick={() => { setConnectProvider(prov); setConnectToken(''); setConnectCompanyId(''); setConnectError(''); setShowConnect(true) }}
-                  className="w-full flex items-center justify-center gap-1.5 text-xs font-semibold bg-[#1E3A5F] text-white rounded-lg py-1.5 hover:bg-[#2a4f7c] transition-colors">
+                  className="w-full flex items-center justify-center gap-1.5 text-xs font-semibold bg-pilote text-white rounded-lg py-1.5 hover:bg-pilote-hover transition-colors">
                   <Link2 className="w-3 h-3" />Connecter
                 </button>
               </div>
@@ -398,9 +398,9 @@ export default function FacturationPage() {
         {/* KPIs */}
         {summary !== null && (
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <KpiCard icon={Euro} label="CA semaine" value={summary.ca_total > 0 ? fmtEuro(summary.ca_total) : '—'} sub={summary.ca_total === 0 ? 'Cliquer sur « Saisir le CA »' : ''} color="bg-blue-50 text-blue-600" />
-            <KpiCard icon={ShoppingCart} label="Achats HT" value={fmtEuro(variableTotalHt + fixedWeekly)} sub={`${variableInvoices.length} facture${variableInvoices.length > 1 ? 's' : ''} + fixes ≈ ${fmtEuro(fixedWeekly)}/sem`} color="bg-orange-50 text-orange-600" />
-            <KpiCard icon={Users} label="Masse salariale" value={fmtEuro(summary.masse_salariale)} sub={summary.ratio_ms !== null ? `${summary.ratio_ms} % du CA` : 'Depuis le planning'} color="bg-violet-50 text-violet-600" />
+            <KpiCard icon={Euro} label="CA semaine" value={summary.ca_total > 0 ? fmtEuro(summary.ca_total) : '—'} sub={summary.ca_total === 0 ? 'Cliquer sur « Saisir le CA »' : ''} color="bg-pilote-50 text-pilote" />
+            <KpiCard icon={ShoppingCart} label="Achats HT" value={fmtEuro(variableTotalHt + fixedWeekly)} sub={`${variableInvoices.length} facture${variableInvoices.length > 1 ? 's' : ''} + fixes ≈ ${fmtEuro(fixedWeekly)}/sem`} color="bg-pilote-50 text-pilote" />
+            <KpiCard icon={Users} label="Masse salariale" value={fmtEuro(summary.masse_salariale)} sub={summary.ratio_ms !== null ? `${summary.ratio_ms} % du CA` : 'Depuis le planning'} color="bg-pilote-50 text-pilote" />
             <KpiCard icon={summary.marge_brute >= 0 ? TrendingUp : TrendingDown} label="Marge brute" value={summary.ca_total > 0 ? fmtEuro(summary.marge_brute) : '—'} sub={summary.taux_marge !== null ? `Taux : ${summary.taux_marge} %` : 'Saisir le CA pour calculer'} color={summary.marge_brute >= 0 ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-500'} warn={summary.marge_brute < 0} />
           </div>
         )}
@@ -408,14 +408,16 @@ export default function FacturationPage() {
         {/* Résultat net */}
         {summary !== null && summary.ca_total > 0 && (
           <div className={`rounded-xl border p-4 flex items-center justify-between ${
-            summary.resultat_net >= 0 ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'
+            summary.resultat_net >= 0 ? 'bg-green-50/70 border-green-200' : 'bg-red-50/70 border-red-200'
           }`}>
             <div>
               <p className="text-xs font-bold uppercase tracking-wider text-gray-500">Résultat net estimé (après achats et charges salariales)</p>
-              <p className="text-3xl font-extrabold mt-0.5 text-gray-900">{fmtEuro(summary.resultat_net)}</p>
+              <p className={`text-3xl font-extrabold tracking-tight mt-1 tabular ${summary.resultat_net >= 0 ? 'text-green-700' : 'text-red-700'}`}>{fmtEuro(summary.resultat_net)}</p>
               <p className="text-xs text-gray-400 mt-0.5">CA {fmtEuro(summary.ca_total)} − Achats {fmtEuro(summary.achats_ht)} − Salaires {fmtEuro(summary.masse_salariale)}</p>
             </div>
-            <div className={`text-5xl font-black ${summary.resultat_net >= 0 ? 'text-green-300' : 'text-red-200'}`}>{summary.resultat_net >= 0 ? '+' : '−'}</div>
+            <div className={`w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0 ${summary.resultat_net >= 0 ? 'bg-green-100' : 'bg-red-100'}`}>
+              {summary.resultat_net >= 0 ? <TrendingUp className="w-6 h-6 text-green-600" /> : <TrendingDown className="w-6 h-6 text-red-600" />}
+            </div>
           </div>
         )}
 
@@ -434,7 +436,7 @@ export default function FacturationPage() {
                 )
               })}
               {fixedWeekly > 0 && (
-                <div className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold bg-purple-50 text-purple-700 border border-purple-200" title={`${fixedInvoices.length} charge(s) structurelle(s) couvrant cette semaine`}>
+                <div className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-600 border border-gray-200" title={`${fixedInvoices.length} charge(s) structurelle(s) couvrant cette semaine`}>
                   <Repeat className="w-3 h-3" />
                   <span>Charges structurelles</span><span className="font-bold">≈ {fmtEuro(fixedWeekly)}/sem</span>
                 </div>
@@ -460,12 +462,12 @@ export default function FacturationPage() {
               <ShoppingCart className="w-8 h-8 text-gray-200 mx-auto mb-2" />
               <p className="text-sm text-gray-400">Aucun achat variable sur la semaine {week}</p>
               <p className="text-xs text-gray-300 mt-1">Lancez un sync pour importer les factures de cette semaine</p>
-              <button onClick={() => setShowAdd(true)} className="mt-3 text-sm text-[#1E3A5F] hover:underline font-medium">+ Ajouter une facture manuellement</button>
+              <button onClick={() => setShowAdd(true)} className="mt-3 text-sm text-pilote hover:underline font-medium">+ Ajouter une facture manuellement</button>
             </div>
           ) : (
-            <table className="w-full">
+            <table className="w-full tabular">
               <thead>
-                <tr className="bg-gray-50 text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                <tr className="bg-gray-50 text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
                   <th className="px-4 py-2.5 text-left">Fournisseur</th>
                   <th className="px-4 py-2.5 text-left">Date</th>
                   <th className="px-4 py-2.5 text-right">HT</th>
@@ -501,11 +503,11 @@ export default function FacturationPage() {
                             <td className="px-4 py-2.5 text-right text-sm text-gray-600">{fmtEuro(inv.amount_ttc)}</td>
                             <td className="px-4 py-2.5 text-center">
                               <div className="flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
-                                <button onClick={() => toggleFixed(inv)} className="p-1.5 rounded hover:bg-purple-50 text-gray-300 hover:text-purple-600 transition-colors" title="Marquer comme charge structurelle (prorata hebdo)">
+                                <button onClick={() => toggleFixed(inv)} className="p-1.5 rounded hover:bg-pilote-50 text-gray-300 hover:text-pilote transition-colors" title="Marquer comme charge structurelle (prorata hebdo)">
                                   <Repeat className="w-3.5 h-3.5" />
                                 </button>
                                 {isViande && (
-                                  <button onClick={() => openValorisation(inv)} className="p-1.5 rounded hover:bg-blue-50 text-gray-300 hover:text-blue-600 transition-colors" title="Valoriser cet animal">
+                                  <button onClick={() => openValorisation(inv)} className="p-1.5 rounded hover:bg-pilote-50 text-gray-300 hover:text-pilote transition-colors" title="Valoriser cet animal">
                                     <ArrowUpRight className="w-3.5 h-3.5" />
                                   </button>
                                 )}
@@ -522,8 +524,8 @@ export default function FacturationPage() {
                 })}
               </tbody>
               <tfoot>
-                <tr className="bg-gray-900 text-white">
-                  <td colSpan={2} className="px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-gray-400">Total achats variables</td>
+                <tr className="bg-pilote text-white">
+                  <td colSpan={2} className="px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-white/60">Total achats variables</td>
                   <td className="px-4 py-2.5 text-right font-bold">{fmtEuro(variableTotalHt)}</td>
                   <td className="px-4 py-2.5"></td>
                   <td className="px-4 py-2.5 text-right font-bold text-orange-300">{fmtEuro(variableTotalTtc)}</td>
@@ -535,10 +537,10 @@ export default function FacturationPage() {
         </div>
 
         {/* ── Charges structurelles couvrant la semaine ── */}
-        <div className="bg-white rounded-xl border border-purple-100 shadow-sm overflow-hidden">
-          <div className="px-4 py-3 border-b border-purple-100 bg-purple-50/50 flex items-center justify-between">
+        <div className="bg-white rounded-xl border border-pilote-100 shadow-card overflow-hidden">
+          <div className="px-4 py-3 border-b border-pilote-100 bg-pilote-50/60 flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Repeat className="w-4 h-4 text-purple-500" />
+              <Repeat className="w-4 h-4 text-pilote" />
               <div>
                 <h2 className="font-semibold text-gray-800">Charges structurelles</h2>
                 <p className="text-[11px] text-gray-400">Toutes les charges fixes dont la période couvre la semaine {week} — quelle que soit leur date de facture</p>
@@ -546,7 +548,7 @@ export default function FacturationPage() {
             </div>
             {fixedInvoices.length > 0 && (
               <div className="text-right">
-                <p className="text-sm font-bold text-purple-700">≈ {fmtEuro(fixedWeekly)}/sem</p>
+                <p className="text-sm font-bold text-pilote tabular">≈ {fmtEuro(fixedWeekly)}/sem</p>
                 <p className="text-[10px] text-gray-400">{fixedInvoices.length} charge{fixedInvoices.length > 1 ? 's' : ''} · {fmtEuro(fixedTotalHt)} HT facturé</p>
               </div>
             )}
@@ -560,9 +562,9 @@ export default function FacturationPage() {
               <p className="text-xs text-gray-300 mt-1">Survolez une facture ci-dessus et cliquez sur l&apos;icône de récurrence pour la marquer comme charge fixe</p>
             </div>
           ) : (
-            <table className="w-full">
+            <table className="w-full tabular">
               <thead>
-                <tr className="bg-gray-50 text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                <tr className="bg-gray-50 text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
                   <th className="px-4 py-2.5 text-left">Fournisseur</th>
                   <th className="px-4 py-2.5 text-left">Facturée le</th>
                   <th className="px-4 py-2.5 text-right">Montant HT</th>
@@ -573,7 +575,7 @@ export default function FacturationPage() {
               </thead>
               <tbody>
                 {fixedInvoices.map((inv, i) => (
-                  <tr key={inv.id} className={`border-t border-gray-100 hover:bg-purple-50/30 group transition-colors ${i % 2 === 0 ? '' : 'bg-gray-50/50'}`}>
+                  <tr key={inv.id} className={`border-t border-gray-100 hover:bg-pilote-50/40 group transition-colors ${i % 2 === 0 ? '' : 'bg-gray-50/50'}`}>
                     <td className="px-4 py-2.5">
                       <div className="font-semibold text-sm text-gray-900">{inv.supplier_name}</div>
                       {inv.invoice_number && <div className="text-xs text-gray-400">{inv.invoice_number}</div>}
@@ -584,14 +586,14 @@ export default function FacturationPage() {
                       <select
                         value={inv.period_days || 30}
                         onChange={e => setFixedPeriod(inv, parseInt(e.target.value))}
-                        className="text-xs border border-purple-200 bg-purple-50 text-purple-700 font-semibold rounded-lg px-2 py-1 focus:outline-none focus:border-purple-400 cursor-pointer"
+                        className="text-xs border border-pilote-200 bg-pilote-50 text-pilote font-semibold rounded-lg px-2 py-1 focus:outline-none focus:border-pilote cursor-pointer"
                         title="Période couverte par cette facture"
                       >
                         {PERIOD_OPTIONS.map(p => <option key={p.days} value={p.days}>{p.label}</option>)}
                       </select>
                     </td>
                     <td className="px-4 py-2.5 text-right">
-                      <span className="font-bold text-sm text-purple-700">≈ {fmtEuro(Number(inv.prorata_ht) || weeklyShare(inv.amount_ht, inv.period_days))}</span>
+                      <span className="font-bold text-sm text-pilote tabular">≈ {fmtEuro(Number(inv.prorata_ht) || weeklyShare(inv.amount_ht, inv.period_days))}</span>
                       <span className="text-[10px] text-gray-400">/sem</span>
                     </td>
                     <td className="px-4 py-2.5 text-center">
@@ -608,8 +610,8 @@ export default function FacturationPage() {
                 ))}
               </tbody>
               <tfoot>
-                <tr className="bg-purple-700 text-white">
-                  <td colSpan={2} className="px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-purple-200">Total charges structurelles</td>
+                <tr className="bg-pilote text-white">
+                  <td colSpan={2} className="px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-white/60">Total charges structurelles</td>
                   <td className="px-4 py-2.5 text-right font-bold">{fmtEuro(fixedTotalHt)}</td>
                   <td className="px-4 py-2.5"></td>
                   <td className="px-4 py-2.5 text-right font-bold text-yellow-300">≈ {fmtEuro(fixedWeekly)}/sem</td>
@@ -643,11 +645,11 @@ export default function FacturationPage() {
                   <Input value={connectCompanyId} onChange={e => setConnectCompanyId(e.target.value)} placeholder="Identifiant de votre entreprise" />
                 </div>
               )}
-              <p className="text-[10px] text-gray-400">Votre token est chiffré et stocké de manière sécurisée. <a href={connectProvider.helpUrl} target="_blank" rel="noreferrer" className="text-[#1E3A5F] underline">Comment trouver mon token ?</a></p>
+              <p className="text-[10px] text-gray-400">Votre token est chiffré et stocké de manière sécurisée. <a href={connectProvider.helpUrl} target="_blank" rel="noreferrer" className="text-pilote underline">Comment trouver mon token ?</a></p>
               {connectError && <div className="flex items-center gap-1.5 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2"><AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />{connectError}</div>}
               <div className="flex gap-3 pt-1">
                 <Button variant="outline" className="flex-1" onClick={() => setShowConnect(false)}>Annuler</Button>
-                <Button className="flex-1 bg-[#1E3A5F] hover:bg-[#2a4f7c] text-white" onClick={connectIntegration} disabled={!connectToken || connecting || (connectProvider.needsCompanyId && !connectCompanyId)}>
+                <Button className="flex-1 bg-pilote hover:bg-pilote-hover text-white" onClick={connectIntegration} disabled={!connectToken || connecting || (connectProvider.needsCompanyId && !connectCompanyId)}>
                   {connecting ? <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" />Test en cours...</> : <><Link2 className="w-4 h-4 mr-1.5" />Connecter</>}
                 </Button>
               </div>
@@ -685,7 +687,7 @@ export default function FacturationPage() {
                   {CATEGORIES.map(cat => (
                     <button key={cat.key} onClick={() => setNewInvoice((p: any) => ({ ...p, category: cat.key }))}
                       className={`py-1.5 px-2 rounded-lg text-xs font-semibold border-2 transition-all ${
-                        newInvoice.category === cat.key ? 'border-[#1E3A5F] bg-[#1E3A5F] text-white' : 'border-gray-200 text-gray-600 hover:border-gray-300'
+                        newInvoice.category === cat.key ? 'border-pilote bg-pilote text-white' : 'border-gray-200 text-gray-600 hover:border-gray-300'
                       }`}>{cat.label}
                     </button>
                   ))}
@@ -698,7 +700,7 @@ export default function FacturationPage() {
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-gray-600 mb-1">Taux TVA (%)</label>
-                  <select value={newInvoice.tva_rate} onChange={e => setNewInvoice((p: any) => ({ ...p, tva_rate: e.target.value }))} className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-[#1E3A5F]">
+                  <select value={newInvoice.tva_rate} onChange={e => setNewInvoice((p: any) => ({ ...p, tva_rate: e.target.value }))} className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-pilote">
                     {TVA_RATES.map(r => <option key={r} value={r}>{r === 0 ? '0 % (exonéré)' : `${r} %`}</option>)}
                   </select>
                 </div>
@@ -710,7 +712,7 @@ export default function FacturationPage() {
               </div>
               <div className="flex gap-3 pt-1">
                 <Button variant="outline" className="flex-1" onClick={() => setShowAdd(false)}>Annuler</Button>
-                <Button className="flex-1 bg-[#1E3A5F] hover:bg-[#2a4f7c] text-white" onClick={addInvoice} disabled={!newInvoice.supplier_name || !newInvoice.invoice_date || !newInvoice.amount_ht || saving}>
+                <Button className="flex-1 bg-pilote hover:bg-pilote-hover text-white" onClick={addInvoice} disabled={!newInvoice.supplier_name || !newInvoice.invoice_date || !newInvoice.amount_ht || saving}>
                   {saving ? 'Enregistrement...' : 'Enregistrer'}
                 </Button>
               </div>
@@ -741,7 +743,7 @@ export default function FacturationPage() {
               ))}
               <div className="flex gap-3 pt-2">
                 <Button variant="outline" className="flex-1" onClick={() => setShowCA(false)}>Annuler</Button>
-                <Button className="flex-1 bg-[#1E3A5F] hover:bg-[#2a4f7c] text-white" onClick={saveCA} disabled={saving}>
+                <Button className="flex-1 bg-pilote hover:bg-pilote-hover text-white" onClick={saveCA} disabled={saving}>
                   <Check className="w-4 h-4 mr-1.5" />{saving ? 'Enregistrement...' : 'Enregistrer'}
                 </Button>
               </div>
@@ -769,7 +771,7 @@ export default function FacturationPage() {
               </div>
               <div className="flex gap-3 pt-1">
                 <Button variant="outline" className="flex-1" onClick={() => setShowSettings(false)}>Annuler</Button>
-                <Button className="flex-1 bg-[#1E3A5F] hover:bg-[#2a4f7c] text-white" onClick={saveSettings} disabled={saving}>
+                <Button className="flex-1 bg-pilote hover:bg-pilote-hover text-white" onClick={saveSettings} disabled={saving}>
                   <Save className="w-4 h-4 mr-1.5" />{saving ? 'Enregistrement...' : 'Sauvegarder'}
                 </Button>
               </div>

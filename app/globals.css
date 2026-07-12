@@ -15,6 +15,9 @@ body {
   color: var(--foreground);
   background: var(--background);
   font-family: var(--font-sans), system-ui, -apple-system, sans-serif;
+  /* Chiffres tabulaires partout : PILOTE est un produit 100 % chiffres,
+     les montants s'alignent en colonnes dans tous les tableaux et KPI. */
+  font-variant-numeric: tabular-nums;
 }
 
 /* Sélection de texte aux couleurs de la marque */
