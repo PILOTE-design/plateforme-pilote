@@ -129,14 +129,17 @@ export default async function MargesPage() {
     m === null ? 'text-gray-400' : m >= 40 ? 'text-green-600' : m >= 30 ? 'text-orange-500' : 'text-red-600'
 
   return (
-    <div className="p-8 max-w-5xl mx-auto">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-          <Percent className="w-6 h-6 text-[#1E3A5F]" />Marges par rayon
-        </h1>
-        <p className="text-gray-500 mt-1">
-          CA des familles de vente vs achats catégorisés — {periodLabel || 'en attente de données'}
-        </p>
+    <div className="p-6 md:p-8 max-w-5xl mx-auto">
+      <div className="mb-8 flex items-start gap-3">
+        <div className="w-10 h-10 rounded-xl bg-pilote-50 flex items-center justify-center flex-shrink-0 mt-0.5">
+          <Percent className="w-5 h-5 text-pilote" />
+        </div>
+        <div>
+          <h1 className="text-2xl font-extrabold tracking-tight text-gray-900">Marges par rayon</h1>
+          <p className="text-sm text-gray-500 mt-1">
+            CA des familles de vente vs achats catégorisés · {periodLabel || 'en attente de données'}
+          </p>
+        </div>
       </div>
 
       {weeks.length === 0 ? (
@@ -144,42 +147,42 @@ export default async function MargesPage() {
           <CardContent className="py-16 text-center">
             <Percent className="w-10 h-10 text-gray-300 mx-auto mb-3" />
             <p className="text-sm font-medium text-gray-500 mb-1">Pas encore assez de données</p>
-            <p className="text-xs text-gray-400 mb-4">Il faut au moins une semaine avec un CA archivé (via un rapport ou une saisie) et des factures catégorisées.</p>
+            <p className="text-xs text-gray-400 mb-4 max-w-sm mx-auto">Il faut au moins une semaine avec un CA archivé (via un rapport ou une saisie) et des factures catégorisées.</p>
             <div className="flex items-center justify-center gap-4">
-              <Link href="/dashboard/facturation" className="text-sm text-[#1E3A5F] font-semibold hover:underline">Facturation →</Link>
-              <Link href="/dashboard/reports" className="text-sm text-[#1E3A5F] font-semibold hover:underline">Mes rapports →</Link>
+              <Link href="/dashboard/facturation" className="text-sm text-pilote font-semibold hover:underline">Facturation →</Link>
+              <Link href="/dashboard/reports" className="text-sm text-pilote font-semibold hover:underline">Mes rapports →</Link>
             </div>
           </CardContent>
         </Card>
       ) : (
         <>
           {/* Marge globale */}
-          <div className="grid grid-cols-3 gap-4 mb-6">
-            <Card><CardContent className="p-5">
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">CA cumulé</p>
-              <p className="text-2xl font-bold text-gray-900">{fmt(caTotal)} €</p>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+            <Card className="hover:shadow-card-hover transition-shadow"><CardContent className="p-5">
+              <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">CA cumulé</p>
+              <p className="text-2xl font-bold tracking-tight text-gray-900 tabular">{fmt(caTotal)} €</p>
             </CardContent></Card>
-            <Card><CardContent className="p-5">
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Achats cumulés</p>
-              <p className="text-2xl font-bold text-gray-900">{fmt(achatsTotal)} €</p>
-              <p className="text-xs text-gray-400 mt-0.5">dont fixes {fmt(chargesFixes)} € · transverses {fmt(coutsTransverses)} €</p>
+            <Card className="hover:shadow-card-hover transition-shadow"><CardContent className="p-5">
+              <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Achats cumulés</p>
+              <p className="text-2xl font-bold tracking-tight text-gray-900 tabular">{fmt(achatsTotal)} €</p>
+              <p className="text-xs text-gray-400 mt-1 tabular">dont fixes {fmt(chargesFixes)} € · transverses {fmt(coutsTransverses)} €</p>
             </CardContent></Card>
-            <Card><CardContent className="p-5">
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Marge globale</p>
-              <p className={`text-2xl font-bold ${margeColor(margeGlobale)}`}>{margeGlobale !== null ? `${margeGlobale.toFixed(1)} %` : '—'}</p>
+            <Card className="hover:shadow-card-hover transition-shadow"><CardContent className="p-5">
+              <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Marge globale</p>
+              <p className={`text-2xl font-bold tracking-tight tabular ${margeColor(margeGlobale)}`}>{margeGlobale !== null ? `${margeGlobale.toFixed(1)} %` : '—'}</p>
             </CardContent></Card>
           </div>
 
           {/* Tableau par rayon */}
-          <Card className="mb-6">
+          <Card className="mb-6 overflow-hidden">
             <CardHeader>
               <CardTitle className="text-base">Marge matière par rayon</CardTitle>
-              <CardDescription>Lissée sur {weeks.length} semaine{weeks.length > 1 ? 's' : ''} — les achats d'une semaine se vendent sur les suivantes, le cumul gomme l'effet stock</CardDescription>
+              <CardDescription>Lissée sur {weeks.length} semaine{weeks.length > 1 ? 's' : ''} · les achats d'une semaine se vendent sur les suivantes, le cumul gomme l'effet stock</CardDescription>
             </CardHeader>
             <CardContent className="p-0">
               <table className="w-full">
                 <thead>
-                  <tr className="bg-gray-50 text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                  <tr className="bg-gray-50 text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
                     <th className="px-4 py-2.5 text-left">Rayon</th>
                     <th className="px-4 py-2.5 text-right">CA</th>
                     <th className="px-4 py-2.5 text-right">Achats matière</th>
@@ -188,23 +191,23 @@ export default async function MargesPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rayons.map((x, i) => (
-                    <tr key={x.r} className={`border-t border-gray-50 ${i % 2 === 1 ? 'bg-gray-50/40' : ''}`}>
+                  {rayons.map((x) => (
+                    <tr key={x.r} className="border-t border-gray-100 hover:bg-gray-50 transition-colors">
                       <td className="px-4 py-3 text-sm font-semibold text-gray-900">{x.label}</td>
-                      <td className="px-4 py-3 text-right text-sm text-gray-700">{fmt(x.ca)} €</td>
-                      <td className="px-4 py-3 text-right text-sm text-gray-700">{fmt(x.achats)} €</td>
-                      <td className={`px-4 py-3 text-right text-sm font-semibold ${x.margeEur >= 0 ? 'text-gray-900' : 'text-red-600'}`}>{fmt(x.margeEur)} €</td>
-                      <td className={`px-4 py-3 text-right text-sm font-bold ${margeColor(x.marge)}`}>{x.marge !== null ? `${x.marge.toFixed(1)} %` : '—'}</td>
+                      <td className="px-4 py-3 text-right text-sm text-gray-700 tabular">{fmt(x.ca)} €</td>
+                      <td className="px-4 py-3 text-right text-sm text-gray-700 tabular">{fmt(x.achats)} €</td>
+                      <td className={`px-4 py-3 text-right text-sm font-semibold tabular ${x.margeEur >= 0 ? 'text-gray-900' : 'text-red-600'}`}>{fmt(x.margeEur)} €</td>
+                      <td className={`px-4 py-3 text-right text-sm font-bold tabular ${margeColor(x.marge)}`}>{x.marge !== null ? `${x.marge.toFixed(1)} %` : '—'}</td>
                     </tr>
                   ))}
                 </tbody>
                 <tfoot>
-                  <tr className="bg-gray-900 text-white">
-                    <td className="px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-gray-400">Total (hors transverses/fixes)</td>
-                    <td className="px-4 py-2.5 text-right font-bold">{fmt(caTotal)} €</td>
-                    <td className="px-4 py-2.5 text-right font-bold">{fmt(achatsByRayon.boucherie + achatsByRayon.charcuterie + achatsByRayon.vente)} €</td>
-                    <td className="px-4 py-2.5 text-right font-bold text-green-300">{fmt(caTotal - achatsByRayon.boucherie - achatsByRayon.charcuterie - achatsByRayon.vente)} €</td>
-                    <td className="px-4 py-2.5 text-right font-bold text-green-300">{caTotal > 0 ? `${(((caTotal - achatsByRayon.boucherie - achatsByRayon.charcuterie - achatsByRayon.vente) / caTotal) * 100).toFixed(1)} %` : '—'}</td>
+                  <tr className="bg-pilote text-white">
+                    <td className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-white/60">Total (hors transverses/fixes)</td>
+                    <td className="px-4 py-3 text-right font-bold tabular">{fmt(caTotal)} €</td>
+                    <td className="px-4 py-3 text-right font-bold tabular">{fmt(achatsByRayon.boucherie + achatsByRayon.charcuterie + achatsByRayon.vente)} €</td>
+                    <td className="px-4 py-3 text-right font-bold tabular text-green-300">{fmt(caTotal - achatsByRayon.boucherie - achatsByRayon.charcuterie - achatsByRayon.vente)} €</td>
+                    <td className="px-4 py-3 text-right font-bold tabular text-green-300">{caTotal > 0 ? `${(((caTotal - achatsByRayon.boucherie - achatsByRayon.charcuterie - achatsByRayon.vente) / caTotal) * 100).toFixed(1)} %` : '—'}</td>
                   </tr>
                 </tfoot>
               </table>
@@ -212,13 +215,13 @@ export default async function MargesPage() {
           </Card>
 
           {/* Notes de lecture */}
-          <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 flex gap-3">
-            <Info className="w-4 h-4 text-[#1E3A5F] flex-shrink-0 mt-0.5" />
-            <div className="text-xs text-gray-600 space-y-1.5">
-              <p><span className="font-semibold">Comment lire :</span> marge matière lissée sur {weeks.length} semaine{weeks.length > 1 ? 's' : ''}. Précise à 2-3 points près (variation de stock non déduite) — la tendance est fiable. Cible métier : boucherie 30-40 %, charcuterie 40-50 %, traiteur 50-65 %.</p>
-              <p><span className="font-semibold">Traiteur :</span> fusionné avec la boucherie car il consomme la même matière. Si sa part de CA augmente, la marge du rayon doit monter — sinon la valorisation carcasse mérite un œil.</p>
-              <p><span className="font-semibold">Fiabilité :</span> dépend de la bonne catégorisation des factures (page Facturation). Emballage, frais généraux et charges fixes sont volontairement hors marge rayon.</p>
-              <p><span className="font-semibold">Contrôle croisé :</span> comparez avec la marge théorique de vos valorisations carcasse — un écart durable = démarque (pertes, erreurs de prix, vol).</p>
+          <div className="bg-pilote-50 border border-pilote-100 rounded-xl p-5 flex gap-3">
+            <Info className="w-4 h-4 text-pilote flex-shrink-0 mt-0.5" />
+            <div className="text-xs text-gray-600 space-y-2 leading-relaxed">
+              <p><span className="font-semibold text-gray-800">Comment lire :</span> marge matière lissée sur {weeks.length} semaine{weeks.length > 1 ? 's' : ''}. Précise à 2-3 points près (variation de stock non déduite), la tendance est fiable. Cible métier : boucherie 30-40 %, charcuterie 40-50 %, traiteur 50-65 %.</p>
+              <p><span className="font-semibold text-gray-800">Traiteur :</span> fusionné avec la boucherie car il consomme la même matière. Si sa part de CA augmente, la marge du rayon doit monter. Sinon, la valorisation carcasse mérite un œil.</p>
+              <p><span className="font-semibold text-gray-800">Fiabilité :</span> dépend de la bonne catégorisation des factures (page Facturation). Emballage, frais généraux et charges fixes sont volontairement hors marge rayon.</p>
+              <p><span className="font-semibold text-gray-800">Contrôle croisé :</span> comparez avec la marge théorique de vos valorisations carcasse. Un écart durable = démarque (pertes, erreurs de prix, vol).</p>
             </div>
           </div>
         </>

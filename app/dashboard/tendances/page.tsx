@@ -129,7 +129,7 @@ export default async function TendancesPage() {
       <div className="flex items-end gap-0.5 h-6">
         {vals.map((v, i) => (
           <div key={i} title={`${labelOf(weekKeys[i])} : ${fmt2(v)} €`}
-            className={`w-1.5 rounded-sm ${i === vals.length - 1 ? 'bg-[#1E3A5F]' : 'bg-gray-200'}`}
+            className={`w-1.5 rounded-sm ${i === vals.length - 1 ? 'bg-pilote' : 'bg-pilote-100'}`}
             style={{ height: `${Math.max(8, (v / max) * 100)}%` }} />
         ))}
       </div>
@@ -137,15 +137,18 @@ export default async function TendancesPage() {
   }
 
   return (
-    <div className="p-8 max-w-6xl mx-auto">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-          <LineChart className="w-6 h-6 text-[#1E3A5F]" />Tendances produits
-        </h1>
-        <p className="text-gray-500 mt-1">
-          Évolution semaine par semaine, alimentée automatiquement par vos rapports hebdomadaires
-          {lastKey && <span className="ml-2 text-xs bg-blue-50 text-[#1E3A5F] px-2 py-0.5 rounded-full font-semibold">{weekKeys.length} semaine{weekKeys.length > 1 ? 's' : ''} · dernière : {labelOf(lastKey)}</span>}
-        </p>
+    <div className="p-6 md:p-8 max-w-6xl mx-auto">
+      <div className="mb-8 flex items-start gap-3">
+        <div className="w-10 h-10 rounded-xl bg-pilote-50 flex items-center justify-center flex-shrink-0 mt-0.5">
+          <LineChart className="w-5 h-5 text-pilote" />
+        </div>
+        <div>
+          <h1 className="text-2xl font-extrabold tracking-tight text-gray-900">Tendances produits</h1>
+          <p className="text-sm text-gray-500 mt-1">
+            Évolution semaine par semaine, alimentée automatiquement par vos rapports hebdomadaires
+            {lastKey && <span className="ml-2 text-xs bg-pilote-50 text-pilote px-2 py-0.5 rounded-full font-semibold tabular">{weekKeys.length} semaine{weekKeys.length > 1 ? 's' : ''} · dernière : {labelOf(lastKey)}</span>}
+          </p>
+        </div>
       </div>
 
       {!hasData ? (
@@ -153,29 +156,31 @@ export default async function TendancesPage() {
           <CardContent className="py-16 text-center">
             <LineChart className="w-10 h-10 text-gray-300 mx-auto mb-3" />
             <p className="text-sm font-medium text-gray-500 mb-1">Pas encore d'historique produits</p>
-            <p className="text-xs text-gray-400 mb-4">Chaque rapport hebdomadaire généré archive automatiquement le CA de chaque produit.<br />Dès 2 semaines de rapports, les tendances apparaîtront ici.</p>
-            <Link href="/dashboard/reports" className="text-sm text-[#1E3A5F] font-semibold hover:underline">Mes rapports →</Link>
+            <p className="text-xs text-gray-400 mb-4 max-w-sm mx-auto">Chaque rapport hebdomadaire généré archive automatiquement le CA de chaque produit.<br />Dès 2 semaines de rapports, les tendances apparaîtront ici.</p>
+            <Link href="/dashboard/reports" className="text-sm text-pilote font-semibold hover:underline">Mes rapports →</Link>
           </CardContent>
         </Card>
       ) : (
         <>
           {/* KPIs d'evolution */}
           {lastCa && (
-            <div className="grid grid-cols-3 gap-4 mb-6">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
               {[
                 { icon: Euro, label: 'CA', val: `${fmt(lastCa.ca)} €`, prev: prevCa ? lastCa.ca - prevCa.ca : null, isEuro: true },
                 { icon: Ticket, label: 'Tickets', val: lastCa.tickets != null ? String(lastCa.tickets) : '—', prev: prevCa?.tickets != null && lastCa.tickets != null ? lastCa.tickets - prevCa.tickets : null, isEuro: false },
                 { icon: ShoppingBasket, label: 'Panier moyen', val: lastCa.panier != null ? `${fmt2(lastCa.panier)} €` : '—', prev: prevCa?.panier != null && lastCa.panier != null ? lastCa.panier - prevCa.panier : null, isEuro: true },
               ].map((kpi, i) => (
-                <Card key={i}>
+                <Card key={i} className="hover:shadow-card-hover transition-shadow">
                   <CardContent className="p-5">
-                    <div className="flex items-center gap-1.5 mb-1">
-                      <kpi.icon className="w-3.5 h-3.5 text-gray-400" />
-                      <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">{kpi.label} — {labelOf(lastKey)}</p>
+                    <div className="flex items-center gap-2 mb-2.5">
+                      <div className="w-6 h-6 rounded-md bg-pilote-50 flex items-center justify-center flex-shrink-0">
+                        <kpi.icon className="w-3.5 h-3.5 text-pilote" />
+                      </div>
+                      <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">{kpi.label} · {labelOf(lastKey)}</p>
                     </div>
-                    <p className="text-2xl font-bold text-gray-900">{kpi.val}</p>
+                    <p className="text-2xl font-bold tracking-tight text-gray-900 tabular">{kpi.val}</p>
                     {kpi.prev !== null && prevKey && (
-                      <p className={`text-xs font-semibold mt-0.5 ${kpi.prev >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                      <p className={`text-xs font-semibold mt-1 tabular ${kpi.prev >= 0 ? 'text-green-600' : 'text-red-500'}`}>
                         {kpi.prev >= 0 ? '+' : ''}{kpi.isEuro ? `${fmt2(kpi.prev)} €` : fmt(kpi.prev)} vs {labelOf(prevKey)}
                       </p>
                     )}
@@ -195,11 +200,11 @@ export default async function TendancesPage() {
                 </CardHeader>
                 <CardContent>
                   {hausses.length === 0 ? <p className="text-sm text-gray-400 text-center py-4">Aucune hausse détectée</p> : (
-                    <div className="space-y-2">
+                    <div className="space-y-2.5">
                       {hausses.map(h => (
                         <div key={h.name} className="flex items-center justify-between text-sm">
                           <span className="text-gray-700 truncate mr-2">{h.name}</span>
-                          <span className="font-bold text-green-600 whitespace-nowrap">+{fmt(h.delta)} €</span>
+                          <span className="font-bold text-green-600 whitespace-nowrap tabular">+{fmt(h.delta)} €</span>
                         </div>
                       ))}
                     </div>
@@ -213,11 +218,11 @@ export default async function TendancesPage() {
                 </CardHeader>
                 <CardContent>
                   {baisses.length === 0 ? <p className="text-sm text-gray-400 text-center py-4">Aucune baisse détectée</p> : (
-                    <div className="space-y-2">
+                    <div className="space-y-2.5">
                       {baisses.map(b => (
                         <div key={b.name} className="flex items-center justify-between text-sm">
                           <span className="text-gray-700 truncate mr-2">{b.name}</span>
-                          <span className="font-bold text-red-500 whitespace-nowrap">{fmt(b.delta)} €</span>
+                          <span className="font-bold text-red-500 whitespace-nowrap tabular">{fmt(b.delta)} €</span>
                         </div>
                       ))}
                     </div>
@@ -240,9 +245,9 @@ export default async function TendancesPage() {
                     <div key={f.name} className="flex items-center gap-4">
                       <span className="text-sm text-gray-700 w-44 truncate flex-shrink-0">{f.name}</span>
                       <Spark series={f.series} />
-                      <span className="text-sm font-semibold text-gray-900 ml-auto whitespace-nowrap">{fmt(f.last)} €</span>
+                      <span className="text-sm font-semibold text-gray-900 ml-auto whitespace-nowrap tabular">{fmt(f.last)} €</span>
                       {hasComparison && (
-                        <span className={`text-xs font-semibold w-20 text-right ${f.delta >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                        <span className={`text-xs font-semibold w-20 text-right tabular ${f.delta >= 0 ? 'text-green-600' : 'text-red-500'}`}>
                           {f.delta >= 0 ? '+' : ''}{fmt(f.delta)} €
                         </span>
                       )}
@@ -254,7 +259,7 @@ export default async function TendancesPage() {
           )}
 
           {/* Tableau produits */}
-          <Card>
+          <Card className="overflow-hidden">
             <CardHeader>
               <CardTitle className="text-base">Tous les produits</CardTitle>
               <CardDescription>Top 40 par CA de la semaine {lastKey ? labelOf(lastKey) : ''} · mini-graphe = {weekKeys.length} semaines</CardDescription>
@@ -265,7 +270,7 @@ export default async function TendancesPage() {
               ) : (
                 <table className="w-full">
                   <thead>
-                    <tr className="bg-gray-50 text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                    <tr className="bg-gray-50 text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
                       <th className="px-4 py-2.5 text-left">Produit</th>
                       <th className="px-4 py-2.5 text-center">Évolution</th>
                       <th className="px-4 py-2.5 text-right">CA {lastKey ? labelOf(lastKey) : ''}</th>
@@ -273,16 +278,16 @@ export default async function TendancesPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {products.map((p, i) => {
+                    {products.map((p) => {
                       const prev = prevKey ? (p.series.get(prevKey) ?? 0) : 0
                       const delta = p.last - prev
                       return (
-                        <tr key={p.name} className={`border-t border-gray-50 hover:bg-gray-50 transition-colors ${i % 2 === 1 ? 'bg-gray-50/40' : ''}`}>
+                        <tr key={p.name} className="border-t border-gray-100 hover:bg-gray-50 transition-colors">
                           <td className="px-4 py-2 text-sm font-medium text-gray-900">{p.name}</td>
                           <td className="px-4 py-2"><div className="flex justify-center"><Spark series={p.series} /></div></td>
-                          <td className="px-4 py-2 text-right text-sm font-semibold text-gray-900">{fmt2(p.last)} €</td>
+                          <td className="px-4 py-2 text-right text-sm font-semibold text-gray-900 tabular">{fmt2(p.last)} €</td>
                           {hasComparison && (
-                            <td className={`px-4 py-2 text-right text-xs font-bold ${delta >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                            <td className={`px-4 py-2 text-right text-xs font-bold tabular ${delta >= 0 ? 'text-green-600' : 'text-red-500'}`}>
                               {delta >= 0 ? '+' : ''}{fmt(delta)} €
                             </td>
                           )}
