@@ -183,8 +183,8 @@ const CATEGORY_LABELS: Record<CutCategory, string> = {
   troisieme: 'Divers', abat: 'Abats', os: 'Os valorisables',
 }
 const CATEGORY_COLORS: Record<CutCategory, string> = {
-  premier: 'bg-red-50 text-red-700 border-red-200', deuxieme: 'bg-orange-50 text-orange-700 border-orange-200',
-  troisieme: 'bg-yellow-50 text-yellow-700 border-yellow-200', abat: 'bg-purple-50 text-purple-700 border-purple-200', os: 'bg-gray-50 text-gray-600 border-gray-200',
+  premier: 'bg-pilote text-white border-transparent', deuxieme: 'bg-pilote-100 text-pilote-800 border-pilote-200',
+  troisieme: 'bg-pilote-50 text-pilote-800 border-pilote-200', abat: 'bg-orange-50 text-orange-700 border-orange-200', os: 'bg-gray-100 text-gray-600 border-gray-200',
 }
 const CATEGORIES: CutCategory[] = ['premier', 'deuxieme', 'troisieme', 'abat', 'os']
 const MONTHS_FR = ['Jan','Fév','Mar','Avr','Mai','Juin','Juil','Aoû','Sep','Oct','Nov','Déc']
@@ -539,29 +539,13 @@ export default function ValorisationPage() {
   const avgMarginAll = totalCA > 0 ? ((totalCA - totalCostAll) / totalCA) * 100 : 0
   const maxCA        = weekStats.length > 0 ? Math.max(...weekStats.map(w => w.totalRevenue)) : 1
 
-  // Couleur accent par espèce
-  const accentBtn: Record<AnimalType, string> = {
-    boeuf:    'bg-red-600    hover:bg-red-700',
-    veau:     'bg-pink-600   hover:bg-pink-700',
-    agneau:   'bg-green-600  hover:bg-green-700',
-    porc:     'bg-orange-600 hover:bg-orange-700',
-    volaille: 'bg-yellow-500 hover:bg-yellow-600',
-  }
-  const accentRing: Record<AnimalType, string> = {
-    boeuf:    'focus:ring-red-500',
-    veau:     'focus:ring-pink-500',
-    agneau:   'focus:ring-green-500',
-    porc:     'focus:ring-orange-500',
-    volaille: 'focus:ring-yellow-500',
-  }
-
   return (
     <div className="p-6 max-w-7xl mx-auto">
 
       {/* Bandeau invoice */}
       {fromInvoice && (
-        <div className="mb-4 flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5 text-sm text-blue-800">
-          <CheckCircle className="w-4 h-4 text-blue-500 flex-shrink-0" />
+        <div className="mb-4 flex items-center gap-2 bg-pilote-50 border border-pilote-200 rounded-xl px-4 py-2.5 text-sm text-pilote-800">
+          <CheckCircle className="w-4 h-4 text-pilote flex-shrink-0" />
           Pré-rempli depuis la facture <strong>{fromInvoice}</strong> — ajoutez le poids carcasse pour calculer.
         </div>
       )}
@@ -577,18 +561,18 @@ export default function ValorisationPage() {
       {/* Header */}
       <div className="mb-5 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className={`w-10 h-10 ${accentBtn[animalType].split(' ')[0]} rounded-xl flex items-center justify-center flex-shrink-0`}>
-            <Calculator className="w-5 h-5 text-white" />
+          <div className="w-10 h-10 bg-pilote-50 rounded-xl flex items-center justify-center flex-shrink-0">
+            <Calculator className="w-5 h-5 text-pilote" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Valorisation Carcasse</h1>
+            <h1 className="text-2xl font-extrabold tracking-tight text-gray-900">Valorisation Carcasse</h1>
             <p className="text-sm text-gray-500">Achat au kg de carcasse · Main d'œuvre réelle du planning · Coefficient · Suivi hebdo</p>
           </div>
         </div>
         {activeTab === 'calc' && totalRevenue1 > 0 && (
           <button onClick={saveValo} disabled={saving || saved}
-            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white transition-all ${
-              saved ? 'bg-green-600' : accentBtn[animalType]
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white shadow-card transition-all ${
+              saved ? 'bg-green-600' : 'bg-pilote hover:bg-pilote-hover'
             }`}>
             {saving ? <><Loader2 className="w-4 h-4 animate-spin" />Enregistrement...</>
               : saved ? <><CheckCircle className="w-4 h-4" />Sauvegardé !</>
@@ -602,18 +586,11 @@ export default function ValorisationPage() {
         {ANIMAL_TYPES.map(at => {
           const a = ANIMALS[at]
           const isActive = animalType === at
-          const activeClass: Record<AnimalType, string> = {
-            boeuf:    'bg-red-600    text-white shadow-md',
-            veau:     'bg-pink-600   text-white shadow-md',
-            agneau:   'bg-green-600  text-white shadow-md',
-            porc:     'bg-orange-600 text-white shadow-md',
-            volaille: 'bg-yellow-500 text-white shadow-md',
-          }
           const excludedCount = (excludedByAnimal[at] ?? []).length
           return (
             <button key={at} onClick={() => setAnimalType(at)}
               className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold border-2 transition-all ${
-                isActive ? `${activeClass[at]} border-transparent` : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'
+                isActive ? 'bg-pilote text-white shadow-card border-transparent' : 'bg-white text-gray-600 border-gray-200 hover:border-pilote-200'
               }`}>
               <span className="text-base">{a.emoji}</span>
               {a.label}
@@ -641,7 +618,7 @@ export default function ValorisationPage() {
           }`}>
           <BarChart2 className="w-4 h-4" />Suivi semaines
           {weekStats.length > 0 && (
-            <span className="ml-1 bg-gray-700 text-white text-xs font-bold px-1.5 py-0.5 rounded-full">{weekStats.length}</span>
+            <span className="ml-1 bg-pilote text-white text-xs font-bold px-1.5 py-0.5 rounded-full">{weekStats.length}</span>
           )}
         </button>
       </div>
@@ -650,12 +627,12 @@ export default function ValorisationPage() {
       {activeTab === 'suivi' && (
         <div>
           {weekStats.length === 0 ? (
-            <div className="bg-white border border-gray-200 rounded-2xl p-16 flex flex-col items-center justify-center text-center">
+            <div className="bg-white border border-gray-100 rounded-2xl p-16 shadow-card flex flex-col items-center justify-center text-center">
               <BarChart2 className="w-12 h-12 text-gray-200 mb-4" />
               <p className="text-gray-600 font-medium">Aucune donnée pour l&apos;instant</p>
               <p className="text-sm text-gray-400 mt-1">Sauvegardez vos premières valorisations pour voir le suivi</p>
               <button onClick={() => setActiveTab('calc')}
-                className="mt-4 px-4 py-2 bg-[#1E3A5F] text-white rounded-xl text-sm font-semibold hover:bg-[#2a4f7c] transition-colors">
+                className="mt-4 px-4 py-2 bg-pilote text-white rounded-xl text-sm font-semibold hover:bg-pilote-hover transition-colors">
                 Aller au calculateur
               </button>
             </div>
@@ -666,21 +643,21 @@ export default function ValorisationPage() {
                   { label: 'Animaux valorisés', value: String(totalAnimals), sub: 'au total' },
                   { label: 'CA total estimé', value: eur(totalCA), sub: 'toutes semaines' },
                 ].map(k => (
-                  <div key={k.label} className="bg-white border border-gray-200 rounded-2xl p-4">
-                    <p className="text-xs text-gray-400 mb-0.5">{k.label}</p>
+                  <div key={k.label} className="bg-white border border-gray-100 rounded-2xl p-4 shadow-card">
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-0.5">{k.label}</p>
                     <p className="text-2xl font-bold text-gray-900">{k.value}</p>
                     <p className="text-xs text-gray-400">{k.sub}</p>
                   </div>
                 ))}
-                <div className={`rounded-2xl p-4 ${
-                  avgMarginAll >= 35 ? 'bg-green-600' : avgMarginAll >= 25 ? 'bg-yellow-500' : 'bg-red-600'
+                <div className={`rounded-2xl p-4 shadow-card ${
+                  avgMarginAll >= 35 ? 'bg-green-600' : avgMarginAll >= 25 ? 'bg-amber-500' : 'bg-red-600'
                 } text-white`}>
-                  <p className="text-xs opacity-80 mb-0.5">Marge brute moy.</p>
+                  <p className="text-[11px] font-semibold uppercase tracking-wider opacity-80 mb-0.5">Marge brute moy.</p>
                   <p className="text-2xl font-bold">{avgMarginAll.toFixed(1)}%</p>
                   <p className="text-xs opacity-70">{avgMarginAll >= 35 ? 'Bonne performance' : avgMarginAll >= 25 ? 'À surveiller' : 'Sous les seuils'}</p>
                 </div>
               </div>
-              <div className="bg-white border border-gray-200 rounded-2xl overflow-hidden">
+              <div className="bg-white border border-gray-100 rounded-2xl overflow-hidden shadow-card">
                 <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
                   <h2 className="text-sm font-semibold text-gray-700 flex items-center gap-2"><BarChart2 className="w-4 h-4 text-gray-400" />Détail par semaine</h2>
                   <span className="text-xs text-gray-400">Du plus récent au plus ancien</span>
@@ -690,7 +667,7 @@ export default function ValorisationPage() {
                     <thead>
                       <tr className="bg-gray-50 border-b border-gray-100">
                         {['Semaine','Animaux','Coût total','CA estimé','Marge','vs sem. préc.','Animaux / Races'].map(h => (
-                          <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-gray-600">{h}</th>
+                          <th key={h} className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-gray-500">{h}</th>
                         ))}
                       </tr>
                     </thead>
@@ -700,10 +677,10 @@ export default function ValorisationPage() {
                         const caEvol = prev && prev.totalRevenue > 0 ? ((w.totalRevenue - prev.totalRevenue) / prev.totalRevenue) * 100 : null
                         const marginEvol = prev ? w.marginRate - prev.marginRate : null
                         return (
-                          <tr key={w.key} className={`border-t border-gray-50 hover:bg-gray-50 transition-colors ${i === 0 ? 'bg-blue-50/30' : ''}`}>
+                          <tr key={w.key} className={`border-t border-gray-50 hover:bg-gray-50 transition-colors ${i === 0 ? 'bg-pilote-50/40' : ''}`}>
                             <td className="px-4 py-3">
                               <div className="flex items-center gap-2">
-                                {i === 0 && <span className="text-[10px] font-bold bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full">Récent</span>}
+                                {i === 0 && <span className="text-[10px] font-bold bg-pilote-100 text-pilote-800 px-1.5 py-0.5 rounded-full">Récent</span>}
                                 <span className="font-semibold text-gray-800">{w.label}</span>
                               </div>
                             </td>
@@ -716,14 +693,14 @@ export default function ValorisationPage() {
                               <div className="flex flex-col items-end">
                                 <span>{eur(w.totalRevenue)}</span>
                                 <div className="mt-1 h-1 bg-gray-100 rounded-full w-20 overflow-hidden">
-                                  <div className="h-1 bg-[#1E3A5F] rounded-full" style={{ width: `${(w.totalRevenue / maxCA) * 100}%` }} />
+                                  <div className="h-1 bg-pilote rounded-full" style={{ width: `${(w.totalRevenue / maxCA) * 100}%` }} />
                                 </div>
                               </div>
                             </td>
                             <td className="px-4 py-3">
                               <div className="flex flex-col items-end gap-0.5">
                                 <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
-                                  w.marginRate >= 35 ? 'bg-green-100 text-green-700' : w.marginRate >= 25 ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'
+                                  w.marginRate >= 35 ? 'bg-green-100 text-green-700' : w.marginRate >= 25 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'
                                 }`}>{w.marginRate.toFixed(1)}%</span>
                                 {marginEvol !== null && Math.abs(marginEvol) >= 0.5 && (
                                   <span className={`text-[10px] font-medium ${marginEvol > 0 ? 'text-green-600' : 'text-red-500'}`}>
@@ -771,7 +748,7 @@ export default function ValorisationPage() {
         <>
           {/* Historique */}
           {history.length > 0 && (
-            <div className="mb-6 bg-white border border-gray-200 rounded-2xl p-5">
+            <div className="mb-6 bg-white border border-gray-100 rounded-2xl p-5 shadow-card">
               <h2 className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
                 <Clock className="w-4 h-4 text-gray-400" />Historique des valorisations
               </h2>
@@ -784,14 +761,14 @@ export default function ValorisationPage() {
                       <div className="flex items-center justify-between mb-1">
                         <span className="text-xs font-bold text-gray-800">{emoji} {v.breed_name}</span>
                         <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
-                          v.margin_rate >= 35 ? 'bg-green-100 text-green-700' : v.margin_rate >= 25 ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'
+                          v.margin_rate >= 35 ? 'bg-green-100 text-green-700' : v.margin_rate >= 25 ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'
                         }`}>{v.margin_rate.toFixed(1)}%</span>
                       </div>
                       <p className="text-xs text-gray-500">
-                        {(v.quantity ?? 1) > 1 ? <span className="font-semibold text-blue-600">{v.quantity} animaux · </span> : ''}
+                        {(v.quantity ?? 1) > 1 ? <span className="font-semibold text-pilote">{v.quantity} animaux · </span> : ''}
                         {v.carcass_weight || v.live_weight} kg carc. · {new Date(v.purchase_date).toLocaleDateString('fr-FR')}
                       </p>
-                      <p className="text-sm font-bold text-[#1E3A5F] mt-1">{eur(v.total_revenue)}</p>
+                      <p className="text-sm font-bold text-pilote mt-1">{eur(v.total_revenue)}</p>
                       <p className="text-[10px] text-gray-400">CA estim. total · coeff. x{v.coefficient?.toFixed(3)}</p>
                     </button>
                   )
@@ -806,15 +783,15 @@ export default function ValorisationPage() {
             <div className="xl:col-span-1 space-y-5">
 
               {/* 1 — Animal */}
-              <div className="bg-white border border-gray-200 rounded-2xl p-5">
+              <div className="bg-white border border-gray-100 rounded-2xl p-5 shadow-card">
                 <h2 className="text-sm font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                  <span className="w-5 h-5 bg-gray-900 text-white text-xs rounded-full flex items-center justify-center font-bold">1</span>
+                  <span className="w-5 h-5 bg-pilote text-white text-xs rounded-full flex items-center justify-center font-bold">1</span>
                   {config.label} {config.emoji}
                 </h2>
                 <div className="mb-4">
                   <label className="block text-xs font-medium text-gray-700 mb-1.5">{config.breedLabel}</label>
                   <select value={breedId} onChange={e => setBreedId(e.target.value)}
-                    className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 ${accentRing[animalType]}`}>
+                    className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200`}>
                     {breeds.map(b => <option key={b.id} value={b.id}>{b.name} — rendement {(b.carcassYield * 100).toFixed(1)}%</option>)}
                   </select>
                   <button onClick={() => setShowBreedInfo(v => !v)} className="mt-1.5 text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1">
@@ -830,62 +807,62 @@ export default function ValorisationPage() {
                 </div>
 
                 {/* Quantité */}
-                <div className="mb-4 p-3 bg-blue-50 border border-blue-100 rounded-xl">
-                  <label className="block text-xs font-semibold text-blue-800 mb-1.5 flex items-center gap-1.5">
+                <div className="mb-4 p-3 bg-pilote-50 border border-pilote-100 rounded-xl">
+                  <label className="block text-xs font-semibold text-pilote-800 mb-1.5 flex items-center gap-1.5">
                     <Users className="w-3.5 h-3.5" />Nombre d&apos;animaux dans le lot
                   </label>
                   <div className="flex items-center gap-3">
                     <button onClick={() => setQuantity(q => String(Math.max(1, parseInt(q) - 1)))}
-                      className="w-8 h-8 rounded-lg bg-white border border-blue-200 text-blue-700 font-bold text-lg flex items-center justify-center hover:bg-blue-100">−</button>
-                    <span className="text-2xl font-extrabold text-blue-800 w-8 text-center tabular-nums">{qty}</span>
+                      className="w-8 h-8 rounded-lg bg-white border border-pilote-200 text-pilote font-bold text-lg flex items-center justify-center hover:bg-pilote-100 transition-colors">−</button>
+                    <span className="text-2xl font-extrabold text-pilote-800 w-8 text-center tabular-nums">{qty}</span>
                     <button onClick={() => setQuantity(q => String(parseInt(q) + 1))}
-                      className="w-8 h-8 rounded-lg bg-white border border-blue-200 text-blue-700 font-bold text-lg flex items-center justify-center hover:bg-blue-100">+</button>
-                    {qty > 1 && <span className="text-xs text-blue-600 font-medium">Résultats par animal + total lot</span>}
+                      className="w-8 h-8 rounded-lg bg-white border border-pilote-200 text-pilote font-bold text-lg flex items-center justify-center hover:bg-pilote-100 transition-colors">+</button>
+                    {qty > 1 && <span className="text-xs text-pilote font-medium">Résultats par animal + total lot</span>}
                   </div>
                 </div>
 
                 <div className="mb-4">
                   <label className="block text-xs font-medium text-gray-700 mb-1.5">Poids carcasse par animal (kg)</label>
                   <input type="number" value={carcassWeight} onChange={e => setCarcassWeight(e.target.value)}
-                    className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 ${accentRing[animalType]}`} />
+                    className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200`} />
                   {carcW > 0 && <p className="text-xs text-gray-500 mt-1">Poids vif estimé : <strong>{liveEstimate.toFixed(0)} kg</strong> (rendement {(breed.carcassYield * 100).toFixed(1)}%)</p>}
                 </div>
                 <div className="mb-4">
                   <label className="block text-xs font-medium text-gray-700 mb-1.5">Prix achat (€/kg carcasse)</label>
                   <input type="number" step="0.01" value={purchasePerKg} onChange={e => setPurchasePerKg(e.target.value)}
-                    className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 ${accentRing[animalType]}`} />
+                    className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200`} />
                   {carcW > 0 && ppkg > 0 && (
                     <p className="text-xs text-gray-500 mt-1">
-                      {qty > 1 ? <><strong>{eur(purchaseTotal1)}/animal</strong> · lot : <strong className="text-blue-700">{eur(purchaseTotalLot)}</strong></> : <strong>{eur(purchaseTotal1)}</strong>}
+                      {qty > 1 ? <><strong>{eur(purchaseTotal1)}/animal</strong> · lot : <strong className="text-pilote-800">{eur(purchaseTotalLot)}</strong></> : <strong>{eur(purchaseTotal1)}</strong>}
                     </p>
                   )}
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1.5">Date d&apos;achat</label>
                   <input type="date" value={purchaseDate} onChange={e => setPurchaseDate(e.target.value)}
-                    className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 ${accentRing[animalType]}`} />
+                    className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200`} />
                 </div>
               </div>
 
               {/* 2 — Charges */}
-              <div className="bg-white border border-gray-200 rounded-2xl p-5">
+              <div className="bg-white border border-gray-100 rounded-2xl p-5 shadow-card">
                 <h2 className="text-sm font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                  <span className="w-5 h-5 bg-gray-900 text-white text-xs rounded-full flex items-center justify-center font-bold">2</span>
+                  <span className="w-5 h-5 bg-pilote text-white text-xs rounded-full flex items-center justify-center font-bold">2</span>
                   Charges <span className="text-xs font-normal text-gray-400">(par animal)</span>
                 </h2>
                 <div className="mb-4">
                   <label className="block text-xs font-medium text-gray-700 mb-1.5">Charges fixes pro-ratées (€)</label>
                   <input type="number" value={overheadCost} onChange={e => setOverheadCost(e.target.value)}
-                    className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 ${accentRing[animalType]}`} />
+                    className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200`} />
                 </div>
 
                 {/* Main d'œuvre boucherie réelle du planning */}
                 {weekLabor && weekLabor.hours > 0 ? (
-                  <div className="mb-3 p-2.5 bg-indigo-50 border border-indigo-100 rounded-lg">
-                    <p className="text-[11px] font-semibold text-indigo-800">
+                  <div className="mb-3 p-2.5 bg-pilote-50 border border-pilote-100 rounded-lg">
+                    <p className="text-[11px] font-semibold text-pilote-800">
                       Main d'œuvre boucherie S{weekLabor.week} : {weekLabor.hours.toFixed(1)}h · {eur(weekLabor.cost)} chargé
                     </p>
-                    <p className="text-[10px] text-indigo-500 mt-0.5">
+                    <p className="text-[10px] text-pilote-800/70 mt-0.5">
                       Taux réel : {eur(weekLabor.rate)}/h — saisissez le temps de découpe ci-dessous pour l'imputer automatiquement
                     </p>
                   </div>
@@ -898,43 +875,43 @@ export default function ValorisationPage() {
                   <label className="block text-xs font-medium text-gray-700 mb-1.5">Temps de découpe par animal (h)</label>
                   <input type="number" step="0.25" min="0" value={decoupeHours} onChange={e => setDecoupe(e.target.value)}
                     placeholder="ex : 3.5"
-                    className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 ${accentRing[animalType]}`} />
+                    className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200`} />
                   {decoupeHours && weekLabor && weekLabor.rate > 0 && (
-                    <p className="text-xs text-indigo-600 mt-1 font-medium">= {eur((parseFloat(decoupeHours) || 0) * weekLabor.rate)} imputés au taux réel du planning</p>
+                    <p className="text-xs text-pilote mt-1 font-medium">= {eur((parseFloat(decoupeHours) || 0) * weekLabor.rate)} imputés au taux réel du planning</p>
                   )}
                 </div>
                 <div className="mb-4">
                   <label className="block text-xs font-medium text-gray-700 mb-1.5">Main d'œuvre découpe (€) <span className="text-gray-400 font-normal">— auto si temps saisi, modifiable</span></label>
                   <input type="number" value={laborCost} onChange={e => setLaborCost(e.target.value)}
-                    className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 ${accentRing[animalType]}`} />
+                    className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200`} />
                 </div>
                 {totalCost1 > 0 && (
                   <div className="p-3 bg-gray-50 rounded-lg">
                     <p className="text-xs text-gray-500">Coût de revient {qty > 1 ? 'par animal' : 'total'}</p>
                     <p className="text-xl font-bold text-gray-900">{eur(totalCost1)}</p>
-                    {qty > 1 && <p className="text-xs font-bold text-blue-700 mt-0.5">Lot ({qty} animaux) : {eur(totalCostLot)}</p>}
+                    {qty > 1 && <p className="text-xs font-bold text-pilote-800 mt-0.5">Lot ({qty} animaux) : {eur(totalCostLot)}</p>}
                   </div>
                 )}
               </div>
 
               {/* 3 — Marge */}
-              <div className="bg-white border border-gray-200 rounded-2xl p-5">
+              <div className="bg-white border border-gray-100 rounded-2xl p-5 shadow-card">
                 <h2 className="text-sm font-semibold text-gray-900 mb-4 flex items-center gap-2">
-                  <span className="w-5 h-5 bg-gray-900 text-white text-xs rounded-full flex items-center justify-center font-bold">3</span>
+                  <span className="w-5 h-5 bg-pilote text-white text-xs rounded-full flex items-center justify-center font-bold">3</span>
                   Marge souhaitée
                 </h2>
                 <div className="flex items-center gap-4 mb-2">
                   <input type="range" min={10} max={70} step={1} value={targetMargin} onChange={e => setTargetMargin(Number(e.target.value))}
-                    className="flex-1 accent-gray-700" />
+                    className="flex-1 accent-pilote" />
                   <span className="text-2xl font-bold text-gray-800 w-14 text-right tabular-nums">{targetMargin}%</span>
                 </div>
                 <div className="flex justify-between text-xs text-gray-400"><span>10%</span><span>40% (typique)</span><span>70%</span></div>
               </div>
 
               {/* 4 — Pièces */}
-              <div className="bg-white border border-gray-200 rounded-2xl p-5">
+              <div className="bg-white border border-gray-100 rounded-2xl p-5 shadow-card">
                 <h2 className="text-sm font-semibold text-gray-900 mb-1 flex items-center gap-2">
-                  <span className="w-5 h-5 bg-gray-900 text-white text-xs rounded-full flex items-center justify-center font-bold">4</span>
+                  <span className="w-5 h-5 bg-pilote text-white text-xs rounded-full flex items-center justify-center font-bold">4</span>
                   Pièces à valoriser
                 </h2>
                 <p className="text-[11px] text-gray-400 mb-3">Choix mémorisés pour {config.label.toLowerCase()} · retirez une pièce précise dans le tableau</p>
@@ -949,7 +926,7 @@ export default function ValorisationPage() {
                 {excludedCuts.size > 0 && (
                   <div className="mt-3 pt-3 border-t border-gray-100 flex items-center justify-between">
                     <span className="text-xs text-gray-500">{excludedCuts.size} pièce{excludedCuts.size > 1 ? 's' : ''} retirée{excludedCuts.size > 1 ? 's' : ''} du calcul</span>
-                    <button onClick={restoreAllCuts} className="flex items-center gap-1 text-xs text-[#1E3A5F] font-medium hover:underline">
+                    <button onClick={restoreAllCuts} className="flex items-center gap-1 text-xs text-pilote font-medium hover:underline">
                       <RotateCcw className="w-3 h-3" />Tout réactiver
                     </button>
                   </div>
@@ -957,11 +934,11 @@ export default function ValorisationPage() {
               </div>
 
               {totalRevenue1 > 0 && (
-                <div className="bg-white border border-gray-200 rounded-2xl p-5">
+                <div className="bg-white border border-gray-100 rounded-2xl p-5 shadow-card">
                   <label className="block text-xs font-semibold text-gray-700 mb-1.5">Notes</label>
                   <textarea value={notes} onChange={e => setNotes(e.target.value)}
                     placeholder="Qualité, conditions d'achat, fournisseur..."
-                    rows={2} className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 ${accentRing[animalType]} resize-none`} />
+                    rows={2} className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200 resize-none`} />
                 </div>
               )}
             </div>
@@ -970,33 +947,33 @@ export default function ValorisationPage() {
             <div className="xl:col-span-2 space-y-5">
 
               {qty > 1 && totalRevenue1 > 0 && (
-                <div className="bg-blue-700 rounded-2xl p-4 text-white">
-                  <p className="text-xs font-semibold text-blue-200 mb-2 uppercase tracking-wide">Récapitulatif lot — {qty} {config.label.toLowerCase()}x</p>
+                <div className="bg-pilote rounded-2xl p-4 text-white shadow-card">
+                  <p className="text-[11px] font-semibold text-pilote-200 mb-2 uppercase tracking-wider">Récapitulatif lot — {qty} {config.label.toLowerCase()}x</p>
                   <div className="grid grid-cols-3 gap-4">
-                    <div><p className="text-xs text-blue-300">Coût total lot</p><p className="text-xl font-extrabold">{eur(totalCostLot)}</p></div>
-                    <div><p className="text-xs text-blue-300">CA estimé total</p><p className="text-xl font-extrabold text-yellow-300">{eur(totalRevenueLot)}</p></div>
-                    <div><p className="text-xs text-blue-300">Marge brute lot</p><p className="text-xl font-extrabold text-green-300">{eur(totalRevenueLot - totalCostLot)}</p><p className="text-xs text-blue-300">{actualMargin1.toFixed(1)}%</p></div>
+                    <div><p className="text-xs text-pilote-200">Coût total lot</p><p className="text-xl font-extrabold">{eur(totalCostLot)}</p></div>
+                    <div><p className="text-xs text-pilote-200">CA estimé total</p><p className="text-xl font-extrabold text-pilote-orange">{eur(totalRevenueLot)}</p></div>
+                    <div><p className="text-xs text-pilote-200">Marge brute lot</p><p className="text-xl font-extrabold text-green-300">{eur(totalRevenueLot - totalCostLot)}</p><p className="text-xs text-pilote-200">{actualMargin1.toFixed(1)}%</p></div>
                   </div>
                 </div>
               )}
 
               {totalRevenue1 > 0 && (
                 <div className={`rounded-2xl p-4 border ${
-                  coeffStatus === 'under' ? 'bg-green-50 border-green-200' : coeffStatus === 'over' ? 'bg-orange-50 border-orange-200' : 'bg-blue-50 border-blue-200'
+                  coeffStatus === 'under' ? 'bg-green-50 border-green-200' : coeffStatus === 'over' ? 'bg-orange-50 border-orange-200' : 'bg-pilote-50 border-pilote-200'
                 }`}>
                   <div className="flex items-start gap-3">
                     {coeffStatus === 'under' && <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />}
                     {coeffStatus === 'over'  && <AlertTriangle className="w-5 h-5 text-orange-600 flex-shrink-0 mt-0.5" />}
-                    {coeffStatus === 'ok'    && <TrendingUp className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />}
+                    {coeffStatus === 'ok'    && <TrendingUp className="w-5 h-5 text-pilote flex-shrink-0 mt-0.5" />}
                     <div className="flex-1">
                       <div className="flex items-baseline gap-2 mb-1">
                         <span className={`text-2xl font-bold ${
-                          coeffStatus === 'under' ? 'text-green-700' : coeffStatus === 'over' ? 'text-orange-700' : 'text-blue-700'
+                          coeffStatus === 'under' ? 'text-green-700' : coeffStatus === 'over' ? 'text-orange-700' : 'text-pilote-800'
                         }`}>x{coefficient.toFixed(3)}</span>
                         <span className="text-sm font-semibold text-gray-700">Coefficient de valorisation</span>
                       </div>
                       <p className={`text-xs leading-relaxed ${
-                        coeffStatus === 'under' ? 'text-green-700' : coeffStatus === 'over' ? 'text-orange-700' : 'text-blue-700'
+                        coeffStatus === 'under' ? 'text-green-700' : coeffStatus === 'over' ? 'text-orange-700' : 'text-pilote-800'
                       }`}>
                         {coeffStatus === 'under' && <>Coûts bas : <strong>{((1 - coefficient) * 100).toFixed(1)}% sous le marché</strong> pour {targetMargin}% de marge.</>}
                         {coeffStatus === 'over'  && <>Pour {targetMargin}% de marge : <strong>{((coefficient - 1) * 100).toFixed(1)}% au-dessus du marché</strong>. Positionnement premium.</> }
@@ -1015,7 +992,7 @@ export default function ValorisationPage() {
 
               {totalRevenue1 > 0 && (
                 <div>
-                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">{qty > 1 ? 'Par animal' : 'Résultat'}</p>
+                  <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-2">{qty > 1 ? 'Par animal' : 'Résultat'}</p>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                     {[
                       { label: 'Poids vendable',  value: kgStr(totalSellable1), sub: `sur ${carcassW1.toFixed(1)} kg carcasse` },
@@ -1023,7 +1000,7 @@ export default function ValorisationPage() {
                       { label: 'CA conseillé',    value: eur(totalRevenue1),    sub: `coeff. x${coefficient.toFixed(3)}` },
                       { label: 'Marge brute',     value: eur(totalRevenue1 - totalCost1), sub: `${actualMargin1.toFixed(1)}% réel`, highlight: true },
                     ].map(kpi => (
-                      <div key={kpi.label} className={`rounded-2xl p-4 border ${'highlight' in kpi && kpi.highlight ? `${accentBtn[animalType].split(' ')[0]} border-transparent` : 'bg-white border-gray-200'}`}>
+                      <div key={kpi.label} className={`rounded-2xl p-4 border shadow-card ${'highlight' in kpi && kpi.highlight ? 'bg-pilote border-transparent' : 'bg-white border-gray-100'}`}>
                         <p className={`text-xs mb-1 ${'highlight' in kpi && kpi.highlight ? 'text-white/70' : 'text-gray-500'}`}>{kpi.label}</p>
                         <p className={`text-lg font-bold leading-tight ${'highlight' in kpi && kpi.highlight ? 'text-white' : 'text-gray-900'}`}>{kpi.value}</p>
                         <p className={`text-xs mt-0.5 ${'highlight' in kpi && kpi.highlight ? 'text-white/60' : 'text-gray-400'}`}>{kpi.sub}</p>
@@ -1034,7 +1011,7 @@ export default function ValorisationPage() {
               )}
 
               {results.length > 0 ? (
-                <div className="bg-white border border-gray-200 rounded-2xl overflow-hidden">
+                <div className="bg-white border border-gray-100 rounded-2xl overflow-hidden shadow-card">
                   <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
                     <h2 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
                       <Package className="w-4 h-4 text-gray-400" />Détail par pièce {qty > 1 && <span className="text-xs font-normal text-gray-400">(par animal)</span>}
@@ -1046,7 +1023,7 @@ export default function ValorisationPage() {
                       <thead>
                         <tr className="bg-gray-50 border-b border-gray-100">
                           {['Pièce','Poids','Réf. marché/kg','Prix conseillé/kg','CA pièce',''].map((h, hi) => (
-                            <th key={hi} className="px-4 py-3 text-left text-xs font-semibold text-gray-600">{h}</th>
+                            <th key={hi} className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-gray-500">{h}</th>
                           ))}
                         </tr>
                       </thead>
@@ -1088,7 +1065,7 @@ export default function ValorisationPage() {
                                       {isExcluded ? (
                                         <button onClick={() => toggleCut(r.cut.id)}
                                           title="Réintégrer cette pièce"
-                                          className="p-1.5 rounded-lg text-[#1E3A5F] hover:bg-blue-50 transition-colors">
+                                          className="p-1.5 rounded-lg text-pilote hover:bg-pilote-50 transition-colors">
                                           <RotateCcw className="w-3.5 h-3.5" />
                                         </button>
                                       ) : (
@@ -1107,20 +1084,20 @@ export default function ValorisationPage() {
                         })}
                       </tbody>
                       <tfoot>
-                        <tr className="border-t-2 border-gray-200 bg-gray-900 text-white">
+                        <tr className="border-t-2 border-pilote-800 bg-pilote text-white">
                           <td className="px-4 py-3 font-bold">TOTAL {qty > 1 ? '/ animal' : ''}</td>
                           <td className="px-4 py-3 text-right font-bold">{totalSellable1 > 0 ? kgStr(totalSellable1) : '—'}</td>
-                          <td className="px-4 py-3 text-right text-gray-400">{totalMarketRevenue1 > 0 ? eur(totalMarketRevenue1) : '—'}</td>
+                          <td className="px-4 py-3 text-right text-pilote-200">{totalMarketRevenue1 > 0 ? eur(totalMarketRevenue1) : '—'}</td>
                           <td className="px-4 py-3" />
-                          <td className="px-4 py-3 text-right font-bold text-orange-300">{totalRevenue1 > 0 ? eur(totalRevenue1) : '—'}</td>
+                          <td className="px-4 py-3 text-right font-bold text-pilote-orange">{totalRevenue1 > 0 ? eur(totalRevenue1) : '—'}</td>
                           <td className="px-4 py-3" />
                         </tr>
                         {qty > 1 && totalRevenue1 > 0 && (
-                          <tr className="bg-blue-700 text-white">
+                          <tr className="bg-pilote-800 text-white">
                             <td className="px-4 py-2.5 font-bold text-sm">TOTAL LOT ({qty} animaux)</td>
                             <td className="px-4 py-2.5 text-right font-bold">{kgStr(totalSellable1 * qty)}</td>
                             <td className="px-4 py-2.5" /><td className="px-4 py-2.5" />
-                            <td className="px-4 py-2.5 text-right font-bold text-yellow-300">{eur(totalRevenueLot)}</td>
+                            <td className="px-4 py-2.5 text-right font-bold text-pilote-orange">{eur(totalRevenueLot)}</td>
                             <td className="px-4 py-2.5" />
                           </tr>
                         )}
@@ -1137,7 +1114,7 @@ export default function ValorisationPage() {
                   </div>
                 </div>
               ) : (
-                <div className="bg-white border border-gray-200 rounded-2xl p-16 flex flex-col items-center justify-center text-center">
+                <div className="bg-white border border-gray-100 rounded-2xl p-16 shadow-card flex flex-col items-center justify-center text-center">
                   <div className="w-14 h-14 bg-gray-100 rounded-full flex items-center justify-center mb-4">
                     <span className="text-3xl">{config.emoji}</span>
                   </div>
@@ -1158,7 +1135,7 @@ export default function ValorisationPage() {
               <div>
                 <h2 className="font-bold text-gray-900">
                   {ANIMALS[selected.animal_type as AnimalType]?.emoji} {selected.breed_name}
-                  {(selected.quantity ?? 1) > 1 && <span className="ml-2 text-sm font-normal text-blue-600">× {selected.quantity}</span>}
+                  {(selected.quantity ?? 1) > 1 && <span className="ml-2 text-sm font-normal text-pilote">× {selected.quantity}</span>}
                 </h2>
                 <p className="text-xs text-gray-400">{new Date(selected.purchase_date).toLocaleDateString('fr-FR')} · {selected.carcass_weight || selected.live_weight} kg carcasse/animal</p>
               </div>
@@ -1178,16 +1155,16 @@ export default function ValorisationPage() {
                 { label: 'Prix achat/kg',   value: `${selected.purchase_per_kg} €/kg carcasse`,      highlight: false },
                 { label: 'Main d\'œuvre',   value: eur(selected.labor_cost),                          highlight: false },
               ].map(kpi => (
-                <div key={kpi.label} className={`rounded-xl p-3 ${kpi.highlight ? 'bg-[#1E3A5F]' : 'bg-gray-50'}`}>
-                  <p className={`text-xs ${kpi.highlight ? 'text-blue-200' : 'text-gray-400'}`}>{kpi.label}</p>
+                <div key={kpi.label} className={`rounded-xl p-3 ${kpi.highlight ? 'bg-pilote' : 'bg-gray-50'}`}>
+                  <p className={`text-xs ${kpi.highlight ? 'text-pilote-200' : 'text-gray-400'}`}>{kpi.label}</p>
                   <p className={`text-base font-bold ${kpi.highlight ? 'text-white' : 'text-gray-900'}`}>{kpi.value}</p>
                 </div>
               ))}
             </div>
             {selected.notes && (
-              <div className="mt-3 p-3 bg-amber-50 border border-amber-100 rounded-xl">
-                <p className="text-xs text-amber-700 font-medium">Notes</p>
-                <p className="text-sm text-amber-900 mt-0.5">{selected.notes}</p>
+              <div className="mt-3 p-3 bg-pilote-50 border border-pilote-100 rounded-xl">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-pilote-800">Notes</p>
+                <p className="text-sm text-gray-700 mt-0.5">{selected.notes}</p>
               </div>
             )}
           </div>
