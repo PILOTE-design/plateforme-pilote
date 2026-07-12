@@ -17,7 +17,7 @@ import { Resend } from 'resend'
 
 export const maxDuration = 60
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// ─── Types ──────────────────────────────────────────────────────────────────
 interface Produit { plu: string; designation: string; ventes: number; montant: number }
 interface Famille { id: string; nom: string; total_montant: number; produits: Produit[] }
 interface FinancierData { ca_net: number; nb_tickets: number; moyenne_ticket: number }
@@ -45,7 +45,7 @@ interface ComputedReport {
   execSummary: string
 }
 
-// ─── Formatters ───────────────────────────────────────────────────────────────
+// ─── Formatters ────────────────────────────────────────────────────────────
 // NE PAS utiliser toLocaleString('fr-FR') — produit U+202F que Helvetica rend '/'
 const eur = (n: number) => {
   const abs = Math.abs(n)
@@ -69,13 +69,13 @@ const sanitize = (s: string) => (s || '')
   .replace(/[“”«»]/g, '"')
   .replace(/[–—]/g, '-')
   .replace(/…/g, '...')
-  .replace(/[   ]/g, ' ')
+  .replace(/[   ]/g, ' ')
   .replace(/[▲▼→←➡➔]/g, '')
   .replace(/[^\x00-\xFF]/g, '')
   .trim()
   .slice(0, 320)
 
-// ─── Palette ──────────────────────────────────────────────────────────────────
+// ─── Palette ──────────────────────────────────────────────────────────────
 const C = {
   navy:        '#1E3A5F',
   blue:        '#2D5986',
@@ -98,7 +98,7 @@ const C = {
   white:       '#FFFFFF',
 }
 
-// ─── Styles ─────────────────────────────────────────────────────────────────────
+// ─── Styles ───────────────────────────────────────────────────────────────
 const S = StyleSheet.create({
   coverBlueBg:    { backgroundColor: C.navy, padding: 56, paddingBottom: 44, flexGrow: 1 },
   coverTagRow:    { flexDirection: 'row', alignItems: 'center', marginBottom: 44 },
@@ -185,7 +185,7 @@ const S = StyleSheet.create({
   actionText:     { fontSize: 10, color: '#7A4100', lineHeight: 1.55, fontFamily: 'Helvetica-Bold' },
 })
 
-// ─── PDF Sub-components ───────────────────────────────────────────────────────────
+// ─── PDF Sub-components ───────────────────────────────────────────────────
 
 const SecHeader = ({ num, title }: { num: string; title: string }) => (
   <View style={S.secHeader}>
@@ -215,7 +215,7 @@ const ShareBar = ({ pct }: { pct: number }) => (
   </View>
 )
 
-// ─── PDF Document ───────────────────────────────────────────────────────────────────
+// ─── PDF Document ───────────────────────────────────────────────────────────
 
 const PiloteReport = ({ r }: { r: ComputedReport }) => {
   const { data, clientName, insights, pieBuffer, tops, flops, famRows, caVar, status, execSummary } = r
@@ -581,7 +581,7 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
   )
 }
 
-// ─── Data extraction ─────────────────────────────────────────────────────────────────
+// ─── Data extraction ─────────────────────────────────────────────────────────
 
 async function parsePDF(file: File): Promise<string> {
   const buffer = Buffer.from(await file.arrayBuffer())
@@ -613,6 +613,52 @@ async function extractFinancials(fin_n: string, fin_n1: string): Promise<{
     messages: [{ role: 'user', content: 'Extrais les donnees financieres CRISALID. Retourne UNIQUEMENT ce JSON:\n{"period_n":"15-21 juin 2026","period_n1":"16-22 juin 2025","week_number":25,"year":2026,"financier_n":{"ca_net":20742.43,"nb_tickets":496,"moyenne_ticket":41.82},"financier_n1":{"ca_net":19316.76,"nb_tickets":453,"moyenne_ticket":42.64}}\n\n=== FINANCIER N ===\n' + fin_n.slice(0, 3000) + '\n=== FINANCIER N-1 ===\n' + fin_n1.slice(0, 3000) }],
   })
   return JSON.parse(extractJSONObject(r.content[0].type === 'text' ? r.content[0].text : ''))
+}
+
+// ─── Semaine ISO deterministe ─────────────────────────────────────────────────
+// La semaine du rapport est TOUJOURS calculee en code a partir des dates de la
+// periode extraite (ex: "29 juin - 5 juillet 2026" => S27), jamais par l'IA.
+// C'est cette semaine qui alimente weekly_ca, le dashboard et la facturation.
+
+const MONTHS_FR: Record<string, number> = {
+  janvier: 0, fevrier: 1, mars: 2, avril: 3, mai: 4, juin: 5,
+  juillet: 6, aout: 7, septembre: 8, octobre: 9, novembre: 10, decembre: 11,
+}
+
+function isoWeekOf(d: Date): { week: number; year: number } {
+  const t = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()))
+  const dayNum = t.getUTCDay() || 7
+  t.setUTCDate(t.getUTCDate() + 4 - dayNum)
+  const yearStart = new Date(Date.UTC(t.getUTCFullYear(), 0, 1))
+  return { week: Math.ceil((((t.getTime() - yearStart.getTime()) / 86400000) + 1) / 7), year: t.getUTCFullYear() }
+}
+
+function weekFromPeriod(period: string): { week: number; year: number } | null {
+  try {
+    const p = (period || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+    const years = p.match(/20\d{2}/g) || []
+    if (years.length === 0) return null
+    let year = parseInt(years[0])
+    const dayMatch = p.match(/(\d{1,2})(?!\d)/)
+    if (!dayMatch) return null
+    const day = parseInt(dayMatch[1])
+    if (day < 1 || day > 31) return null
+    // Premier nom de mois present dans la chaine = mois du jour de debut
+    let monthIdx: number | null = null
+    let firstPos = Infinity
+    for (const [name, idx] of Object.entries(MONTHS_FR)) {
+      const pos = p.indexOf(name)
+      if (pos !== -1 && pos < firstPos) { firstPos = pos; monthIdx = idx }
+    }
+    if (monthIdx === null) return null
+    // Periode dec -> janv ou seule l'annee de fin est affichee
+    if (years.length === 1 && monthIdx === 11 && p.includes('janv')) year -= 1
+    const start = new Date(Date.UTC(year, monthIdx, day))
+    if (isNaN(start.getTime())) return null
+    return isoWeekOf(start)
+  } catch {
+    return null
+  }
 }
 
 function parseNum(s: string): number {
@@ -693,15 +739,19 @@ async function extractData(texts: { fin_n: string; fin_n1: string; ventes_n: str
     extractProductAmounts(texts.ventes_n1),
   ])
   const topFlop = computeTopFlop(prodN, prodN1)
+  // Semaine ISO recalculee en code depuis les dates de la periode — la valeur IA
+  // ne sert que de secours si la periode est illisible
+  const isoFixed = weekFromPeriod(financials.period_n)
   return {
     period_n: financials.period_n, period_n1: financials.period_n1,
-    week_number: financials.week_number, year: financials.year,
+    week_number: isoFixed?.week ?? financials.week_number,
+    year: isoFixed?.year ?? financials.year,
     financier_n: financials.financier_n, financier_n1: financials.financier_n1,
     ventes_n, ventes_n1, tops: topFlop.tops, flops: topFlop.flops,
   }
 }
 
-// ─── Calculs métier ────────────────────────────────────────────────────────────────
+// ─── Calculs métier ────────────────────────────────────────────────────────────
 
 /** Familles fusionnées N/N-1, triées par CA N desc, plafonnées à 12 lignes (le reste en AUTRES) */
 function buildFamRows(vn: { total: number; familles: Famille[] }, vn1: { total: number; familles: Famille[] }, max = 12): FamRow[] {
@@ -780,7 +830,7 @@ async function generateInsights(data: ReportData, famRows: FamRow[]): Promise<In
   }
 }
 
-// ─── QuickChart ─────────────────────────────────────────────────────────────────────
+// ─── QuickChart ───────────────────────────────────────────────────────────────────
 // REGLES ABSOLUES QuickChart :
 // 1. Aucun caractere non-ASCII dans la config JSON
 // 2. ticks.callback interdit — crash Chart.js 2.9.4 dans le sandbox
@@ -936,6 +986,8 @@ export async function POST(req: NextRequest) {
 
     if (clientId) {
       // Stocker TOUTES les familles (slice 12000 garantit qu'elles sont toutes extraites)
+      // week_number/year sont desormais calcules en code depuis la periode => le CA
+      // s'ecrit toujours sur la bonne semaine (mise a jour automatique du CA hebdo)
       const familiesDetail = data.ventes_n.familles.map((f: Famille) => ({ nom: f.nom, montant: f.total_montant }))
       await serviceSupabase.from('weekly_ca').delete()
         .eq('client_id', clientId).eq('week_number', data.week_number).eq('year', data.year)
