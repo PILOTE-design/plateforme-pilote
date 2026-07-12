@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-import { BarChart3, FileText, Settings, LogOut, CalendarDays, Receipt, Scale, LineChart } from 'lucide-react'
+import { BarChart3, FileText, Settings, LogOut, CalendarDays, Receipt, Scale, LineChart, Percent } from 'lucide-react'
 
 const ADMIN_EMAIL = 'nouvion.theo51@gmail.com'
 
@@ -16,6 +16,7 @@ const NAV = [
   { href: '/dashboard',              icon: BarChart3,    label: 'Tableau de bord', short: 'Accueil' },
   { href: '/dashboard/reports',      icon: FileText,     label: 'Mes rapports',    short: 'Rapports' },
   { href: '/dashboard/tendances',    icon: LineChart,    label: 'Tendances',       short: 'Tendances' },
+  { href: '/dashboard/marges',       icon: Percent,      label: 'Marges',          short: 'Marges' },
   { href: '/dashboard/planning',     icon: CalendarDays, label: 'Planning',        short: 'Planning' },
   { href: '/dashboard/facturation',  icon: Receipt,      label: 'Facturation',     short: 'Factures' },
   { href: '/dashboard/valorisation', icon: Scale,        label: 'Valorisation',    short: 'Valo' },
@@ -90,7 +91,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
       </div>
 
       {/* Barre d'onglets — mobile uniquement */}
-      <nav className="md:hidden fixed bottom-0 inset-x-0 z-50 bg-white border-t border-gray-200 grid grid-cols-5 pb-[env(safe-area-inset-bottom)]">
+      <nav className="md:hidden fixed bottom-0 inset-x-0 z-50 bg-white border-t border-gray-200 grid grid-cols-6 pb-[env(safe-area-inset-bottom)]">
         {NAV.filter(i => !['/dashboard/reports', '/dashboard/settings'].includes(i.href)).map(item => (
           <Link key={item.href} href={item.href} className="flex flex-col items-center justify-center gap-0.5 py-2 text-gray-500 hover:text-[#1E3A5F] active:bg-gray-50">
             <item.icon className="w-5 h-5" />
