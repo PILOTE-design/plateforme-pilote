@@ -957,8 +957,8 @@ export default function PlanningPage() {
                       const maxDay   = emp.is_minor ? 8 : 10
                       const overDay  = type === 'travail' && hours > maxDay
 
-                      const cellBg   = fName ? 'bg-amber-50'    : type === 'travail' ? pal.bg   : TYPE_CONFIG[type].bg
-                      const cellTxt  = fName ? 'text-amber-800' : type === 'travail' ? pal.text : TYPE_CONFIG[type].text
+                      const cellBg   = fName ? 'bg-amber-50/60' : 'bg-white hover:bg-gray-50/80'
+                      const cellTxt  = fName ? 'text-amber-800' : type === 'travail' ? 'text-gray-500' : TYPE_CONFIG[type].text
                       const cellDot  = fName ? 'bg-amber-400'   : type === 'travail' ? pal.dot  : TYPE_CONFIG[type].dot
                       const typeLabel = fName ? 'Férié' : type === 'travail' ? 'Travail' : TYPE_CONFIG[type].label
 
@@ -966,7 +966,7 @@ export default function PlanningPage() {
                         <td key={jour} className="p-0 border-b border-r border-gray-200 align-stretch group/cell">
                           <div className="relative h-full" data-cell="true" onClick={e => e.stopPropagation()}>
                             <div
-                              className={`cursor-pointer transition-all ${cellBg} ${overDay ? 'ring-2 ring-inset ring-red-400' : ''} w-full h-full min-h-[145px] px-2 pt-2 pb-2 flex flex-col select-none hover:brightness-95`}
+                              className={`cursor-pointer transition-all ${cellBg} ${overDay ? 'ring-2 ring-inset ring-red-400' : ''} w-full h-full min-h-[145px] px-2 pt-2 pb-2 flex flex-col select-none`}
                               onClick={e => { e.stopPropagation(); setContractPopover(null); setDetailModal({ empId: emp.id, jour, idx }) }}
                             >
                               {/* ── Top: type + copy ── */}
@@ -1015,9 +1015,9 @@ export default function PlanningPage() {
 
                                   {/* Matin row — horaires + poste du créneau */}
                                   <div className={`flex items-center gap-1 rounded-md px-1.5 py-[3px] ${
-                                    sd.matin_debut || catM ? 'bg-amber-50 border border-amber-100' : 'bg-gray-50'
+                                    sd.matin_debut || catM ? 'bg-gray-50 border border-gray-200/70' : 'bg-gray-50/50'
                                   }`}>
-                                    <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${sd.matin_debut || catM ? 'bg-amber-400' : 'bg-gray-200'}`} />
+                                    <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${sd.matin_debut || catM ? pal.dot : 'bg-gray-200'}`} />
                                     <span className="text-[8px] font-bold text-gray-400 w-3 shrink-0">M</span>
                                     <span className={`text-[9px] font-semibold truncate ${sd.matin_debut ? 'text-gray-700' : 'text-gray-300'}`}>
                                       {sd.matin_debut ? `${sd.matin_debut}→${sd.matin_fin || '?'}` : '--:--'}
@@ -1029,9 +1029,9 @@ export default function PlanningPage() {
 
                                   {/* Après-midi row — horaires + poste du créneau */}
                                   <div className={`flex items-center gap-1 rounded-md px-1.5 py-[3px] ${
-                                    sd.apmidi_debut || catA ? 'bg-sky-50 border border-sky-100' : 'bg-gray-50'
+                                    sd.apmidi_debut || catA ? 'bg-gray-50 border border-gray-200/70' : 'bg-gray-50/50'
                                   }`}>
-                                    <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${sd.apmidi_debut || catA ? 'bg-sky-400' : 'bg-gray-200'}`} />
+                                    <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${sd.apmidi_debut || catA ? pal.dot : 'bg-gray-200'}`} />
                                     <span className="text-[8px] font-bold text-gray-400 w-3 shrink-0">AM</span>
                                     <span className={`text-[9px] font-semibold truncate ${sd.apmidi_debut ? 'text-gray-700' : 'text-gray-300'}`}>
                                       {sd.apmidi_debut ? `${sd.apmidi_debut}→${sd.apmidi_fin || '?'}` : '--:--'}
@@ -1057,14 +1057,13 @@ export default function PlanningPage() {
                               ) : (
                                 <div className="flex-1 flex flex-col items-center justify-center gap-0.5">
                                   {fName ? (
-                                    <span className={`font-bold text-2xl ${cellTxt}`}>✦</span>
+                                    <span className="font-bold text-2xl text-amber-400">✦</span>
                                   ) : type === 'conges' ? (
-                                    <>
-                                      <span className={`text-[10px] font-bold uppercase tracking-wide opacity-60 ${cellTxt}`}>CP</span>
-                                      <span className={`font-bold text-xl ${cellTxt}`}>{fmtH(ch / 5)}</span>
-                                    </>
+                                    <span className="px-3 py-1.5 rounded-lg bg-sky-50 text-sky-700 text-sm font-bold">CP · {fmtH(ch / 5)}</span>
+                                  ) : type === 'maladie' ? (
+                                    <span className="px-3 py-1.5 rounded-lg bg-red-50 text-red-600 text-sm font-bold">Maladie</span>
                                   ) : (
-                                    <span className={`font-bold text-2xl ${cellTxt}`}>{TYPE_CONFIG[type].display}</span>
+                                    <span className="text-gray-300 font-bold text-lg">—</span>
                                   )}
                                 </div>
                               )}
