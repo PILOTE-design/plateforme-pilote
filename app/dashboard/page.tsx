@@ -5,7 +5,7 @@ import { formatDate } from '@/lib/utils'
 import Link from 'next/link'
 import { DonutChart } from './DashboardChart'
 
-// ─── Helpers dates ────────────────────────────────────────────────────────
+// ─── Helpers dates ──────────────────────────────────────────────────────────
 
 function getISOWeek(date: Date): { week: number; year: number } {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
@@ -277,14 +277,14 @@ export default async function DashboardPage() {
     : taux_marge >= 30 ? 'text-orange-500'
     : 'text-red-600'
 
-  // Donut familles : top 4 + Autres
+  // Donut familles : top 4 + Autres — palette marque (navy + orange), plus de conflit avec les couleurs sémantiques
   const sorted = [...familiesDetail].sort((a, b) => b.montant - a.montant)
   const top4 = sorted.slice(0, 4)
   const autresTotal = sorted.slice(4).reduce((s, f) => s + f.montant, 0)
-  const FAMILY_COLORS = ['#dc2626', '#f97316', '#22c55e', '#3b82f6']
+  const FAMILY_COLORS = ['#1E3A5F', '#4A6B94', '#FF8C00', '#93A9C4']
   const segments = [
     ...top4.map((f, i) => ({ label: f.nom, value: f.montant, color: FAMILY_COLORS[i] })),
-    ...(autresTotal > 0 ? [{ label: 'Autres', value: autresTotal, color: '#9ca3af' }] : []),
+    ...(autresTotal > 0 ? [{ label: 'Autres', value: autresTotal, color: '#CBD5E1' }] : []),
   ]
   const segTotal = segments.reduce((s, seg) => s + seg.value, 0) || ca_total
 
@@ -295,7 +295,7 @@ export default async function DashboardPage() {
     : null
 
   const attention: { color: string; text: string }[] = [
-    ...legalAlerts.map(t => ({ color: 'bg-red-500', text: `Planning S${currentWeek} — ${t}` })),
+    ...legalAlerts.map(t => ({ color: 'bg-red-500', text: `Planning S${currentWeek} · ${t}` })),
     ...cddAlerts.map(t => ({ color: 'bg-amber-500', text: t })),
     ...(ratioMS !== null && ratioMS > 40 ? [{ color: 'bg-amber-500', text: `Masse salariale à ${ratioMS.toFixed(0)} % du CA (cible < 35 %)` }] : []),
   ]
@@ -314,15 +314,15 @@ export default async function DashboardPage() {
   const hasAnyData = ca_total > 0 || achatsTotal > 0 || payrollRef > 0 || reports.length > 0
 
   return (
-    <div className="p-8 max-w-6xl mx-auto">
+    <div className="p-6 md:p-8 max-w-6xl mx-auto">
       {/* ── En-tête ── */}
-      <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
+      <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">
-            Bonjour, {profile?.business_name || 'bienvenue'} 👋
+          <h1 className="text-2xl font-extrabold tracking-tight text-gray-900">
+            Bonjour, {profile?.business_name || 'bienvenue'}
           </h1>
-          <p className="text-gray-500 mt-1">
-            Pilotage de la semaine écoulée — <span className="font-semibold text-gray-700">S{refWeek} · {weekPeriodLabel(refWeek, refYear)} {refYear}</span>
+          <p className="text-sm text-gray-500 mt-1.5">
+            Pilotage de la semaine écoulée · <span className="font-semibold text-gray-700">S{refWeek} · {weekPeriodLabel(refWeek, refYear)} {refYear}</span>
             {refIsFallback && <span className="ml-2 text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium">dernières données disponibles</span>}
           </p>
         </div>
@@ -333,7 +333,7 @@ export default async function DashboardPage() {
             { href: '/dashboard/valorisation', icon: Calculator,   label: 'Valorisation' },
           ].map(l => (
             <Link key={l.href} href={l.href}
-              className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 bg-white border border-gray-200 rounded-lg px-3 py-2 hover:border-[#1E3A5F] hover:text-[#1E3A5F] transition-colors">
+              className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 bg-white border border-gray-200 rounded-lg px-3 h-9 hover:border-pilote hover:text-pilote hover:shadow-card transition-all">
               <l.icon className="w-3.5 h-3.5" />{l.label}
             </Link>
           ))}
@@ -342,30 +342,30 @@ export default async function DashboardPage() {
 
       {/* ── Checklist de démarrage ── */}
       {showOnboarding && (
-        <div className="mb-6 bg-white rounded-xl border border-[#1E3A5F]/20 shadow-sm overflow-hidden">
-          <div className="px-4 py-3 bg-[#1E3A5F] flex items-center justify-between">
+        <div className="mb-6 bg-white rounded-xl border border-gray-200/80 shadow-card overflow-hidden">
+          <div className="px-5 py-3.5 bg-pilote flex items-center justify-between">
             <div>
-              <h2 className="text-sm font-bold text-white">Bien démarrer avec PILOTE</h2>
-              <p className="text-[11px] text-blue-200">Encore {onboardingSteps.length - stepsDone} étape{onboardingSteps.length - stepsDone > 1 ? 's' : ''} pour un pilotage 100 % automatique</p>
+              <h2 className="text-sm font-bold text-white tracking-tight">Bien démarrer avec PILOTE</h2>
+              <p className="text-[11px] text-white/70">Encore {onboardingSteps.length - stepsDone} étape{onboardingSteps.length - stepsDone > 1 ? 's' : ''} pour un pilotage 100 % automatique</p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2.5">
               <div className="w-24 h-1.5 bg-white/20 rounded-full overflow-hidden">
-                <div className="h-full bg-[#FF8C00] rounded-full" style={{ width: `${(stepsDone / onboardingSteps.length) * 100}%` }} />
+                <div className="h-full bg-pilote-orange rounded-full transition-all duration-500" style={{ width: `${(stepsDone / onboardingSteps.length) * 100}%` }} />
               </div>
-              <span className="text-xs font-bold text-white">{stepsDone}/{onboardingSteps.length}</span>
+              <span className="text-xs font-bold text-white tabular">{stepsDone}/{onboardingSteps.length}</span>
             </div>
           </div>
           <div className="divide-y divide-gray-50">
             {onboardingSteps.map((step, i) => (
-              <Link key={i} href={step.href} className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 transition-colors group">
+              <Link key={i} href={step.href} className="flex items-center gap-3 px-5 py-3.5 hover:bg-gray-50 transition-colors group">
                 {step.done
                   ? <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0" />
                   : <Circle className="w-5 h-5 text-gray-300 flex-shrink-0" />}
                 <div className="flex-1">
                   <p className={`text-sm font-medium ${step.done ? 'text-gray-400 line-through' : 'text-gray-900'}`}>{step.label}</p>
-                  {!step.done && <p className="text-xs text-gray-400">{step.desc}</p>}
+                  {!step.done && <p className="text-xs text-gray-400 mt-0.5">{step.desc}</p>}
                 </div>
-                {!step.done && <ArrowRight className="w-4 h-4 text-gray-300 group-hover:text-[#1E3A5F] transition-colors" />}
+                {!step.done && <ArrowRight className="w-4 h-4 text-gray-300 group-hover:text-pilote group-hover:translate-x-0.5 transition-all" />}
               </Link>
             ))}
           </div>
@@ -374,15 +374,15 @@ export default async function DashboardPage() {
 
       {/* ── Points d'attention ── */}
       {attention.length > 0 && (
-        <div className="mb-6 bg-white rounded-xl border border-red-100 shadow-sm p-4">
-          <div className="flex items-center gap-2 mb-2">
+        <div className="mb-6 bg-white rounded-xl border border-red-100 shadow-card p-5">
+          <div className="flex items-center gap-2 mb-3">
             <AlertTriangle className="w-4 h-4 text-red-500" />
-            <h2 className="text-sm font-bold text-gray-900">Points d'attention</h2>
-            <span className="text-[10px] font-bold bg-red-100 text-red-700 px-1.5 py-0.5 rounded-full">{attention.length}</span>
+            <h2 className="text-sm font-bold text-gray-900 tracking-tight">Points d'attention</h2>
+            <span className="text-[10px] font-bold bg-red-100 text-red-700 px-1.5 py-0.5 rounded-full tabular">{attention.length}</span>
           </div>
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             {attention.slice(0, 6).map((a, i) => (
-              <div key={i} className="flex items-center gap-2">
+              <div key={i} className="flex items-center gap-2.5">
                 <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${a.color}`} />
                 <p className="text-xs text-gray-600">{a.text}</p>
               </div>
@@ -393,13 +393,13 @@ export default async function DashboardPage() {
 
       {!hasAnyData ? (
         <Card className="mb-8">
-          <CardContent className="py-14 text-center">
+          <CardContent className="py-16 text-center">
             <TrendingUp className="w-10 h-10 text-gray-300 mx-auto mb-3" />
             <p className="text-sm font-medium text-gray-500 mb-1">Aucune donnée pour l'instant</p>
-            <p className="text-xs text-gray-400 mb-4">Synchronisez vos factures, remplissez le planning ou générez votre premier rapport pour activer le tableau de bord.</p>
+            <p className="text-xs text-gray-400 mb-5 max-w-sm mx-auto">Synchronisez vos factures, remplissez le planning ou générez votre premier rapport pour activer le tableau de bord.</p>
             <div className="flex items-center justify-center gap-3">
-              <Link href="/dashboard/facturation" className="text-sm text-[#1E3A5F] font-semibold hover:underline">Facturation →</Link>
-              <Link href="/dashboard/planning" className="text-sm text-[#1E3A5F] font-semibold hover:underline">Planning →</Link>
+              <Link href="/dashboard/facturation" className="text-sm text-pilote font-semibold hover:underline">Facturation →</Link>
+              <Link href="/dashboard/planning" className="text-sm text-pilote font-semibold hover:underline">Planning →</Link>
             </div>
           </CardContent>
         </Card>
@@ -407,66 +407,76 @@ export default async function DashboardPage() {
         <>
           {/* ── KPIs semaine écoulée ── */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-            <Card>
+            <Card className="hover:shadow-card-hover transition-shadow">
               <CardContent className="p-5">
-                <div className="flex items-center gap-1.5 mb-1">
-                  <Euro className="w-3.5 h-3.5 text-blue-500" />
-                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">CA — {weekLabel}</p>
+                <div className="flex items-center gap-2 mb-2.5">
+                  <div className="w-6 h-6 rounded-md bg-pilote-50 flex items-center justify-center flex-shrink-0">
+                    <Euro className="w-3.5 h-3.5 text-pilote" />
+                  </div>
+                  <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">CA · {weekLabel}</p>
                 </div>
-                <p className="text-2xl font-bold text-gray-900">{ca_total > 0 ? `${fmt(ca_total)} €` : '—'}</p>
-                {ca_total === 0 && <p className="text-xs text-gray-400 mt-0.5">Saisir le CA ou générer le rapport</p>}
+                <p className="text-2xl font-bold tracking-tight text-gray-900 tabular">{ca_total > 0 ? `${fmt(ca_total)} €` : '—'}</p>
+                {ca_total === 0 && <p className="text-xs text-gray-400 mt-1">Saisir le CA ou générer le rapport</p>}
               </CardContent>
             </Card>
 
-            <Card>
+            <Card className="hover:shadow-card-hover transition-shadow">
               <CardContent className="p-5">
-                <div className="flex items-center gap-1.5 mb-1">
-                  <Receipt className="w-3.5 h-3.5 text-orange-500" />
-                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Achats HT — {weekLabel}</p>
+                <div className="flex items-center gap-2 mb-2.5">
+                  <div className="w-6 h-6 rounded-md bg-pilote-50 flex items-center justify-center flex-shrink-0">
+                    <Receipt className="w-3.5 h-3.5 text-pilote" />
+                  </div>
+                  <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Achats HT · {weekLabel}</p>
                 </div>
-                <p className="text-2xl font-bold text-gray-900">{achatsTotal > 0 ? `${fmt(achatsTotal)} €` : '—'}</p>
+                <p className="text-2xl font-bold tracking-tight text-gray-900 tabular">{achatsTotal > 0 ? `${fmt(achatsTotal)} €` : '—'}</p>
                 {chargesFixesSem > 0 && (
-                  <p className="text-xs text-purple-600 mt-0.5 flex items-center gap-1"><Repeat className="w-3 h-3" />dont fixes ≈ {fmt(chargesFixesSem)} €/sem</p>
+                  <p className="text-xs text-gray-500 mt-1 flex items-center gap-1 tabular"><Repeat className="w-3 h-3 text-gray-400" />dont fixes ≈ {fmt(chargesFixesSem)} €/sem</p>
                 )}
               </CardContent>
             </Card>
 
-            <Card>
+            <Card className="hover:shadow-card-hover transition-shadow">
               <CardContent className="p-5">
-                <div className="flex items-center gap-1.5 mb-1">
-                  <Users className="w-3.5 h-3.5 text-violet-500" />
-                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Masse salariale — {weekLabel}</p>
+                <div className="flex items-center gap-2 mb-2.5">
+                  <div className="w-6 h-6 rounded-md bg-pilote-50 flex items-center justify-center flex-shrink-0">
+                    <Users className="w-3.5 h-3.5 text-pilote" />
+                  </div>
+                  <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Masse salariale · {weekLabel}</p>
                 </div>
-                <p className="text-2xl font-bold text-gray-900">{payrollRef > 0 ? `${fmt(payrollRef)} €` : '—'}</p>
-                <p className="text-xs text-gray-400 mt-0.5">{payrollRef > 0 ? (ratioMS !== null ? `${ratioMS.toFixed(0)} % du CA · chargée (CCN 992)` : 'chargée (CCN 992)') : 'Remplir le planning'}</p>
+                <p className="text-2xl font-bold tracking-tight text-gray-900 tabular">{payrollRef > 0 ? `${fmt(payrollRef)} €` : '—'}</p>
+                <p className="text-xs text-gray-400 mt-1 tabular">{payrollRef > 0 ? (ratioMS !== null ? `${ratioMS.toFixed(0)} % du CA · chargée (CCN 992)` : 'chargée (CCN 992)') : 'Remplir le planning'}</p>
               </CardContent>
             </Card>
 
-            <Card>
+            <Card className="hover:shadow-card-hover transition-shadow">
               <CardContent className="p-5">
-                <div className="flex items-center gap-1.5 mb-1">
-                  {taux_marge !== null && taux_marge < 30 ? <TrendingDown className="w-3.5 h-3.5 text-red-500" /> : <TrendingUp className="w-3.5 h-3.5 text-green-600" />}
-                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Marge brute — {weekLabel}</p>
+                <div className="flex items-center gap-2 mb-2.5">
+                  <div className={`w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0 ${taux_marge !== null && taux_marge < 30 ? 'bg-red-50' : 'bg-green-50'}`}>
+                    {taux_marge !== null && taux_marge < 30 ? <TrendingDown className="w-3.5 h-3.5 text-red-500" /> : <TrendingUp className="w-3.5 h-3.5 text-green-600" />}
+                  </div>
+                  <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Marge brute · {weekLabel}</p>
                 </div>
-                <p className={`text-2xl font-bold ${margeColor}`}>{taux_marge !== null ? `${taux_marge.toFixed(1)} %` : '—'}</p>
-                {taux_marge !== null && <p className="text-xs text-gray-400 mt-0.5">{fmt(marge_brute)} € · CA − achats (fixes inclus)</p>}
+                <p className={`text-2xl font-bold tracking-tight tabular ${margeColor}`}>{taux_marge !== null ? `${taux_marge.toFixed(1)} %` : '—'}</p>
+                {taux_marge !== null && <p className="text-xs text-gray-400 mt-1 tabular">{fmt(marge_brute)} € · CA − achats (fixes inclus)</p>}
               </CardContent>
             </Card>
           </div>
 
           {/* ── Résultat estimé ── */}
           {resultat !== null && (
-            <div className={`mb-8 rounded-xl border p-4 flex items-center justify-between ${
-              resultat >= 0 ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'
+            <div className={`mb-8 rounded-xl border p-5 flex items-center justify-between gap-4 ${
+              resultat >= 0 ? 'bg-green-50/70 border-green-200' : 'bg-red-50/70 border-red-200'
             }`}>
               <div>
-                <p className="text-xs font-bold uppercase tracking-wider text-gray-500">Résultat estimé — semaine {refWeek}</p>
-                <p className="text-3xl font-extrabold mt-0.5 text-gray-900">{fmt(resultat)} €</p>
-                <p className="text-xs text-gray-400 mt-0.5">
+                <p className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Résultat estimé · semaine {refWeek}</p>
+                <p className={`text-3xl font-extrabold tracking-tight mt-1 tabular ${resultat >= 0 ? 'text-green-700' : 'text-red-700'}`}>{resultat >= 0 ? '+' : ''}{fmt(resultat)} €</p>
+                <p className="text-xs text-gray-500 mt-1.5 tabular">
                   CA {fmt(ca_total)} € − Achats {fmt(achatsTotal)} € (dont fixes {fmt(chargesFixesSem)} €) − Masse salariale chargée {fmt(payrollRef)} €
                 </p>
               </div>
-              <div className={`text-5xl font-black ${resultat >= 0 ? 'text-green-300' : 'text-red-200'}`}>{resultat >= 0 ? '+' : '−'}</div>
+              <div className={`w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0 ${resultat >= 0 ? 'bg-green-100' : 'bg-red-100'}`}>
+                {resultat >= 0 ? <TrendingUp className="w-6 h-6 text-green-600" /> : <TrendingDown className="w-6 h-6 text-red-600" />}
+              </div>
             </div>
           )}
 
@@ -479,7 +489,7 @@ export default async function DashboardPage() {
                   <CardDescription>{caTrend.length} dernières semaines saisies</CardDescription>
                 </div>
                 {trendEvol !== null && (
-                  <span className={`text-sm font-bold px-2.5 py-1 rounded-full ${
+                  <span className={`text-sm font-bold px-2.5 py-1 rounded-full tabular ${
                     trendEvol >= 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
                   }`}>{trendEvol >= 0 ? '+' : ''}{trendEvol.toFixed(1)} % vs sem. préc.</span>
                 )}
@@ -490,14 +500,14 @@ export default async function DashboardPage() {
                     const isLast = i === caTrend.length - 1
                     return (
                       <div key={`${t.year}-${t.week}`} className="flex-1 flex flex-col items-center gap-1" title={`S${t.week} ${t.year} : ${fmt(t.ca)} €`}>
-                        <span className="text-[10px] font-semibold text-gray-500">{fmt(t.ca / 1000 >= 1 ? Math.round(t.ca / 100) / 10 : t.ca)}{t.ca >= 1000 ? ' k€' : ' €'}</span>
+                        <span className="text-[10px] font-semibold text-gray-500 tabular">{fmt(t.ca / 1000 >= 1 ? Math.round(t.ca / 100) / 10 : t.ca)}{t.ca >= 1000 ? ' k€' : ' €'}</span>
                         <div className="w-full flex items-end" style={{ height: '80px' }}>
                           <div
-                            className={`w-full rounded-t-md transition-all ${isLast ? 'bg-[#1E3A5F]' : 'bg-gray-200'}`}
+                            className={`w-full rounded-t-md transition-all ${isLast ? 'bg-pilote' : 'bg-pilote-100 hover:bg-pilote-200'}`}
                             style={{ height: `${Math.max(6, (t.ca / maxTrend) * 100)}%` }}
                           />
                         </div>
-                        <span className={`text-[10px] ${isLast ? 'font-bold text-[#1E3A5F]' : 'text-gray-400'}`}>S{t.week}</span>
+                        <span className={`text-[10px] tabular ${isLast ? 'font-bold text-pilote' : 'text-gray-400'}`}>S{t.week}</span>
                       </div>
                     )
                   })}
@@ -536,8 +546,8 @@ export default async function DashboardPage() {
                               <span className="text-gray-700">{seg.label}</span>
                             </div>
                             <div className="flex items-center gap-3">
-                              <span className="font-semibold text-gray-900">{fmt(seg.value)} €</span>
-                              <span className="text-gray-400 w-9 text-right">{Math.round(pct)} %</span>
+                              <span className="font-semibold text-gray-900 tabular">{fmt(seg.value)} €</span>
+                              <span className="text-gray-400 w-9 text-right tabular">{Math.round(pct)} %</span>
                             </div>
                           </div>
                           <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
@@ -548,7 +558,7 @@ export default async function DashboardPage() {
                     })}
                     <div className="pt-3 mt-3 border-t border-gray-100 flex justify-between text-sm">
                       <span className="text-gray-500">Marge brute estimée</span>
-                      <span className={`font-semibold ${margeColor}`}>
+                      <span className={`font-semibold tabular ${margeColor}`}>
                         {fmt(marge_brute)} €{taux_marge !== null ? ` (${taux_marge.toFixed(1)} %)` : ''}
                       </span>
                     </div>
@@ -567,7 +577,7 @@ export default async function DashboardPage() {
             <CardTitle>Derniers rapports</CardTitle>
             <CardDescription>Rapport complet publié chaque semaine · flash automatique le lundi matin</CardDescription>
           </div>
-          <Link href="/dashboard/reports" className="text-sm text-[#1E3A5F] font-medium hover:underline flex items-center gap-1">
+          <Link href="/dashboard/reports" className="text-sm text-pilote font-semibold hover:underline flex items-center gap-1 flex-shrink-0">
             Voir tout <ArrowRight className="w-3.5 h-3.5" />
           </Link>
         </CardHeader>
@@ -583,20 +593,22 @@ export default async function DashboardPage() {
               {reports.map((report) => (
                 <div
                   key={report.id}
-                  className="flex items-center justify-between p-4 rounded-lg border border-gray-100 hover:bg-gray-50 transition-colors"
+                  className="flex items-center justify-between p-4 rounded-lg border border-gray-100 hover:bg-gray-50 hover:border-gray-200 transition-colors"
                 >
                   <div className="flex items-center gap-3">
-                    <FileText className="w-5 h-5 text-[#1E3A5F]" />
+                    <div className="w-9 h-9 rounded-lg bg-pilote-50 flex items-center justify-center flex-shrink-0">
+                      <FileText className="w-4 h-4 text-pilote" />
+                    </div>
                     <div>
-                      <p className="font-medium text-gray-900">{report.title}</p>
-                      <p className="text-xs text-gray-400">{formatDate(report.created_at)}</p>
+                      <p className="text-sm font-semibold text-gray-900">{report.title}</p>
+                      <p className="text-xs text-gray-400 mt-0.5">{formatDate(report.created_at)}</p>
                     </div>
                   </div>
                   <a
                     href={report.file_url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-sm text-[#1E3A5F] font-medium hover:underline"
+                    className="text-xs font-semibold text-pilote border border-gray-200 rounded-lg px-3 py-2 hover:border-pilote hover:bg-pilote-50 transition-colors"
                   >
                     Télécharger
                   </a>
