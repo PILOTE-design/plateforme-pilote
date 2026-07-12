@@ -44,15 +44,15 @@ export default async function ReportsPage() {
   }
 
   return (
-    <div className="p-8">
+    <div className="p-6 md:p-8 max-w-5xl mx-auto">
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Rapports</h1>
-          <p className="text-gray-500 mt-1">Vos analyses comparatives hebdomadaires</p>
+          <h1 className="text-2xl font-extrabold tracking-tight text-gray-900">Rapports</h1>
+          <p className="text-sm text-gray-500 mt-1">Vos analyses comparatives hebdomadaires</p>
         </div>
         {isAdmin && (
           <Link href="/admin/reports/nouveau">
-            <Button><Plus className="w-4 h-4 mr-2" />Nouveau rapport</Button>
+            <Button className="bg-pilote hover:bg-pilote-hover text-white"><Plus className="w-4 h-4 mr-2" />Nouveau rapport</Button>
           </Link>
         )}
       </div>

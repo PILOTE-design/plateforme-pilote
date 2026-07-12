@@ -81,8 +81,8 @@ export default function SettingsPage() {
   return (
     <div className="p-8 max-w-2xl space-y-8">
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">Paramètres</h1>
-        <p className="text-gray-500 mt-1">Gérez votre compte et votre abonnement</p>
+        <h1 className="text-2xl font-extrabold tracking-tight text-gray-900">Paramètres</h1>
+        <p className="text-sm text-gray-500 mt-1">Gérez votre compte et votre abonnement</p>
       </div>
 
       {/* Profile */}
@@ -135,7 +135,7 @@ export default function SettingsPage() {
                 {message}
               </p>
             )}
-            <Button type="submit" disabled={saving}>
+            <Button type="submit" disabled={saving} className="bg-pilote hover:bg-pilote-hover text-white">
               {saving ? 'Enregistrement...' : 'Sauvegarder les modifications'}
             </Button>
           </form>
@@ -163,11 +163,11 @@ export default function SettingsPage() {
           </div>
           <div className="flex items-center justify-between">
             <span className="text-sm text-gray-700">Montant</span>
-            <span className="text-sm font-medium">149€/mois HT</span>
+            <span className="text-sm font-medium tabular">149 €/mois HT</span>
           </div>
           {!profile?.stripe_customer_id && (
-            <Button onClick={handleCheckout} disabled={checkoutLoading} className="w-full">
-              {checkoutLoading ? 'Redirection...' : 'Commencer mon abonnement (149€/mois)'}
+            <Button onClick={handleCheckout} disabled={checkoutLoading} className="w-full bg-pilote hover:bg-pilote-hover text-white">
+              {checkoutLoading ? 'Redirection...' : 'Commencer mon abonnement (149 €/mois)'}
             </Button>
           )}
           <Button

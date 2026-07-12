@@ -22,10 +22,10 @@ export default async function ClientsPage() {
   return (
     <div className="p-6 max-w-4xl mx-auto">
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Clients</h1>
+        <h1 className="text-2xl font-extrabold tracking-tight text-gray-900">Clients</h1>
         <Link
           href="/dashboard/clients/nouveau"
-          className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors"
+          className="flex items-center gap-2 px-4 py-2 bg-pilote text-white rounded-lg text-sm font-medium hover:bg-pilote-hover transition-colors"
         >
           <Plus className="w-4 h-4" />
           Nouveau client
