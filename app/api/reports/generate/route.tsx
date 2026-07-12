@@ -29,6 +29,11 @@ interface ReportData {
   tops: { designation: string; n: number; ecart: number }[]
   flops: { designation: string; n: number; ecart: number }[]
 }
+// Données extraites complètes : ReportData + CA par produit (pour l'historisation)
+interface ExtractedData extends ReportData {
+  prodN: Map<string, number>
+  prodN1: Map<string, number>
+}
 interface Insights { resume: string; insights: string[]; recommendations: string[]; vigilance: string[] }
 interface FamRow { nom: string; caN: number; caN1: number | null; ecart: number }
 interface WeekStatus { label: string; color: string; light: string; desc: string }
@@ -730,7 +735,7 @@ function computeTopFlop(prodN: Map<string, number>, prodN1: Map<string, number>)
   return { tops, flops }
 }
 
-async function extractData(texts: { fin_n: string; fin_n1: string; ventes_n: string; ventes_n1: string }): Promise<ReportData> {
+async function extractData(texts: { fin_n: string; fin_n1: string; ventes_n: string; ventes_n1: string }): Promise<ExtractedData> {
   const [financials, ventes_n, ventes_n1, prodN, prodN1] = await Promise.all([
     extractFinancials(texts.fin_n, texts.fin_n1),
     extractVentesData(texts.ventes_n),
@@ -748,7 +753,43 @@ async function extractData(texts: { fin_n: string; fin_n1: string; ventes_n: str
     year: isoFixed?.year ?? financials.year,
     financier_n: financials.financier_n, financier_n1: financials.financier_n1,
     ventes_n, ventes_n1, tops: topFlop.tops, flops: topFlop.flops,
+    prodN, prodN1,
   }
+}
+
+// ─── Historisation caisse ─────────────────────────────────────────────────────
+// A chaque generation : archive CA + familles + tickets (weekly_ca) et CA par
+// produit (weekly_sales_products) pour N ET N-1. A terme : comparaison N-1 sans
+// fichiers et tendances produits multi-semaines.
+
+async function archiveWeekData(
+  serviceSupabase: ReturnType<typeof createServiceClient>,
+  clientId: string,
+  week: number,
+  year: number,
+  fin: FinancierData,
+  familles: Famille[],
+  produits: Map<string, number>,
+) {
+  const familiesDetail = familles.map((f: Famille) => ({ nom: f.nom, montant: f.total_montant }))
+  await serviceSupabase.from('weekly_ca').delete()
+    .eq('client_id', clientId).eq('week_number', week).eq('year', year)
+  await serviceSupabase.from('weekly_ca').insert({
+    client_id: clientId,
+    week_number: week,
+    year,
+    ca_total: fin.ca_net,
+    families_detail: familiesDetail,
+    nb_tickets: fin.nb_tickets,
+    moyenne_ticket: fin.moyenne_ticket,
+  })
+
+  await serviceSupabase.from('weekly_sales_products').delete()
+    .eq('client_id', clientId).eq('week_number', week).eq('year', year)
+  const rows = [...produits.entries()].map(([product, amount]) => ({
+    client_id: clientId, week_number: week, year, product, amount,
+  }))
+  if (rows.length > 0) await serviceSupabase.from('weekly_sales_products').insert(rows)
 }
 
 // ─── Calculs métier ────────────────────────────────────────────────────────────
@@ -985,19 +1026,11 @@ export async function POST(req: NextRequest) {
     })
 
     if (clientId) {
-      // Stocker TOUTES les familles (slice 12000 garantit qu'elles sont toutes extraites)
-      // week_number/year sont desormais calcules en code depuis la periode => le CA
-      // s'ecrit toujours sur la bonne semaine (mise a jour automatique du CA hebdo)
-      const familiesDetail = data.ventes_n.familles.map((f: Famille) => ({ nom: f.nom, montant: f.total_montant }))
-      await serviceSupabase.from('weekly_ca').delete()
-        .eq('client_id', clientId).eq('week_number', data.week_number).eq('year', data.year)
-      await serviceSupabase.from('weekly_ca').insert({
-        client_id: clientId,
-        week_number: data.week_number,
-        year: data.year,
-        ca_total: data.financier_n.ca_net,
-        families_detail: familiesDetail,
-      })
+      // Historisation : semaine N ET semaine N-1 (meme semaine, annee precedente).
+      // Le CA hebdo se met a jour automatiquement, et l'historique produits permettra
+      // a terme la comparaison N-1 sans fichiers + les tendances multi-semaines.
+      await archiveWeekData(serviceSupabase, clientId, data.week_number, data.year, data.financier_n, data.ventes_n.familles, data.prodN)
+      await archiveWeekData(serviceSupabase, clientId, data.week_number, data.year - 1, data.financier_n1, data.ventes_n1.familles, data.prodN1)
     }
 
     return NextResponse.json({ success: true, title, file_url: fileUrl })
