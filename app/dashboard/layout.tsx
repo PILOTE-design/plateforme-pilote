@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-import { BarChart3, FileText, Settings, LogOut, CalendarDays, Receipt, Scale } from 'lucide-react'
+import { BarChart3, FileText, Settings, LogOut, CalendarDays, Receipt, Scale, LineChart } from 'lucide-react'
 
 const ADMIN_EMAIL = 'nouvion.theo51@gmail.com'
 
@@ -45,6 +45,10 @@ export default async function DashboardLayout({ children }: { children: React.Re
           <Link href="/dashboard/reports" className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-100 transition-colors">
             <FileText className="w-4 h-4" />
             Mes rapports
+          </Link>
+          <Link href="/dashboard/tendances" className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-100 transition-colors">
+            <LineChart className="w-4 h-4" />
+            Tendances
           </Link>
           <Link href="/dashboard/planning" className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-gray-100 transition-colors">
             <CalendarDays className="w-4 h-4" />
