@@ -703,8 +703,8 @@ export default function PlanningPage() {
       {/* ── Header ── */}
       <div className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-2.5">
-          <CalendarDays className="w-5 h-5 text-[#1E3A5F]" />
-          <h1 className="text-lg font-bold text-gray-900">Planning des équipes</h1>
+          <CalendarDays className="w-5 h-5 text-pilote" />
+          <h1 className="text-lg font-bold tracking-tight text-gray-900">Planning des équipes</h1>
         </div>
         <div className="flex items-center gap-2">
           {employees.length > 0 && (
@@ -712,12 +712,12 @@ export default function PlanningPage() {
               <Button onClick={openMonthly} variant="outline" className="h-8 text-sm px-3 border-gray-300 text-gray-600 hover:bg-gray-50">
                 <BarChart2 className="w-3.5 h-3.5 mr-1.5" />Récap du mois
               </Button>
-              <Button onClick={exportPDF} variant="outline" className="h-8 text-sm px-3 border-[#1E3A5F] text-[#1E3A5F] hover:bg-blue-50" title="Feuille d'émargement à imprimer et faire signer — sans données financières">
+              <Button onClick={exportPDF} variant="outline" className="h-8 text-sm px-3 border-pilote text-pilote hover:bg-pilote-50" title="Feuille d'émargement à imprimer et faire signer — sans données financières">
                 <FileDown className="w-3.5 h-3.5 mr-1.5" />Feuille d'émargement
               </Button>
             </>
           )}
-          <Button onClick={() => setShowAdd(true)} className="bg-[#1E3A5F] hover:bg-[#2a4f7c] text-white h-8 text-sm px-3">
+          <Button onClick={() => setShowAdd(true)} className="bg-pilote hover:bg-pilote-hover text-white h-8 text-sm px-3">
             <Plus className="w-3.5 h-3.5 mr-1.5" />Ajouter un employé
           </Button>
         </div>
@@ -729,11 +729,11 @@ export default function PlanningPage() {
         <div className="flex items-center gap-2">
           <span className="font-semibold text-gray-900 text-sm">Semaine {week}</span>
           <span className="hidden md:inline text-xs text-gray-400">{getWeekLabel(week, year)}</span>
-          {isCurrentWeek && <span className="text-[10px] bg-[#1E3A5F] text-white px-1.5 py-0.5 rounded font-medium">Actuelle</span>}
+          {isCurrentWeek && <span className="text-[10px] bg-pilote text-white px-1.5 py-0.5 rounded font-medium">Actuelle</span>}
         </div>
         <button onClick={nextWeek} className="p-1.5 rounded hover:bg-gray-100 transition-colors"><ChevronRight className="w-4 h-4 text-gray-500" /></button>
         {!isCurrentWeek && (
-          <button onClick={() => { setWeek(cw); setYear(cy) }} className="text-xs text-[#1E3A5F] hover:underline">← Semaine actuelle</button>
+          <button onClick={() => { setWeek(cw); setYear(cy) }} className="text-xs text-pilote hover:underline">← Semaine actuelle</button>
         )}
         <button
           onClick={copyPrevWeek}
@@ -797,14 +797,14 @@ export default function PlanningPage() {
         <table className="w-full min-w-[860px] border-collapse">
           <thead>
             <tr className="bg-white">
-              <th className="w-52 px-4 py-3 text-left text-xs font-semibold text-gray-400 uppercase tracking-wider sticky left-0 bg-white z-10 border-b border-r border-gray-200">Employé</th>
+              <th className="w-52 px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider sticky left-0 bg-white z-10 border-b border-r border-gray-200">Employé</th>
               {weekDates.map((date, i) => {
                 const isToday = date.toISOString().slice(0, 10) === todayISO
                 const isWE    = i >= 5
                 const fName   = weekHolidays[i]
                 return (
                   <th key={i} className={`px-2 py-2 text-center min-w-[155px] border-b border-r border-gray-200 ${
-                    isToday ? 'bg-[#1E3A5F]' : fName ? 'bg-amber-50' : isWE ? 'bg-gray-50' : 'bg-white'
+                    isToday ? 'bg-pilote' : fName ? 'bg-amber-50' : isWE ? 'bg-gray-50' : 'bg-white'
                   }`}>
                     <div className={`text-xs font-bold uppercase tracking-wide ${
                       isToday ? 'text-white' : fName ? 'text-amber-700' : isWE ? 'text-gray-400' : 'text-gray-500'
@@ -812,7 +812,7 @@ export default function PlanningPage() {
                     <div className={`text-lg font-bold ${
                       isToday ? 'text-white' : fName ? 'text-amber-800' : isWE ? 'text-gray-300' : 'text-gray-800'
                     }`}>{date.getUTCDate()}</div>
-                    <div className={`text-[10px] ${isToday ? 'text-blue-200' : 'text-gray-400'}`}>
+                    <div className={`text-[10px] ${isToday ? 'text-white/70' : 'text-gray-400'}`}>
                       {date.toLocaleDateString('fr-FR', { month: 'short', timeZone: 'UTC' })}
                     </div>
                     {fName && (
@@ -823,8 +823,8 @@ export default function PlanningPage() {
                   </th>
                 )
               })}
-              <th className="px-3 py-3 text-center text-xs font-semibold text-gray-400 uppercase tracking-wider border-b border-r border-gray-200 w-20">Total</th>
-              <th className="px-3 py-3 text-center text-xs font-semibold text-gray-400 uppercase tracking-wider border-b border-gray-200 w-24">Coût</th>
+              <th className="px-3 py-3 text-center text-[11px] font-semibold text-gray-400 uppercase tracking-wider border-b border-r border-gray-200 w-20">Total</th>
+              <th className="px-3 py-3 text-center text-[11px] font-semibold text-gray-400 uppercase tracking-wider border-b border-gray-200 w-24">Coût</th>
             </tr>
           </thead>
           <tbody>
@@ -875,7 +875,7 @@ export default function PlanningPage() {
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-1">
                             <p
-                              className="text-sm font-semibold text-gray-900 leading-tight truncate cursor-pointer hover:text-[#1E3A5F] transition-colors"
+                              className="text-sm font-semibold text-gray-900 leading-tight truncate cursor-pointer hover:text-pilote transition-colors"
                               title="Ouvrir la fiche employé"
                               onClick={e => { e.stopPropagation(); setProfileEmp({ ...emp, charges_patronales: emp.charges_patronales ?? 45, hs_cumules: emp.hs_cumules ?? 0, position: emp.position ?? null, hire_date: emp.hire_date ?? null, contract_end_date: emp.contract_end_date ?? null, phone: emp.phone ?? null, email: emp.email ?? null, notes: emp.notes ?? null, is_minor: emp.is_minor ?? false, cp_initial: emp.cp_initial ?? 0 }) }}
                             >{emp.name}</p>
@@ -889,7 +889,7 @@ export default function PlanningPage() {
                             <div className="relative">
                               <button
                                 onClick={e => { e.stopPropagation(); setContractPopover(showContractPop ? null : emp.id) }}
-                                className="text-[10px] font-bold bg-[#1E3A5F] text-white px-1.5 py-0.5 rounded hover:bg-[#2a4f7c] transition-colors cursor-pointer"
+                                className="text-[10px] font-bold bg-pilote text-white px-1.5 py-0.5 rounded hover:bg-pilote-hover transition-colors cursor-pointer"
                               >
                                 {contractLabel(emp.contract_type)}
                               </button>
@@ -899,12 +899,12 @@ export default function PlanningPage() {
                                   {CONTRACT_TYPES.map(ct => (
                                     <button key={ct.key} onClick={() => updateContract(emp.id, ct.key)}
                                       className={`w-full flex items-center justify-between px-2 py-1.5 rounded-lg text-left transition-colors ${
-                                        emp.contract_type === ct.key ? 'bg-[#1E3A5F] text-white' : 'hover:bg-gray-50 text-gray-700'
+                                        emp.contract_type === ct.key ? 'bg-pilote text-white' : 'hover:bg-gray-50 text-gray-700'
                                       }`}
                                     >
                                       <div>
                                         <div className="text-xs font-semibold">{ct.short}</div>
-                                        <div className={`text-[9px] ${emp.contract_type === ct.key ? 'text-blue-200' : 'text-gray-400'}`}>{ct.desc}</div>
+                                        <div className={`text-[9px] ${emp.contract_type === ct.key ? 'text-white/70' : 'text-gray-400'}`}>{ct.desc}</div>
                                       </div>
                                       {emp.contract_type === ct.key && <span className="text-[10px]">✓</span>}
                                     </button>
@@ -980,7 +980,7 @@ export default function PlanningPage() {
                                     <button
                                       className={`p-0.5 rounded transition-all ${
                                         copiedCell?.empId === emp.id && copiedCell?.jour === jour
-                                          ? 'bg-blue-500 text-white opacity-100'
+                                          ? 'bg-pilote text-white opacity-100'
                                           : 'opacity-0 group-hover/cell:opacity-100 bg-white/60 text-gray-400 hover:text-gray-700'
                                       }`}
                                       onClick={e => { e.stopPropagation(); setCopiedCell(copiedCell?.empId === emp.id && copiedCell?.jour === jour ? null : { empId: emp.id, jour }) }}
@@ -990,7 +990,7 @@ export default function PlanningPage() {
                                     </button>
                                     {copiedCell && !(copiedCell.empId === emp.id && copiedCell.jour === jour) && (
                                       <button
-                                        className="p-0.5 rounded bg-white/60 text-blue-500 hover:text-blue-700 opacity-0 group-hover/cell:opacity-100 transition-all"
+                                        className="p-0.5 rounded bg-white/60 text-pilote hover:text-pilote-hover opacity-0 group-hover/cell:opacity-100 transition-all"
                                         onClick={e => { e.stopPropagation(); pasteDay(emp.id, jour) }}
                                         title="Coller ici"
                                       >
@@ -1104,9 +1104,9 @@ export default function PlanningPage() {
 
             {/* Footer row */}
             {employees.length > 0 && (
-              <tr className="bg-gray-900">
-                <td className="px-3 py-3 sticky left-0 bg-gray-900 z-10 border-r border-gray-700">
-                  <span className="text-xs font-bold uppercase tracking-wider text-gray-400">Total / jour</span>
+              <tr className="bg-pilote">
+                <td className="px-3 py-3 sticky left-0 bg-pilote z-10 border-r border-white/15">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-white/60">Total / jour</span>
                 </td>
                 {JOURS_DB.map((jour, idx) => {
                   const dayH = employees.reduce((s, emp) => {
@@ -1121,17 +1121,17 @@ export default function PlanningPage() {
                   }).length
                   const isFerie = weekHolidays[idx] !== null
                   return (
-                    <td key={jour} className={`px-2 py-3 text-center border-r border-gray-700 ${isFerie ? 'bg-amber-950/30' : ''}`}>
+                    <td key={jour} className={`px-2 py-3 text-center border-r border-white/15 ${isFerie ? 'bg-amber-950/30' : ''}`}>
                       {dayH > 0
-                        ? <><div className="text-sm font-bold text-white">{fmtH(dayH)}</div><div className="text-[10px] text-gray-500">{present} pers.</div></>
-                        : <span className="text-gray-700">—</span>}
+                        ? <><div className="text-sm font-bold text-white">{fmtH(dayH)}</div><div className="text-[10px] text-white/50">{present} pers.</div></>
+                        : <span className="text-white/30">—</span>}
                     </td>
                   )
                 })}
-                <td className="px-3 py-3 text-center border-r border-gray-700"><span className="font-bold text-white">{fmtH(grandH)}</span></td>
+                <td className="px-3 py-3 text-center border-r border-white/15"><span className="font-bold text-white">{fmtH(grandH)}</span></td>
                 <td className="px-3 py-3 text-center">
-                  <div className="font-bold text-orange-400">{grandCost.toFixed(0)} €</div>
-                  <div className="text-[10px] text-gray-500">{grandCharged.toFixed(0)} € chargé</div>
+                  <div className="font-bold text-orange-300">{grandCost.toFixed(0)} €</div>
+                  <div className="text-[10px] text-white/50">{grandCharged.toFixed(0)} € chargé</div>
                 </td>
               </tr>
             )}
@@ -1427,15 +1427,15 @@ export default function PlanningPage() {
                   })}
                 </tbody>
                 <tfoot>
-                  <tr className="bg-gray-900">
-                    <td className="py-2.5 px-2 text-xs font-bold uppercase text-gray-400">Total mois</td>
+                  <tr className="bg-pilote">
+                    <td className="py-2.5 px-2 text-xs font-bold uppercase text-white/60">Total mois</td>
                     <td className="text-center py-2.5 font-bold text-white">{fmtH(monthlyData.reduce((s, r) => s + r.hours, 0))}</td>
-                    <td className="text-center py-2.5 font-bold text-orange-400">{fmtH(monthlyData.reduce((s, r) => s + r.ot, 0))}</td>
-                    <td className="text-center py-2.5 text-gray-400">{monthlyData.reduce((s, r) => s + r.worked, 0)}j</td>
-                    <td className="text-center py-2.5 text-sky-400">{monthlyData.reduce((s, r) => s + r.cp, 0)}j</td>
-                    <td className="text-center py-2.5 text-red-400">{monthlyData.reduce((s, r) => s + r.sick, 0)}j</td>
-                    <td className="text-center py-2.5 font-bold text-green-400">{monthlyData.reduce((s, r) => s + r.cost, 0).toFixed(0)} €</td>
-                    <td className="text-center py-2.5 font-bold text-orange-400">{monthlyData.reduce((s, r) => s + r.charged, 0).toFixed(0)} €</td>
+                    <td className="text-center py-2.5 font-bold text-orange-300">{fmtH(monthlyData.reduce((s, r) => s + r.ot, 0))}</td>
+                    <td className="text-center py-2.5 text-white/60">{monthlyData.reduce((s, r) => s + r.worked, 0)}j</td>
+                    <td className="text-center py-2.5 text-sky-300">{monthlyData.reduce((s, r) => s + r.cp, 0)}j</td>
+                    <td className="text-center py-2.5 text-red-300">{monthlyData.reduce((s, r) => s + r.sick, 0)}j</td>
+                    <td className="text-center py-2.5 font-bold text-green-300">{monthlyData.reduce((s, r) => s + r.cost, 0).toFixed(0)} €</td>
+                    <td className="text-center py-2.5 font-bold text-orange-300">{monthlyData.reduce((s, r) => s + r.charged, 0).toFixed(0)} €</td>
                   </tr>
                 </tfoot>
               </table>
@@ -1475,18 +1475,18 @@ export default function PlanningPage() {
                   {CONTRACT_TYPES.map(ct => (
                     <button key={ct.key} onClick={() => setNewContractKey(ct.key)}
                       className={`py-2.5 px-3 rounded-lg border-2 text-left transition-all ${
-                        newContractKey === ct.key ? 'border-[#1E3A5F] bg-[#1E3A5F] text-white' : 'border-gray-200 text-gray-700 hover:border-gray-300 bg-white'
+                        newContractKey === ct.key ? 'border-pilote bg-pilote text-white' : 'border-gray-200 text-gray-700 hover:border-gray-300 bg-white'
                       }`}
                     >
                       <div className="text-sm font-bold">{ct.short}</div>
-                      <div className={`text-[10px] mt-0.5 ${newContractKey === ct.key ? 'text-blue-200' : 'text-gray-400'}`}>{ct.desc}</div>
+                      <div className={`text-[10px] mt-0.5 ${newContractKey === ct.key ? 'text-white/70' : 'text-gray-400'}`}>{ct.desc}</div>
                     </button>
                   ))}
                 </div>
               </div>
               <div className="flex gap-3 pt-1">
                 <Button variant="outline" className="flex-1" onClick={() => setShowAdd(false)}>Annuler</Button>
-                <Button className="flex-1 bg-[#1E3A5F] hover:bg-[#2a4f7c] text-white" onClick={addEmployee} disabled={!newName.trim() || !newRate || adding}>
+                <Button className="flex-1 bg-pilote hover:bg-pilote-hover text-white" onClick={addEmployee} disabled={!newName.trim() || !newRate || adding}>
                   {adding ? 'Ajout...' : 'Ajouter'}
                 </Button>
               </div>
