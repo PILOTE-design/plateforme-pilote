@@ -988,7 +988,7 @@ export default function PlanningPage() {
                                   <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${overDay ? 'bg-red-500' : cellDot}`} />
                                   <span className={`text-[10px] font-semibold truncate ${cellTxt}`}>{typeLabel}</span>
                                 </div>
-                                {!fName && (
+                                {(
                                   <div className="ml-auto flex items-center gap-0.5">
                                     <button
                                       className={`p-0.5 rounded transition-all ${
@@ -1015,7 +1015,9 @@ export default function PlanningPage() {
                               </div>
 
                               {/* ── Centre: résumé ── */}
-                              {!fName && type === 'travail' ? (
+                              {/* Un jour férié PEUT être travaillé (majoration +100 % CCN 992) :
+                                  la saisie de travail reste disponible sur les jours fériés */}
+                              {type === 'travail' ? (
                                 <div className="flex-1 flex flex-col py-1.5 gap-1 px-1.5">
                                   {/* Poste global (legacy — uniquement si pas de poste par créneau) */}
                                   {catSel && (
@@ -1221,8 +1223,15 @@ export default function PlanningPage() {
                   ))}
                 </div>
 
-                {mType === 'travail' && !mFName && (
+                {mType === 'travail' && (
                   <div className="space-y-3.5">
+
+                    {/* Jour férié travaillé : autorisé, avec rappel de la majoration CCN */}
+                    {mFName && (
+                      <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1.5">
+                        ✦ {mFName} — jour férié travaillé : heures majorées +100 % (CCN 992), prises en compte automatiquement dans le coût
+                      </p>
+                    )}
 
                     {/* Poste matin */}
                     <div className="flex items-start gap-3">
