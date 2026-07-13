@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef, Fragment } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -300,14 +300,11 @@ export default function FacturationPage() {
   const fixedInvoices    = fixedAll
     .filter(i => coversWeek(i, monISO, sunISO))
     .sort((a, b) => (Number(b.prorata_ht) || 0) - (Number(a.prorata_ht) || 0))
-  const groupedVariable  = CATEGORIES
-    .map(cat => ({
-      cat,
-      items: variableInvoices
-        .filter(i => catInfo(i.category).key === cat.key)
-        .sort((a, b) => b.amount_ht - a.amount_ht),
-    }))
-    .filter(g => g.items.length > 0)
+  // Liste plate triée par date (puis montant) — le groupement par catégorie était peu fiable,
+  // la catégorie reste visible en pastille sur chaque ligne
+  const sortedVariable   = [...variableInvoices].sort(
+    (a, b) => (b.invoice_date || '').localeCompare(a.invoice_date || '') || b.amount_ht - a.amount_ht,
+  )
   const variableTotalHt  = variableInvoices.reduce((s, i) => s + i.amount_ht, 0)
   const variableTotalTtc = variableInvoices.reduce((s, i) => s + i.amount_ttc, 0)
   const fixedTotalHt     = fixedInvoices.reduce((s, i) => s + i.amount_ht, 0)
@@ -451,7 +448,7 @@ export default function FacturationPage() {
           </div>
         )}
 
-        {/* ── Achats de la semaine (variables, groupés par catégorie) ── */}
+        {/* ── Achats de la semaine (liste plate, catégorie en pastille) ── */}
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
           <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
             <h2 className="font-semibold text-gray-800">Achats de la semaine {week}</h2>
@@ -475,6 +472,7 @@ export default function FacturationPage() {
               <thead>
                 <tr className="bg-gray-50 text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
                   <th className="px-4 py-2.5 text-left">Fournisseur</th>
+                  <th className="px-4 py-2.5 text-left">Catégorie</th>
                   <th className="px-4 py-2.5 text-left">Date</th>
                   <th className="px-4 py-2.5 text-right">HT</th>
                   <th className="px-4 py-2.5 text-right">TVA</th>
@@ -483,55 +481,44 @@ export default function FacturationPage() {
                 </tr>
               </thead>
               <tbody>
-                {groupedVariable.map(group => {
-                  const subHt = group.items.reduce((s, i) => s + i.amount_ht, 0)
+                {sortedVariable.map(inv => {
+                  const cat = catInfo(inv.category)
+                  const isViande = cat.key === 'viande'
                   return (
-                    <Fragment key={group.cat.key}>
-                      <tr className="border-t border-gray-100 bg-gray-50/70">
-                        <td colSpan={6} className="px-4 py-2">
-                          <div className="flex items-center justify-between">
-                            <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${group.cat.color}`}>{group.cat.label}</span>
-                            <span className="text-xs text-gray-400">{group.items.length} facture{group.items.length > 1 ? 's' : ''} · <span className="font-semibold text-gray-600">{fmtEuro(subHt)} HT</span></span>
-                          </div>
-                        </td>
-                      </tr>
-                      {group.items.map(inv => {
-                        const isViande = catInfo(inv.category).key === 'viande'
-                        return (
-                          <tr key={inv.id} className="border-t border-gray-50 hover:bg-gray-50 group transition-colors">
-                            <td className="px-4 py-2.5">
-                              <div className="font-semibold text-sm text-gray-900">{inv.supplier_name}</div>
-                              {inv.invoice_number && <div className="text-xs text-gray-400">{inv.invoice_number}</div>}
-                            </td>
-                            <td className="px-4 py-2.5 text-sm text-gray-600">{new Date(inv.invoice_date).toLocaleDateString('fr-FR')}</td>
-                            <td className={`px-4 py-2.5 text-right font-semibold text-sm ${inv.amount_ht < 0 ? 'text-green-600' : 'text-gray-900'}`}>{fmtEuro(inv.amount_ht)}</td>
-                            <td className="px-4 py-2.5 text-right text-xs text-gray-400">{inv.tva_rate} %</td>
-                            <td className="px-4 py-2.5 text-right text-sm text-gray-600">{fmtEuro(inv.amount_ttc)}</td>
-                            <td className="px-4 py-2.5 text-center">
-                              <div className="flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
-                                <button onClick={() => toggleFixed(inv)} className="p-1.5 rounded hover:bg-pilote-50 text-gray-300 hover:text-pilote transition-colors" title="Marquer comme charge structurelle (prorata hebdo)">
-                                  <Repeat className="w-3.5 h-3.5" />
-                                </button>
-                                {isViande && (
-                                  <button onClick={() => openValorisation(inv)} className="p-1.5 rounded hover:bg-pilote-50 text-gray-300 hover:text-pilote transition-colors" title="Valoriser cet animal">
-                                    <ArrowUpRight className="w-3.5 h-3.5" />
-                                  </button>
-                                )}
-                                <button onClick={() => deleteInvoice(inv.id)} className="p-1.5 rounded hover:bg-red-50 text-gray-300 hover:text-red-400 transition-colors" title="Supprimer">
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        )
-                      })}
-                    </Fragment>
+                    <tr key={inv.id} className="border-t border-gray-50 hover:bg-gray-50 group transition-colors">
+                      <td className="px-4 py-2.5">
+                        <div className="font-semibold text-sm text-gray-900">{inv.supplier_name}</div>
+                        {inv.invoice_number && <div className="text-xs text-gray-400">{inv.invoice_number}</div>}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <span className={`inline-block text-xs font-semibold px-2 py-0.5 rounded-full ${cat.color}`}>{cat.label}</span>
+                      </td>
+                      <td className="px-4 py-2.5 text-sm text-gray-600">{new Date(inv.invoice_date).toLocaleDateString('fr-FR')}</td>
+                      <td className={`px-4 py-2.5 text-right font-semibold text-sm ${inv.amount_ht < 0 ? 'text-green-600' : 'text-gray-900'}`}>{fmtEuro(inv.amount_ht)}</td>
+                      <td className="px-4 py-2.5 text-right text-xs text-gray-400">{inv.tva_rate} %</td>
+                      <td className="px-4 py-2.5 text-right text-sm text-gray-600">{fmtEuro(inv.amount_ttc)}</td>
+                      <td className="px-4 py-2.5 text-center">
+                        <div className="flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                          <button onClick={() => toggleFixed(inv)} className="p-1.5 rounded hover:bg-pilote-50 text-gray-300 hover:text-pilote transition-colors" title="Marquer comme charge structurelle (prorata hebdo)">
+                            <Repeat className="w-3.5 h-3.5" />
+                          </button>
+                          {isViande && (
+                            <button onClick={() => openValorisation(inv)} className="p-1.5 rounded hover:bg-pilote-50 text-gray-300 hover:text-pilote transition-colors" title="Valoriser cet animal">
+                              <ArrowUpRight className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          <button onClick={() => deleteInvoice(inv.id)} className="p-1.5 rounded hover:bg-red-50 text-gray-300 hover:text-red-400 transition-colors" title="Supprimer">
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
                   )
                 })}
               </tbody>
               <tfoot>
                 <tr className="bg-pilote text-white">
-                  <td colSpan={2} className="px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-white/60">Total achats variables</td>
+                  <td colSpan={3} className="px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-white/60">Total achats variables</td>
                   <td className="px-4 py-2.5 text-right font-bold">{fmtEuro(variableTotalHt)}</td>
                   <td className="px-4 py-2.5"></td>
                   <td className="px-4 py-2.5 text-right font-bold text-orange-300">{fmtEuro(variableTotalTtc)}</td>
