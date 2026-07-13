@@ -3,6 +3,8 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { Calculator, TrendingUp, Package, Info, AlertTriangle, CheckCircle, Save, Trash2, Clock, X, Loader2, Users, BarChart2, RotateCcw } from 'lucide-react'
+import { useToast } from '@/components/ui/toast'
+import { useConfirm } from '@/components/ui/confirm-dialog'
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -305,6 +307,8 @@ function normalizeValo(v: any): SavedValo {
 
 export default function ValorisationPage() {
   const params = useSearchParams()
+  const { toast } = useToast()
+  const { confirm: confirmAction } = useConfirm()
 
   const [animalType,    setAnimalType]    = useState<AnimalType>('boeuf')
   const [activeTab,     setActiveTab]     = useState<'calc' | 'suivi'>('calc')
@@ -488,23 +492,30 @@ export default function ValorisationPage() {
       })
       if (!res.ok) {
         const err = await res.json().catch(() => null)
-        alert(`Enregistrement impossible : ${err?.error || 'erreur ' + res.status}`)
+        toast({ variant: 'error', title: 'Enregistrement impossible', description: err?.error || `Erreur ${res.status}` })
         return
       }
       setSaved(true)
       setTimeout(() => setSaved(false), 2500)
       loadHistory()
     } catch {
-      alert("Erreur réseau : la valorisation n'a pas été enregistrée.")
+      toast({ variant: 'error', title: 'Erreur réseau', description: "La valorisation n'a pas été enregistrée." })
     } finally {
       setSaving(false)
     }
   }
 
   async function deleteValo(id: string) {
-    if (!confirm('Supprimer cette valorisation ?')) return
+    const ok = await confirmAction({
+      title: 'Supprimer cette valorisation ?',
+      description: 'Elle sera retirée de l’historique et du suivi hebdomadaire. Cette action est définitive.',
+      confirmLabel: 'Supprimer',
+      variant: 'danger',
+    })
+    if (!ok) return
     await fetch(`/api/valorisations/${id}`, { method: 'DELETE' })
     setSelected(null); loadHistory()
+    toast({ variant: 'success', title: 'Valorisation supprimée' })
   }
 
   const fromInvoice = params.get('supplier')
