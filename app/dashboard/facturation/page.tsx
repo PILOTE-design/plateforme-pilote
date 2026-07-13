@@ -4,6 +4,8 @@ import { useState, useEffect, useCallback, useRef, Fragment } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { useToast } from '@/components/ui/toast'
+import { useConfirm } from '@/components/ui/confirm-dialog'
 import {
   Receipt, ChevronLeft, ChevronRight, Plus, Trash2,
   TrendingUp, TrendingDown, ShoppingCart, Users, Euro,
@@ -11,7 +13,7 @@ import {
   Link2, Link2Off, RefreshCw, ArrowUpRight, Repeat, Undo2
 } from 'lucide-react'
 
-// ─── Types ─────────────────────────────────────────────────────────────
+// ─── Types ────────────────────────────────────────────────────────────
 
 type Invoice = {
   id: string; supplier_name: string; invoice_number?: string; invoice_date: string
@@ -71,7 +73,7 @@ const PROVIDERS_META: ProviderMeta[] = [
   { id: 'ebp',       name: 'EBP',       logo: 'EBP', color: 'bg-orange-500', tokenLabel: 'Token API EBP en ligne', tokenPlaceholder: 'Token depuis EBP → Paramètres → API', needsCompanyId: true, companyIdLabel: 'Identifiant dossier EBP', helpUrl: 'https://developer.ebp.com', description: 'EBP en ligne — import factures fournisseurs automatique' },
 ]
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ─── Helpers ───────────────────────────────────────────────────────────────────
 
 function getISOWeek(date: Date) {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
@@ -115,10 +117,12 @@ function getLastWeek() {
   return getISOWeek(ref)
 }
 
-// ─── Composant principal ────────────────────────────────────────────────────────────
+// ─── Composant principal ──────────────────────────────────────────────────────────────
 
 export default function FacturationPage() {
   const router = useRouter()
+  const { toast } = useToast()
+  const { confirm: confirmAction } = useConfirm()
   const lastWeek = getLastWeek()
   const [week, setWeek] = useState(lastWeek.week)
   const [year, setYear] = useState(lastWeek.year)
@@ -198,10 +202,17 @@ export default function FacturationPage() {
   }
 
   async function deleteInvoice(id: string) {
-    if (!confirm('Supprimer cette facture ?')) return
+    const ok = await confirmAction({
+      title: 'Supprimer cette facture ?',
+      description: 'La facture sera définitivement retirée de la semaine et des totaux.',
+      confirmLabel: 'Supprimer',
+      variant: 'danger',
+    })
+    if (!ok) return
     await fetch(`/api/invoices/${id}`, { method: 'DELETE' })
     setInvoices(prev => prev.filter(i => i.id !== id))
     setFixedAll(prev => prev.filter(i => i.id !== id))
+    toast({ variant: 'success', title: 'Facture supprimée' })
     load()
   }
 
@@ -251,8 +262,15 @@ export default function FacturationPage() {
   }
 
   async function disconnectIntegration(provider: string) {
-    if (!confirm(`Déconnecter ${provider} ?`)) return
+    const ok = await confirmAction({
+      title: `Déconnecter ${provider} ?`,
+      description: 'La synchronisation automatique des factures sera arrêtée. Vous pourrez reconnecter le logiciel à tout moment.',
+      confirmLabel: 'Déconnecter',
+      variant: 'danger',
+    })
+    if (!ok) return
     await fetch(`/api/billing-integrations/${provider}`, { method: 'DELETE' }); loadIntegrations()
+    toast({ variant: 'info', title: `${provider} déconnecté` })
   }
 
   async function syncNow(provider: string) {
