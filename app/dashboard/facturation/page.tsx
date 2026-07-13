@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useToast } from '@/components/ui/toast'
 import { useConfirm } from '@/components/ui/confirm-dialog'
+import { KpiCard } from '@/components/ui/kpi-card'
 import {
   Receipt, ChevronLeft, ChevronRight, Plus, Trash2,
   TrendingUp, TrendingDown, ShoppingCart, Users, Euro,
@@ -13,7 +14,7 @@ import {
   Link2, Link2Off, RefreshCw, ArrowUpRight, Repeat, Undo2
 } from 'lucide-react'
 
-// ─── Types ────────────────────────────────────────────────────────────
+// ─── Types ────────────────────────────────────────────────────────
 
 type Invoice = {
   id: string; supplier_name: string; invoice_number?: string; invoice_date: string
@@ -41,7 +42,7 @@ type ProviderMeta = {
   helpUrl: string; description: string
 }
 
-// ─── Constantes ────────────────────────────────────────────────────────
+// ─── Constantes ──────────────────────────────────────────────────────
 
 const CATEGORIES = [
   { key: 'viande',         label: 'Viande',         color: 'bg-red-100 text-red-800'       },
@@ -73,7 +74,7 @@ const PROVIDERS_META: ProviderMeta[] = [
   { id: 'ebp',       name: 'EBP',       logo: 'EBP', color: 'bg-orange-500', tokenLabel: 'Token API EBP en ligne', tokenPlaceholder: 'Token depuis EBP → Paramètres → API', needsCompanyId: true, companyIdLabel: 'Identifiant dossier EBP', helpUrl: 'https://developer.ebp.com', description: 'EBP en ligne — import factures fournisseurs automatique' },
 ]
 
-// ─── Helpers ───────────────────────────────────────────────────────────────────
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function getISOWeek(date: Date) {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
@@ -311,19 +312,6 @@ export default function FacturationPage() {
   const variableTotalTtc = variableInvoices.reduce((s, i) => s + i.amount_ttc, 0)
   const fixedTotalHt     = fixedInvoices.reduce((s, i) => s + i.amount_ht, 0)
   const fixedWeekly      = fixedInvoices.reduce((s, i) => s + (Number(i.prorata_ht) || 0), 0)
-
-  function KpiCard({ icon: Icon, label, value, sub, color, warn }: any) {
-    return (
-      <div className={`bg-white rounded-xl border p-4 flex flex-col gap-1 ${warn ? 'border-red-200' : 'border-gray-200/80'} shadow-card`}>
-        <div className="flex items-center justify-between">
-          <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">{label}</span>
-          <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${color}`}><Icon className="w-4 h-4" /></div>
-        </div>
-        <p className={`text-2xl font-bold tracking-tight mt-1 ${warn ? 'text-red-600' : 'text-gray-900'}`}>{value}</p>
-        {sub && <p className="text-xs text-gray-400">{sub}</p>}
-      </div>
-    )
-  }
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">

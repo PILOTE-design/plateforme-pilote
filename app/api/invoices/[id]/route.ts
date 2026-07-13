@@ -1,15 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
-
-async function resolveClientId(serviceSupabase: any, userId: string, userEmail?: string | null) {
-  const { data: byId } = await serviceSupabase.from('clients').select('id').eq('client_user_id', userId).maybeSingle()
-  if (byId) return byId.id
-  if (!userEmail) return null
-  const { data: byEmail } = await serviceSupabase.from('clients').select('id').eq('email', userEmail).maybeSingle()
-  if (!byEmail) return null
-  await serviceSupabase.from('clients').update({ client_user_id: userId }).eq('id', byEmail.id)
-  return byEmail.id
-}
+import { resolveClientId } from '@/lib/resolve-client-id'
 
 export async function PATCH(request: NextRequest, { params }: { params: { id: string } }) {
   const supabase = createClient()

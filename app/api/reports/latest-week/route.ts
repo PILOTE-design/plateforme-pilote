@@ -1,21 +1,6 @@
 import { createClient, createServiceClient } from '@/lib/supabase/server'
+import { resolveClientId } from '@/lib/resolve-client-id'
 import { NextResponse } from 'next/server'
-
-async function resolveClientId(
-  serviceSupabase: ReturnType<typeof createServiceClient>,
-  userId: string,
-  userEmail?: string | null
-) {
-  const { data: byId } = await serviceSupabase
-    .from('clients').select('id').eq('client_user_id', userId).maybeSingle()
-  if (byId) return byId.id as string
-  if (!userEmail) return null
-  const { data: byEmail } = await serviceSupabase
-    .from('clients').select('id').eq('email', userEmail).maybeSingle()
-  if (!byEmail) return null
-  await serviceSupabase.from('clients').update({ client_user_id: userId }).eq('id', byEmail.id)
-  return byEmail.id as string
-}
 
 export async function GET() {
   const supabase = createClient()

@@ -1,11 +1,12 @@
 import { createClient, createServiceClient } from '@/lib/supabase/server'
+import { resolveClientId } from '@/lib/resolve-client-id'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { FileText, TrendingUp, TrendingDown, Users, Receipt, Euro, AlertTriangle, CalendarDays, Calculator, ArrowRight, Repeat, CheckCircle2, Circle } from 'lucide-react'
 import { formatDate } from '@/lib/utils'
 import Link from 'next/link'
 import { DonutChart } from './DashboardChart'
 
-// ─── Helpers dates ──────────────────────────────────────────────────────────
+// ─── Helpers dates ────────────────────────────────────────────────────────────
 
 function getISOWeek(date: Date): { week: number; year: number } {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
@@ -55,22 +56,6 @@ function frenchHolidays(year: number): Set<string> {
     fmtD(new Date(Date.UTC(year, 6, 14))), fmtD(new Date(Date.UTC(year, 7, 15))), fmtD(new Date(Date.UTC(year, 10, 1))),
     fmtD(new Date(Date.UTC(year, 10, 11))), fmtD(new Date(Date.UTC(year, 11, 25))),
   ])
-}
-
-async function resolveClientId(
-  serviceSupabase: ReturnType<typeof createServiceClient>,
-  userId: string,
-  userEmail?: string | null
-) {
-  const { data: byId } = await serviceSupabase
-    .from('clients').select('id').eq('client_user_id', userId).maybeSingle()
-  if (byId) return byId.id as string
-  if (!userEmail) return null
-  const { data: byEmail } = await serviceSupabase
-    .from('clients').select('id').eq('email', userEmail).maybeSingle()
-  if (!byEmail) return null
-  await serviceSupabase.from('clients').update({ client_user_id: userId }).eq('id', byEmail.id)
-  return byEmail.id as string
 }
 
 const fmt  = (n: number) => n.toLocaleString('fr-FR', { maximumFractionDigits: 0 })

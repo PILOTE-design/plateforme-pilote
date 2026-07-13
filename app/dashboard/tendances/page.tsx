@@ -1,26 +1,11 @@
 import { createClient, createServiceClient } from '@/lib/supabase/server'
+import { resolveClientId } from '@/lib/resolve-client-id'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { TrendingUp, TrendingDown, LineChart, Euro, Ticket, ShoppingBasket } from 'lucide-react'
 import Link from 'next/link'
 
 const fmt  = (n: number) => n.toLocaleString('fr-FR', { maximumFractionDigits: 0 })
 const fmt2 = (n: number) => n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-
-async function resolveClientId(
-  serviceSupabase: ReturnType<typeof createServiceClient>,
-  userId: string,
-  userEmail?: string | null
-) {
-  const { data: byId } = await serviceSupabase
-    .from('clients').select('id').eq('client_user_id', userId).maybeSingle()
-  if (byId) return byId.id as string
-  if (!userEmail) return null
-  const { data: byEmail } = await serviceSupabase
-    .from('clients').select('id').eq('email', userEmail).maybeSingle()
-  if (!byEmail) return null
-  await serviceSupabase.from('clients').update({ client_user_id: userId }).eq('id', byEmail.id)
-  return byEmail.id as string
-}
 
 type WeekKey = string // "2026-27"
 const keyOf = (year: number, week: number): WeekKey => `${year}-${String(week).padStart(2, '0')}`
