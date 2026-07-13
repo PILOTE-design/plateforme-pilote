@@ -11,13 +11,60 @@ import { createClient, createServiceClient } from '@/lib/supabase/server'
 import Anthropic from '@anthropic-ai/sdk'
 import React from 'react'
 import {
-  Document, Page, Text, View, Image, StyleSheet, renderToBuffer,
+  Document, Page, Text, View, Image, StyleSheet, renderToBuffer, Font,
 } from '@react-pdf/renderer'
 import { Resend } from 'resend'
 
 export const maxDuration = 60
 
-// ─── Types ──────────────────────────────────────────────────────────────────
+// ─── Police PDF : Plus Jakarta Sans (alignée sur la DA du site) ──────────────
+// Les TTF sont téléchargés une fois par instance (cache module) depuis deux CDN
+// (jsDelivr puis raw.githubusercontent en secours), épinglés sur un commit précis,
+// puis passés à Font.register en data: URI. Grâce à cette vraie police :
+//   - '€' et les accents sont rendus nativement (fin du contournement 'EUR')
+//   - les indicateurs de tendance utilisent ▲ / ▼ (fin du contournement '+/-')
+const FONT_REF = '18d1cd2f7ea10481919d2f05c1f7064b7307fc26'
+const FONT_SOURCES = [
+  `https://cdn.jsdelivr.net/gh/tokotype/PlusJakartaSans@${FONT_REF}/fonts/ttf/`,
+  `https://raw.githubusercontent.com/tokotype/PlusJakartaSans/${FONT_REF}/fonts/ttf/`,
+]
+const FONT_WEIGHTS: [number, string][] = [
+  [400, 'PlusJakartaSans-Regular.ttf'],
+  [600, 'PlusJakartaSans-SemiBold.ttf'],
+  [700, 'PlusJakartaSans-Bold.ttf'],
+  [800, 'PlusJakartaSans-ExtraBold.ttf'],
+]
+const FONT_FAMILY = 'PlusJakartaSans'
+
+let fontsPromise: Promise<void> | null = null
+function ensureFonts(): Promise<void> {
+  if (!fontsPromise) {
+    fontsPromise = (async () => {
+      let lastErr: unknown = null
+      for (const base of FONT_SOURCES) {
+        try {
+          const fonts = await Promise.all(FONT_WEIGHTS.map(async ([fontWeight, file]) => {
+            const res = await fetch(base + file)
+            if (!res.ok) throw new Error(`${file}: HTTP ${res.status}`)
+            const b64 = Buffer.from(await res.arrayBuffer()).toString('base64')
+            return { src: `data:font/ttf;base64,${b64}`, fontWeight }
+          }))
+          Font.register({ family: FONT_FAMILY, fonts })
+          // Pas de césure automatique : les libellés produits restent entiers
+          Font.registerHyphenationCallback(w => [w])
+          return
+        } catch (e) {
+          lastErr = e
+        }
+      }
+      fontsPromise = null // permet une nouvelle tentative au prochain appel
+      throw new Error('Police du rapport indisponible (CDN) : ' + String(lastErr))
+    })()
+  }
+  return fontsPromise
+}
+
+// ─── Types ────────────────────────────────────────────────────────────────
 interface Produit { plu: string; designation: string; ventes: number; montant: number }
 interface Famille { id: string; nom: string; total_montant: number; produits: Produit[] }
 interface FinancierData { ca_net: number; nb_tickets: number; moyenne_ticket: number }
@@ -50,8 +97,9 @@ interface ComputedReport {
   execSummary: string
 }
 
-// ─── Formatters ────────────────────────────────────────────────────────────
-// NE PAS utiliser toLocaleString('fr-FR') — produit U+202F que Helvetica rend '/'
+// ─── Formatters ──────────────────────────────────────────────────────────────
+// NE PAS utiliser toLocaleString('fr-FR') — produit U+202F (espace fine insécable),
+// on garde un formatage manuel avec espace simple pour un rendu stable
 const eur = (n: number) => {
   const abs = Math.abs(n)
   const [int, dec] = abs.toFixed(2).split('.')
@@ -68,19 +116,19 @@ const signPct = (n: number) => (n >= 0 ? '+' : '') + (n * 100).toFixed(1) + '%'
 const pctStr = (n: number) => (n * 100).toFixed(1) + '%'
 const trunc = (s: string, len: number) => (s.length > len ? s.slice(0, len - 1) + '...' : s)
 
-// Nettoie les textes IA : caractères que Helvetica (WinAnsi) rend mal
+// Nettoie les textes IA : normalise la ponctuation et borne la longueur
 const sanitize = (s: string) => (s || '')
   .replace(/[‘’ʼ]/g, "'")
   .replace(/[“”«»]/g, '"')
   .replace(/[–—]/g, '-')
   .replace(/…/g, '...')
-  .replace(/[   ]/g, ' ')
+  .replace(/[   ]/g, ' ')
   .replace(/[▲▼→←➡➔]/g, '')
   .replace(/[^\x00-\xFF]/g, '')
   .trim()
   .slice(0, 320)
 
-// ─── Palette ──────────────────────────────────────────────────────────────
+// ─── Palette ────────────────────────────────────────────────────────────
 const C = {
   navy:        '#1E3A5F',
   blue:        '#2D5986',
@@ -103,57 +151,57 @@ const C = {
   white:       '#FFFFFF',
 }
 
-// ─── Styles ───────────────────────────────────────────────────────────────
+// ─── Styles ─────────────────────────────────────────────────────────────
 const S = StyleSheet.create({
   coverBlueBg:    { backgroundColor: C.navy, padding: 56, paddingBottom: 44, flexGrow: 1 },
   coverTagRow:    { flexDirection: 'row', alignItems: 'center', marginBottom: 44 },
   coverTagDot:    { width: 8, height: 8, borderRadius: 4, backgroundColor: C.orange, marginRight: 6 },
   coverTagText:   { color: C.orange, fontSize: 10, letterSpacing: 4 },
-  coverTitle:     { color: C.white, fontSize: 40, fontFamily: 'Helvetica-Bold', lineHeight: 1.15, marginBottom: 10 },
+  coverTitle:     { color: C.white, fontSize: 40, fontWeight: 700, lineHeight: 1.15, marginBottom: 10 },
   coverSub:       { color: C.blueMid, fontSize: 13, marginBottom: 30 },
   coverDivider:   { width: 52, height: 3, backgroundColor: C.orange, marginBottom: 24 },
-  coverWeek:      { color: C.white, fontFamily: 'Helvetica-Bold', fontSize: 21, marginBottom: 4 },
+  coverWeek:      { color: C.white, fontWeight: 700, fontSize: 21, marginBottom: 4 },
   coverPeriod:    { color: C.blueMid, fontSize: 11, marginBottom: 26 },
   coverKpiRow:    { flexDirection: 'row', marginTop: 8 },
   coverKpi:       { flex: 1, borderLeftWidth: 2, borderLeftColor: C.orange, paddingLeft: 10, marginRight: 16 },
   coverKpiLabel:  { color: C.blueMid, fontSize: 7.5, letterSpacing: 1.5, marginBottom: 3 },
-  coverKpiValue:  { color: C.white, fontFamily: 'Helvetica-Bold', fontSize: 15 },
+  coverKpiValue:  { color: C.white, fontWeight: 700, fontSize: 15 },
   coverWhiteBg:   { backgroundColor: C.white, paddingVertical: 30, paddingHorizontal: 56, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end' },
   coverLabel:     { color: C.textLight, fontSize: 8, letterSpacing: 2, marginBottom: 3 },
-  coverClient:    { color: C.navy, fontFamily: 'Helvetica-Bold', fontSize: 14 },
+  coverClient:    { color: C.navy, fontWeight: 700, fontSize: 14 },
   coverMeta:      { color: C.textLight, fontSize: 8, marginBottom: 2, textAlign: 'right' },
 
-  page:           { backgroundColor: C.white, paddingTop: 0, paddingBottom: 42, paddingHorizontal: 0 },
+  page:           { backgroundColor: C.white, paddingTop: 0, paddingBottom: 42, paddingHorizontal: 0, fontFamily: FONT_FAMILY },
   secHeader:      { flexDirection: 'row', alignItems: 'center', backgroundColor: C.navy, paddingVertical: 11, paddingHorizontal: 36, marginBottom: 18 },
-  secHeaderNum:   { color: C.orange, fontFamily: 'Helvetica-Bold', fontSize: 11, marginRight: 10, letterSpacing: 1 },
-  secHeaderText:  { color: C.white, fontFamily: 'Helvetica-Bold', fontSize: 11, letterSpacing: 1 },
+  secHeaderNum:   { color: C.orange, fontWeight: 700, fontSize: 11, marginRight: 10, letterSpacing: 1 },
+  secHeaderText:  { color: C.white, fontWeight: 700, fontSize: 11, letterSpacing: 1 },
   footer:         { position: 'absolute', bottom: 20, left: 36, right: 36, flexDirection: 'row', justifyContent: 'space-between', borderTopColor: C.line, borderTopWidth: 0.5, paddingTop: 6 },
   footerText:     { fontSize: 7.5, color: C.textLight },
 
   execBox:        { marginHorizontal: 36, marginBottom: 16, backgroundColor: C.lightBlue, borderLeftWidth: 3, borderLeftColor: C.navy, borderRadius: 4, padding: 12 },
-  execLabel:      { fontSize: 7.5, letterSpacing: 1.5, color: C.blue, marginBottom: 4, fontFamily: 'Helvetica-Bold' },
+  execLabel:      { fontSize: 7.5, letterSpacing: 1.5, color: C.blue, marginBottom: 4, fontWeight: 700 },
   execText:       { fontSize: 9.5, color: C.textMid, lineHeight: 1.5 },
 
   kpiRow:         { flexDirection: 'row', paddingHorizontal: 36, marginBottom: 10 },
   kpiBox:         { flex: 1, borderRadius: 6, padding: 14, marginRight: 8 },
   kpiLabel:       { fontSize: 8, letterSpacing: 1, marginBottom: 6 },
-  kpiValue:       { fontFamily: 'Helvetica-Bold', fontSize: 17, color: C.white },
+  kpiValue:       { fontWeight: 700, fontSize: 17, color: C.white },
   kpiSub:         { fontSize: 9, marginTop: 3 },
 
   tableWrap:      { paddingHorizontal: 36 },
   tHead:          { flexDirection: 'row', backgroundColor: C.blue, paddingVertical: 7, paddingHorizontal: 8 },
-  tHeadCell:      { color: C.white, fontFamily: 'Helvetica-Bold', fontSize: 8 },
+  tHeadCell:      { color: C.white, fontWeight: 700, fontSize: 8 },
   tRow:           { flexDirection: 'row', alignItems: 'center', paddingVertical: 6, paddingHorizontal: 8, borderBottomColor: C.line, borderBottomWidth: 0.5 },
   tRowAlt:        { flexDirection: 'row', alignItems: 'center', paddingVertical: 6, paddingHorizontal: 8, backgroundColor: C.gray, borderBottomColor: C.line, borderBottomWidth: 0.5 },
   tTotal:         { flexDirection: 'row', paddingVertical: 7, paddingHorizontal: 8, backgroundColor: C.navy },
   tCell:          { fontSize: 8.5, color: C.textDark },
-  tCellB:         { fontSize: 8.5, color: C.textDark, fontFamily: 'Helvetica-Bold' },
+  tCellB:         { fontSize: 8.5, color: C.textDark, fontWeight: 700 },
   tCellR:         { fontSize: 8.5, color: C.textDark, textAlign: 'right' },
-  tCellRB:        { fontSize: 8.5, color: C.textDark, fontFamily: 'Helvetica-Bold', textAlign: 'right' },
-  tCellGreen:     { fontSize: 8.5, color: C.green, fontFamily: 'Helvetica-Bold', textAlign: 'right' },
-  tCellRed:       { fontSize: 8.5, color: C.red, fontFamily: 'Helvetica-Bold', textAlign: 'right' },
-  tTotalCell:     { fontSize: 8.5, color: C.white, fontFamily: 'Helvetica-Bold', textAlign: 'right' },
-  tTotalCellL:    { fontSize: 8.5, color: C.white, fontFamily: 'Helvetica-Bold' },
+  tCellRB:        { fontSize: 8.5, color: C.textDark, fontWeight: 700, textAlign: 'right' },
+  tCellGreen:     { fontSize: 8.5, color: C.green, fontWeight: 700, textAlign: 'right' },
+  tCellRed:       { fontSize: 8.5, color: C.red, fontWeight: 700, textAlign: 'right' },
+  tTotalCell:     { fontSize: 8.5, color: C.white, fontWeight: 700, textAlign: 'right' },
+  tTotalCellL:    { fontSize: 8.5, color: C.white, fontWeight: 700 },
 
   shareBarBg:     { height: 5, backgroundColor: C.grayMid, borderRadius: 2.5, flex: 1, marginLeft: 6, marginRight: 6 },
   shareBarFill:   { height: 5, backgroundColor: C.navy, borderRadius: 2.5 },
@@ -165,32 +213,32 @@ const S = StyleSheet.create({
   insightRow:     { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 11 },
   insightBullet:  { width: 20, height: 20, borderRadius: 10, backgroundColor: C.navy, alignItems: 'center', justifyContent: 'center', marginRight: 12, flexShrink: 0 },
   recoBullet:     { width: 20, height: 20, borderRadius: 10, backgroundColor: C.orange, alignItems: 'center', justifyContent: 'center', marginRight: 12, flexShrink: 0 },
-  bulletNum:      { color: C.white, fontFamily: 'Helvetica-Bold', fontSize: 8 },
+  bulletNum:      { color: C.white, fontWeight: 700, fontSize: 8 },
   insightText:    { fontSize: 9.5, color: C.textMid, flex: 1, lineHeight: 1.55 },
   vigilanceBox:   { marginHorizontal: 36, marginTop: 4, marginBottom: 14, backgroundColor: C.lightAmber, borderLeftWidth: 3, borderLeftColor: C.amber, borderRadius: 4, padding: 11 },
-  vigilanceTitle: { fontSize: 8, letterSpacing: 1.5, color: C.amber, fontFamily: 'Helvetica-Bold', marginBottom: 5 },
+  vigilanceTitle: { fontSize: 8, letterSpacing: 1.5, color: C.amber, fontWeight: 700, marginBottom: 5 },
   vigilanceText:  { fontSize: 9, color: '#7C4A03', lineHeight: 1.5, marginBottom: 3 },
 
   topFlopWrap:    { flexDirection: 'row', paddingHorizontal: 36 },
   topFlopLeft:    { flex: 1, marginRight: 10 },
   topFlopRight:   { flex: 1, marginLeft: 10 },
   rankChip:       { width: 16, height: 16, borderRadius: 8, alignItems: 'center', justifyContent: 'center', marginRight: 6 },
-  rankChipText:   { fontSize: 7, fontFamily: 'Helvetica-Bold', color: C.white },
+  rankChipText:   { fontSize: 7, fontWeight: 700, color: C.white },
 
   statusBanner:   { marginHorizontal: 36, borderRadius: 8, padding: 18, marginBottom: 18 },
-  statusLabel:    { color: C.white, fontFamily: 'Helvetica-Bold', fontSize: 16, marginBottom: 4, letterSpacing: 0.5 },
+  statusLabel:    { color: C.white, fontWeight: 700, fontSize: 16, marginBottom: 4, letterSpacing: 0.5 },
   statusDesc:     { color: C.white, fontSize: 9.5, opacity: 0.9, lineHeight: 1.5 },
   recapGrid:      { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 30 },
   recapCard:      { width: '31%', marginHorizontal: '1.16%', marginBottom: 10, backgroundColor: C.gray, borderRadius: 6, padding: 11 },
   recapLabel:     { fontSize: 7, letterSpacing: 1, color: C.textLight, marginBottom: 4 },
-  recapValue:     { fontSize: 13, fontFamily: 'Helvetica-Bold', color: C.navy },
+  recapValue:     { fontSize: 13, fontWeight: 700, color: C.navy },
   recapSub:       { fontSize: 7.5, color: C.textLight, marginTop: 2 },
   actionBox:      { marginHorizontal: 36, marginTop: 8, backgroundColor: C.lightOrange, borderLeftWidth: 3, borderLeftColor: C.orange, borderRadius: 4, padding: 13 },
-  actionLabel:    { fontSize: 8, letterSpacing: 1.5, color: C.orange, fontFamily: 'Helvetica-Bold', marginBottom: 5 },
-  actionText:     { fontSize: 10, color: '#7A4100', lineHeight: 1.55, fontFamily: 'Helvetica-Bold' },
+  actionLabel:    { fontSize: 8, letterSpacing: 1.5, color: C.orange, fontWeight: 700, marginBottom: 5 },
+  actionText:     { fontSize: 10, color: '#7A4100', lineHeight: 1.55, fontWeight: 700 },
 })
 
-// ─── PDF Sub-components ───────────────────────────────────────────────────
+// ─── PDF Sub-components ───────────────────────────────────────────────────────
 
 const SecHeader = ({ num, title }: { num: string; title: string }) => (
   <View style={S.secHeader}>
@@ -220,7 +268,7 @@ const ShareBar = ({ pct }: { pct: number }) => (
   </View>
 )
 
-// ─── PDF Document ───────────────────────────────────────────────────────────
+// ─── PDF Document ───────────────────────────────────────────────────────────────
 
 const PiloteReport = ({ r }: { r: ComputedReport }) => {
   const { data, clientName, insights, pieBuffer, tops, flops, famRows, caVar, status, execSummary } = r
@@ -238,7 +286,7 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
     <Document title={`Rapport S${data.week_number} - ${data.period_n}`} author="PILOTE" language="fr">
 
       {/* PAGE 1 - COUVERTURE */}
-      <Page size="A4" style={{ backgroundColor: C.white }}>
+      <Page size="A4" style={{ backgroundColor: C.white, fontFamily: FONT_FAMILY }}>
         <View style={S.coverBlueBg}>
           <View style={S.coverTagRow}>
             <View style={S.coverTagDot} />
@@ -255,7 +303,7 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
               <Text style={S.coverKpiValue}>{eur0(fn.ca_net)}</Text>
             </View>
             <View style={[S.coverKpi, { borderLeftColor: caVar >= 0 ? '#4CAF50' : '#EF5350' }]}>
-              <Text style={S.coverKpiLabel}>VS MEME SEMAINE {data.year - 1}</Text>
+              <Text style={S.coverKpiLabel}>VS MÊME SEMAINE {data.year - 1}</Text>
               <Text style={[S.coverKpiValue, { color: caVar >= 0 ? '#81C784' : '#EF9A9A' }]}>{signPct(caVar)}</Text>
             </View>
             <View style={S.coverKpi}>
@@ -280,18 +328,18 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
             )}
           </View>
           <View>
-            <Text style={S.coverMeta}>Genere le {generatedOn}</Text>
-            <Text style={S.coverMeta}>Periode comparee (N-1) : {data.period_n1}</Text>
-            <Text style={S.coverMeta}>7 pages - Analyse IA - Graphique - Synthese de semaine</Text>
+            <Text style={S.coverMeta}>Généré le {generatedOn}</Text>
+            <Text style={S.coverMeta}>Période comparée (N-1) : {data.period_n1}</Text>
+            <Text style={S.coverMeta}>7 pages - Analyse IA - Graphique - Synthèse de semaine</Text>
           </View>
         </View>
       </Page>
 
       {/* PAGE 2 - SYNTHESE FINANCIERE */}
       <Page size="A4" style={S.page}>
-        <SecHeader num="01" title="SYNTHESE FINANCIERE" />
+        <SecHeader num="01" title="SYNTHÈSE FINANCIÈRE" />
         <View style={S.execBox}>
-          <Text style={S.execLabel}>RESUME EXECUTIF</Text>
+          <Text style={S.execLabel}>RÉSUMÉ EXÉCUTIF</Text>
           <Text style={S.execText}>{execSummary}</Text>
         </View>
         <Text style={{ paddingHorizontal: 36, fontSize: 9, color: C.textLight, marginBottom: 8 }}>CHIFFRE D'AFFAIRES</Text>
@@ -306,13 +354,13 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
           <KpiBox label="TICKETS N-1" value={String(fn1.nb_tickets)} sub={`S${data.week_number} - ${data.year - 1}`} bg={C.blue} />
           <KpiBox label="PANIER MOYEN" value={eur(fn.moyenne_ticket)} sub={`N-1 : ${eur(fn1.moyenne_ticket)}`} bg={fn.moyenne_ticket >= fn1.moyenne_ticket ? C.green : C.red} />
         </View>
-        <Text style={{ paddingHorizontal: 36, fontSize: 9.5, fontFamily: 'Helvetica-Bold', color: C.navy, marginBottom: 10 }}>Recapitulatif par famille de produits</Text>
+        <Text style={{ paddingHorizontal: 36, fontSize: 9.5, fontWeight: 700, color: C.navy, marginBottom: 10 }}>Récapitulatif par famille de produits</Text>
         <View style={S.tableWrap}>
           <View style={S.tHead}>
             <Text style={[S.tHeadCell, { flex: 3 }]}>FAMILLE</Text>
             <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N (€)</Text>
             <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N-1 (€)</Text>
-            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>ECART (€)</Text>
+            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>ÉCART (€)</Text>
             <Text style={[S.tHeadCell, { flex: 1.2, textAlign: 'right' }]}>% CA</Text>
             <Text style={[S.tHeadCell, { flex: 1, textAlign: 'center' }]}>TEND.</Text>
           </View>
@@ -325,7 +373,7 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
                 <Text style={[S.tCellR, { flex: 2 }]}>{fam.caN1 !== null ? eur(fam.caN1) : '-'}</Text>
                 <Text style={[fam.ecart >= 0 ? S.tCellGreen : S.tCellRed, { flex: 2 }]}>{signEur(fam.ecart)}</Text>
                 <Text style={[S.tCellRB, { flex: 1.2 }]}>{pctStr(w)}</Text>
-                <Text style={[fam.ecart >= 0 ? S.tCellGreen : S.tCellRed, { flex: 1, textAlign: 'center' }]}>{fam.ecart >= 0 ? '+' : '-'}</Text>
+                <Text style={[fam.ecart >= 0 ? S.tCellGreen : S.tCellRed, { flex: 1, textAlign: 'center' }]}>{fam.ecart >= 0 ? '▲' : '▼'}</Text>
               </View>
             )
           })}
@@ -335,7 +383,7 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
             <Text style={[S.tTotalCell, { flex: 2 }]}>{eur(vn1.total)}</Text>
             <Text style={[S.tTotalCell, { flex: 2 }]}>{signEur(vn.total - vn1.total)}</Text>
             <Text style={[S.tTotalCell, { flex: 1.2 }]}>100%</Text>
-            <Text style={[S.tTotalCell, { flex: 1, textAlign: 'center' }]}>{vn.total >= vn1.total ? '+' : '-'}</Text>
+            <Text style={[S.tTotalCell, { flex: 1, textAlign: 'center' }]}>{vn.total >= vn1.total ? '▲' : '▼'}</Text>
           </View>
         </View>
         <Footer page={2} week={data.week_number} year={data.year} />
@@ -343,18 +391,18 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
 
       {/* PAGE 3 - REPARTITION CA */}
       <Page size="A4" style={S.page}>
-        <SecHeader num="02" title="REPARTITION DU CA PAR FAMILLE" />
+        <SecHeader num="02" title="RÉPARTITION DU CA PAR FAMILLE" />
         <View style={S.chartWrap}>
           <Image src={{ data: pieBuffer, format: 'png' }} style={{ width: 490, height: 275 }} />
         </View>
-        <Text style={S.chartCaption}>Repartition du CA par famille (€ TTC) - Semaine {data.week_number} {data.year}</Text>
+        <Text style={S.chartCaption}>Répartition du CA par famille (€ TTC) - Semaine {data.week_number} {data.year}</Text>
         <View style={[S.tableWrap, { marginTop: 14 }]}>
           <View style={S.tHead}>
             <Text style={[S.tHeadCell, { flex: 2.6 }]}>FAMILLE</Text>
             <Text style={[S.tHeadCell, { flex: 1.8, textAlign: 'right' }]}>CA N (€)</Text>
             <Text style={[S.tHeadCell, { flex: 2.6, textAlign: 'center' }]}>PART DU CA</Text>
             <Text style={[S.tHeadCell, { flex: 1.8, textAlign: 'right' }]}>CA N-1 (€)</Text>
-            <Text style={[S.tHeadCell, { flex: 1.4, textAlign: 'right' }]}>EVOL. CA</Text>
+            <Text style={[S.tHeadCell, { flex: 1.4, textAlign: 'right' }]}>ÉVOL. CA</Text>
           </View>
           {famRows.map((fam, i) => {
             const wN = vn.total ? fam.caN / vn.total : 0
@@ -378,18 +426,18 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
 
       {/* PAGE 4 - EVOLUTION PAR FAMILLE (tableau trié, sans graphique) */}
       <Page size="A4" style={S.page}>
-        <SecHeader num="03" title={`EVOLUTION PAR FAMILLE - ${data.year} vs ${data.year - 1}`} />
+        <SecHeader num="03" title={`ÉVOLUTION PAR FAMILLE - ${data.year} vs ${data.year - 1}`} />
         <Text style={{ paddingHorizontal: 36, fontSize: 8.5, color: C.textLight, marginBottom: 12 }}>
-          Familles triees du meilleur ecart au moins bon - comparaison avec la meme semaine {data.year - 1}
+          Familles triées du meilleur écart au moins bon - comparaison avec la même semaine {data.year - 1}
         </Text>
         <View style={S.tableWrap}>
           <View style={S.tHead}>
             <Text style={[S.tHeadCell, { flex: 3 }]}>FAMILLE</Text>
             <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N (€)</Text>
             <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N-1 (€)</Text>
-            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>ECART (€)</Text>
-            <Text style={[S.tHeadCell, { flex: 1.5, textAlign: 'right' }]}>ECART %</Text>
-            <Text style={[S.tHeadCell, { flex: 2.6, textAlign: 'center' }]}>POIDS DE L'ECART</Text>
+            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>ÉCART (€)</Text>
+            <Text style={[S.tHeadCell, { flex: 1.5, textAlign: 'right' }]}>ÉCART %</Text>
+            <Text style={[S.tHeadCell, { flex: 2.6, textAlign: 'center' }]}>POIDS DE L'ÉCART</Text>
           </View>
           {(() => {
             const maxAbs = Math.max(1, ...sortedByEcart.map(f => Math.abs(f.ecart)))
@@ -415,7 +463,7 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
         </View>
         <View style={{ marginHorizontal: 36, marginTop: 16, backgroundColor: C.gray, borderRadius: 6, padding: 11 }}>
           <Text style={{ fontSize: 8, color: C.textMid, lineHeight: 1.5 }}>
-            Lecture : la barre indique le poids de l'ecart de chaque famille par rapport au plus gros ecart de la semaine (vert = progression, rouge = recul). Les familles en tete expliquent l'essentiel de la variation du CA.
+            Lecture : la barre indique le poids de l'écart de chaque famille par rapport au plus gros écart de la semaine (vert = progression, rouge = recul). Les familles en tête expliquent l'essentiel de la variation du CA.
           </Text>
         </View>
         <Footer page={4} week={data.week_number} year={data.year} />
@@ -423,20 +471,20 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
 
       {/* PAGE 5 - TOP / FLOP */}
       <Page size="A4" style={S.page}>
-        <SecHeader num="04" title="CE QUI PROGRESSE - CE QUI DECROCHE" />
+        <SecHeader num="04" title="CE QUI PROGRESSE - CE QUI DÉCROCHE" />
         <Text style={{ paddingHorizontal: 36, fontSize: 8.5, color: C.textLight, marginBottom: 12 }}>
-          Plus fortes progressions et plus fortes baisses de CA produit vs la meme semaine {data.year - 1} (ecarts calcules sur le CA total de chaque produit)
+          Plus fortes progressions et plus fortes baisses de CA produit vs la même semaine {data.year - 1} (écarts calculés sur le CA total de chaque produit)
         </Text>
         <View style={S.topFlopWrap}>
           <View style={S.topFlopLeft}>
             <View style={{ backgroundColor: C.green, paddingVertical: 9, paddingHorizontal: 8, borderTopLeftRadius: 4, borderTopRightRadius: 4 }}>
-              <Text style={{ color: C.white, fontFamily: 'Helvetica-Bold', fontSize: 9 }}>TOP PROGRESSIONS</Text>
+              <Text style={{ color: C.white, fontWeight: 700, fontSize: 9 }}>TOP PROGRESSIONS</Text>
             </View>
             <View style={{ flexDirection: 'row', backgroundColor: '#F1F5F9', paddingVertical: 5, paddingHorizontal: 8, borderBottomColor: '#CBD5E1', borderBottomWidth: 1 }}>
               <Text style={[S.tHeadCell, { flex: 0.7, color: C.textLight }]}>#</Text>
               <Text style={[S.tHeadCell, { flex: 3, color: C.textMid }]}>PRODUIT</Text>
               <Text style={[S.tHeadCell, { flex: 1.8, textAlign: 'right', color: C.textMid }]}>CA N (€)</Text>
-              <Text style={[S.tHeadCell, { flex: 1.4, textAlign: 'right', color: C.textMid }]}>ECART (€)</Text>
+              <Text style={[S.tHeadCell, { flex: 1.4, textAlign: 'right', color: C.textMid }]}>ÉCART (€)</Text>
             </View>
             {tops.map((t, i) => (
               <View key={i} style={[i % 2 === 0 ? S.tRow : S.tRowAlt, { paddingHorizontal: 8 }]}>
@@ -451,18 +499,18 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
               </View>
             ))}
             {tops.length === 0 && (
-              <View style={S.tRow}><Text style={[S.tCell, { fontSize: 8, color: C.textLight }]}>Aucune progression detectee</Text></View>
+              <View style={S.tRow}><Text style={[S.tCell, { fontSize: 8, color: C.textLight }]}>Aucune progression détectée</Text></View>
             )}
           </View>
           <View style={S.topFlopRight}>
             <View style={{ backgroundColor: C.red, paddingVertical: 9, paddingHorizontal: 8, borderTopLeftRadius: 4, borderTopRightRadius: 4 }}>
-              <Text style={{ color: C.white, fontFamily: 'Helvetica-Bold', fontSize: 9 }}>TOP BAISSES</Text>
+              <Text style={{ color: C.white, fontWeight: 700, fontSize: 9 }}>TOP BAISSES</Text>
             </View>
             <View style={{ flexDirection: 'row', backgroundColor: '#F1F5F9', paddingVertical: 5, paddingHorizontal: 8, borderBottomColor: '#CBD5E1', borderBottomWidth: 1 }}>
               <Text style={[S.tHeadCell, { flex: 0.7, color: C.textLight }]}>#</Text>
               <Text style={[S.tHeadCell, { flex: 3, color: C.textMid }]}>PRODUIT</Text>
               <Text style={[S.tHeadCell, { flex: 1.8, textAlign: 'right', color: C.textMid }]}>CA N (€)</Text>
-              <Text style={[S.tHeadCell, { flex: 1.4, textAlign: 'right', color: C.textMid }]}>ECART (€)</Text>
+              <Text style={[S.tHeadCell, { flex: 1.4, textAlign: 'right', color: C.textMid }]}>ÉCART (€)</Text>
             </View>
             {flops.map((f, i) => (
               <View key={i} style={[i % 2 === 0 ? S.tRow : S.tRowAlt, { paddingHorizontal: 8 }]}>
@@ -477,13 +525,13 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
               </View>
             ))}
             {flops.length === 0 && (
-              <View style={S.tRow}><Text style={[S.tCell, { fontSize: 8, color: C.textLight }]}>Aucune baisse detectee</Text></View>
+              <View style={S.tRow}><Text style={[S.tCell, { fontSize: 8, color: C.textLight }]}>Aucune baisse détectée</Text></View>
             )}
           </View>
         </View>
         <View style={{ marginHorizontal: 36, marginTop: 16, backgroundColor: C.gray, borderRadius: 6, padding: 11 }}>
           <Text style={{ fontSize: 8, color: C.textMid, lineHeight: 1.5 }}>
-            Lecture : CA N = total des ventes du produit sur la semaine ; l'ecart compare ce total a la meme semaine de {data.year - 1}. Les produits en tete de progression sont a mettre en avant en vitrine ; les baisses marquees meritent une verification (approvisionnement, prix, presence en rayon).
+            Lecture : CA N = total des ventes du produit sur la semaine ; l'écart compare ce total à la même semaine de {data.year - 1}. Les produits en tête de progression sont à mettre en avant en vitrine ; les baisses marquées méritent une vérification (approvisionnement, prix, présence en rayon).
           </Text>
         </View>
         <Footer page={5} week={data.week_number} year={data.year} />
@@ -491,8 +539,8 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
 
       {/* PAGE 6 - ANALYSE IA */}
       <Page size="A4" style={S.page}>
-        <SecHeader num="05" title="ANALYSE INTELLIGENTE - INSIGHTS CLES" />
-        <Text style={{ paddingHorizontal: 36, fontSize: 8.5, color: C.textLight, marginBottom: 14 }}>Analyse generee par intelligence artificielle - Semaine {data.week_number} {data.year}</Text>
+        <SecHeader num="05" title="ANALYSE INTELLIGENTE - INSIGHTS CLÉS" />
+        <Text style={{ paddingHorizontal: 36, fontSize: 8.5, color: C.textLight, marginBottom: 14 }}>Analyse générée par intelligence artificielle - Semaine {data.week_number} {data.year}</Text>
         <View style={S.insightBlock}>
           {insights.insights.map((txt, i) => (
             <View key={i} style={S.insightRow}>
@@ -525,12 +573,12 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
 
       {/* PAGE 7 - SYNTHESE DE LA SEMAINE */}
       <Page size="A4" style={S.page}>
-        <SecHeader num="07" title="SYNTHESE DE LA SEMAINE" />
+        <SecHeader num="07" title="SYNTHÈSE DE LA SEMAINE" />
         <View style={[S.statusBanner, { backgroundColor: status.color }]}>
           <Text style={S.statusLabel}>{status.label}</Text>
           <Text style={S.statusDesc}>{status.desc}</Text>
         </View>
-        <Text style={{ paddingHorizontal: 36, fontSize: 9, color: C.textLight, marginBottom: 10 }}>LES CHIFFRES A RETENIR</Text>
+        <Text style={{ paddingHorizontal: 36, fontSize: 9, color: C.textLight, marginBottom: 10 }}>LES CHIFFRES À RETENIR</Text>
         <View style={S.recapGrid}>
           <View style={S.recapCard}>
             <Text style={S.recapLabel}>CA SEMAINE</Text>
@@ -538,7 +586,7 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
             <Text style={S.recapSub}>{signEur(fn.ca_net - fn1.ca_net)} vs {data.year - 1}</Text>
           </View>
           <View style={[S.recapCard, { backgroundColor: caVar >= 0 ? C.lightGreen : C.lightRed }]}>
-            <Text style={S.recapLabel}>EVOLUTION</Text>
+            <Text style={S.recapLabel}>ÉVOLUTION</Text>
             <Text style={[S.recapValue, { color: caVar >= 0 ? C.green : C.red }]}>{signPct(caVar)}</Text>
             <Text style={S.recapSub}>vs S{data.week_number} {data.year - 1}</Text>
           </View>
@@ -564,7 +612,7 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
           </View>
         </View>
         <View style={{ marginHorizontal: 36, marginTop: 8, marginBottom: 4, backgroundColor: C.lightBlue, borderLeftWidth: 3, borderLeftColor: C.navy, borderRadius: 4, padding: 12 }}>
-          <Text style={S.execLabel}>A RETENIR CETTE SEMAINE</Text>
+          <Text style={S.execLabel}>À RETENIR CETTE SEMAINE</Text>
           <Text style={S.execText}>{insights.resume}</Text>
         </View>
         <View style={S.actionBox}>
@@ -573,11 +621,11 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
         </View>
         {flopProduct && (
           <Text style={{ paddingHorizontal: 36, marginTop: 12, fontSize: 8, color: C.textLight }}>
-            A surveiller aussi : {trunc(flopProduct.designation, 40)} ({'-'}{eur0(Math.abs(flopProduct.ecart))} vs N-1).
+            À surveiller aussi : {trunc(flopProduct.designation, 40)} ({'-'}{eur0(Math.abs(flopProduct.ecart))} vs N-1).
           </Text>
         )}
         <Text style={{ paddingHorizontal: 36, marginTop: 18, fontSize: 8, color: C.textLight }}>
-          Rapport genere automatiquement par PILOTE le {generatedOn}. Donnees issues de vos exports de caisse (S{data.week_number} {data.year} et S{data.week_number} {data.year - 1}).
+          Rapport généré automatiquement par PILOTE le {generatedOn}. Données issues de vos exports de caisse (S{data.week_number} {data.year} et S{data.week_number} {data.year - 1}).
         </Text>
         <Footer page={7} week={data.week_number} year={data.year} />
       </Page>
@@ -586,7 +634,7 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
   )
 }
 
-// ─── Data extraction ─────────────────────────────────────────────────────────
+// ─── Data extraction ───────────────────────────────────────────────────────────
 
 async function parsePDF(file: File): Promise<string> {
   const buffer = Buffer.from(await file.arrayBuffer())
@@ -634,7 +682,7 @@ async function extractFinancials(fin_n: string, fin_n1: string): Promise<{
   return JSON.parse(extractJSONObject(r.content[0].type === 'text' ? r.content[0].text : ''))
 }
 
-// ─── Semaine ISO deterministe ─────────────────────────────────────────────────
+// ─── Semaine ISO deterministe ─────────────────────────────────────────────────────
 // La semaine du rapport est TOUJOURS calculee en code a partir des dates de la
 // periode extraite (ex: "29 juin - 5 juillet 2026" => S27), jamais par l'IA.
 
@@ -771,7 +819,7 @@ async function extractData(texts: { fin_n: string; fin_n1: string; ventes_n: str
   }
 }
 
-// ─── Historisation caisse ─────────────────────────────────────────────────────
+// ─── Historisation caisse ─────────────────────────────────────────────────────────
 
 async function archiveWeekData(
   serviceSupabase: ReturnType<typeof createServiceClient>,
@@ -803,7 +851,7 @@ async function archiveWeekData(
   if (rows.length > 0) await serviceSupabase.from('weekly_sales_products').insert(rows)
 }
 
-// ─── Calculs métier ────────────────────────────────────────────────────────────
+// ─── Calculs métier ────────────────────────────────────────────────────────────────
 
 /** Familles fusionnées N/N-1, triées par CA N desc, plafonnées à 12 lignes (le reste en AUTRES) */
 function buildFamRows(vn: { total: number; familles: Famille[] }, vn1: { total: number; familles: Famille[] }, max = 12): FamRow[] {
@@ -827,10 +875,10 @@ function buildFamRows(vn: { total: number; familles: Famille[] }, vn1: { total: 
 /** Statut de semaine selon les seuils métier boucherie (analyse N vs N-1) */
 function buildStatus(caVar: number): WeekStatus {
   const v = caVar * 100
-  if (v > 10)  return { label: 'SEMAINE EN FORTE PROGRESSION', color: '#2E7D32', light: '#E6F4EA', desc: 'Le CA progresse nettement par rapport a la meme semaine l\'an dernier. Capitalisez sur cette dynamique : notez ce qui a change (meteo, evenements, offres) pour pouvoir le reproduire.' }
-  if (v > 0)   return { label: 'SEMAINE EN PROGRESSION', color: '#43A047', light: '#E6F4EA', desc: 'Le CA est en hausse par rapport a la meme semaine l\'an dernier. La trajectoire est bonne : surveillez les familles en retrait pour transformer cette progression en tendance.' }
-  if (v > -5)  return { label: 'SEMAINE STABLE - A SURVEILLER', color: '#D97706', light: '#FEF3C7', desc: 'Le CA est en leger retrait par rapport a la meme semaine l\'an dernier. Rien d\'alarmant, mais identifiez les familles et produits qui decrochent pour reagir vite.' }
-  return { label: 'SEMAINE EN RECUL', color: '#C62828', light: '#FCE8E6', desc: 'Le CA recule sensiblement par rapport a la meme semaine l\'an dernier. Verifiez la comparabilite des semaines (jours feries, fermetures) puis concentrez-vous sur les recommandations page 6.' }
+  if (v > 10)  return { label: 'SEMAINE EN FORTE PROGRESSION', color: '#2E7D32', light: '#E6F4EA', desc: 'Le CA progresse nettement par rapport à la même semaine l\'an dernier. Capitalisez sur cette dynamique : notez ce qui a changé (météo, événements, offres) pour pouvoir le reproduire.' }
+  if (v > 0)   return { label: 'SEMAINE EN PROGRESSION', color: '#43A047', light: '#E6F4EA', desc: 'Le CA est en hausse par rapport à la même semaine l\'an dernier. La trajectoire est bonne : surveillez les familles en retrait pour transformer cette progression en tendance.' }
+  if (v > -5)  return { label: 'SEMAINE STABLE - À SURVEILLER', color: '#D97706', light: '#FEF3C7', desc: 'Le CA est en léger retrait par rapport à la même semaine l\'an dernier. Rien d\'alarmant, mais identifiez les familles et produits qui décrochent pour réagir vite.' }
+  return { label: 'SEMAINE EN RECUL', color: '#C62828', light: '#FCE8E6', desc: 'Le CA recule sensiblement par rapport à la même semaine l\'an dernier. Vérifiez la comparabilité des semaines (jours fériés, fermetures) puis concentrez-vous sur les recommandations page 6.' }
 }
 
 /** Résumé exécutif calculé (independant de l'IA — toujours disponible) */
@@ -841,9 +889,9 @@ function buildExecSummary(data: ReportData, famRows: FamRow[], caVar: number): s
   const dTickets = fn.nb_tickets - fn1.nb_tickets
   const panierUp = fn.moyenne_ticket >= fn1.moyenne_ticket
   const p1 = caVar >= 0
-    ? `CA de ${eur0(fn.ca_net)} sur la semaine ${data.week_number}, en progression de ${(caVar * 100).toFixed(1)}% par rapport a la meme semaine ${data.year - 1}.`
-    : `CA de ${eur0(fn.ca_net)} sur la semaine ${data.week_number}, en retrait de ${Math.abs(caVar * 100).toFixed(1)}% par rapport a la meme semaine ${data.year - 1}.`
-  const p2 = `${dTickets >= 0 ? dTickets + ' tickets de plus' : Math.abs(dTickets) + ' tickets de moins'} qu'en ${data.year - 1}, avec un panier moyen ${panierUp ? 'en hausse' : 'en baisse'} a ${eur(fn.moyenne_ticket)}.`
+    ? `CA de ${eur0(fn.ca_net)} sur la semaine ${data.week_number}, en progression de ${(caVar * 100).toFixed(1)}% par rapport à la même semaine ${data.year - 1}.`
+    : `CA de ${eur0(fn.ca_net)} sur la semaine ${data.week_number}, en retrait de ${Math.abs(caVar * 100).toFixed(1)}% par rapport à la même semaine ${data.year - 1}.`
+  const p2 = `${dTickets >= 0 ? dTickets + ' tickets de plus' : Math.abs(dTickets) + ' tickets de moins'} qu'en ${data.year - 1}, avec un panier moyen ${panierUp ? 'en hausse' : 'en baisse'} à ${eur(fn.moyenne_ticket)}.`
   const p3 = best && worst && best !== worst
     ? `${trunc(best.nom, 24)} tire la performance (${signEur(best.ecart)}) tandis que ${trunc(worst.nom, 24)} recule (${signEur(worst.ecart)}).`
     : ''
@@ -955,10 +1003,11 @@ async function getPieBuffer(data: ReportData): Promise<Buffer> {
 }
 
 async function generatePDF(report: ComputedReport): Promise<Buffer> {
+  await ensureFonts()
   return renderToBuffer(React.createElement(PiloteReport, { r: report }))
 }
 
-// ─── POST Handler ───────────────────────────────────────────────────────────────────
+// ─── POST Handler ─────────────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
   try {
@@ -1045,7 +1094,26 @@ export async function POST(req: NextRequest) {
           from: 'PILOTE <onboarding@resend.dev>',
           to: toEmail,
           subject: `Rapport hebdomadaire ${title}`,
-          html: `<div style="font-family:sans-serif;max-width:600px;margin:0 auto"><div style="background:#1E3A5F;padding:32px 40px"><div style="color:#FF8C00;font-size:11px;letter-spacing:4px;margin-bottom:10px">PILOTE</div><h2 style="color:#FFFFFF;margin:0;font-size:22px">Votre rapport est pret</h2></div><div style="padding:32px 40px;border:1px solid #E0E0E0;border-top:none"><p style="color:#444;margin-top:0"><strong>${title}</strong></p><p style="color:#666;font-size:14px">7 pages - Analyse IA - Graphique - Top &amp; Flop produits - Synthese de la semaine</p><div style="margin:28px 0;text-align:center"><a href="${fileUrl}" style="background:#1E3A5F;color:white;padding:14px 32px;border-radius:8px;text-decoration:none;font-weight:bold;font-size:15px">Telecharger le rapport PDF</a></div><p style="color:#999;font-size:11px;text-align:center">Rapport confidentiel - Genere automatiquement par PILOTE</p></div></div>`,
+          html: `<div style="font-family:'Plus Jakarta Sans','Segoe UI',system-ui,-apple-system,sans-serif;max-width:600px;margin:0 auto;background:#ffffff">
+  <div style="background:#1E3A5F;padding:36px 40px 32px">
+    <div style="font-size:15px;font-weight:800;letter-spacing:4px;color:#ffffff;margin-bottom:22px">PILOTE<span style="color:#FF8C00">.</span></div>
+    <div style="font-size:11px;font-weight:600;letter-spacing:2px;color:#c5d2e2;text-transform:uppercase;margin-bottom:6px">Semaine ${data.week_number} · ${data.year}</div>
+    <h1 style="color:#ffffff;margin:0;font-size:24px;font-weight:800;letter-spacing:-0.5px">Votre rapport hebdomadaire est prêt</h1>
+    <div style="width:44px;height:3px;background:#FF8C00;border-radius:2px;margin-top:16px"></div>
+  </div>
+  <div style="padding:32px 40px;border:1px solid #e4eaf1;border-top:none;border-radius:0 0 12px 12px">
+    <p style="color:#111827;font-size:15px;font-weight:700;margin:0 0 6px">${title}</p>
+    <p style="color:#6b7280;font-size:13px;line-height:1.6;margin:0 0 24px">7 pages · Analyse IA · Graphique de répartition · Top &amp; Flop produits · Synthèse de la semaine</p>
+    <div style="background:#f2f5f9;border-left:3px solid #1E3A5F;border-radius:6px;padding:14px 16px;margin-bottom:28px">
+      <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;color:#1E3A5F;text-transform:uppercase;margin-bottom:4px">Période analysée</div>
+      <div style="color:#374151;font-size:13px">${data.period_n} — comparée à ${data.period_n1}</div>
+    </div>
+    <div style="text-align:center;margin-bottom:28px">
+      <a href="${fileUrl}" style="display:inline-block;background:#1E3A5F;color:#ffffff;padding:14px 36px;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px">Télécharger le rapport PDF</a>
+    </div>
+    <p style="color:#9ca3af;font-size:11px;text-align:center;margin:0;border-top:1px solid #f3f4f6;padding-top:16px">Rapport confidentiel · Généré automatiquement par <span style="font-weight:700;color:#1E3A5F">PILOTE<span style="color:#FF8C00">.</span></span></p>
+  </div>
+</div>`,
         })
       }
     } catch (emailErr) {
