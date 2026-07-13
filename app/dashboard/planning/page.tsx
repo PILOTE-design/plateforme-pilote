@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { useToast } from '@/components/ui/toast'
+import { useConfirm } from '@/components/ui/confirm-dialog'
 import { Plus, ChevronLeft, ChevronRight, Trash2, CalendarDays, FileDown, Copy, Clipboard, BarChart2, X, AlertTriangle } from 'lucide-react'
 import EmployeeProfileModal, { EmployeeProfile } from '@/components/EmployeeProfileModal'
 
@@ -82,7 +84,7 @@ type MonthlyStat = {
   emp: Employee; hours: number; cost: number; charged: number; ot: number; worked: number; cp: number; sick: number
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Helpers ────────────────────────────────────────────────────────────────
 
 function isoWeeksInYear(y: number): number {
   const d = new Date(y, 11, 28)
@@ -312,9 +314,11 @@ function calcHoursFromSd(sd: ScheduleDetail): number | null {
   return (matin || 0) + (apmidi || 0)
 }
 
-// ─── Component ────────────────────────────────────────────────────────────────
+// ─── Component ──────────────────────────────────────────────────────────────
 
 export default function PlanningPage() {
+  const { toast } = useToast()
+  const { confirm: confirmAction } = useConfirm()
   const now = getISOWeek(new Date())
   const [week, setWeek]   = useState(now.week)
   const [year, setYear]   = useState(now.year)
@@ -496,10 +500,18 @@ export default function PlanningPage() {
   }
 
   async function deleteEmployee(id: string) {
-    if (!confirm('Supprimer cet employé et tout son historique ?')) return
+    const emp = employees.find(e => e.id === id)
+    const ok = await confirmAction({
+      title: `Supprimer ${emp?.name ?? 'cet employé'} ?`,
+      description: 'Tout son historique de planning sera également supprimé. Cette action est définitive.',
+      confirmLabel: 'Supprimer',
+      variant: 'danger',
+    })
+    if (!ok) return
     await fetch(`/api/employees/${id}`, { method: 'DELETE' })
     setEmployees(p => p.filter(e => e.id !== id))
     setEntriesSync(prev => { const n = { ...prev }; delete n[id]; return n })
+    toast({ variant: 'success', title: 'Employé supprimé' })
   }
 
   function prevWeek() {
@@ -521,7 +533,7 @@ export default function PlanningPage() {
       const res = await fetch(`/api/planning?week=${prevW}&year=${prevY}`)
       const data = await res.json()
       if (!Array.isArray(data) || data.length === 0) {
-        alert(`Aucun planning trouvé pour la semaine ${prevW} (${prevY}).`)
+        toast({ variant: 'info', title: 'Aucun planning à copier', description: `Aucun planning trouvé pour la semaine ${prevW} (${prevY}).` })
         return
       }
       const posts = data.map((entry: Record<string, unknown>) => {
@@ -534,6 +546,7 @@ export default function PlanningPage() {
       })
       await Promise.all(posts)
       loadEntries()
+      toast({ variant: 'success', title: 'Planning copié', description: `Semaine ${prevW} copiée vers la semaine ${week}.` })
     } finally {
       setCopying(false)
     }
