@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
+import { useToast } from '@/components/ui/toast'
 
 type Client = {
   id: string
@@ -14,6 +15,7 @@ type Client = {
 export default function ClientsList({ clients: initial }: { clients: Client[] }) {
   const [clients, setClients] = useState(initial)
   const [loading, setLoading] = useState<string | null>(null)
+  const { toast } = useToast()
 
   async function handleInvite(clientId: string) {
     setLoading(clientId)
@@ -25,7 +27,7 @@ export default function ClientsList({ clients: initial }: { clients: Client[] })
         )
       } else {
         const data = await res.json()
-        alert('Erreur : ' + data.error)
+        toast({ variant: 'error', title: "Envoi de l'invitation impossible", description: data.error })
       }
     } finally {
       setLoading(null)

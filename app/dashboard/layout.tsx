@@ -2,6 +2,8 @@ import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { LogOut } from 'lucide-react'
 import { SidebarNav, MobileTabBar } from './NavLinks'
+import { ToastProvider } from '@/components/ui/toast'
+import { ConfirmProvider } from '@/components/ui/confirm-dialog'
 
 const ADMIN_EMAIL = 'nouvion.theo51@gmail.com'
 
@@ -35,6 +37,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const initial = displayName.charAt(0).toUpperCase()
 
   return (
+    <ToastProvider>
+    <ConfirmProvider>
     <div className="min-h-screen bg-gray-50 flex">
       {/* Sidebar — desktop uniquement */}
       <aside className="hidden md:flex w-64 bg-white border-r border-gray-200 flex-col">
@@ -86,5 +90,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
       <MobileTabBar />
     </div>
+    </ConfirmProvider>
+    </ToastProvider>
   )
 }
