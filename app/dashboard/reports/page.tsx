@@ -4,14 +4,13 @@ import { Button } from '@/components/ui/button'
 import { Plus } from 'lucide-react'
 import Link from 'next/link'
 import { ReportsTree } from './ReportsTree'
-
-const ADMIN_EMAIL = 'nouvion.theo51@gmail.com'
+import { isAdminEmail } from '@/lib/admins'
 
 export default async function ReportsPage() {
   const supabase = createClient()
   const serviceSupabase = createServiceClient()
   const { data: { user } } = await supabase.auth.getUser()
-  const isAdmin = user?.email === ADMIN_EMAIL
+  const isAdmin = isAdminEmail(user?.email)
 
   const { data: clientRecord } = await serviceSupabase
     .from('clients')

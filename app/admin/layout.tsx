@@ -2,8 +2,7 @@ import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { Users, FileText, LogOut, ArrowLeft, ShieldCheck } from 'lucide-react'
-
-const ADMIN_EMAIL = 'nouvion.theo51@gmail.com'
+import { isAdminEmail } from '@/lib/admins'
 
 async function signOut() {
   'use server'
@@ -17,7 +16,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   const { data: { user } } = await supabase.auth.getUser()
 
   if (!user) redirect('/login')
-  if (user.email !== ADMIN_EMAIL) redirect('/dashboard')
+  if (!isAdminEmail(user.email)) redirect('/dashboard')
 
   return (
     <div className="min-h-screen bg-gray-50 flex">

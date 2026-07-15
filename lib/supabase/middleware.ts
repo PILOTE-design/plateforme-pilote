@@ -1,5 +1,6 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
+import { isAdminEmail } from '@/lib/admins'
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request })
@@ -38,9 +39,9 @@ export async function updateSession(request: NextRequest) {
     }
   }
 
-  // Protect admin routes
+  // Protect admin routes (admin principal + co-admins via ADMIN_EMAILS)
   if (pathname.startsWith('/admin')) {
-    if (!user || user.email !== process.env.ADMIN_EMAIL) {
+    if (!user || !isAdminEmail(user.email)) {
       return NextResponse.redirect(new URL('/', request.url))
     }
   }
