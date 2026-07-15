@@ -217,6 +217,16 @@ export default function FacturationPage() {
     load()
   }
 
+  /** Change la catégorie d'un achat directement dans la liste (persisté aussitôt) */
+  async function updateCategory(inv: Invoice, category: string) {
+    if (category === inv.category) return
+    setInvoices(prev => prev.map(i => i.id === inv.id ? { ...i, category } : i))
+    setFixedAll(prev => prev.map(i => i.id === inv.id ? { ...i, category } : i))
+    const res = await fetch(`/api/invoices/${inv.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ category }) })
+    if (res.ok) { toast({ variant: 'success', title: 'Catégorie mise à jour' }); load() }
+    else toast({ variant: 'error', title: 'Erreur', description: 'La catégorie n\'a pas pu être modifiée.' })
+  }
+
   /** Bascule manuelle charge fixe <-> achat variable */
   async function toggleFixed(inv: Invoice) {
     const makeFixed = !inv.is_fixed_charge
@@ -240,10 +250,31 @@ export default function FacturationPage() {
   }
 
   async function saveCA() {
+    const total  = parseFloat(caForm.ca_total)
+    const rayons = {
+      ca_boucherie:   parseFloat(caForm.ca_boucherie)   || 0,
+      ca_charcuterie: parseFloat(caForm.ca_charcuterie) || 0,
+      ca_traiteur:    parseFloat(caForm.ca_traiteur)    || 0,
+      ca_vente:       parseFloat(caForm.ca_vente)       || 0,
+    }
+    if (!caForm.ca_total.trim() || isNaN(total) || total <= 0) {
+      toast({ variant: 'error', title: 'CA total invalide', description: 'Saisissez un chiffre d\'affaires total strictement positif.' })
+      return
+    }
+    if (Object.values(rayons).some(v => v < 0)) {
+      toast({ variant: 'error', title: 'Montant négatif', description: 'Le détail par rayon ne peut pas contenir de valeur négative.' })
+      return
+    }
+    const sumRayons = rayons.ca_boucherie + rayons.ca_charcuterie + rayons.ca_traiteur + rayons.ca_vente
+    if (sumRayons > total + 0.01) {
+      toast({ variant: 'error', title: 'Détail incohérent', description: `La somme des rayons (${fmtEuro(sumRayons)}) dépasse le CA total (${fmtEuro(total)}).` })
+      return
+    }
     setSaving(true)
-    const body = { week_number: week, year, ca_total: parseFloat(caForm.ca_total) || 0, ca_boucherie: parseFloat(caForm.ca_boucherie) || 0, ca_charcuterie: parseFloat(caForm.ca_charcuterie) || 0, ca_traiteur: parseFloat(caForm.ca_traiteur) || 0, ca_vente: parseFloat(caForm.ca_vente) || 0 }
+    const body = { week_number: week, year, ca_total: total, ...rayons }
     const res = await fetch('/api/weekly-ca', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-    if (res.ok) { setShowCA(false); load() }
+    if (res.ok) { setShowCA(false); toast({ variant: 'success', title: 'CA enregistré' }); load() }
+    else toast({ variant: 'error', title: 'Erreur', description: 'Le CA n\'a pas pu être enregistré.' })
     setSaving(false)
   }
 
@@ -491,7 +522,14 @@ export default function FacturationPage() {
                         {inv.invoice_number && <div className="text-xs text-gray-400">{inv.invoice_number}</div>}
                       </td>
                       <td className="px-4 py-2.5">
-                        <span className={`inline-block text-xs font-semibold px-2 py-0.5 rounded-full ${cat.color}`}>{cat.label}</span>
+                        <select
+                          value={inv.category}
+                          onChange={e => updateCategory(inv, e.target.value)}
+                          className={`text-xs font-semibold rounded-full pl-2.5 pr-1.5 py-0.5 border-0 cursor-pointer focus:outline-none focus:ring-2 focus:ring-pilote-200 ${cat.color}`}
+                          title="Modifier la catégorie"
+                        >
+                          {CATEGORIES.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
+                        </select>
                       </td>
                       <td className="px-4 py-2.5 text-sm text-gray-600">{new Date(inv.invoice_date).toLocaleDateString('fr-FR')}</td>
                       <td className={`px-4 py-2.5 text-right font-semibold text-sm ${inv.amount_ht < 0 ? 'text-green-600' : 'text-gray-900'}`}>{fmtEuro(inv.amount_ht)}</td>
