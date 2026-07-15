@@ -536,6 +536,18 @@ export default function PlanningPage() {
         toast({ variant: 'info', title: 'Aucun planning à copier', description: `Aucun planning trouvé pour la semaine ${prevW} (${prevY}).` })
         return
       }
+      const currentHasData = Object.values(entriesRef.current).some(entry =>
+        JOURS_DB.some(j => (Number((entry as Record<string, unknown>)[j]) || 0) > 0)
+      )
+      if (currentHasData) {
+        const ok = await confirmAction({
+          title: `Écraser le planning de la semaine ${week} ?`,
+          description: `La semaine ${week} contient déjà des heures saisies. Copier la semaine ${prevW} remplacera les jours déjà renseignés.`,
+          confirmLabel: 'Copier et écraser',
+          variant: 'danger',
+        })
+        if (!ok) return
+      }
       const posts = data.map((entry: Record<string, unknown>) => {
         const entryData = { ...entry }; delete entryData.id
         return fetch('/api/planning', {
