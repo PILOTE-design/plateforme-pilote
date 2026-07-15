@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { sendWelcomeEmail } from '@/lib/resend'
+import { PRIMARY_ADMIN_EMAIL, getAdminEmails } from '@/lib/admins'
 import { Resend } from 'resend'
-
-const ADMIN_EMAIL = 'nouvion.theo51@gmail.com'
 
 export async function POST(request: NextRequest) {
   const supabase = createClient()
@@ -40,9 +39,9 @@ export async function POST(request: NextRequest) {
   try {
     const serviceSupabase = createServiceClient()
 
-    // Find admin user ID
+    // Find admin user ID — l'admin PRINCIPAL reste propriétaire des enregistrements clients
     const { data: adminUsers } = await serviceSupabase.auth.admin.listUsers()
-    const adminUser = adminUsers?.users?.find((u: { email?: string }) => u.email === ADMIN_EMAIL)
+    const adminUser = adminUsers?.users?.find((u: { email?: string }) => u.email === PRIMARY_ADMIN_EMAIL)
 
     // Check if client already exists for this user
     const { data: existing } = await serviceSupabase
@@ -80,7 +79,7 @@ export async function POST(request: NextRequest) {
     })
     await resend.emails.send({
       from: 'PILOTE <onboarding@resend.dev>',
-      to: ADMIN_EMAIL,
+      to: getAdminEmails(),
       subject: `[PILOTE] Nouvelle inscription — ${businessName}`,
       html: `
         <div style="font-family:sans-serif;max-width:560px;margin:0 auto">

@@ -4,8 +4,7 @@ import { LogOut } from 'lucide-react'
 import { SidebarNav, MobileTabBar } from './NavLinks'
 import { ToastProvider } from '@/components/ui/toast'
 import { ConfirmProvider } from '@/components/ui/confirm-dialog'
-
-const ADMIN_EMAIL = 'nouvion.theo51@gmail.com'
+import { isAdminEmail } from '@/lib/admins'
 
 async function signOut() {
   'use server'
@@ -20,8 +19,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   if (!user) redirect('/login')
 
-  // L'admin n'a pas acces au dashboard client — il va directement sur /admin
-  if (user.email === ADMIN_EMAIL) redirect('/admin')
+  // Les admins n'ont pas acces au dashboard client — ils vont directement sur /admin
+  if (isAdminEmail(user.email)) redirect('/admin')
 
   const { data: profile } = await supabase
     .from('profiles')

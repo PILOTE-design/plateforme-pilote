@@ -1,7 +1,6 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-
-const ADMIN_EMAIL = 'nouvion.theo51@gmail.com'
+import { isAdminEmail } from '@/lib/admins'
 
 // Cette page redirige :
 // - Admin → /admin/reports/nouveau (espace dédié à la génération)
@@ -10,6 +9,6 @@ export default async function NouveauRapportPage() {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/login')
-  if (user.email === ADMIN_EMAIL) redirect('/admin/reports/nouveau')
+  if (isAdminEmail(user.email)) redirect('/admin/reports/nouveau')
   redirect('/dashboard/reports')
 }

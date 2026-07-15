@@ -2,13 +2,12 @@ import { createClient, createServiceClient } from '@/lib/supabase/server'
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { Users, FileText, Plus, CheckCircle, Clock } from 'lucide-react'
-
-const ADMIN_EMAIL = 'nouvion.theo51@gmail.com'
+import { isAdminEmail } from '@/lib/admins'
 
 export default async function AdminClientsPage() {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  if (!user || user.email !== ADMIN_EMAIL) redirect('/dashboard')
+  if (!user || !isAdminEmail(user.email)) redirect('/dashboard')
 
   // Service client bypasses RLS -> voit TOUS les clients
   const service = createServiceClient()

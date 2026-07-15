@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { getAdminEmails } from '@/lib/admins'
 import { Resend } from 'resend'
-
-const ADMIN_EMAIL = 'nouvion.theo51@gmail.com'
 
 export async function GET() {
   const supabase = createClient()
@@ -40,7 +39,7 @@ export async function POST(req: NextRequest) {
     const createdAt = new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' })
     await resend.emails.send({
       from: 'PILOTE <onboarding@resend.dev>',
-      to: ADMIN_EMAIL,
+      to: getAdminEmails(),
       subject: `[PILOTE] Nouveau client créé — ${name}`,
       html: `
         <div style="font-family:sans-serif;max-width:560px;margin:0 auto">
