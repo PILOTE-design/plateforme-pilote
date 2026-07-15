@@ -34,28 +34,30 @@ export async function GET(request: NextRequest) {
     achats_by_category[cat] = (achats_by_category[cat] || 0) + parseFloat(inv.amount_ht || 0)
   }
 
-  // 2. Masse salariale depuis planning
-  const { data: planningData } = await serviceSupabase
-    .from('planning_entries')
-    .select('lundi, mardi, mercredi, jeudi, vendredi, samedi, dimanche, lundi_type, mardi_type, mercredi_type, jeudi_type, vendredi_type, samedi_type, dimanche_type, employee_id')
-    .eq('week_number', week)
-    .eq('year', year)
-
+  // 2. Masse salariale depuis planning — UNIQUEMENT les employés de CE client.
+  // Cloisonnement critique : sans ce filtre, la requête additionnait les
+  // plannings de TOUS les clients de la plateforme pour la même semaine.
   let masse_salariale = 0
-  if (planningData && planningData.length > 0) {
-    const employeeIds = [...new Set(planningData.map((p: any) => p.employee_id))]
-    const { data: employees } = await serviceSupabase
-      .from('employees')
-      .select('id, hourly_rate, contract_type, contract_hours')
-      .in('id', employeeIds)
+  const { data: employees } = await serviceSupabase
+    .from('employees')
+    .select('id, hourly_rate, contract_type, contract_hours')
+    .eq('client_id', clientId)
+
+  if (employees && employees.length > 0) {
+    const { data: planningData } = await serviceSupabase
+      .from('planning_entries')
+      .select('lundi, mardi, mercredi, jeudi, vendredi, samedi, dimanche, lundi_type, mardi_type, mercredi_type, jeudi_type, vendredi_type, samedi_type, dimanche_type, employee_id')
+      .in('employee_id', employees.map((e: any) => e.id))
+      .eq('week_number', week)
+      .eq('year', year)
 
     const empMap: Record<string, any> = {}
-    for (const emp of employees || []) empMap[emp.id] = emp
+    for (const emp of employees) empMap[emp.id] = emp
 
     const CONTRACT_HOURS: Record<string, number> = { CDI_35: 35, CDI_39: 39, CDD_35: 35, CDD_39: 39 }
     const JOURS = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
 
-    for (const entry of planningData) {
+    for (const entry of planningData || []) {
       const emp = empMap[entry.employee_id]
       if (!emp) continue
       const ch = CONTRACT_HOURS[emp.contract_type] ?? emp.contract_hours ?? 35

@@ -36,6 +36,9 @@ export async function POST(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Non autorisé' }, { status: 401 })
 
+  const clientId = await resolveClientId(serviceSupabase, user.id, user.email)
+  if (!clientId) return NextResponse.json({ error: 'Client introuvable' }, { status: 404 })
+
   const body = await req.json()
   const {
     employee_id, week_number, year,
@@ -43,6 +46,16 @@ export async function POST(req: NextRequest) {
     lundi_type, mardi_type, mercredi_type, jeudi_type, vendredi_type, samedi_type, dimanche_type,
     schedule_details,
   } = body
+
+  // Cloisonnement : l'employé doit appartenir au client connecté
+  // (sinon n'importe quel compte pourrait écrire le planning d'une autre boucherie)
+  const { data: ownedEmp } = await serviceSupabase
+    .from('employees')
+    .select('id')
+    .eq('id', employee_id)
+    .eq('client_id', clientId)
+    .maybeSingle()
+  if (!ownedEmp) return NextResponse.json({ error: 'Employé introuvable pour ce client' }, { status: 403 })
 
   const { data, error } = await serviceSupabase
     .from('planning_entries')
