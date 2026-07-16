@@ -30,7 +30,7 @@ interface AnimalConfig {
   breeds: Breed[]; cuts: Cut[]
   defaultWeight: string; defaultPurchaseKg: string; defaultLabor: string
 }
-interface WeekLabor { hours: number; cost: number; rate: number; week: number; year: number }
+interface WeekLabor { hours: number; cost: number; rate: number; decoupeHours: number; decoupeCost: number; week: number; year: number }
 
 // ─── Données Bœuf ─────────────────────────────────────────────────────────────────
 
@@ -235,10 +235,12 @@ function slotHours(debut?: string, fin?: string): number {
   return e - s
 }
 
-/** Heures et coût CHARGÉ de la main d'œuvre taguée "boucherie" dans le planning de la semaine */
-function computeBoucherieLabor(entries: any[], emps: any[]): { hours: number; cost: number } {
+/** Heures et coût CHARGÉ de la main d'œuvre "boucherie" du planning de la semaine.
+ *  `decoupeHours` / `decoupeCost` : uniquement le temps de découpe saisi dans le planning
+ *  (champ « Découpe » du poste boucherie) — c'est ce qui est imputé à la valorisation. */
+function computeBoucherieLabor(entries: any[], emps: any[]): { hours: number; cost: number; decoupeHours: number; decoupeCost: number } {
   const empMap = new Map(emps.map((e: any) => [e.id, e]))
-  let hours = 0, cost = 0
+  let hours = 0, cost = 0, decoupeHours = 0, decoupeCost = 0
   for (const en of entries) {
     const emp: any = empMap.get(en.employee_id)
     if (!emp) continue
@@ -250,6 +252,7 @@ function computeBoucherieLabor(entries: any[], emps: any[]): { hours: number; co
       const sd = sds[j] || {}
       const catM = sd.categorie_matin || sd.categorie
       const catA = sd.categorie_apmidi || sd.categorie
+      const isBoucherie = catM === 'boucherie' || catA === 'boucherie' || sd.categorie === 'boucherie'
       const m = slotHours(sd.matin_debut, sd.matin_fin)
       const a = slotHours(sd.apmidi_debut, sd.apmidi_fin)
       let h = 0
@@ -259,9 +262,13 @@ function computeBoucherieLabor(entries: any[], emps: any[]): { hours: number; co
       if (h === 0 && m === 0 && a === 0 && sd.categorie === 'boucherie') h = Number(en[j]) || 0
       hours += h
       cost  += h * rate
+      // Temps de découpe explicite (champ dédié du planning)
+      const dh = isBoucherie ? (parseFloat(sd.decoupe) || 0) : 0
+      decoupeHours += dh
+      decoupeCost  += dh * rate
     }
   }
-  return { hours, cost }
+  return { hours, cost, decoupeHours, decoupeCost }
 }
 
 // ─── Préférences par famille (catégories cochées + pièces retirées), persistées en localStorage ─
@@ -333,10 +340,14 @@ export default function ValorisationPage() {
   const [saving,        setSaving]        = useState(false)
   const [saved,         setSaved]         = useState(false)
   const [selected,      setSelected]      = useState<SavedValo | null>(null)
+  // Poids saisis manuellement par le boucher, pièce par pièce (clé = id de la pièce)
+  const [cutWeights,    setCutWeights]    = useState<Record<string, string>>({})
 
   const config = ANIMALS[animalType]
   const breeds = config.breeds
   const cuts   = config.cuts
+  // Bœuf et veau s'achètent en demi-carcasse : le poids saisi est celui d'un demi, la quantité un nombre de demis
+  const isHalf = animalType === 'boeuf' || animalType === 'veau'
 
   // Préférences par famille — persistées
   useEffect(() => {
@@ -356,6 +367,7 @@ export default function ValorisationPage() {
     setPurchasePerKg(config.defaultPurchaseKg)
     setLaborCost(config.defaultLabor)
     setDecoupeHours('')
+    setCutWeights({})
     setShowBreedInfo(false)
   }, [animalType]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -376,8 +388,13 @@ export default function ValorisationPage() {
       fetch('/api/employees').then(r => r.json()).catch(() => []),
     ]).then(([entries, emps]) => {
       if (!Array.isArray(entries) || !Array.isArray(emps)) { setWeekLabor(null); return }
-      const { hours, cost } = computeBoucherieLabor(entries, emps)
-      setWeekLabor({ hours, cost, rate: hours > 0 ? cost / hours : 0, week: w, year: y })
+      const { hours, cost, decoupeHours: dH, decoupeCost: dC } = computeBoucherieLabor(entries, emps)
+      setWeekLabor({ hours, cost, rate: hours > 0 ? cost / hours : 0, decoupeHours: dH, decoupeCost: dC, week: w, year: y })
+      // Le temps de découpe du planning devient la main d'œuvre imputée à la valorisation
+      if (dH > 0) {
+        setDecoupeHours(String(Math.round(dH * 100) / 100))
+        setLaborCost(String(Math.round(dC * 100) / 100))
+      }
     }).catch(() => setWeekLabor(null))
   }, [purchaseDate])
 
@@ -408,18 +425,20 @@ export default function ValorisationPage() {
   const { results, coefficient, totalMarketRevenue1 } = useMemo(() => {
     if (carcW <= 0 || ppkg <= 0) return { results: [] as CutResult[], coefficient: 1, totalMarketRevenue1: 0 }
     const isActive    = (c: Cut) => includedCats.has(c.category) && !excludedCuts.has(c.id)
+    // Poids saisi manuellement par pièce (0 tant que le boucher n'a rien renseigné)
+    const cutWeight   = (c: Cut) => parseFloat(cutWeights[c.id] || '') || 0
     const activeCuts  = cuts.filter(isActive)
-    const mktRevenue  = activeCuts.reduce((s, c) => s + (carcassW1 * c.yieldPct / 100) * c.marketPrice, 0)
+    const mktRevenue  = activeCuts.reduce((s, c) => s + cutWeight(c) * c.marketPrice, 0)
     const targetRev   = targetMargin < 100 && totalCost1 > 0 ? totalCost1 / (1 - targetMargin / 100) : mktRevenue
     const coeff       = mktRevenue > 0 ? targetRev / mktRevenue : 1
     const res: CutResult[] = cuts.map(cut => {
-      const weight       = carcassW1 * cut.yieldPct / 100
+      const weight       = cutWeight(cut)
       const active       = isActive(cut)
       const sellingPrice = active ? cut.marketPrice * coeff : 0
       return { cut, weight, sellingPrice, revenue: sellingPrice * weight, active }
     })
     return { results: res, coefficient: coeff, totalMarketRevenue1: mktRevenue }
-  }, [animalType, breedId, carcW, ppkg, overhead, labor, targetMargin, includedCats, excludedCuts, carcassW1, totalCost1, cuts])
+  }, [animalType, breedId, carcW, ppkg, overhead, labor, targetMargin, includedCats, excludedCuts, totalCost1, cuts, cutWeights])
 
   const activeResults   = results.filter(r => r.active)
   const totalRevenue1   = activeResults.reduce((s, r) => s + r.revenue, 0)
@@ -488,6 +507,8 @@ export default function ValorisationPage() {
           total_revenue: Math.round(totalRevenueLot * 100) / 100,
           margin_rate: Math.round(actualMargin1 * 100) / 100,
           coefficient: Math.round(coefficient * 10000) / 10000,
+          decoupe_hours: parseFloat(decoupeHours) || 0,
+          cut_weights: activeResults.reduce((acc, r) => { acc[r.cut.id] = Math.round(r.weight * 100) / 100; return acc }, {} as Record<string, number>),
         }),
       })
       if (!res.ok) {
@@ -820,7 +841,7 @@ export default function ValorisationPage() {
                 {/* Quantité */}
                 <div className="mb-4 p-3 bg-pilote-50 border border-pilote-100 rounded-xl">
                   <label className="block text-xs font-semibold text-pilote-800 mb-1.5 flex items-center gap-1.5">
-                    <Users className="w-3.5 h-3.5" />Nombre d&apos;animaux dans le lot
+                    <Users className="w-3.5 h-3.5" />{isHalf ? 'Nombre de demis' : "Nombre d'animaux dans le lot"}
                   </label>
                   <div className="flex items-center gap-3">
                     <button onClick={() => setQuantity(q => String(Math.max(1, parseInt(q) - 1)))}
@@ -828,15 +849,15 @@ export default function ValorisationPage() {
                     <span className="text-2xl font-extrabold text-pilote-800 w-8 text-center tabular-nums">{qty}</span>
                     <button onClick={() => setQuantity(q => String(parseInt(q) + 1))}
                       className="w-8 h-8 rounded-lg bg-white border border-pilote-200 text-pilote font-bold text-lg flex items-center justify-center hover:bg-pilote-100 transition-colors">+</button>
-                    {qty > 1 && <span className="text-xs text-pilote font-medium">Résultats par animal + total lot</span>}
+                    {qty > 1 && <span className="text-xs text-pilote font-medium">{isHalf ? 'Résultats par demi + total lot' : 'Résultats par animal + total lot'}</span>}
                   </div>
                 </div>
 
                 <div className="mb-4">
-                  <label className="block text-xs font-medium text-gray-700 mb-1.5">Poids carcasse par animal (kg)</label>
+                  <label className="block text-xs font-medium text-gray-700 mb-1.5">{isHalf ? "Poids d'un demi-carcasse (kg)" : 'Poids carcasse par animal (kg)'}</label>
                   <input type="number" value={carcassWeight} onChange={e => setCarcassWeight(e.target.value)}
                     className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200`} />
-                  {carcW > 0 && <p className="text-xs text-gray-500 mt-1">Poids vif estimé : <strong>{liveEstimate.toFixed(0)} kg</strong> (rendement {(breed.carcassYield * 100).toFixed(1)}%)</p>}
+                  {carcW > 0 && !isHalf && <p className="text-xs text-gray-500 mt-1">Poids vif estimé : <strong>{liveEstimate.toFixed(0)} kg</strong> (rendement {(breed.carcassYield * 100).toFixed(1)}%)</p>}
                 </div>
                 <div className="mb-4">
                   <label className="block text-xs font-medium text-gray-700 mb-1.5">Prix achat (€/kg carcasse)</label>
@@ -859,7 +880,7 @@ export default function ValorisationPage() {
               <div className="bg-white border border-gray-100 rounded-2xl p-5 shadow-card">
                 <h2 className="text-sm font-semibold text-gray-900 mb-4 flex items-center gap-2">
                   <span className="w-5 h-5 bg-pilote text-white text-xs rounded-full flex items-center justify-center font-bold">2</span>
-                  Charges <span className="text-xs font-normal text-gray-400">(par animal)</span>
+                  Charges <span className="text-xs font-normal text-gray-400">{isHalf ? '(par demi)' : '(par animal)'}</span>
                 </h2>
                 <div className="mb-4">
                   <label className="block text-xs font-medium text-gray-700 mb-1.5">Charges fixes pro-ratées (€)</label>
@@ -867,23 +888,23 @@ export default function ValorisationPage() {
                     className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200`} />
                 </div>
 
-                {/* Main d'œuvre boucherie réelle du planning */}
-                {weekLabor && weekLabor.hours > 0 ? (
+                {/* Main d'œuvre = temps de découpe saisi dans le planning */}
+                {weekLabor && weekLabor.decoupeHours > 0 ? (
                   <div className="mb-3 p-2.5 bg-pilote-50 border border-pilote-100 rounded-lg">
                     <p className="text-[11px] font-semibold text-pilote-800">
-                      Main d'œuvre boucherie S{weekLabor.week} : {weekLabor.hours.toFixed(1)}h · {eur(weekLabor.cost)} chargé
+                      Découpe S{weekLabor.week} (planning) : {weekLabor.decoupeHours.toFixed(2)}h · {eur(weekLabor.decoupeCost)} chargé
                     </p>
                     <p className="text-[10px] text-pilote-800/70 mt-0.5">
-                      Taux réel : {eur(weekLabor.rate)}/h — saisissez le temps de découpe ci-dessous pour l'imputer automatiquement
+                      Imputé automatiquement à la main d'œuvre ci-dessous — taux réel {eur(weekLabor.rate)}/h. Modifiable.
                     </p>
                   </div>
                 ) : (
                   <p className="mb-3 text-[10px] text-gray-400">
-                    Astuce : taguez les postes « Boucherie » dans le planning de la semaine pour imputer la main d'œuvre au taux réel.
+                    Astuce : renseignez le <strong>temps de découpe</strong> dans les postes « Boucherie » du planning de la semaine — il s'impute ici automatiquement au taux réel.
                   </p>
                 )}
                 <div className="mb-4">
-                  <label className="block text-xs font-medium text-gray-700 mb-1.5">Temps de découpe par animal (h)</label>
+                  <label className="block text-xs font-medium text-gray-700 mb-1.5">Temps de découpe (h) <span className="text-gray-400 font-normal">— depuis le planning, modifiable</span></label>
                   <input type="number" step="0.25" min="0" value={decoupeHours} onChange={e => setDecoupe(e.target.value)}
                     placeholder="ex : 3.5"
                     className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200`} />
@@ -892,15 +913,15 @@ export default function ValorisationPage() {
                   )}
                 </div>
                 <div className="mb-4">
-                  <label className="block text-xs font-medium text-gray-700 mb-1.5">Main d'œuvre découpe (€) <span className="text-gray-400 font-normal">— auto si temps saisi, modifiable</span></label>
+                  <label className="block text-xs font-medium text-gray-700 mb-1.5">Main d'œuvre découpe (€) <span className="text-gray-400 font-normal">— auto, modifiable</span></label>
                   <input type="number" value={laborCost} onChange={e => setLaborCost(e.target.value)}
                     className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200`} />
                 </div>
                 {totalCost1 > 0 && (
                   <div className="p-3 bg-gray-50 rounded-lg">
-                    <p className="text-xs text-gray-500">Coût de revient {qty > 1 ? 'par animal' : 'total'}</p>
+                    <p className="text-xs text-gray-500">Coût de revient {qty > 1 ? (isHalf ? 'par demi' : 'par animal') : 'total'}</p>
                     <p className="text-xl font-bold text-gray-900">{eur(totalCost1)}</p>
-                    {qty > 1 && <p className="text-xs font-bold text-pilote-800 mt-0.5">Lot ({qty} animaux) : {eur(totalCostLot)}</p>}
+                    {qty > 1 && <p className="text-xs font-bold text-pilote-800 mt-0.5">Lot ({qty} {isHalf ? 'demis' : 'animaux'}) : {eur(totalCostLot)}</p>}
                   </div>
                 )}
               </div>
@@ -959,7 +980,7 @@ export default function ValorisationPage() {
 
               {qty > 1 && totalRevenue1 > 0 && (
                 <div className="bg-pilote rounded-2xl p-4 text-white shadow-card">
-                  <p className="text-[11px] font-semibold text-pilote-200 mb-2 uppercase tracking-wider">Récapitulatif lot — {qty} {config.label.toLowerCase()}x</p>
+                  <p className="text-[11px] font-semibold text-pilote-200 mb-2 uppercase tracking-wider">Récapitulatif lot — {qty} {isHalf ? `demis (${config.label.toLowerCase()})` : `${config.label.toLowerCase()}x`}</p>
                   <div className="grid grid-cols-3 gap-4">
                     <div><p className="text-xs text-pilote-200">Coût total lot</p><p className="text-xl font-extrabold">{eur(totalCostLot)}</p></div>
                     <div><p className="text-xs text-pilote-200">CA estimé total</p><p className="text-xl font-extrabold text-pilote-orange">{eur(totalRevenueLot)}</p></div>
@@ -1003,7 +1024,7 @@ export default function ValorisationPage() {
 
               {totalRevenue1 > 0 && (
                 <div>
-                  <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-2">{qty > 1 ? 'Par animal' : 'Résultat'}</p>
+                  <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-2">{qty > 1 ? (isHalf ? 'Par demi' : 'Par animal') : 'Résultat'}</p>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                     {[
                       { label: 'Poids vendable',  value: kgStr(totalSellable1), sub: `sur ${carcassW1.toFixed(1)} kg carcasse` },
@@ -1025,7 +1046,7 @@ export default function ValorisationPage() {
                 <div className="bg-white border border-gray-100 rounded-2xl overflow-hidden shadow-card">
                   <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
                     <h2 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
-                      <Package className="w-4 h-4 text-gray-400" />Détail par pièce {qty > 1 && <span className="text-xs font-normal text-gray-400">(par animal)</span>}
+                      <Package className="w-4 h-4 text-gray-400" />Détail par pièce {qty > 1 && <span className="text-xs font-normal text-gray-400">{isHalf ? '(par demi)' : '(par animal)'}</span>}
                     </h2>
                     <span className="text-xs text-gray-400">Prix de marché France 2025</span>
                   </div>
@@ -1066,7 +1087,17 @@ export default function ValorisationPage() {
                                       {r.cut.name}
                                       {isExcluded && <span className="ml-2 text-[10px] font-semibold text-red-500 bg-red-50 px-1.5 py-0.5 rounded-full">retirée</span>}
                                     </td>
-                                    <td className="px-4 py-2.5 text-right tabular-nums text-gray-600">{kgStr(r.weight)}</td>
+                                    <td className="px-4 py-2.5 text-right">
+                                      <div className="flex items-center justify-end gap-1">
+                                        <input type="number" min="0" step="0.1"
+                                          value={cutWeights[r.cut.id] ?? ''}
+                                          onChange={e => setCutWeights(prev => ({ ...prev, [r.cut.id]: e.target.value }))}
+                                          disabled={isExcluded}
+                                          placeholder="0"
+                                          className="w-16 border border-gray-200 rounded-md px-2 py-1 text-sm text-right tabular-nums focus:outline-none focus:ring-2 focus:ring-pilote-200 disabled:bg-gray-50 disabled:text-gray-300" />
+                                        <span className="text-xs text-gray-400">kg</span>
+                                      </div>
+                                    </td>
                                     <td className="px-4 py-2.5 text-right tabular-nums text-gray-400">{eur(r.cut.marketPrice)}</td>
                                     <td className="px-4 py-2.5 text-right tabular-nums font-semibold">
                                       {r.active ? <span className={priceColor}>{eur(r.sellingPrice)}{Math.abs(pctDiff) > 1 && <span className={`ml-1 text-xs font-normal ${priceColor}`}>({pctDiff > 0 ? '+' : ''}{pctDiff.toFixed(0)}%)</span>}</span> : '—'}
@@ -1096,7 +1127,7 @@ export default function ValorisationPage() {
                       </tbody>
                       <tfoot>
                         <tr className="border-t-2 border-pilote-800 bg-pilote text-white">
-                          <td className="px-4 py-3 font-bold">TOTAL {qty > 1 ? '/ animal' : ''}</td>
+                          <td className="px-4 py-3 font-bold">TOTAL {qty > 1 ? (isHalf ? '/ demi' : '/ animal') : ''}</td>
                           <td className="px-4 py-3 text-right font-bold">{totalSellable1 > 0 ? kgStr(totalSellable1) : '—'}</td>
                           <td className="px-4 py-3 text-right text-pilote-200">{totalMarketRevenue1 > 0 ? eur(totalMarketRevenue1) : '—'}</td>
                           <td className="px-4 py-3" />
@@ -1105,7 +1136,7 @@ export default function ValorisationPage() {
                         </tr>
                         {qty > 1 && totalRevenue1 > 0 && (
                           <tr className="bg-pilote-800 text-white">
-                            <td className="px-4 py-2.5 font-bold text-sm">TOTAL LOT ({qty} animaux)</td>
+                            <td className="px-4 py-2.5 font-bold text-sm">TOTAL LOT ({qty} {isHalf ? 'demis' : 'animaux'})</td>
                             <td className="px-4 py-2.5 text-right font-bold">{kgStr(totalSellable1 * qty)}</td>
                             <td className="px-4 py-2.5" /><td className="px-4 py-2.5" />
                             <td className="px-4 py-2.5 text-right font-bold text-pilote-orange">{eur(totalRevenueLot)}</td>
