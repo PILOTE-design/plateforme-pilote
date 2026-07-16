@@ -2,7 +2,7 @@
 
 import React, { useState, useMemo, useEffect, useCallback } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { Calculator, TrendingUp, Package, Info, AlertTriangle, CheckCircle, Save, Trash2, Clock, X, Loader2, Users, BarChart2, RotateCcw } from 'lucide-react'
+import { Calculator, TrendingUp, Package, Info, AlertTriangle, CheckCircle, Save, Trash2, Clock, X, Loader2, Users, BarChart2, RotateCcw, ChevronRight } from 'lucide-react'
 import { useToast } from '@/components/ui/toast'
 import { useConfirm } from '@/components/ui/confirm-dialog'
 
@@ -12,7 +12,7 @@ type CutCategory = 'premier' | 'deuxieme' | 'troisieme' | 'abat' | 'os'
 type AnimalType  = 'boeuf' | 'veau' | 'agneau' | 'porc' | 'volaille'
 
 interface Breed { id: string; name: string; carcassYield: number; avgWeight: string; origin: string; description: string }
-interface Cut   { id: string; name: string; category: CutCategory; yieldPct: number; marketPrice: number }
+interface Cut   { id: string; name: string; category: CutCategory; yieldPct: number; marketPrice: number; group?: string[] }
 interface CutResult { cut: Cut; weight: number; sellingPrice: number; revenue: number; active: boolean }
 interface SavedValo {
   id: string; breed_id: string; breed_name: string; live_weight: number; quantity: number
@@ -45,55 +45,65 @@ const BOEUF_BREEDS: Breed[] = [
   { id: 'angus',            name: 'Aberdeen Angus',     carcassYield: 0.578, avgWeight: '600-750 kg',  origin: 'Écosse/France',    description: 'Persillage exceptionnel dit marbré, viande fondante et savoureuse. Segment premium.' },
   { id: 'hereford',         name: 'Hereford',           carcassYield: 0.565, avgWeight: '550-700 kg',  origin: 'Angleterre/France', description: 'Viande bien persillée, tendre et goûteuse. Qualité constante, appréciée des bouchers exigeants.' },
 ]
-// Découpe détaillée bœuf (fournie par le boucher). yieldPct non utilisé (poids saisi manuellement) ;
-// marketPrice = prix de référence indicatif, modifiable par pièce dans le tableau.
+// Découpe bœuf en arborescence (fournie par le boucher). Chaque pièce = une feuille avec son
+// chemin `group` (catégorie → grosse pièce → sous-groupe). yieldPct non utilisé (poids manuel) ;
+// marketPrice = prix de référence indicatif, modifiable par pièce.
 const BOEUF_CUTS: Cut[] = [
-  { id: 'viande_hachee',          name: 'Viande hachée',                 category: 'troisieme', yieldPct: 0, marketPrice: 13 },
-  { id: 'dechet_animaux',         name: 'Déchet animaux',                category: 'os',        yieldPct: 0, marketPrice: 0.5 },
-  { id: 'viande_fabrique_collier',name: 'Viande fabrique collier',       category: 'troisieme', yieldPct: 0, marketPrice: 10 },
-  { id: 'coeur_basse_cote',       name: 'Cœur de basse côte',            category: 'deuxieme',  yieldPct: 0, marketPrice: 14 },
-  { id: 'persille',               name: 'Persillé',                      category: 'deuxieme',  yieldPct: 0, marketPrice: 15 },
-  { id: 'paleron',                name: 'Paleron',                       category: 'deuxieme',  yieldPct: 0, marketPrice: 15 },
-  { id: 'jumeau',                 name: 'Jumeau',                        category: 'deuxieme',  yieldPct: 0, marketPrice: 14 },
-  { id: 'jarret_avant_sans_os',   name: 'Jarret avant sans os',          category: 'troisieme', yieldPct: 0, marketPrice: 12 },
-  { id: 'dessus_palette',         name: 'Dessus de palette',             category: 'deuxieme',  yieldPct: 0, marketPrice: 13 },
-  { id: 'macreuse',               name: 'Macreuse',                      category: 'deuxieme',  yieldPct: 0, marketPrice: 15 },
-  { id: 'boite_a_moelle',         name: 'Boîte à moelle',                category: 'os',        yieldPct: 0, marketPrice: 3 },
-  { id: 'plat_capa_griffe',       name: 'Plat de capa griffe',           category: 'troisieme', yieldPct: 0, marketPrice: 10 },
-  { id: 'gros_bout_poitrine',     name: 'Gros bout de poitrine sans os', category: 'troisieme', yieldPct: 0, marketPrice: 10 },
-  { id: 'hampe',                  name: 'Hampe',                         category: 'premier',   yieldPct: 0, marketPrice: 22 },
-  { id: 'fausse_hampe',           name: 'Fausse hampe',                  category: 'premier',   yieldPct: 0, marketPrice: 20 },
-  { id: 'plat_de_cote',           name: 'Plat de côte',                  category: 'troisieme', yieldPct: 0, marketPrice: 10 },
-  { id: 'chapeau',                name: 'Chapeau',                       category: 'deuxieme',  yieldPct: 0, marketPrice: 15 },
-  { id: 'entame',                 name: 'Entame',                        category: 'deuxieme',  yieldPct: 0, marketPrice: 15 },
-  { id: 'milieu',                 name: 'Milieu',                        category: 'premier',   yieldPct: 0, marketPrice: 17 },
-  { id: 'talon',                  name: 'Talon',                         category: 'troisieme', yieldPct: 0, marketPrice: 12 },
-  { id: 'poire',                  name: 'Poire',                         category: 'premier',   yieldPct: 0, marketPrice: 26 },
-  { id: 'merlan',                 name: 'Merlan',                        category: 'premier',   yieldPct: 0, marketPrice: 26 },
-  { id: 'dessus_tranche',         name: 'Dessus de tranche',             category: 'premier',   yieldPct: 0, marketPrice: 18 },
-  { id: 'rond_tranche_grasse',    name: 'Rond de tranche grasse',        category: 'deuxieme',  yieldPct: 0, marketPrice: 16 },
-  { id: 'plat_tranche_grasse',    name: 'Plat de tranche grasse',        category: 'deuxieme',  yieldPct: 0, marketPrice: 15 },
-  { id: 'mouvant_tranche_grasse', name: 'Mouvant de tranche grasse',     category: 'deuxieme',  yieldPct: 0, marketPrice: 15 },
-  { id: 'filet_rtk',              name: 'Filet de rumsteck (rtk)',       category: 'premier',   yieldPct: 0, marketPrice: 22 },
-  { id: 'coeur_rtk',              name: 'Cœur de rumsteck (rtk)',        category: 'premier',   yieldPct: 0, marketPrice: 24 },
-  { id: 'langue_de_chat',         name: 'Langue de chat',                category: 'premier',   yieldPct: 0, marketPrice: 22 },
-  { id: 'aiguillette_rtk',        name: 'Aiguillette de rumsteck (rtk)', category: 'premier',   yieldPct: 0, marketPrice: 22 },
-  { id: 'aiguillette_baronne',    name: 'Aiguillette baronne',           category: 'premier',   yieldPct: 0, marketPrice: 22 },
-  { id: 'faux_filet_b',           name: 'Faux-filet',                    category: 'premier',   yieldPct: 0, marketPrice: 29 },
-  { id: 'carre_7_cotes',          name: 'Carré 7 côtes',                 category: 'premier',   yieldPct: 0, marketPrice: 26 },
-  { id: 'dessus_de_cote',         name: 'Dessus de côte',                category: 'deuxieme',  yieldPct: 0, marketPrice: 14 },
-  { id: 'filet_b',                name: 'Filet',                         category: 'premier',   yieldPct: 0, marketPrice: 45 },
-  { id: 'chainette_filet',        name: 'Chaînette de filet',            category: 'premier',   yieldPct: 0, marketPrice: 28 },
-  { id: 'araignee_b',             name: 'Araignée',                      category: 'premier',   yieldPct: 0, marketPrice: 32 },
-  { id: 'onglet_b',               name: 'Onglet',                        category: 'premier',   yieldPct: 0, marketPrice: 32 },
-  { id: 'rond_de_gite',           name: 'Rond de gîte',                  category: 'deuxieme',  yieldPct: 0, marketPrice: 18 },
-  { id: 'gite_noix',              name: 'Gîte à la noix',                category: 'deuxieme',  yieldPct: 0, marketPrice: 17 },
-  { id: 'nerveux',                name: 'Nerveux',                       category: 'troisieme', yieldPct: 0, marketPrice: 11 },
-  { id: 'plat_nerveux',           name: 'Plat nerveux',                  category: 'troisieme', yieldPct: 0, marketPrice: 11 },
-  { id: 'jarret_arriere_os',      name: 'Jarret arrière avec os',        category: 'troisieme', yieldPct: 0, marketPrice: 12 },
-  { id: 'bavette_aloyau_b',       name: "Bavette d'aloyau",              category: 'premier',   yieldPct: 0, marketPrice: 22 },
-  { id: 'bavette_flanchet',       name: 'Bavette de flanchet',           category: 'premier',   yieldPct: 0, marketPrice: 18 },
+  // ── BCUH ──
+  { id: 'jarret_avec_os',         name: 'Jarret avec os',          category: 'troisieme', yieldPct: 0, marketPrice: 12, group: ['BCUH', 'Jarret'] },
+  { id: 'jarret_sans_os',         name: 'Jarret sans os',          category: 'troisieme', yieldPct: 0, marketPrice: 14, group: ['BCUH', 'Jarret'] },
+  { id: 'araignee_b',             name: 'Araignée',                category: 'premier',   yieldPct: 0, marketPrice: 32, group: ['BCUH', 'Globe'] },
+  { id: 'tende_tranche',          name: 'Tende de tranche',        category: 'premier',   yieldPct: 0, marketPrice: 18, group: ['BCUH', 'Globe'] },
+  { id: 'coeur_tranche',          name: 'Cœur de tranche',         category: 'deuxieme',  yieldPct: 0, marketPrice: 17, group: ['BCUH', 'Globe'] },
+  { id: 'entame',                 name: 'Entame',                  category: 'deuxieme',  yieldPct: 0, marketPrice: 15, group: ['BCUH', 'Globe'] },
+  { id: 'chapeau',                name: 'Chapeau',                 category: 'deuxieme',  yieldPct: 0, marketPrice: 15, group: ['BCUH', 'Globe'] },
+  { id: 'talon',                  name: 'Talon',                   category: 'troisieme', yieldPct: 0, marketPrice: 12, group: ['BCUH', 'Globe'] },
+  { id: 'rond_tranche_grasse',    name: 'Rond de tranche grasse',  category: 'deuxieme',  yieldPct: 0, marketPrice: 16, group: ['BCUH', 'Globe', 'Tranche grasse'] },
+  { id: 'plat_tranche_grasse',    name: 'Plat de tranche grasse',  category: 'deuxieme',  yieldPct: 0, marketPrice: 15, group: ['BCUH', 'Globe', 'Tranche grasse'] },
+  { id: 'mouvant_tranche_grasse', name: 'Mouvant de tranche grasse', category: 'deuxieme', yieldPct: 0, marketPrice: 15, group: ['BCUH', 'Globe', 'Tranche grasse'] },
+  { id: 'gite_noix',              name: 'Gîte à la noix',          category: 'deuxieme',  yieldPct: 0, marketPrice: 17, group: ['BCUH', 'RTK', 'Semelle'] },
+  { id: 'rond_de_gite',           name: 'Rond de gîte',            category: 'deuxieme',  yieldPct: 0, marketPrice: 18, group: ['BCUH', 'RTK', 'Semelle'] },
+  { id: 'nerveux',                name: 'Nerveux',                 category: 'troisieme', yieldPct: 0, marketPrice: 11, group: ['BCUH', 'RTK', 'Semelle'] },
+  { id: 'oreille_gite',           name: 'Oreille de gîte',         category: 'troisieme', yieldPct: 0, marketPrice: 12, group: ['BCUH', 'RTK', 'Semelle'] },
+  { id: 'coeur_rtk',              name: 'Cœur de rumsteck',        category: 'premier',   yieldPct: 0, marketPrice: 24, group: ['BCUH', 'RTK', 'Aiguillette RTK'] },
+  { id: 'filet_rtk',              name: 'Filet de RTK',            category: 'premier',   yieldPct: 0, marketPrice: 22, group: ['BCUH', 'RTK', 'Aiguillette RTK'] },
+  { id: 'baronne',                name: 'Baronne',                 category: 'premier',   yieldPct: 0, marketPrice: 20, group: ['BCUH', 'RTK'] },
+  { id: 'coeur_hanche',           name: 'Cœur de hanche',          category: 'deuxieme',  yieldPct: 0, marketPrice: 18, group: ['BCUH', 'Hanche'] },
+  { id: 'fausse_araignee',        name: 'Fausse araignée',         category: 'premier',   yieldPct: 0, marketPrice: 20, group: ['BCUH', 'Hanche'] },
+  { id: 'dessus_hanche',          name: 'Dessus de hanche',        category: 'deuxieme',  yieldPct: 0, marketPrice: 16, group: ['BCUH', 'Hanche'] },
+  { id: 'poire',                  name: 'Poire',                   category: 'premier',   yieldPct: 0, marketPrice: 26, group: ['BCUH', 'Hanche'] },
+  { id: 'merlan',                 name: 'Merlan',                  category: 'premier',   yieldPct: 0, marketPrice: 26, group: ['BCUH', 'Hanche'] },
+  // ── DEHMT ──
+  { id: 'flanchet',               name: 'Flanchet',                category: 'deuxieme',  yieldPct: 0, marketPrice: 12, group: ['DEHMT', 'Bavettes'] },
+  { id: 'bavette_aloyau_b',       name: "Bavette d'aloyau",        category: 'premier',   yieldPct: 0, marketPrice: 22, group: ['DEHMT', 'Bavettes'] },
+  { id: 'fausse_bavette',         name: 'Fausse bavette',          category: 'deuxieme',  yieldPct: 0, marketPrice: 14, group: ['DEHMT', 'Bavettes'] },
+  { id: 'faux_filet_b',           name: 'Faux-filet',              category: 'premier',   yieldPct: 0, marketPrice: 29, group: ['DEHMT'] },
+  { id: 'filet_b',                name: 'Filet',                   category: 'premier',   yieldPct: 0, marketPrice: 45, group: ['DEHMT'] },
+  { id: 'dessus_de_cote',         name: 'Dessus de côté',          category: 'deuxieme',  yieldPct: 0, marketPrice: 14, group: ['DEHMT', 'Carré côté'] },
 ]
+
+// ── Arborescence de découpe (dérivée du champ `group`) ──
+interface TreeNode { name: string; path: string; children: TreeNode[]; cut?: Cut }
+function buildCutTree(cuts: Cut[]): TreeNode[] {
+  const roots: TreeNode[] = []
+  const byPath = new Map<string, TreeNode>()
+  for (const cut of cuts) {
+    const names = cut.group ?? []
+    let list = roots
+    let acc = ''
+    for (const nm of names) {
+      acc = acc ? `${acc} / ${nm}` : nm
+      let node = byPath.get(acc)
+      if (!node) { node = { name: nm, path: acc, children: [] }; byPath.set(acc, node); list.push(node) }
+      list = node.children
+    }
+    list.push({ name: cut.name, path: `${acc} / ${cut.name}`, children: [], cut })
+  }
+  return roots
+}
+function collectLeafCuts(node: TreeNode): Cut[] {
+  return node.cut ? [node.cut] : node.children.flatMap(collectLeafCuts)
+}
 
 // ─── Données Veau ─────────────────────────────────────────────────────────────────
 
@@ -374,6 +384,8 @@ export default function ValorisationPage() {
   const [selected,      setSelected]      = useState<SavedValo | null>(null)
   // Poids saisis manuellement par le boucher, pièce par pièce (clé = id de la pièce)
   const [cutWeights,    setCutWeights]    = useState<Record<string, string>>({})
+  // Nœuds dépliés de l'arborescence de découpe (par chemin)
+  const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set())
 
   const config = ANIMALS[animalType]
   const breeds = config.breeds
@@ -409,6 +421,7 @@ export default function ValorisationPage() {
     setLaborCost(config.defaultLabor)
     setDecoupeHours('')
     setCutWeights({})
+    setExpandedNodes(new Set())
     setShowBreedInfo(false)
   }, [animalType]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -487,6 +500,95 @@ export default function ValorisationPage() {
   const actualMargin1   = totalRevenue1 > 0 ? ((totalRevenue1 - totalCost1) / totalRevenue1) * 100 : 0
   const totalRevenueLot = totalRevenue1 * qty
   const coeffStatus     = coefficient < 0.95 ? 'under' : coefficient > 1.15 ? 'over' : 'ok'
+
+  // Arborescence de découpe (uniquement pour les espèces dont les pièces ont un `group`, ex. bœuf)
+  const cutTree = useMemo(() => buildCutTree(cuts), [cuts])
+  const isTree  = cuts.some(c => c.group && c.group.length > 0)
+  const resById = new Map(results.map(r => [r.cut.id, r]))
+
+  function toggleNode(path: string) {
+    setExpandedNodes(prev => { const n = new Set(prev); if (n.has(path)) n.delete(path); else n.add(path); return n })
+  }
+
+  /** Ligne d'une pièce (feuille de l'arbre) : nom + poids + prix éditables + prix conseillé + CA. */
+  function leafRow(r: CutResult, depth = 0): JSX.Element {
+    const isExcluded = excludedCuts.has(r.cut.id)
+    const refPrice = priceOf(r.cut)
+    const pctDiff = r.sellingPrice > 0 && refPrice > 0 ? ((r.sellingPrice - refPrice) / refPrice) * 100 : 0
+    const priceColor = pctDiff < -5 ? 'text-green-600' : pctDiff > 15 ? 'text-orange-600' : 'text-gray-900'
+    return (
+      <tr key={r.cut.id} className={`group border-t border-gray-50 transition-colors ${r.active ? 'hover:bg-gray-50' : 'opacity-40 bg-gray-50/50'}`}>
+        <td className="px-4 py-2.5 font-medium text-gray-800" style={depth ? { paddingLeft: 16 + depth * 18 } : undefined}>
+          {r.cut.name}
+          {isExcluded && <span className="ml-2 text-[10px] font-semibold text-red-500 bg-red-50 px-1.5 py-0.5 rounded-full">retirée</span>}
+        </td>
+        <td className="px-4 py-2.5 text-right">
+          <div className="flex items-center justify-end gap-1">
+            <input type="number" min="0" step="0.1"
+              value={cutWeights[r.cut.id] ?? ''}
+              onChange={e => setCutWeights(prev => ({ ...prev, [r.cut.id]: e.target.value }))}
+              disabled={isExcluded}
+              placeholder="0"
+              className="w-16 border border-gray-200 rounded-md px-2 py-1 text-sm text-right tabular-nums focus:outline-none focus:ring-2 focus:ring-pilote-200 disabled:bg-gray-50 disabled:text-gray-300" />
+            <span className="text-xs text-gray-400">kg</span>
+          </div>
+        </td>
+        <td className="px-4 py-2.5 text-right">
+          <div className="flex items-center justify-end gap-1">
+            <input type="number" min="0" step="0.5"
+              value={cutPrices[r.cut.id] ?? ''}
+              onChange={e => setCutPrice(r.cut.id, e.target.value)}
+              placeholder={String(r.cut.marketPrice)}
+              className="w-14 border border-gray-200 rounded-md px-2 py-1 text-sm text-right tabular-nums text-gray-500 focus:outline-none focus:ring-2 focus:ring-pilote-200" />
+            <span className="text-xs text-gray-400">€</span>
+          </div>
+        </td>
+        <td className="px-4 py-2.5 text-right tabular-nums font-semibold">
+          {r.active ? <span className={priceColor}>{eur(r.sellingPrice)}{Math.abs(pctDiff) > 1 && <span className={`ml-1 text-xs font-normal ${priceColor}`}>({pctDiff > 0 ? '+' : ''}{pctDiff.toFixed(0)}%)</span>}</span> : '—'}
+        </td>
+        <td className="px-4 py-2.5 text-right tabular-nums text-gray-700">{r.active ? eur(r.revenue) : '—'}</td>
+        <td className="px-2 py-2.5 text-center w-10">
+          {isExcluded ? (
+            <button onClick={() => toggleCut(r.cut.id)} title="Réintégrer cette pièce" className="p-1.5 rounded-lg text-pilote hover:bg-pilote-50 transition-colors"><RotateCcw className="w-3.5 h-3.5" /></button>
+          ) : (
+            <button onClick={() => toggleCut(r.cut.id)} title="Retirer cette pièce du calcul" className="p-1.5 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all"><Trash2 className="w-3.5 h-3.5" /></button>
+          )}
+        </td>
+      </tr>
+    )
+  }
+
+  /** Rendu récursif : entêtes de pièces dépliables + feuilles (avec poids/prix). */
+  function renderTree(nodes: TreeNode[], depth: number): JSX.Element[] {
+    const out: JSX.Element[] = []
+    for (const node of nodes) {
+      if (node.cut) {
+        const r = resById.get(node.cut.id)
+        if (r) out.push(leafRow(r, depth))
+        continue
+      }
+      const open = expandedNodes.has(node.path)
+      const leaves = collectLeafCuts(node)
+      let w = 0, rev = 0
+      for (const c of leaves) { const rr = resById.get(c.id); if (rr && rr.active) { w += rr.weight; rev += rr.revenue } }
+      out.push(
+        <tr key={node.path} className="border-t border-gray-100 bg-gray-50/60 hover:bg-gray-100 cursor-pointer transition-colors" onClick={() => toggleNode(node.path)}>
+          <td colSpan={6} className="px-4 py-2" style={{ paddingLeft: 12 + depth * 18 }}>
+            <div className="flex items-center justify-between">
+              <span className="flex items-center gap-1.5 font-semibold text-xs uppercase tracking-wide text-gray-700">
+                <ChevronRight className={`w-3.5 h-3.5 text-gray-400 transition-transform ${open ? 'rotate-90' : ''}`} />
+                {node.name}
+                <span className="text-[10px] font-normal text-gray-400 normal-case">({leaves.length})</span>
+              </span>
+              {w > 0 && <span className="text-xs text-gray-400 tabular-nums">{kgStr(w)} · {eur(rev)}</span>}
+            </div>
+          </td>
+        </tr>
+      )
+      if (open) out.push(...renderTree(node.children, depth + 1))
+    }
+    return out
+  }
 
   const loadHistory = useCallback(async () => {
     try {
@@ -981,7 +1083,8 @@ export default function ValorisationPage() {
                 <div className="flex justify-between text-xs text-gray-400"><span>10%</span><span>40% (typique)</span><span>70%</span></div>
               </div>
 
-              {/* 4 — Pièces */}
+              {/* 4 — Pièces (catégories) — masqué pour le bœuf, remplacé par l'arborescence dépliable */}
+              {!isTree && (
               <div className="bg-white border border-gray-100 rounded-2xl p-5 shadow-card">
                 <h2 className="text-sm font-semibold text-gray-900 mb-1 flex items-center gap-2">
                   <span className="w-5 h-5 bg-pilote text-white text-xs rounded-full flex items-center justify-center font-bold">4</span>
@@ -1005,6 +1108,7 @@ export default function ValorisationPage() {
                   </div>
                 )}
               </div>
+              )}
 
               {totalRevenue1 > 0 && (
                 <div className="bg-white border border-gray-100 rounded-2xl p-5 shadow-card">
@@ -1089,7 +1193,7 @@ export default function ValorisationPage() {
                     <h2 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
                       <Package className="w-4 h-4 text-gray-400" />Détail par pièce {qty > 1 && <span className="text-xs font-normal text-gray-400">{isHalf ? '(par demi)' : '(par animal)'}</span>}
                     </h2>
-                    <span className="text-xs text-gray-400">Prix de référence modifiables · poids saisis</span>
+                    <span className="text-xs text-gray-400">{isTree ? 'Cliquez une pièce pour la déplier · poids et prix éditables' : 'Prix de référence modifiables · poids saisis'}</span>
                   </div>
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm">
@@ -1101,7 +1205,7 @@ export default function ValorisationPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {CATEGORIES.map(cat => {
+                        {isTree ? renderTree(cutTree, 0) : CATEGORIES.map(cat => {
                           const catResults = results.filter(r => r.cut.category === cat)
                           if (catResults.length === 0) return null
                           const catActive  = catResults.filter(r => r.active)
