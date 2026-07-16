@@ -45,28 +45,54 @@ const BOEUF_BREEDS: Breed[] = [
   { id: 'angus',            name: 'Aberdeen Angus',     carcassYield: 0.578, avgWeight: '600-750 kg',  origin: 'Écosse/France',    description: 'Persillage exceptionnel dit marbré, viande fondante et savoureuse. Segment premium.' },
   { id: 'hereford',         name: 'Hereford',           carcassYield: 0.565, avgWeight: '550-700 kg',  origin: 'Angleterre/France', description: 'Viande bien persillée, tendre et goûteuse. Qualité constante, appréciée des bouchers exigeants.' },
 ]
+// Découpe détaillée bœuf (fournie par le boucher). yieldPct non utilisé (poids saisi manuellement) ;
+// marketPrice = prix de référence indicatif, modifiable par pièce dans le tableau.
 const BOEUF_CUTS: Cut[] = [
-  { id: 'filet',            name: 'Filet (tournedos/rôti)',  category: 'premier',   yieldPct: 1.8,  marketPrice: 45 },
-  { id: 'faux_filet',       name: 'Faux-filet',              category: 'premier',   yieldPct: 3.0,  marketPrice: 29 },
-  { id: 'cote_boeuf',       name: 'Côte de bœuf/Entrecôte', category: 'premier',   yieldPct: 7.0,  marketPrice: 26 },
-  { id: 'rumsteck',         name: 'Rumsteck',                category: 'premier',   yieldPct: 3.2,  marketPrice: 22 },
-  { id: 'bavette_aloyau',   name: "Bavette d'aloyau",        category: 'premier',   yieldPct: 1.3,  marketPrice: 20 },
-  { id: 'tende_tranche',    name: 'Tende de tranche',        category: 'premier',   yieldPct: 3.5,  marketPrice: 18 },
-  { id: 'tranche_grasse',   name: 'Tranche grasse',          category: 'premier',   yieldPct: 2.5,  marketPrice: 17 },
-  { id: 'araignee',         name: 'Araignée',                category: 'premier',   yieldPct: 0.3,  marketPrice: 32 },
-  { id: 'onglet',           name: 'Onglet',                  category: 'premier',   yieldPct: 0.4,  marketPrice: 32 },
-  { id: 'paleron',          name: 'Paleron',                 category: 'deuxieme',  yieldPct: 3.5,  marketPrice: 15 },
-  { id: 'macreuse_braiser', name: 'Macreuse à braiser',      category: 'deuxieme',  yieldPct: 2.5,  marketPrice: 14 },
-  { id: 'joue_boeuf',       name: 'Joue de bœuf',           category: 'deuxieme',  yieldPct: 1.2,  marketPrice: 24 },
-  { id: 'collier_boeuf',    name: 'Collier',                 category: 'deuxieme',  yieldPct: 1.8,  marketPrice: 12 },
-  { id: 'plat_cotes',       name: 'Plat de côtes',           category: 'troisieme', yieldPct: 4.5,  marketPrice: 9  },
-  { id: 'poitrine_boeuf',   name: 'Poitrine',                category: 'troisieme', yieldPct: 3.5,  marketPrice: 9  },
-  { id: 'jarret_avant',     name: 'Jarret avant',            category: 'troisieme', yieldPct: 2.5,  marketPrice: 9  },
-  { id: 'jarret_arriere',   name: 'Jarret arrière/Gîte',    category: 'troisieme', yieldPct: 3.0,  marketPrice: 9  },
-  { id: 'foie_boeuf',       name: 'Foie',                    category: 'abat',      yieldPct: 1.3,  marketPrice: 5  },
-  { id: 'langue_boeuf',     name: 'Langue',                  category: 'abat',      yieldPct: 0.5,  marketPrice: 18 },
-  { id: 'queue_boeuf',      name: 'Queue',                   category: 'abat',      yieldPct: 0.7,  marketPrice: 13 },
-  { id: 'os_moelle',        name: 'Os à moelle',             category: 'os',        yieldPct: 4.0,  marketPrice: 3  },
+  { id: 'viande_hachee',          name: 'Viande hachée',                 category: 'troisieme', yieldPct: 0, marketPrice: 13 },
+  { id: 'dechet_animaux',         name: 'Déchet animaux',                category: 'os',        yieldPct: 0, marketPrice: 0.5 },
+  { id: 'viande_fabrique_collier',name: 'Viande fabrique collier',       category: 'troisieme', yieldPct: 0, marketPrice: 10 },
+  { id: 'coeur_basse_cote',       name: 'Cœur de basse côte',            category: 'deuxieme',  yieldPct: 0, marketPrice: 14 },
+  { id: 'persille',               name: 'Persillé',                      category: 'deuxieme',  yieldPct: 0, marketPrice: 15 },
+  { id: 'paleron',                name: 'Paleron',                       category: 'deuxieme',  yieldPct: 0, marketPrice: 15 },
+  { id: 'jumeau',                 name: 'Jumeau',                        category: 'deuxieme',  yieldPct: 0, marketPrice: 14 },
+  { id: 'jarret_avant_sans_os',   name: 'Jarret avant sans os',          category: 'troisieme', yieldPct: 0, marketPrice: 12 },
+  { id: 'dessus_palette',         name: 'Dessus de palette',             category: 'deuxieme',  yieldPct: 0, marketPrice: 13 },
+  { id: 'macreuse',               name: 'Macreuse',                      category: 'deuxieme',  yieldPct: 0, marketPrice: 15 },
+  { id: 'boite_a_moelle',         name: 'Boîte à moelle',                category: 'os',        yieldPct: 0, marketPrice: 3 },
+  { id: 'plat_capa_griffe',       name: 'Plat de capa griffe',           category: 'troisieme', yieldPct: 0, marketPrice: 10 },
+  { id: 'gros_bout_poitrine',     name: 'Gros bout de poitrine sans os', category: 'troisieme', yieldPct: 0, marketPrice: 10 },
+  { id: 'hampe',                  name: 'Hampe',                         category: 'premier',   yieldPct: 0, marketPrice: 22 },
+  { id: 'fausse_hampe',           name: 'Fausse hampe',                  category: 'premier',   yieldPct: 0, marketPrice: 20 },
+  { id: 'plat_de_cote',           name: 'Plat de côte',                  category: 'troisieme', yieldPct: 0, marketPrice: 10 },
+  { id: 'chapeau',                name: 'Chapeau',                       category: 'deuxieme',  yieldPct: 0, marketPrice: 15 },
+  { id: 'entame',                 name: 'Entame',                        category: 'deuxieme',  yieldPct: 0, marketPrice: 15 },
+  { id: 'milieu',                 name: 'Milieu',                        category: 'premier',   yieldPct: 0, marketPrice: 17 },
+  { id: 'talon',                  name: 'Talon',                         category: 'troisieme', yieldPct: 0, marketPrice: 12 },
+  { id: 'poire',                  name: 'Poire',                         category: 'premier',   yieldPct: 0, marketPrice: 26 },
+  { id: 'merlan',                 name: 'Merlan',                        category: 'premier',   yieldPct: 0, marketPrice: 26 },
+  { id: 'dessus_tranche',         name: 'Dessus de tranche',             category: 'premier',   yieldPct: 0, marketPrice: 18 },
+  { id: 'rond_tranche_grasse',    name: 'Rond de tranche grasse',        category: 'deuxieme',  yieldPct: 0, marketPrice: 16 },
+  { id: 'plat_tranche_grasse',    name: 'Plat de tranche grasse',        category: 'deuxieme',  yieldPct: 0, marketPrice: 15 },
+  { id: 'mouvant_tranche_grasse', name: 'Mouvant de tranche grasse',     category: 'deuxieme',  yieldPct: 0, marketPrice: 15 },
+  { id: 'filet_rtk',              name: 'Filet de rumsteck (rtk)',       category: 'premier',   yieldPct: 0, marketPrice: 22 },
+  { id: 'coeur_rtk',              name: 'Cœur de rumsteck (rtk)',        category: 'premier',   yieldPct: 0, marketPrice: 24 },
+  { id: 'langue_de_chat',         name: 'Langue de chat',                category: 'premier',   yieldPct: 0, marketPrice: 22 },
+  { id: 'aiguillette_rtk',        name: 'Aiguillette de rumsteck (rtk)', category: 'premier',   yieldPct: 0, marketPrice: 22 },
+  { id: 'aiguillette_baronne',    name: 'Aiguillette baronne',           category: 'premier',   yieldPct: 0, marketPrice: 22 },
+  { id: 'faux_filet_b',           name: 'Faux-filet',                    category: 'premier',   yieldPct: 0, marketPrice: 29 },
+  { id: 'carre_7_cotes',          name: 'Carré 7 côtes',                 category: 'premier',   yieldPct: 0, marketPrice: 26 },
+  { id: 'dessus_de_cote',         name: 'Dessus de côte',                category: 'deuxieme',  yieldPct: 0, marketPrice: 14 },
+  { id: 'filet_b',                name: 'Filet',                         category: 'premier',   yieldPct: 0, marketPrice: 45 },
+  { id: 'chainette_filet',        name: 'Chaînette de filet',            category: 'premier',   yieldPct: 0, marketPrice: 28 },
+  { id: 'araignee_b',             name: 'Araignée',                      category: 'premier',   yieldPct: 0, marketPrice: 32 },
+  { id: 'onglet_b',               name: 'Onglet',                        category: 'premier',   yieldPct: 0, marketPrice: 32 },
+  { id: 'rond_de_gite',           name: 'Rond de gîte',                  category: 'deuxieme',  yieldPct: 0, marketPrice: 18 },
+  { id: 'gite_noix',              name: 'Gîte à la noix',                category: 'deuxieme',  yieldPct: 0, marketPrice: 17 },
+  { id: 'nerveux',                name: 'Nerveux',                       category: 'troisieme', yieldPct: 0, marketPrice: 11 },
+  { id: 'plat_nerveux',           name: 'Plat nerveux',                  category: 'troisieme', yieldPct: 0, marketPrice: 11 },
+  { id: 'jarret_arriere_os',      name: 'Jarret arrière avec os',        category: 'troisieme', yieldPct: 0, marketPrice: 12 },
+  { id: 'bavette_aloyau_b',       name: "Bavette d'aloyau",              category: 'premier',   yieldPct: 0, marketPrice: 22 },
+  { id: 'bavette_flanchet',       name: 'Bavette de flanchet',           category: 'premier',   yieldPct: 0, marketPrice: 18 },
 ]
 
 // ─── Données Veau ─────────────────────────────────────────────────────────────────
@@ -282,6 +308,11 @@ const DEFAULT_CATS = (): CatsByAnimal => ({
 const DEFAULT_EXCLUDED = (): CutsByAnimal => ({
   boeuf: [], veau: [], agneau: [], porc: [], volaille: [],
 })
+// Prix de référence personnalisés par pièce (surcharge le prix indicatif), mémorisés par famille
+type PricesByAnimal = Record<AnimalType, Record<string, string>>
+const DEFAULT_PRICES = (): PricesByAnimal => ({
+  boeuf: {}, veau: {}, agneau: {}, porc: {}, volaille: {},
+})
 
 function loadPref<T>(key: string, fallback: T): T {
   if (typeof window === 'undefined') return fallback
@@ -333,6 +364,7 @@ export default function ValorisationPage() {
   const [showBreedInfo, setShowBreedInfo] = useState(false)
   const [catsByAnimal,     setCatsByAnimal]     = useState<CatsByAnimal>(() => loadPref('valo_cats_v1', DEFAULT_CATS()))
   const [excludedByAnimal, setExcludedByAnimal] = useState<CutsByAnimal>(() => loadPref('valo_excluded_v1', DEFAULT_EXCLUDED()))
+  const [cutPricesByAnimal, setCutPricesByAnimal] = useState<PricesByAnimal>(() => loadPref('valo_prices_v1', DEFAULT_PRICES()))
   const [purchaseDate,  setPurchaseDate]  = useState(new Date().toISOString().split('T')[0])
   const [notes,         setNotes]         = useState('')
   const [history,       setHistory]       = useState<SavedValo[]>([])
@@ -348,6 +380,12 @@ export default function ValorisationPage() {
   const cuts   = config.cuts
   // Bœuf et veau s'achètent en demi-carcasse : le poids saisi est celui d'un demi, la quantité un nombre de demis
   const isHalf = animalType === 'boeuf' || animalType === 'veau'
+  // Prix de référence par pièce : valeur saisie si présente, sinon prix indicatif de la pièce
+  const cutPrices = cutPricesByAnimal[animalType] ?? {}
+  const priceOf = (cut: Cut) => { const v = parseFloat(cutPrices[cut.id] ?? ''); return isNaN(v) ? cut.marketPrice : v }
+  function setCutPrice(cutId: string, value: string) {
+    setCutPricesByAnimal(prev => ({ ...prev, [animalType]: { ...(prev[animalType] ?? {}), [cutId]: value } }))
+  }
 
   // Préférences par famille — persistées
   useEffect(() => {
@@ -356,6 +394,9 @@ export default function ValorisationPage() {
   useEffect(() => {
     try { window.localStorage.setItem('valo_excluded_v1', JSON.stringify(excludedByAnimal)) } catch {}
   }, [excludedByAnimal])
+  useEffect(() => {
+    try { window.localStorage.setItem('valo_prices_v1', JSON.stringify(cutPricesByAnimal)) } catch {}
+  }, [cutPricesByAnimal])
 
   const includedCats = useMemo(() => new Set<CutCategory>(catsByAnimal[animalType] ?? CATEGORIES), [catsByAnimal, animalType])
   const excludedCuts = useMemo(() => new Set<string>(excludedByAnimal[animalType] ?? []), [excludedByAnimal, animalType])
@@ -428,17 +469,17 @@ export default function ValorisationPage() {
     // Poids saisi manuellement par pièce (0 tant que le boucher n'a rien renseigné)
     const cutWeight   = (c: Cut) => parseFloat(cutWeights[c.id] || '') || 0
     const activeCuts  = cuts.filter(isActive)
-    const mktRevenue  = activeCuts.reduce((s, c) => s + cutWeight(c) * c.marketPrice, 0)
+    const mktRevenue  = activeCuts.reduce((s, c) => s + cutWeight(c) * priceOf(c), 0)
     const targetRev   = targetMargin < 100 && totalCost1 > 0 ? totalCost1 / (1 - targetMargin / 100) : mktRevenue
     const coeff       = mktRevenue > 0 ? targetRev / mktRevenue : 1
     const res: CutResult[] = cuts.map(cut => {
       const weight       = cutWeight(cut)
       const active       = isActive(cut)
-      const sellingPrice = active ? cut.marketPrice * coeff : 0
+      const sellingPrice = active ? priceOf(cut) * coeff : 0
       return { cut, weight, sellingPrice, revenue: sellingPrice * weight, active }
     })
     return { results: res, coefficient: coeff, totalMarketRevenue1: mktRevenue }
-  }, [animalType, breedId, carcW, ppkg, overhead, labor, targetMargin, includedCats, excludedCuts, totalCost1, cuts, cutWeights])
+  }, [animalType, breedId, carcW, ppkg, overhead, labor, targetMargin, includedCats, excludedCuts, totalCost1, cuts, cutWeights, cutPrices])
 
   const activeResults   = results.filter(r => r.active)
   const totalRevenue1   = activeResults.reduce((s, r) => s + r.revenue, 0)
@@ -1048,7 +1089,7 @@ export default function ValorisationPage() {
                     <h2 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
                       <Package className="w-4 h-4 text-gray-400" />Détail par pièce {qty > 1 && <span className="text-xs font-normal text-gray-400">{isHalf ? '(par demi)' : '(par animal)'}</span>}
                     </h2>
-                    <span className="text-xs text-gray-400">Prix de marché France 2025</span>
+                    <span className="text-xs text-gray-400">Prix de référence modifiables · poids saisis</span>
                   </div>
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm">
@@ -1079,7 +1120,8 @@ export default function ValorisationPage() {
                               </tr>
                               {catResults.map(r => {
                                 const isExcluded = excludedCuts.has(r.cut.id)
-                                const pctDiff = r.sellingPrice > 0 ? ((r.sellingPrice - r.cut.marketPrice) / r.cut.marketPrice) * 100 : 0
+                                const refPrice = priceOf(r.cut)
+                                const pctDiff = r.sellingPrice > 0 && refPrice > 0 ? ((r.sellingPrice - refPrice) / refPrice) * 100 : 0
                                 const priceColor = pctDiff < -5 ? 'text-green-600' : pctDiff > 15 ? 'text-orange-600' : 'text-gray-900'
                                 return (
                                   <tr key={r.cut.id} className={`group border-t border-gray-50 transition-colors ${r.active ? 'hover:bg-gray-50' : 'opacity-40 bg-gray-50/50'}`}>
@@ -1098,7 +1140,16 @@ export default function ValorisationPage() {
                                         <span className="text-xs text-gray-400">kg</span>
                                       </div>
                                     </td>
-                                    <td className="px-4 py-2.5 text-right tabular-nums text-gray-400">{eur(r.cut.marketPrice)}</td>
+                                    <td className="px-4 py-2.5 text-right">
+                                      <div className="flex items-center justify-end gap-1">
+                                        <input type="number" min="0" step="0.5"
+                                          value={cutPrices[r.cut.id] ?? ''}
+                                          onChange={e => setCutPrice(r.cut.id, e.target.value)}
+                                          placeholder={String(r.cut.marketPrice)}
+                                          className="w-14 border border-gray-200 rounded-md px-2 py-1 text-sm text-right tabular-nums text-gray-500 focus:outline-none focus:ring-2 focus:ring-pilote-200" />
+                                        <span className="text-xs text-gray-400">€</span>
+                                      </div>
+                                    </td>
                                     <td className="px-4 py-2.5 text-right tabular-nums font-semibold">
                                       {r.active ? <span className={priceColor}>{eur(r.sellingPrice)}{Math.abs(pctDiff) > 1 && <span className={`ml-1 text-xs font-normal ${priceColor}`}>({pctDiff > 0 ? '+' : ''}{pctDiff.toFixed(0)}%)</span>}</span> : '—'}
                                     </td>
@@ -1148,10 +1199,10 @@ export default function ValorisationPage() {
                   </div>
                   <div className="px-5 py-3 bg-gray-50 border-t border-gray-100">
                     <p className="text-xs text-gray-400">
-                      Coefficient x{coefficient.toFixed(3)} appliqué aux prix de marché.
-                      <span className="text-green-600 font-medium ml-1">Vert</span> = sous le marché.
+                      Coefficient x{coefficient.toFixed(3)} appliqué aux prix de référence.
+                      <span className="text-green-600 font-medium ml-1">Vert</span> = sous la référence.
                       <span className="text-orange-600 font-medium ml-1">Orange</span> = +15% au-dessus.
-                      <span className="ml-1">Corbeille au survol = retirer une pièce (mémorisé par famille).</span>
+                      <span className="ml-1">Poids et prix de référence sont éditables ; les prix restent mémorisés par famille.</span>
                     </p>
                   </div>
                 </div>
