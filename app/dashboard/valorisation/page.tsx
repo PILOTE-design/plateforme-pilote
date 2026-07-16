@@ -61,12 +61,13 @@ const BOEUF_CUTS: Cut[] = [
   { id: 'rond_tranche_grasse',    name: 'Rond de tranche grasse',  category: 'deuxieme',  yieldPct: 0, marketPrice: 16, group: ['BCUH', 'Globe', 'Tranche grasse'] },
   { id: 'plat_tranche_grasse',    name: 'Plat de tranche grasse',  category: 'deuxieme',  yieldPct: 0, marketPrice: 15, group: ['BCUH', 'Globe', 'Tranche grasse'] },
   { id: 'mouvant_tranche_grasse', name: 'Mouvant de tranche grasse', category: 'deuxieme', yieldPct: 0, marketPrice: 15, group: ['BCUH', 'Globe', 'Tranche grasse'] },
-  { id: 'gite_noix',              name: 'Gîte à la noix',          category: 'deuxieme',  yieldPct: 0, marketPrice: 17, group: ['BCUH', 'RTK', 'Semelle'] },
-  { id: 'rond_de_gite',           name: 'Rond de gîte',            category: 'deuxieme',  yieldPct: 0, marketPrice: 18, group: ['BCUH', 'RTK', 'Semelle'] },
-  { id: 'nerveux',                name: 'Nerveux',                 category: 'troisieme', yieldPct: 0, marketPrice: 11, group: ['BCUH', 'RTK', 'Semelle'] },
-  { id: 'oreille_gite',           name: 'Oreille de gîte',         category: 'troisieme', yieldPct: 0, marketPrice: 12, group: ['BCUH', 'RTK', 'Semelle'] },
-  { id: 'coeur_rtk',              name: 'Cœur de rumsteck',        category: 'premier',   yieldPct: 0, marketPrice: 24, group: ['BCUH', 'RTK', 'Aiguillette RTK'] },
-  { id: 'filet_rtk',              name: 'Filet de RTK',            category: 'premier',   yieldPct: 0, marketPrice: 22, group: ['BCUH', 'RTK', 'Aiguillette RTK'] },
+  { id: 'gite_noix',              name: 'Gîte à la noix',          category: 'deuxieme',  yieldPct: 0, marketPrice: 17, group: ['BCUH', 'Globe', 'Semelle'] },
+  { id: 'rond_de_gite',           name: 'Rond de gîte',            category: 'deuxieme',  yieldPct: 0, marketPrice: 18, group: ['BCUH', 'Globe', 'Semelle'] },
+  { id: 'nerveux',                name: 'Nerveux',                 category: 'troisieme', yieldPct: 0, marketPrice: 11, group: ['BCUH', 'Globe', 'Semelle'] },
+  { id: 'oreille_gite',           name: 'Oreille de gîte',         category: 'troisieme', yieldPct: 0, marketPrice: 12, group: ['BCUH', 'Globe', 'Semelle'] },
+  { id: 'filet_rtk',              name: 'Filet de rumsteck',       category: 'premier',   yieldPct: 0, marketPrice: 22, group: ['BCUH', 'RTK', 'Rumsteck classique'] },
+  { id: 'coeur_rtk',              name: 'Cœur de rumsteck',        category: 'premier',   yieldPct: 0, marketPrice: 24, group: ['BCUH', 'RTK', 'Rumsteck classique'] },
+  { id: 'langue_de_chat',         name: 'Langue de chat',          category: 'premier',   yieldPct: 0, marketPrice: 22, group: ['BCUH', 'RTK', 'Rumsteck classique'] },
   { id: 'baronne',                name: 'Baronne',                 category: 'premier',   yieldPct: 0, marketPrice: 20, group: ['BCUH', 'RTK'] },
   { id: 'coeur_hanche',           name: 'Cœur de hanche',          category: 'deuxieme',  yieldPct: 0, marketPrice: 18, group: ['BCUH', 'Hanche'] },
   { id: 'fausse_araignee',        name: 'Fausse araignée',         category: 'premier',   yieldPct: 0, marketPrice: 20, group: ['BCUH', 'Hanche'] },
@@ -74,12 +75,13 @@ const BOEUF_CUTS: Cut[] = [
   { id: 'poire',                  name: 'Poire',                   category: 'premier',   yieldPct: 0, marketPrice: 26, group: ['BCUH', 'Hanche'] },
   { id: 'merlan',                 name: 'Merlan',                  category: 'premier',   yieldPct: 0, marketPrice: 26, group: ['BCUH', 'Hanche'] },
   // ── DEHMT ──
-  { id: 'flanchet',               name: 'Flanchet',                category: 'deuxieme',  yieldPct: 0, marketPrice: 12, group: ['DEHMT', 'Bavettes'] },
-  { id: 'bavette_aloyau_b',       name: "Bavette d'aloyau",        category: 'premier',   yieldPct: 0, marketPrice: 22, group: ['DEHMT', 'Bavettes'] },
-  { id: 'fausse_bavette',         name: 'Fausse bavette',          category: 'deuxieme',  yieldPct: 0, marketPrice: 14, group: ['DEHMT', 'Bavettes'] },
   { id: 'faux_filet_b',           name: 'Faux-filet',              category: 'premier',   yieldPct: 0, marketPrice: 29, group: ['DEHMT'] },
   { id: 'filet_b',                name: 'Filet',                   category: 'premier',   yieldPct: 0, marketPrice: 45, group: ['DEHMT'] },
   { id: 'dessus_de_cote',         name: 'Dessus de côté',          category: 'deuxieme',  yieldPct: 0, marketPrice: 14, group: ['DEHMT', 'Carré côté'] },
+  // ── BAVETTE ──
+  { id: 'flanchet',               name: 'Flanchet',                category: 'deuxieme',  yieldPct: 0, marketPrice: 12, group: ['BAVETTE'] },
+  { id: 'bavette_aloyau_b',       name: "Bavette d'aloyau",        category: 'premier',   yieldPct: 0, marketPrice: 22, group: ['BAVETTE'] },
+  { id: 'fausse_bavette',         name: 'Fausse bavette',          category: 'deuxieme',  yieldPct: 0, marketPrice: 14, group: ['BAVETTE'] },
 ]
 
 // ── Arborescence de découpe (dérivée du champ `group`) ──
