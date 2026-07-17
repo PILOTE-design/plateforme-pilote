@@ -9,7 +9,8 @@ import { useConfirm } from '@/components/ui/confirm-dialog'
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
 type CutCategory = 'premier' | 'deuxieme' | 'troisieme' | 'abat' | 'os'
-type AnimalType  = 'boeuf' | 'boeuf_b2' | 'veau' | 'agneau' | 'porc' | 'volaille'
+type AnimalType  = 'boeuf' | 'veau' | 'agneau' | 'porc' | 'volaille'
+type BoeufDecoupe = 'b1' | 'b2'
 
 interface Breed { id: string; name: string; carcassYield: number; avgWeight: string; origin: string; description: string }
 interface Cut   { id: string; name: string; category: CutCategory; yieldPct: number; marketPrice: number; group?: string[] }
@@ -226,15 +227,20 @@ const VOLAILLE_CUTS: Cut[] = [
 // ─── Config espèces ─── poids et prix par défaut exprimés en CARCASSE ───────────────
 
 const ANIMALS: Record<AnimalType, AnimalConfig> = {
-  boeuf:    { label: 'Bœuf B1', emoji: '🐄', accent: 'red',    breedLabel: 'Race bovine',   breeds: BOEUF_BREEDS,    cuts: BOEUF_CUTS,    defaultWeight: '520', defaultPurchaseKg: '6.00',  defaultLabor: '150' },
-  boeuf_b2: { label: 'Bœuf B2', emoji: '🐄', accent: 'red',    breedLabel: 'Race bovine',   breeds: BOEUF_BREEDS,    cuts: BOEUF_B2_CUTS, defaultWeight: '520', defaultPurchaseKg: '6.00',  defaultLabor: '150' },
+  boeuf:    { label: 'Bœuf',    emoji: '🐄', accent: 'red',    breedLabel: 'Race bovine',   breeds: BOEUF_BREEDS,    cuts: BOEUF_CUTS,    defaultWeight: '520', defaultPurchaseKg: '6.00',  defaultLabor: '150' },
   veau:     { label: 'Veau',    emoji: '🐮', accent: 'pink',   breedLabel: 'Type de veau',  breeds: VEAU_BREEDS,     cuts: VEAU_CUTS,     defaultWeight: '125', defaultPurchaseKg: '9.00',  defaultLabor: '80'  },
   agneau:   { label: 'Agneau',  emoji: '🐑', accent: 'green',  breedLabel: 'Race ovine',    breeds: AGNEAU_BREEDS,   cuts: AGNEAU_CUTS,   defaultWeight: '20',  defaultPurchaseKg: '10.00', defaultLabor: '30'  },
   porc:     { label: 'Porc',    emoji: '🐖', accent: 'orange', breedLabel: 'Race porcine',  breeds: PORC_BREEDS,     cuts: PORC_CUTS,     defaultWeight: '85',  defaultPurchaseKg: '2.90',  defaultLabor: '60'  },
   volaille: { label: 'Volaille',emoji: '🐔', accent: 'yellow', breedLabel: 'Variété',       breeds: VOLAILLE_BREEDS, cuts: VOLAILLE_CUTS, defaultWeight: '1.9', defaultPurchaseKg: '3.70',  defaultLabor: '5'   },
 }
 
-const ANIMAL_TYPES: AnimalType[] = ['boeuf', 'boeuf_b2', 'veau', 'agneau', 'porc', 'volaille']
+const ANIMAL_TYPES: AnimalType[] = ['boeuf', 'veau', 'agneau', 'porc', 'volaille']
+
+// Deux découpes possibles pour le bœuf, au choix de l'artisan (bascule en haut du calculateur)
+const BOEUF_DECOUPES: { id: BoeufDecoupe; label: string; hint: string; cuts: Cut[] }[] = [
+  { id: 'b1', label: 'Découpe 1', hint: 'BCUH · DEHMT · Bavette', cuts: BOEUF_CUTS },
+  { id: 'b2', label: 'Découpe 2', hint: 'CEFIMEV · épaule + collier', cuts: BOEUF_B2_CUTS },
+]
 
 // ─── Catégories ───────────────────────────────────────────────────────────────────
 
@@ -335,15 +341,15 @@ type CatsByAnimal = Record<AnimalType, CutCategory[]>
 type CutsByAnimal = Record<AnimalType, string[]>
 
 const DEFAULT_CATS = (): CatsByAnimal => ({
-  boeuf: [...CATEGORIES], boeuf_b2: [...CATEGORIES], veau: [...CATEGORIES], agneau: [...CATEGORIES], porc: [...CATEGORIES], volaille: [...CATEGORIES],
+  boeuf: [...CATEGORIES], veau: [...CATEGORIES], agneau: [...CATEGORIES], porc: [...CATEGORIES], volaille: [...CATEGORIES],
 })
 const DEFAULT_EXCLUDED = (): CutsByAnimal => ({
-  boeuf: [], boeuf_b2: [], veau: [], agneau: [], porc: [], volaille: [],
+  boeuf: [], veau: [], agneau: [], porc: [], volaille: [],
 })
 // Prix de référence personnalisés par pièce (surcharge le prix indicatif), mémorisés par famille
 type PricesByAnimal = Record<AnimalType, Record<string, string>>
 const DEFAULT_PRICES = (): PricesByAnimal => ({
-  boeuf: {}, boeuf_b2: {}, veau: {}, agneau: {}, porc: {}, volaille: {},
+  boeuf: {}, veau: {}, agneau: {}, porc: {}, volaille: {},
 })
 
 function loadPref<T>(key: string, fallback: T): T {
@@ -408,12 +414,17 @@ export default function ValorisationPage() {
   const [cutWeights,    setCutWeights]    = useState<Record<string, string>>({})
   // Nœuds dépliés de l'arborescence de découpe (par chemin)
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set())
+  // Découpe choisie pour le bœuf (uniquement pour l'espèce bœuf)
+  const [boeufDecoupe, setBoeufDecoupe] = useState<BoeufDecoupe>('b1')
 
   const config = ANIMALS[animalType]
   const breeds = config.breeds
-  const cuts   = config.cuts
+  // Pour le bœuf, les pièces dépendent de la découpe sélectionnée (Découpe 1 / Découpe 2 CEFIMEV)
+  const cuts   = animalType === 'boeuf'
+    ? (BOEUF_DECOUPES.find(d => d.id === boeufDecoupe)?.cuts ?? BOEUF_CUTS)
+    : config.cuts
   // Bœuf et veau s'achètent en demi-carcasse : le poids saisi est celui d'un demi, la quantité un nombre de demis
-  const isHalf = animalType === 'boeuf' || animalType === 'boeuf_b2' || animalType === 'veau'
+  const isHalf = animalType === 'boeuf' || animalType === 'veau'
   // Prix de référence par pièce : valeur saisie si présente, sinon prix indicatif de la pièce
   const cutPrices = cutPricesByAnimal[animalType] ?? {}
   const priceOf = (cut: Cut) => { const v = parseFloat(cutPrices[cut.id] ?? ''); return isNaN(v) ? cut.marketPrice : v }
@@ -445,7 +456,14 @@ export default function ValorisationPage() {
     setCutWeights({})
     setExpandedNodes(new Set())
     setShowBreedInfo(false)
+    setBoeufDecoupe('b1')
   }, [animalType]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Reset des poids saisis / nœuds dépliés quand on bascule de découpe bœuf
+  useEffect(() => {
+    setCutWeights({})
+    setExpandedNodes(new Set())
+  }, [boeufDecoupe])
 
   // Pré-remplissage depuis la facturation
   useEffect(() => {
@@ -800,6 +818,27 @@ export default function ValorisationPage() {
           )
         })}
       </div>
+
+      {/* ── Choix de la découpe (bœuf uniquement) ── */}
+      {animalType === 'boeuf' && (
+        <div className="flex items-center gap-3 mb-5 flex-wrap">
+          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Découpe</span>
+          <div className="inline-flex bg-gray-100 p-1 rounded-xl">
+            {BOEUF_DECOUPES.map(d => {
+              const active = boeufDecoupe === d.id
+              return (
+                <button key={d.id} onClick={() => setBoeufDecoupe(d.id)}
+                  className={`flex flex-col items-start px-4 py-1.5 rounded-lg transition-all ${
+                    active ? 'bg-white shadow-sm' : 'hover:bg-white/50'
+                  }`}>
+                  <span className={`text-sm font-semibold leading-tight ${active ? 'text-gray-900' : 'text-gray-500'}`}>{d.label}</span>
+                  <span className={`text-[10px] leading-tight ${active ? 'text-pilote' : 'text-gray-400'}`}>{d.hint}</span>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       {/* ── Onglets Calculateur / Suivi ── */}
       <div className="flex gap-1 mb-6 bg-gray-100 p-1 rounded-xl w-fit">
