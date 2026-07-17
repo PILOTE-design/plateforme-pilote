@@ -238,8 +238,8 @@ const ANIMAL_TYPES: AnimalType[] = ['boeuf', 'veau', 'agneau', 'porc', 'volaille
 
 // Deux découpes possibles pour le bœuf, au choix de l'artisan (bascule en haut du calculateur)
 const BOEUF_DECOUPES: { id: BoeufDecoupe; label: string; hint: string; cuts: Cut[] }[] = [
-  { id: 'b1', label: 'Découpe 1', hint: 'BCUH · DEHMT · Bavette', cuts: BOEUF_CUTS },
-  { id: 'b2', label: 'Découpe 2', hint: 'CEFIMEV · épaule + collier', cuts: BOEUF_B2_CUTS },
+  { id: 'b1', label: 'RT8',       hint: 'BCUH · DEHMT · Bavette', cuts: BOEUF_CUTS },
+  { id: 'b2', label: 'AVANTCAPA', hint: 'CEFIMEV · épaule + collier', cuts: BOEUF_B2_CUTS },
 ]
 
 // ─── Catégories ───────────────────────────────────────────────────────────────────
@@ -419,7 +419,7 @@ export default function ValorisationPage() {
 
   const config = ANIMALS[animalType]
   const breeds = config.breeds
-  // Pour le bœuf, les pièces dépendent de la découpe sélectionnée (Découpe 1 / Découpe 2 CEFIMEV)
+  // Pour le bœuf, les pièces dépendent de la découpe sélectionnée (RT8 / AVANTCAPA)
   const cuts   = animalType === 'boeuf'
     ? (BOEUF_DECOUPES.find(d => d.id === boeufDecoupe)?.cuts ?? BOEUF_CUTS)
     : config.cuts
