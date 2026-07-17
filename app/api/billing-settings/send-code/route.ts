@@ -3,7 +3,10 @@ import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { Resend } from 'resend'
 import crypto from 'crypto'
 
-const resend = new Resend(process.env.RESEND_API_KEY)
+// Clé de repli au build : le constructeur Resend lève une erreur si la clé est absente,
+// ce qui casse `next build` (« Collecting page data »). Le handler ci-dessous refuse
+// proprement l'envoi (500) tant que RESEND_API_KEY n'est pas définie en production.
+const resend = new Resend(process.env.RESEND_API_KEY || 'MISSING_RESEND_KEY')
 
 // Sur Resend plan gratuit : RESEND_FROM_EMAIL doit être omis (utilise onboarding@resend.dev)
 // et l'adresse destinataire doit être dans Authorized Recipients du compte Resend.

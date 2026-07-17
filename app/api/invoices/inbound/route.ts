@@ -7,7 +7,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/server'
 import Anthropic from '@anthropic-ai/sdk'
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+// Clé de repli au build : le constructeur Anthropic lève une erreur si la clé est absente,
+// ce qui casse `next build` (« Collecting page data »). En prod, l'extraction échoue
+// proprement à l'exécution tant que ANTHROPIC_API_KEY n'est pas définie.
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || 'MISSING_ANTHROPIC_KEY' })
 
 function getISOWeek(date: Date) {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
