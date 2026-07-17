@@ -6,7 +6,7 @@ import { Calculator, TrendingUp, Package, Info, AlertTriangle, CheckCircle, Save
 import { useToast } from '@/components/ui/toast'
 import { useConfirm } from '@/components/ui/confirm-dialog'
 
-// ─── Types ──────────────────────────────────────────────────────────────────────
+// ─── Types ────────────────────────────────────────────────
 
 type CutCategory = 'premier' | 'deuxieme' | 'troisieme' | 'abat' | 'os'
 type AnimalType  = 'boeuf' | 'veau' | 'agneau' | 'porc' | 'volaille'
@@ -33,7 +33,7 @@ interface AnimalConfig {
 }
 interface WeekLabor { hours: number; cost: number; rate: number; decoupeHours: number; decoupeCost: number; week: number; year: number }
 
-// ─── Données Bœuf ─────────────────────────────────────────────────────────────────
+// ─── Données Bœuf ────────────────────────────────────────────
 
 const BOEUF_BREEDS: Breed[] = [
   { id: 'charolaise',       name: 'Charolaise',         carcassYield: 0.645, avgWeight: '750-950 kg',  origin: 'Bourgogne',        description: 'Race à viande n°1 en France. Masses musculaires très développées. Viande ferme, peu persillée, idéale pour pièces à griller et rôtir.' },
@@ -127,7 +127,7 @@ function collectLeafCuts(node: TreeNode): Cut[] {
   return node.cut ? [node.cut] : node.children.flatMap(collectLeafCuts)
 }
 
-// ─── Données Veau ─────────────────────────────────────────────────────────────────
+// ─── Données Veau ─────────────────────────────────────────────
 
 const VEAU_BREEDS: Breed[] = [
   { id: 'veau_lait_limousin', name: 'Veau de lait Limousin',   carcassYield: 0.62, avgWeight: '160-200 kg', origin: 'Limousin',  description: 'Label Rouge. Élevé sous la mère. Chair rose pâle, très tendre et fine. Le standard haut de gamme.' },
@@ -153,7 +153,7 @@ const VEAU_CUTS: Cut[] = [
   { id: 'os_veau',       name: 'Os à moelle',            category: 'os',        yieldPct: 8.0,  marketPrice: 2  },
 ]
 
-// ─── Données Agneau ────────────────────────────────────────────────────────────────
+// ─── Données Agneau ─────────────────────────────────────────
 
 const AGNEAU_BREEDS: Breed[] = [
   { id: 'berrichon',         name: 'Berrichon du Cher',          carcassYield: 0.50, avgWeight: '35-45 kg', origin: 'Centre-Val de Loire', description: 'Race bouchère par excellence. Gigot charnu, viande tendre et rosée. Label Rouge Agneau du Berry.' },
@@ -178,7 +178,7 @@ const AGNEAU_CUTS: Cut[] = [
   { id: 'rognons_agneau',    name: 'Rognons',                 category: 'abat',      yieldPct: 0.3, marketPrice: 6  },
 ]
 
-// ─── Données Porc ──────────────────────────────────────────────────────────────────
+// ─── Données Porc ─────────────────────────────────────────────
 
 const PORC_BREEDS: Breed[] = [
   { id: 'large_white',       name: 'Large White',          carcassYield: 0.77, avgWeight: '100-120 kg', origin: 'Bretagne/National', description: 'Race dominante en France. Très bon rendement. Viande maigre et tendre, idéale pour jambons et filets.' },
@@ -203,7 +203,7 @@ const PORC_CUTS: Cut[] = [
   { id: 'os_porc',           name: 'Os et crosse',             category: 'os',        yieldPct: 8,    marketPrice: 1  },
 ]
 
-// ─── Données Volaille ──────────────────────────────────────────────────────────────
+// ─── Données Volaille ────────────────────────────────────────
 
 const VOLAILLE_BREEDS: Breed[] = [
   { id: 'poulet_fermier',  name: 'Poulet fermier Label Rouge', carcassYield: 0.75, avgWeight: '2-3 kg',   origin: 'France',    description: 'Label Rouge. Élevage 81 jours min. Chair ferme et goûteuse. Le standard de qualité en volaille artisanale.' },
@@ -224,7 +224,7 @@ const VOLAILLE_CUTS: Cut[] = [
   { id: 'carcasse_bouillon',name: 'Carcasse / Bouillon',      category: 'os',        yieldPct: 15,  marketPrice: 1.5},
 ]
 
-// ─── Config espèces ─── poids et prix par défaut exprimés en CARCASSE ───────────────
+// ─── Config espèces ─── poids et prix par défaut exprimés en CARCASSE ───────────
 
 const ANIMALS: Record<AnimalType, AnimalConfig> = {
   boeuf:    { label: 'Bœuf',    emoji: '🐄', accent: 'red',    breedLabel: 'Race bovine',   breeds: BOEUF_BREEDS,    cuts: BOEUF_CUTS,    defaultWeight: '520', defaultPurchaseKg: '6.00',  defaultLabor: '150' },
@@ -242,7 +242,7 @@ const BOEUF_DECOUPES: { id: BoeufDecoupe; label: string; hint: string; cuts: Cut
   { id: 'b2', label: 'AVANTCAPA', hint: 'CEFIMEV · épaule + collier', cuts: BOEUF_B2_CUTS },
 ]
 
-// ─── Catégories ───────────────────────────────────────────────────────────────────
+// ─── Catégories ─────────────────────────────────────────────
 
 const CATEGORY_LABELS: Record<CutCategory, string> = {
   premier: '1er choix', deuxieme: '2e choix',
@@ -274,7 +274,7 @@ function makeWeekLabel(week: number, year: number): string {
   return `S${week} ${year}  ·  ${weekStart.getDate()} ${MONTHS_FR[weekStart.getMonth()]}`
 }
 
-// ─── Main d'œuvre boucherie depuis le planning ─────────────────────────────────
+// ─── Main d'œuvre boucherie depuis le planning ─────────────────────────
 
 const JOURS_PLANNING = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
 
@@ -379,7 +379,7 @@ function normalizeValo(v: any): SavedValo {
   }
 }
 
-// ─── Page ──────────────────────────────────────────────────────────────────────
+// ─── Page ─────────────────────────────────────────────────
 
 export default function ValorisationPage() {
   const params = useSearchParams()
@@ -776,11 +776,11 @@ export default function ValorisationPage() {
       {/* Header */}
       <div className="mb-5 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-pilote-50 rounded-xl flex items-center justify-center flex-shrink-0">
-            <Calculator className="w-5 h-5 text-pilote" />
+          <div className="w-12 h-12 bg-gradient-to-br from-pilote to-pilote-hover rounded-2xl flex items-center justify-center flex-shrink-0 shadow-card">
+            <Calculator className="w-6 h-6 text-white" />
           </div>
           <div>
-            <h1 className="text-2xl font-extrabold tracking-tight text-gray-900">Valorisation Carcasse</h1>
+            <h1 className="text-3xl font-extrabold tracking-tight text-gray-900">Valorisation Carcasse</h1>
             <p className="text-sm text-gray-500">Achat au kg de carcasse · Main d'œuvre réelle du planning · Coefficient · Suivi hebdo</p>
           </div>
         </div>
@@ -1376,12 +1376,12 @@ export default function ValorisationPage() {
                   </div>
                 </div>
               ) : (
-                <div className="bg-white border border-gray-100 rounded-2xl p-16 shadow-card flex flex-col items-center justify-center text-center">
-                  <div className="w-14 h-14 bg-gray-100 rounded-full flex items-center justify-center mb-4">
-                    <span className="text-3xl">{config.emoji}</span>
+                <div className="bg-gradient-to-b from-pilote-50/40 to-white border border-pilote-100 rounded-2xl p-16 shadow-card flex flex-col items-center justify-center text-center">
+                  <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-pilote-50 to-pilote-100 ring-1 ring-pilote-200/60 flex items-center justify-center mb-5 shadow-sm">
+                    <span className="text-4xl">{config.emoji}</span>
                   </div>
-                  <p className="text-gray-600 font-medium">Renseignez les informations</p>
-                  <p className="text-sm text-gray-400 mt-1">Le détail par pièce apparaîtra ici</p>
+                  <p className="text-lg font-bold text-gray-900">Prêt à valoriser votre carcasse</p>
+                  <p className="text-sm text-gray-500 mt-1.5 max-w-xs">Renseignez le poids et le prix d'achat à gauche — le détail par pièce et le prix de vente conseillé s'afficheront ici.</p>
                 </div>
               )}
             </div>
