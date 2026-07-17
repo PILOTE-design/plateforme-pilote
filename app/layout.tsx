@@ -6,6 +6,7 @@ const sans = Plus_Jakarta_Sans({
   subsets: ['latin'],
   variable: '--font-sans',
   display: 'swap',
+  fallback: ['system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'sans-serif'],
 })
 
 const mono = JetBrains_Mono({
@@ -13,6 +14,7 @@ const mono = JetBrains_Mono({
   variable: '--font-mono',
   display: 'swap',
   weight: ['500', '600', '700'],
+  fallback: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Consolas', 'monospace'],
 })
 
 export const metadata: Metadata = {
