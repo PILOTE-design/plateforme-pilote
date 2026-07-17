@@ -9,7 +9,7 @@ import { useConfirm } from '@/components/ui/confirm-dialog'
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
 type CutCategory = 'premier' | 'deuxieme' | 'troisieme' | 'abat' | 'os'
-type AnimalType  = 'boeuf' | 'veau' | 'agneau' | 'porc' | 'volaille'
+type AnimalType  = 'boeuf' | 'boeuf_b2' | 'veau' | 'agneau' | 'porc' | 'volaille'
 
 interface Breed { id: string; name: string; carcassYield: number; avgWeight: string; origin: string; description: string }
 interface Cut   { id: string; name: string; category: CutCategory; yieldPct: number; marketPrice: number; group?: string[] }
@@ -82,6 +82,25 @@ const BOEUF_CUTS: Cut[] = [
   { id: 'flanchet',               name: 'Flanchet',                category: 'deuxieme',  yieldPct: 0, marketPrice: 12, group: ['BAVETTE'] },
   { id: 'bavette_aloyau_b',       name: "Bavette d'aloyau",        category: 'premier',   yieldPct: 0, marketPrice: 22, group: ['BAVETTE'] },
   { id: 'fausse_bavette',         name: 'Fausse bavette',          category: 'deuxieme',  yieldPct: 0, marketPrice: 14, group: ['BAVETTE'] },
+]
+// Découpe B2 — nomenclature CEFIMEV (avant du bœuf : épaule + collier basse-côte).
+// Arborescence : grande pièce → sous-pièce. Prix de référence indicatifs, modifiables.
+const BOEUF_B2_CUTS: Cut[] = [
+  // ── ÉPAULE (B 4.1) ──
+  { id: 'b2_jarret_avant',      name: 'Jarret (avant)',          category: 'troisieme', yieldPct: 0, marketPrice: 12, group: ['Épaule'] },
+  { id: 'b2_boite_a_moelle',    name: 'Boîte à moelle',          category: 'deuxieme',  yieldPct: 0, marketPrice: 12, group: ['Épaule'] },
+  { id: 'b2_dessus_macreuse',   name: 'Dessus de macreuse',      category: 'premier',   yieldPct: 0, marketPrice: 19, group: ['Épaule', 'Macreuse à biftecks'] },
+  { id: 'b2_macreuse_roti',     name: 'Macreuse (rôti)',         category: 'premier',   yieldPct: 0, marketPrice: 18, group: ['Épaule', 'Macreuse à biftecks'] },
+  { id: 'b2_paleron',           name: 'Paleron',                 category: 'deuxieme',  yieldPct: 0, marketPrice: 14, group: ['Épaule'] },
+  { id: 'b2_dessus_palette',    name: 'Dessus de palette',       category: 'deuxieme',  yieldPct: 0, marketPrice: 13, group: ['Épaule'] },
+  { id: 'b2_jumeau',            name: 'Jumeau',                  category: 'premier',   yieldPct: 0, marketPrice: 16, group: ['Épaule'] },
+  // ── COLLIER BASSE-CÔTE (B 4.2) ──
+  { id: 'b2_persille',          name: 'Persillé',                category: 'deuxieme',  yieldPct: 0, marketPrice: 15, group: ['Collier basse-côte', 'Basse côte'] },
+  { id: 'b2_basse_cote',        name: 'Basse côte (entrecôte minute)', category: 'premier', yieldPct: 0, marketPrice: 17, group: ['Collier basse-côte', 'Basse côte'] },
+  { id: 'b2_veine_maigre',      name: 'Veine maigre',            category: 'troisieme', yieldPct: 0, marketPrice: 12, group: ['Collier basse-côte', 'Collier'] },
+  { id: 'b2_saliere',           name: 'Salière',                 category: 'deuxieme',  yieldPct: 0, marketPrice: 13, group: ['Collier basse-côte', 'Collier'] },
+  { id: 'b2_veine_grasse',      name: 'Veine grasse',            category: 'deuxieme',  yieldPct: 0, marketPrice: 11, group: ['Collier basse-côte', 'Collier'] },
+  { id: 'b2_filet_mignon_col',  name: 'Filet mignon (de collier)', category: 'premier', yieldPct: 0, marketPrice: 14, group: ['Collier basse-côte', 'Collier'] },
 ]
 
 // ── Arborescence de découpe (dérivée du champ `group`) ──
@@ -207,14 +226,15 @@ const VOLAILLE_CUTS: Cut[] = [
 // ─── Config espèces ─── poids et prix par défaut exprimés en CARCASSE ───────────────
 
 const ANIMALS: Record<AnimalType, AnimalConfig> = {
-  boeuf:    { label: 'Bœuf',    emoji: '🐄', accent: 'red',    breedLabel: 'Race bovine',   breeds: BOEUF_BREEDS,    cuts: BOEUF_CUTS,    defaultWeight: '520', defaultPurchaseKg: '6.00',  defaultLabor: '150' },
+  boeuf:    { label: 'Bœuf B1', emoji: '🐄', accent: 'red',    breedLabel: 'Race bovine',   breeds: BOEUF_BREEDS,    cuts: BOEUF_CUTS,    defaultWeight: '520', defaultPurchaseKg: '6.00',  defaultLabor: '150' },
+  boeuf_b2: { label: 'Bœuf B2', emoji: '🐄', accent: 'red',    breedLabel: 'Race bovine',   breeds: BOEUF_BREEDS,    cuts: BOEUF_B2_CUTS, defaultWeight: '520', defaultPurchaseKg: '6.00',  defaultLabor: '150' },
   veau:     { label: 'Veau',    emoji: '🐮', accent: 'pink',   breedLabel: 'Type de veau',  breeds: VEAU_BREEDS,     cuts: VEAU_CUTS,     defaultWeight: '125', defaultPurchaseKg: '9.00',  defaultLabor: '80'  },
   agneau:   { label: 'Agneau',  emoji: '🐑', accent: 'green',  breedLabel: 'Race ovine',    breeds: AGNEAU_BREEDS,   cuts: AGNEAU_CUTS,   defaultWeight: '20',  defaultPurchaseKg: '10.00', defaultLabor: '30'  },
   porc:     { label: 'Porc',    emoji: '🐖', accent: 'orange', breedLabel: 'Race porcine',  breeds: PORC_BREEDS,     cuts: PORC_CUTS,     defaultWeight: '85',  defaultPurchaseKg: '2.90',  defaultLabor: '60'  },
   volaille: { label: 'Volaille',emoji: '🐔', accent: 'yellow', breedLabel: 'Variété',       breeds: VOLAILLE_BREEDS, cuts: VOLAILLE_CUTS, defaultWeight: '1.9', defaultPurchaseKg: '3.70',  defaultLabor: '5'   },
 }
 
-const ANIMAL_TYPES: AnimalType[] = ['boeuf', 'veau', 'agneau', 'porc', 'volaille']
+const ANIMAL_TYPES: AnimalType[] = ['boeuf', 'boeuf_b2', 'veau', 'agneau', 'porc', 'volaille']
 
 // ─── Catégories ───────────────────────────────────────────────────────────────────
 
@@ -315,15 +335,15 @@ type CatsByAnimal = Record<AnimalType, CutCategory[]>
 type CutsByAnimal = Record<AnimalType, string[]>
 
 const DEFAULT_CATS = (): CatsByAnimal => ({
-  boeuf: [...CATEGORIES], veau: [...CATEGORIES], agneau: [...CATEGORIES], porc: [...CATEGORIES], volaille: [...CATEGORIES],
+  boeuf: [...CATEGORIES], boeuf_b2: [...CATEGORIES], veau: [...CATEGORIES], agneau: [...CATEGORIES], porc: [...CATEGORIES], volaille: [...CATEGORIES],
 })
 const DEFAULT_EXCLUDED = (): CutsByAnimal => ({
-  boeuf: [], veau: [], agneau: [], porc: [], volaille: [],
+  boeuf: [], boeuf_b2: [], veau: [], agneau: [], porc: [], volaille: [],
 })
 // Prix de référence personnalisés par pièce (surcharge le prix indicatif), mémorisés par famille
 type PricesByAnimal = Record<AnimalType, Record<string, string>>
 const DEFAULT_PRICES = (): PricesByAnimal => ({
-  boeuf: {}, veau: {}, agneau: {}, porc: {}, volaille: {},
+  boeuf: {}, boeuf_b2: {}, veau: {}, agneau: {}, porc: {}, volaille: {},
 })
 
 function loadPref<T>(key: string, fallback: T): T {
@@ -393,7 +413,7 @@ export default function ValorisationPage() {
   const breeds = config.breeds
   const cuts   = config.cuts
   // Bœuf et veau s'achètent en demi-carcasse : le poids saisi est celui d'un demi, la quantité un nombre de demis
-  const isHalf = animalType === 'boeuf' || animalType === 'veau'
+  const isHalf = animalType === 'boeuf' || animalType === 'boeuf_b2' || animalType === 'veau'
   // Prix de référence par pièce : valeur saisie si présente, sinon prix indicatif de la pièce
   const cutPrices = cutPricesByAnimal[animalType] ?? {}
   const priceOf = (cut: Cut) => { const v = parseFloat(cutPrices[cut.id] ?? ''); return isNaN(v) ? cut.marketPrice : v }
