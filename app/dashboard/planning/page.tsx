@@ -27,10 +27,12 @@ type ScheduleDetail = {
 type ScheduleDetails = Partial<Record<JourDB, ScheduleDetail>>
 
 const CATEGORIES = [
-  { key: 'boucherie',   short: 'Boucherie',   abbr: 'Bouch.', color: 'bg-red-100 text-red-700',      ring: 'ring-red-300'      },
-  { key: 'charcuterie', short: 'Charcuterie', abbr: 'Charc.', color: 'bg-orange-100 text-orange-700', ring: 'ring-orange-300'  },
-  { key: 'traiteur',    short: 'Traiteur',    abbr: 'Trait.', color: 'bg-emerald-100 text-emerald-700', ring: 'ring-emerald-300' },
-  { key: 'vente',       short: 'Vente',       abbr: 'Vente',  color: 'bg-sky-100 text-sky-700',       ring: 'ring-sky-300'     },
+  { key: 'boucherie',     short: 'Boucherie',     abbr: 'Bouch.', color: 'bg-red-100 text-red-700',        ring: 'ring-red-300'      },
+  { key: 'charcuterie',   short: 'Charcuterie',   abbr: 'Charc.', color: 'bg-orange-100 text-orange-700',  ring: 'ring-orange-300'  },
+  { key: 'traiteur',      short: 'Traiteur',      abbr: 'Trait.', color: 'bg-emerald-100 text-emerald-700', ring: 'ring-emerald-300' },
+  { key: 'vente',         short: 'Vente',         abbr: 'Vente',  color: 'bg-sky-100 text-sky-700',        ring: 'ring-sky-300'     },
+  { key: 'administratif', short: 'Administratif', abbr: 'Admin.', color: 'bg-slate-100 text-slate-700',    ring: 'ring-slate-300'   },
+  { key: 'livraison',     short: 'Livraison',     abbr: 'Livr.',  color: 'bg-indigo-100 text-indigo-700',  ring: 'ring-indigo-300'  },
 ] as const
 
 const TYPE_CONFIG: Record<DayType, {
@@ -659,7 +661,7 @@ export default function PlanningPage() {
       const bg    = fName ? '#d97706' : i >= 5 ? '#94a3b8' : '#1E3A5F'
       return `<th style="background:${bg};color:white;padding:7px 5px;font-size:10px;text-align:center;">${fmtD(d)}${fName ? `<br><span style="font-size:8px;opacity:.9;">✦ ${fName}</span>` : ''}</th>`
     }).join('')
-    const catHex: Record<string, string> = { boucherie: '#b91c1c', charcuterie: '#c2410c', traiteur: '#047857', vente: '#0369a1' }
+    const catHex: Record<string, string> = { boucherie: '#b91c1c', charcuterie: '#c2410c', traiteur: '#047857', vente: '#0369a1', administratif: '#475569', livraison: '#4f46e5' }
     const empRows = employees.map((emp, i) => {
       const pal    = EMP_PALETTES[i % EMP_PALETTES.length]
       const entry  = getEntryState(emp.id)
@@ -960,11 +962,12 @@ export default function PlanningPage() {
                                 cpRemaining < 0 ? 'text-red-500 font-semibold' : cpRemaining <= 3 ? 'text-orange-500' : 'text-gray-400'
                               }`}>{cpRemaining}j CP restants</span>
                             </div>
-                            {hsCumul > 0 && (
-                              <span className="text-[9px] text-orange-500 font-medium" title="Heures supplémentaires cumulées (fiche employé)">
-                                {fmtH(hsCumul)} HS cumulées
-                              </span>
-                            )}
+                            <span
+                              className={`text-[9px] font-medium ${hsCumul > 0 ? 'text-orange-500' : 'text-gray-400'}`}
+                              title="Compteur d'heures supplémentaires cumulées — à récupérer (modifiable dans la fiche employé)"
+                            >
+                              {fmtH(hsCumul)} HS cumul.
+                            </span>
                           </div>
                         </div>
                       </div>
