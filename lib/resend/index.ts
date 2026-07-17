@@ -1,6 +1,9 @@
 import { Resend } from 'resend'
 
-export const resend = new Resend(process.env.RESEND_API_KEY)
+// Clé de repli au build : le constructeur Resend lève une erreur si la clé est absente,
+// ce qui casse `next build` lors du « Collecting page data ». En prod l'envoi reste protégé
+// par les gardes des routes (qui vérifient RESEND_API_KEY avant d'envoyer).
+export const resend = new Resend(process.env.RESEND_API_KEY || 'MISSING_RESEND_KEY')
 
 export async function sendWelcomeEmail(to: string, businessName: string) {
   await resend.emails.send({
