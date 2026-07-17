@@ -13,10 +13,25 @@ export async function GET(request: NextRequest) {
   const week  = searchParams.get('week')
   const year  = searchParams.get('year')
   const fixed = searchParams.get('fixed')
+  const suppliers = searchParams.get('suppliers')
 
   const serviceSupabase = createServiceClient()
   const clientId = await resolveClientId(serviceSupabase, user.id, user.email)
   if (!clientId) return NextResponse.json([])
+
+  // Mémoire fournisseur → catégorie : renvoie la catégorie la plus récente utilisée pour
+  // chaque fournisseur, pour pré-remplir automatiquement la catégorie à la saisie d'un achat.
+  if (suppliers) {
+    const { data: rows } = await serviceSupabase
+      .from('invoices').select('supplier_name, category, invoice_date')
+      .eq('client_id', clientId).order('invoice_date', { ascending: false })
+    const map = new Map<string, string>()
+    for (const r of rows || []) {
+      const key = String(r.supplier_name || '').trim().toLowerCase()
+      if (key && !map.has(key)) map.set(key, r.category) // trié desc → 1re occurrence = plus récente
+    }
+    return NextResponse.json(Array.from(map, ([supplier_name, category]) => ({ supplier_name, category })))
+  }
 
   let query = serviceSupabase.from('invoices').select('*').eq('client_id', clientId)
 
