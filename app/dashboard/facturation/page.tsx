@@ -14,7 +14,7 @@ import {
   Link2, Link2Off, RefreshCw, ArrowUpRight, Repeat, Undo2
 } from 'lucide-react'
 
-// ─── Types ────────────────────────────────────────────────────────
+// ─── Types ──────────────────────────────────────
 
 type Invoice = {
   id: string; supplier_name: string; invoice_number?: string; invoice_date: string
@@ -42,7 +42,7 @@ type ProviderMeta = {
   helpUrl: string; description: string
 }
 
-// ─── Constantes ──────────────────────────────────────────────────────
+// ─── Constantes ────────────────────────────────────
 
 const CATEGORIES = [
   { key: 'viande',         label: 'Viande',         color: 'bg-red-100 text-red-800'       },
@@ -74,7 +74,7 @@ const PROVIDERS_META: ProviderMeta[] = [
   { id: 'ebp',       name: 'EBP',       logo: 'EBP', color: 'bg-orange-500', tokenLabel: 'Token API EBP en ligne', tokenPlaceholder: 'Token depuis EBP → Paramètres → API', needsCompanyId: true, companyIdLabel: 'Identifiant dossier EBP', helpUrl: 'https://developer.ebp.com', description: 'EBP en ligne — import factures fournisseurs automatique' },
 ]
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────
 
 function getISOWeek(date: Date) {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
@@ -118,7 +118,7 @@ function getLastWeek() {
   return getISOWeek(ref)
 }
 
-// ─── Composant principal ──────────────────────────────────────────────────────────────
+// ─── Composant principal ────────────────────────────────────────────────────────
 
 export default function FacturationPage() {
   const router = useRouter()
@@ -137,6 +137,8 @@ export default function FacturationPage() {
   const [showProviders, setShowProviders] = useState(false)
   const [newInvoice, setNewInvoice] = useState<any>(EMPTY_INVOICE)
   const [saving,    setSaving]    = useState(false)
+  // Mémoire fournisseur → catégorie (pré-remplissage auto à la saisie d'un achat)
+  const [supplierMap, setSupplierMap] = useState<Record<string, string>>({})
   const [caForm,    setCaForm]    = useState({ ca_total: '', ca_boucherie: '', ca_charcuterie: '', ca_traiteur: '', ca_vente: '' })
   const [settForm,  setSettForm]  = useState({ company_name: '', siret: '' })
 
@@ -189,6 +191,22 @@ export default function FacturationPage() {
 
   useEffect(() => { load() }, [load])
   useEffect(() => { loadIntegrations() }, [loadIntegrations])
+
+  // Charge la mémoire fournisseur → catégorie une fois (catégorie la plus récente par fournisseur)
+  useEffect(() => {
+    fetch('/api/invoices?suppliers=1', { cache: 'no-store' })
+      .then(r => r.json())
+      .then(data => {
+        if (!Array.isArray(data)) return
+        const m: Record<string, string> = {}
+        for (const s of data) {
+          const key = String(s?.supplier_name || '').trim().toLowerCase()
+          if (key && s?.category) m[key] = s.category
+        }
+        setSupplierMap(m)
+      })
+      .catch(() => {})
+  }, [invoices.length])
 
   function prevWeek() { if (week === 1) { setYear(y => y - 1); setWeek(52) } else setWeek(w => w - 1) }
   function nextWeek() { if (week === 52) { setYear(y => y + 1); setWeek(1) } else setWeek(w => w + 1) }
@@ -700,7 +718,11 @@ export default function FacturationPage() {
             <div className="space-y-4">
               <div className="col-span-2">
                 <label className="block text-xs font-semibold text-gray-600 mb-1">Fournisseur *</label>
-                <Input value={newInvoice.supplier_name} onChange={e => setNewInvoice((p: any) => ({ ...p, supplier_name: e.target.value }))} placeholder="Maison Dupont" autoFocus />
+                <Input value={newInvoice.supplier_name} onChange={e => {
+                  const supplier_name = e.target.value
+                  const known = supplierMap[supplier_name.trim().toLowerCase()]
+                  setNewInvoice((p: any) => ({ ...p, supplier_name, ...(known ? { category: known } : {}) }))
+                }} placeholder="Maison Dupont" autoFocus />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -723,6 +745,9 @@ export default function FacturationPage() {
                     </button>
                   ))}
                 </div>
+                {supplierMap[(newInvoice.supplier_name || '').trim().toLowerCase()] && (
+                  <p className="text-[11px] text-pilote mt-1.5">Pré-remplie d'après vos achats précédents chez ce fournisseur — modifiable.</p>
+                )}
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
