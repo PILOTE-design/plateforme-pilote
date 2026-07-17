@@ -6,7 +6,7 @@ import { Calculator, TrendingUp, Package, Info, AlertTriangle, CheckCircle, Save
 import { useToast } from '@/components/ui/toast'
 import { useConfirm } from '@/components/ui/confirm-dialog'
 
-// ─── Types ─────────────────────────────────────────────────────────────────────
+// ─── Types ──────────────────────────────────────────────────────────────────────
 
 type CutCategory = 'premier' | 'deuxieme' | 'troisieme' | 'abat' | 'os'
 type AnimalType  = 'boeuf' | 'veau' | 'agneau' | 'porc' | 'volaille'
@@ -804,8 +804,8 @@ export default function ValorisationPage() {
           const excludedCount = (excludedByAnimal[at] ?? []).length
           return (
             <button key={at} onClick={() => setAnimalType(at)}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold border-2 transition-all ${
-                isActive ? 'bg-pilote text-white shadow-card border-transparent' : 'bg-white text-gray-600 border-gray-200 hover:border-pilote-200'
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold border-2 transition-all active:scale-95 ${
+                isActive ? 'bg-pilote text-white shadow-card border-transparent' : 'bg-white text-gray-600 border-gray-200 hover:border-pilote-200 hover:shadow-sm'
               }`}>
               <span className="text-base">{a.emoji}</span>
               {a.label}
@@ -829,7 +829,7 @@ export default function ValorisationPage() {
               return (
                 <button key={d.id} onClick={() => setBoeufDecoupe(d.id)}
                   className={`flex flex-col items-start px-4 py-1.5 rounded-lg transition-all ${
-                    active ? 'bg-white shadow-sm' : 'hover:bg-white/50'
+                    active ? 'bg-white shadow-sm ring-1 ring-gray-900/5' : 'hover:bg-white/60'
                   }`}>
                   <span className={`text-sm font-semibold leading-tight ${active ? 'text-gray-900' : 'text-gray-500'}`}>{d.label}</span>
                   <span className={`text-[10px] leading-tight ${active ? 'text-pilote' : 'text-gray-400'}`}>{d.hint}</span>
@@ -1200,9 +1200,13 @@ export default function ValorisationPage() {
                   coeffStatus === 'under' ? 'bg-green-50 border-green-200' : coeffStatus === 'over' ? 'bg-orange-50 border-orange-200' : 'bg-pilote-50 border-pilote-200'
                 }`}>
                   <div className="flex items-start gap-3">
-                    {coeffStatus === 'under' && <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />}
-                    {coeffStatus === 'over'  && <AlertTriangle className="w-5 h-5 text-orange-600 flex-shrink-0 mt-0.5" />}
-                    {coeffStatus === 'ok'    && <TrendingUp className="w-5 h-5 text-pilote flex-shrink-0 mt-0.5" />}
+                    <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${
+                      coeffStatus === 'under' ? 'bg-green-100' : coeffStatus === 'over' ? 'bg-orange-100' : 'bg-pilote-100'
+                    }`}>
+                      {coeffStatus === 'under' && <CheckCircle className="w-5 h-5 text-green-600" />}
+                      {coeffStatus === 'over'  && <AlertTriangle className="w-5 h-5 text-orange-600" />}
+                      {coeffStatus === 'ok'    && <TrendingUp className="w-5 h-5 text-pilote" />}
+                    </div>
                     <div className="flex-1">
                       <div className="flex items-baseline gap-2 mb-1">
                         <span className={`text-2xl font-bold ${
@@ -1238,9 +1242,9 @@ export default function ValorisationPage() {
                       { label: 'CA conseillé',    value: eur(totalRevenue1),    sub: `coeff. x${coefficient.toFixed(3)}` },
                       { label: 'Marge brute',     value: eur(totalRevenue1 - totalCost1), sub: `${actualMargin1.toFixed(1)}% réel`, highlight: true },
                     ].map(kpi => (
-                      <div key={kpi.label} className={`rounded-2xl p-4 border shadow-card ${'highlight' in kpi && kpi.highlight ? 'bg-pilote border-transparent' : 'bg-white border-gray-100'}`}>
-                        <p className={`text-xs mb-1 ${'highlight' in kpi && kpi.highlight ? 'text-white/70' : 'text-gray-500'}`}>{kpi.label}</p>
-                        <p className={`text-lg font-bold leading-tight ${'highlight' in kpi && kpi.highlight ? 'text-white' : 'text-gray-900'}`}>{kpi.value}</p>
+                      <div key={kpi.label} className={`rounded-2xl p-4 border shadow-card transition-all hover:shadow-md hover:-translate-y-0.5 ${'highlight' in kpi && kpi.highlight ? 'bg-pilote border-transparent' : 'bg-white border-gray-100'}`}>
+                        <p className={`text-[10px] font-semibold uppercase tracking-wider mb-1 ${'highlight' in kpi && kpi.highlight ? 'text-white/70' : 'text-gray-400'}`}>{kpi.label}</p>
+                        <p className={`text-xl font-extrabold leading-tight tabular-nums ${'highlight' in kpi && kpi.highlight ? 'text-white' : 'text-gray-900'}`}>{kpi.value}</p>
                         <p className={`text-xs mt-0.5 ${'highlight' in kpi && kpi.highlight ? 'text-white/60' : 'text-gray-400'}`}>{kpi.sub}</p>
                       </div>
                     ))}
