@@ -1,6 +1,9 @@
 import Stripe from 'stripe'
 
-export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
+// Clé de repli au build : le constructeur Stripe lève « Neither apiKey nor config.authenticator
+// provided » si la clé est absente, ce qui casse `next build` (« Collecting page data »).
+// En prod, l'appel Stripe échoue proprement à l'exécution tant que STRIPE_SECRET_KEY n'est pas définie.
+export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || 'sk_missing_build_placeholder', {
   apiVersion: '2026-06-24.dahlia',
   typescript: true,
 })
