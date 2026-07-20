@@ -3,39 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Percent, Check, Loader2, Info } from 'lucide-react'
-
-export type Groupe = 'boucherie' | 'charcuterie' | 'traiteur' | 'achat_revente'
-export type MappingRow = { source_type: 'famille' | 'achat_categorie'; source_name: string; groupe: Groupe }
-
-export const GROUPES: { key: Groupe; label: string; color: string; active: string }[] = [
-  { key: 'boucherie',     label: 'Boucherie',     color: 'text-red-700 bg-red-50 hover:bg-red-100',          active: 'bg-red-600 text-white' },
-  { key: 'charcuterie',   label: 'Charcuterie',   color: 'text-orange-700 bg-orange-50 hover:bg-orange-100', active: 'bg-orange-600 text-white' },
-  { key: 'traiteur',      label: 'Traiteur',      color: 'text-emerald-700 bg-emerald-50 hover:bg-emerald-100', active: 'bg-emerald-600 text-white' },
-  { key: 'achat_revente', label: 'Achat-revente', color: 'text-sky-700 bg-sky-50 hover:bg-sky-100',          active: 'bg-sky-600 text-white' },
-]
-
-const ACHAT_CATEGORIES: { key: string; label: string }[] = [
-  { key: 'viande',         label: 'Viande (achats)' },
-  { key: 'charcuterie',    label: 'Charcuterie (achats)' },
-  { key: 'epicerie',       label: 'Épicerie (achats)' },
-  { key: 'emballage',      label: 'Emballage' },
-  { key: 'frais_generaux', label: 'Frais généraux' },
-  { key: 'autre',          label: 'Autre' },
-]
-
-/** Pré-remplissage intelligent — le client ajuste ensuite (c'est sa réflexion à la création) */
-export function defaultGroupeForFamille(nom: string): Groupe {
-  const n = nom.toUpperCase()
-  if (/(CHARCUT|SALAISON|SAUCISS|JAMBON|PATE|PÂTÉ|TERRINE)/.test(n)) return 'charcuterie'
-  if (/(TRAITEUR|PLAT|ROTISSERIE|RÔTISSERIE|SNACK|SANDWICH)/.test(n)) return 'traiteur'
-  if (/(BOEUF|BŒUF|VEAU|AGNEAU|PORC|VOLAILLE|VIANDE|BOUCH|GIBIER|ABAT)/.test(n)) return 'boucherie'
-  return 'achat_revente'
-}
-export function defaultGroupeForCategorie(cat: string): Groupe {
-  if (cat === 'viande') return 'boucherie'
-  if (cat === 'charcuterie') return 'charcuterie'
-  return 'achat_revente'
-}
+import { GROUPES, ACHAT_CATEGORIES, defaultGroupeForFamille, defaultGroupeForCategorie, type Groupe, type MappingRow } from '@/lib/marges-config'
 
 export default function MargesWizard({
   familles,
@@ -112,13 +80,13 @@ export default function MargesWizard({
             </div>
           )}
           <div>
-            <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-1">Catégories d'achat (factures &amp; charges fixes)</p>
-            <div>{ACHAT_CATEGORIES.map(c => <Row key={`achat_categorie|${c.key}`} k={`achat_categorie|${c.key}`} label={c.label} sub={c.key === 'frais_generaux' ? 'Loyer, énergie, assurance… — leur part hebdo pèsera sur le groupe choisi' : undefined} />)}</div>
+            <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-1">Catégories d'achat (marchandises)</p>
+            <div>{ACHAT_CATEGORIES.map(c => <Row key={`achat_categorie|${c.key}`} k={`achat_categorie|${c.key}`} label={c.label} />)}</div>
           </div>
 
           <div className="bg-pilote-50 border border-pilote-100 rounded-xl p-3.5 flex gap-2.5">
             <Info className="w-4 h-4 text-pilote flex-shrink-0 mt-0.5" />
-            <p className="text-xs text-gray-600 leading-relaxed">Pré-rempli d'après les noms — vérifiez chaque ligne : c'est cette correspondance qui déterminera vos marges par groupe. Nouvelles familles détectées plus tard : elles apparaîtront ici à catégoriser.</p>
+            <p className="text-xs text-gray-600 leading-relaxed">Pré-rempli d'après les noms — vérifiez chaque ligne : c'est cette correspondance qui déterminera vos marges par groupe. Les <strong>frais généraux</strong> (loyer, énergie, assurance…) ne sont pas à trier : ils pèsent sur la marge globale, pas sur un groupe.</p>
           </div>
 
           {error && <p className="text-xs font-semibold text-red-600">{error}</p>}
