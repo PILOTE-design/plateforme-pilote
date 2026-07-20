@@ -64,7 +64,7 @@ function ensureFonts(): Promise<void> {
   return fontsPromise
 }
 
-// ─── Types ────────────────────────────────────────────────────────────────
+// ─── Types ────────────────────────────────────────────────────────
 interface Produit { plu: string; designation: string; ventes: number; montant: number }
 interface Famille { id: string; nom: string; total_montant: number; produits: Produit[] }
 interface FinancierData { ca_net: number; nb_tickets: number; moyenne_ticket: number }
@@ -97,7 +97,7 @@ interface ComputedReport {
   execSummary: string
 }
 
-// ─── Formatters ──────────────────────────────────────────────────────────────
+// ─── Formatters ────────────────────────────────────────────────────────────
 // NE PAS utiliser toLocaleString('fr-FR') — produit U+202F (espace fine insécable),
 // on garde un formatage manuel avec espace simple pour un rendu stable
 const eur = (n: number) => {
@@ -128,7 +128,7 @@ const sanitize = (s: string) => (s || '')
   .trim()
   .slice(0, 320)
 
-// ─── Palette ────────────────────────────────────────────────────────────
+// ─── Palette ────────────────────────────────────────────────────────
 const C = {
   navy:        '#1E3A5F',
   blue:        '#2D5986',
@@ -151,7 +151,7 @@ const C = {
   white:       '#FFFFFF',
 }
 
-// ─── Styles ─────────────────────────────────────────────────────────────
+// ─── Styles ───────────────────────────────────────────────────────
 const S = StyleSheet.create({
   coverBlueBg:    { backgroundColor: C.navy, padding: 56, paddingBottom: 44, flexGrow: 1 },
   coverTagRow:    { flexDirection: 'row', alignItems: 'center', marginBottom: 44 },
@@ -238,7 +238,7 @@ const S = StyleSheet.create({
   actionText:     { fontSize: 10, color: '#7A4100', lineHeight: 1.55, fontWeight: 700 },
 })
 
-// ─── PDF Sub-components ───────────────────────────────────────────────────────
+// ─── PDF Sub-components ─────────────────────────────────────────────
 
 const SecHeader = ({ num, title }: { num: string; title: string }) => (
   <View style={S.secHeader}>
@@ -268,7 +268,7 @@ const ShareBar = ({ pct }: { pct: number }) => (
   </View>
 )
 
-// ─── PDF Document ───────────────────────────────────────────────────────────────
+// ─── PDF Document ──────────────────────────────────────────────────────────────
 
 const PiloteReport = ({ r }: { r: ComputedReport }) => {
   const { data, clientName, insights, pieBuffer, tops, flops, famRows, caVar, status, execSummary } = r
@@ -634,7 +634,7 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
   )
 }
 
-// ─── Data extraction ───────────────────────────────────────────────────────────
+// ─── Data extraction ─────────────────────────────────────────────────────────
 
 async function parsePDF(file: File): Promise<string> {
   const buffer = Buffer.from(await file.arrayBuffer())
@@ -682,7 +682,7 @@ async function extractFinancials(fin_n: string, fin_n1: string): Promise<{
   return JSON.parse(extractJSONObject(r.content[0].type === 'text' ? r.content[0].text : ''))
 }
 
-// ─── Semaine ISO deterministe ─────────────────────────────────────────────────────
+// ─── Semaine ISO deterministe ─────────────────────────────────────────────────
 // La semaine du rapport est TOUJOURS calculee en code a partir des dates de la
 // periode extraite (ex: "29 juin - 5 juillet 2026" => S27), jamais par l'IA.
 
@@ -736,7 +736,7 @@ async function extractVentesData(ventes_text: string): Promise<{ total: number; 
   const r = await client.messages.create({
     model: 'claude-haiku-4-5-20251001', max_tokens: 1024,
     // Slice 12000 chars pour capturer TOUTES les familles (pas seulement les grandes)
-    messages: [{ role: 'user', content: `Extrais les totaux par famille du fichier CRISALID.\nRetourne UNIQUEMENT ces lignes (une par ligne):\nTOTAL|20742.43\nVIANDE DE BOEUF|1|3081.17\nCHARCUTERIE|2|2500.00\n\nFormat: 1ere ligne TOTAL|montant, puis NOM|ID|montant par famille. Point comme separateur decimal.\n\n${ventes_text.slice(0, 12000)}` }],
+    messages: [{ role: 'user', content: `Extrais les totaux par famille du fichier CRISALID.\nRetourne UNIQUEMENT ces lignes (une par ligne):\nTOTAL|20742.43\nVIANDE DE BOEUF|1|3081.17\nCHARCUTERIE|2|2500.00\n\nFormat: 1ere ligne TOTAL|montant, puis NOM|ID|montant par famille. Point comme separateur decimal. Montant = CA en euros de la PERIODE uniquement (jamais cumul annuel, jamais quantites, jamais code PLU) ; un montant de famille ne depasse jamais le TOTAL.\n\n${ventes_text.slice(0, 12000)}` }],
   })
   const text = r.content[0].type === 'text' ? r.content[0].text.trim() : ''
   const lines = text.split('\n').map((l: string) => l.trim()).filter((l: string) => l)
@@ -750,7 +750,22 @@ async function extractVentesData(ventes_text: string): Promise<{ total: number; 
       if (montant > 0) familles.push({ id: parts[1]?.trim() || String(familles.length + 1), nom: parts[0].trim(), total_montant: montant, produits: [] })
     }
   }
-  return { total, familles }
+  // ── Garde-fous deterministes anti-aberrations (ex. epicerie a 6 chiffres sur une petite semaine) ──
+  // Un montant de famille ne peut jamais depasser le CA total de la periode. Erreurs classiques
+  // d'extraction : virgule decimale perdue (x100), separateur de milliers avale (x1000),
+  // colonne cumul annuel ou code PLU pris pour un montant -> corrige ou ecarte.
+  const cleaned: Famille[] = []
+  for (const f of familles) {
+    let m = f.total_montant
+    if (total > 0 && m > total * 1.005) {
+      if (m / 100 <= total * 1.005) m = Math.round(m) / 100
+      else if (m / 1000 <= total * 1.005) m = Math.round(m) / 1000
+      else { console.warn('[ventes] famille ecartee (montant aberrant):', f.nom, f.total_montant, '> CA total', total); continue }
+      console.warn('[ventes] montant corrige (decimale perdue):', f.nom, f.total_montant, '->', m)
+    }
+    cleaned.push({ ...f, total_montant: m })
+  }
+  return { total, familles: cleaned }
 }
 
 /** Extrait le CA TOTAL par produit d'un fichier ventes CRISALID.
@@ -819,7 +834,7 @@ async function extractData(texts: { fin_n: string; fin_n1: string; ventes_n: str
   }
 }
 
-// ─── Historisation caisse ─────────────────────────────────────────────────────────
+// ─── Historisation caisse ─────────────────────────────────────────────────────
 
 async function archiveWeekData(
   serviceSupabase: ReturnType<typeof createServiceClient>,
@@ -851,7 +866,7 @@ async function archiveWeekData(
   if (rows.length > 0) await serviceSupabase.from('weekly_sales_products').insert(rows)
 }
 
-// ─── Calculs métier ────────────────────────────────────────────────────────────────
+// ─── Calculs métier ──────────────────────────────────────────────────────────
 
 /** Familles fusionnées N/N-1, triées par CA N desc, plafonnées à 12 lignes (le reste en AUTRES) */
 function buildFamRows(vn: { total: number; familles: Famille[] }, vn1: { total: number; familles: Famille[] }, max = 12): FamRow[] {
@@ -931,7 +946,7 @@ async function generateInsights(data: ReportData, famRows: FamRow[]): Promise<In
   }
 }
 
-// ─── QuickChart ───────────────────────────────────────────────────────────────────
+// ─── QuickChart ───────────────────────────────────────────────────────────────
 // REGLES ABSOLUES QuickChart :
 // 1. Aucun caractere non-ASCII dans la config JSON
 // 2. ticks.callback interdit — crash Chart.js 2.9.4 dans le sandbox
@@ -1007,7 +1022,7 @@ async function generatePDF(report: ComputedReport): Promise<Buffer> {
   return renderToBuffer(React.createElement(PiloteReport, { r: report }))
 }
 
-// ─── POST Handler ─────────────────────────────────────────────────────────────────────
+// ─── POST Handler ───────────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
   try {
