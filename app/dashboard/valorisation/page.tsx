@@ -53,11 +53,14 @@ const BOEUF_CUTS: Cut[] = [
   { id: 'jarret_avec_os',         name: 'Jarret avec os',          category: 'troisieme', yieldPct: 0, marketPrice: 12, group: ['ART8', 'BCUH', 'Jarret'] },
   { id: 'jarret_sans_os',         name: 'Jarret sans os',          category: 'troisieme', yieldPct: 0, marketPrice: 14, group: ['ART8', 'BCUH', 'Jarret'] },
   { id: 'araignee_b',             name: 'Araignée',                category: 'premier',   yieldPct: 0, marketPrice: 32, group: ['ART8', 'BCUH', 'Globe'] },
-  { id: 'tende_tranche',          name: 'Tende de tranche',        category: 'premier',   yieldPct: 0, marketPrice: 18, group: ['ART8', 'BCUH', 'Globe'] },
-  { id: 'coeur_tranche',          name: 'Cœur de tranche',         category: 'deuxieme',  yieldPct: 0, marketPrice: 17, group: ['ART8', 'BCUH', 'Globe'] },
-  { id: 'entame',                 name: 'Entame',                  category: 'deuxieme',  yieldPct: 0, marketPrice: 15, group: ['ART8', 'BCUH', 'Globe'] },
-  { id: 'chapeau',                name: 'Chapeau',                 category: 'deuxieme',  yieldPct: 0, marketPrice: 15, group: ['ART8', 'BCUH', 'Globe'] },
-  { id: 'talon',                  name: 'Talon',                   category: 'troisieme', yieldPct: 0, marketPrice: 12, group: ['ART8', 'BCUH', 'Globe'] },
+  // Tende de tranche = catégorie dépliable ; Entame = sous-catégorie dépliable (pas de doublons ailleurs)
+  { id: 'coeur_tranche',          name: 'Cœur de tranche',         category: 'deuxieme',  yieldPct: 0, marketPrice: 17, group: ['ART8', 'BCUH', 'Globe', 'Tende de tranche'] },
+  { id: 'fausse_araignee',        name: 'Fausse araignée',         category: 'premier',   yieldPct: 0, marketPrice: 20, group: ['ART8', 'BCUH', 'Globe', 'Tende de tranche', 'Entame'] },
+  { id: 'dessous_tranche',        name: 'Dessous de tranche',      category: 'deuxieme',  yieldPct: 0, marketPrice: 16, group: ['ART8', 'BCUH', 'Globe', 'Tende de tranche', 'Entame'] },
+  { id: 'poire',                  name: 'Poire',                   category: 'premier',   yieldPct: 0, marketPrice: 26, group: ['ART8', 'BCUH', 'Globe', 'Tende de tranche', 'Entame'] },
+  { id: 'merlan',                 name: 'Merlan',                  category: 'premier',   yieldPct: 0, marketPrice: 26, group: ['ART8', 'BCUH', 'Globe', 'Tende de tranche', 'Entame'] },
+  { id: 'chapeau',                name: 'Chapeau',                 category: 'deuxieme',  yieldPct: 0, marketPrice: 15, group: ['ART8', 'BCUH', 'Globe', 'Tende de tranche'] },
+  { id: 'talon',                  name: 'Talon',                   category: 'troisieme', yieldPct: 0, marketPrice: 12, group: ['ART8', 'BCUH', 'Globe', 'Tende de tranche'] },
   { id: 'rond_tranche_grasse',    name: 'Rond de tranche grasse',  category: 'deuxieme',  yieldPct: 0, marketPrice: 16, group: ['ART8', 'BCUH', 'Globe', 'Tranche grasse'] },
   { id: 'plat_tranche_grasse',    name: 'Plat de tranche grasse',  category: 'deuxieme',  yieldPct: 0, marketPrice: 15, group: ['ART8', 'BCUH', 'Globe', 'Tranche grasse'] },
   { id: 'mouvant_tranche_grasse', name: 'Mouvant de tranche grasse', category: 'deuxieme', yieldPct: 0, marketPrice: 15, group: ['ART8', 'BCUH', 'Globe', 'Tranche grasse'] },
@@ -70,10 +73,7 @@ const BOEUF_CUTS: Cut[] = [
   { id: 'langue_de_chat',         name: 'Langue de chat',          category: 'premier',   yieldPct: 0, marketPrice: 22, group: ['ART8', 'BCUH', 'RTK', 'Rumsteck classique'] },
   { id: 'baronne',                name: 'Baronne',                 category: 'premier',   yieldPct: 0, marketPrice: 20, group: ['ART8', 'BCUH', 'RTK'] },
   { id: 'coeur_hanche',           name: 'Cœur de hanche',          category: 'deuxieme',  yieldPct: 0, marketPrice: 18, group: ['ART8', 'BCUH', 'Hanche'] },
-  { id: 'fausse_araignee',        name: 'Fausse araignée',         category: 'premier',   yieldPct: 0, marketPrice: 20, group: ['ART8', 'BCUH', 'Hanche'] },
   { id: 'dessus_hanche',          name: 'Dessus de hanche',        category: 'deuxieme',  yieldPct: 0, marketPrice: 16, group: ['ART8', 'BCUH', 'Hanche'] },
-  { id: 'poire',                  name: 'Poire',                   category: 'premier',   yieldPct: 0, marketPrice: 26, group: ['ART8', 'BCUH', 'Hanche'] },
-  { id: 'merlan',                 name: 'Merlan',                  category: 'premier',   yieldPct: 0, marketPrice: 26, group: ['ART8', 'BCUH', 'Hanche'] },
   // ── DEHMT ──
   { id: 'faux_filet_b',           name: 'Faux-filet',              category: 'premier',   yieldPct: 0, marketPrice: 29, group: ['ART8', 'DEHMT'] },
   { id: 'filet_b',                name: 'Filet',                   category: 'premier',   yieldPct: 0, marketPrice: 45, group: ['ART8', 'DEHMT'] },
@@ -130,7 +130,7 @@ function collectLeafCuts(node: TreeNode): Cut[] {
   return node.cut ? [node.cut] : node.children.flatMap(collectLeafCuts)
 }
 
-// ─── Données Veau ─────────────────────────────────────────────
+// ─── Données Veau ─────────────────────────────────────────
 
 const VEAU_BREEDS: Breed[] = [
   { id: 'veau_lait_limousin', name: 'Veau de lait Limousin',   carcassYield: 0.62, avgWeight: '160-200 kg', origin: 'Limousin',  description: 'Label Rouge. Élevé sous la mère. Chair rose pâle, très tendre et fine. Le standard haut de gamme.' },
