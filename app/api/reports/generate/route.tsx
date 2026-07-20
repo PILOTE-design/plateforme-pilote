@@ -1,6 +1,5 @@
 // ⚠️  Ce fichier doit être nommé route.tsx (supprimer route.ts)
-// Dépendances à installer : npm install @react-pdf/renderer
-// Dépendances à retirer   : npm uninstall exceljs
+// Dépendances : @react-pdf/renderer, pdf-parse, @anthropic-ai/sdk, resend
 if (typeof globalThis.DOMMatrix === 'undefined') {
   ;(globalThis as Record<string, unknown>).DOMMatrix = class DOMMatrix {
     a = 1; b = 0; c = 0; d = 1; e = 0; f = 0
@@ -12,13 +11,60 @@ import { createClient, createServiceClient } from '@/lib/supabase/server'
 import Anthropic from '@anthropic-ai/sdk'
 import React from 'react'
 import {
-  Document, Page, Text, View, Image, StyleSheet, renderToBuffer,
+  Document, Page, Text, View, Image, StyleSheet, renderToBuffer, Font,
 } from '@react-pdf/renderer'
 import { Resend } from 'resend'
 
 export const maxDuration = 60
 
-// ─── Types ────────────────────────────────────────────────────────────
+// ─── Police PDF : Plus Jakarta Sans (alignée sur la DA du site) ──────────────
+// Les TTF sont téléchargés une fois par instance (cache module) depuis deux CDN
+// (jsDelivr puis raw.githubusercontent en secours), épinglés sur un commit précis,
+// puis passés à Font.register en data: URI. Grâce à cette vraie police :
+//   - '€' et les accents sont rendus nativement (fin du contournement 'EUR')
+//   - les indicateurs de tendance utilisent ▲ / ▼ (fin du contournement '+/-')
+const FONT_REF = '18d1cd2f7ea10481919d2f05c1f7064b7307fc26'
+const FONT_SOURCES = [
+  `https://cdn.jsdelivr.net/gh/tokotype/PlusJakartaSans@${FONT_REF}/fonts/ttf/`,
+  `https://raw.githubusercontent.com/tokotype/PlusJakartaSans/${FONT_REF}/fonts/ttf/`,
+]
+const FONT_WEIGHTS: [number, string][] = [
+  [400, 'PlusJakartaSans-Regular.ttf'],
+  [600, 'PlusJakartaSans-SemiBold.ttf'],
+  [700, 'PlusJakartaSans-Bold.ttf'],
+  [800, 'PlusJakartaSans-ExtraBold.ttf'],
+]
+const FONT_FAMILY = 'PlusJakartaSans'
+
+let fontsPromise: Promise<void> | null = null
+function ensureFonts(): Promise<void> {
+  if (!fontsPromise) {
+    fontsPromise = (async () => {
+      let lastErr: unknown = null
+      for (const base of FONT_SOURCES) {
+        try {
+          const fonts = await Promise.all(FONT_WEIGHTS.map(async ([fontWeight, file]) => {
+            const res = await fetch(base + file)
+            if (!res.ok) throw new Error(`${file}: HTTP ${res.status}`)
+            const b64 = Buffer.from(await res.arrayBuffer()).toString('base64')
+            return { src: `data:font/ttf;base64,${b64}`, fontWeight }
+          }))
+          Font.register({ family: FONT_FAMILY, fonts })
+          // Pas de césure automatique : les libellés produits restent entiers
+          Font.registerHyphenationCallback(w => [w])
+          return
+        } catch (e) {
+          lastErr = e
+        }
+      }
+      fontsPromise = null // permet une nouvelle tentative au prochain appel
+      throw new Error('Police du rapport indisponible (CDN) : ' + String(lastErr))
+    })()
+  }
+  return fontsPromise
+}
+
+// ─── Types ────────────────────────────────────────────────────────
 interface Produit { plu: string; designation: string; ventes: number; montant: number }
 interface Famille { id: string; nom: string; total_montant: number; produits: Produit[] }
 interface FinancierData { ca_net: number; nb_tickets: number; moyenne_ticket: number }
@@ -30,39 +76,74 @@ interface ReportData {
   tops: { designation: string; n: number; ecart: number }[]
   flops: { designation: string; n: number; ecart: number }[]
 }
-interface Insights { insights: string[]; recommendations: string[] }
+// Données extraites complètes : ReportData + CA par produit (pour l'historisation)
+interface ExtractedData extends ReportData {
+  prodN: Map<string, number>
+  prodN1: Map<string, number>
+}
+interface Insights { resume: string; insights: string[]; recommendations: string[]; vigilance: string[] }
+interface FamRow { nom: string; caN: number; caN1: number | null; ecart: number }
+interface WeekStatus { label: string; color: string; light: string; desc: string }
 interface ComputedReport {
   data: ReportData
   clientName: string | null
   insights: Insights
   pieBuffer: Buffer
-  barBuffer: Buffer
   tops: { designation: string; n: number; ecart: number }[]
   flops: { designation: string; n: number; ecart: number }[]
-  famMap: Map<string, Famille>
+  famRows: FamRow[]
   caVar: number
+  status: WeekStatus
+  execSummary: string
 }
 
-// ─── Formatters ──────────────────────────────────────────────────────
-const eur = (n: number) =>
-  n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'
+// ─── Formatters ────────────────────────────────────────────────────────────
+// NE PAS utiliser toLocaleString('fr-FR') — produit U+202F (espace fine insécable),
+// on garde un formatage manuel avec espace simple pour un rendu stable
+const eur = (n: number) => {
+  const abs = Math.abs(n)
+  const [int, dec] = abs.toFixed(2).split('.')
+  const intFmt = int.replace(/\B(?=(\d{3})+(?!\d))/g, ' ')
+  return (n < 0 ? '-' : '') + intFmt + ',' + dec + ' €'
+}
+const eur0 = (n: number) => {
+  const abs = Math.abs(n)
+  const intFmt = Math.round(abs).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ' ')
+  return (n < 0 ? '-' : '') + intFmt + ' €'
+}
 const signEur = (n: number) => (n >= 0 ? '+' : '') + eur(n)
 const signPct = (n: number) => (n >= 0 ? '+' : '') + (n * 100).toFixed(1) + '%'
 const pctStr = (n: number) => (n * 100).toFixed(1) + '%'
-const trunc = (s: string, len: number) => (s.length > len ? s.slice(0, len - 1) + '…' : s)
+const trunc = (s: string, len: number) => (s.length > len ? s.slice(0, len - 1) + '...' : s)
 
-// ─── Palette ─────────────────────────────────────────────────────────
+// Nettoie les textes IA : normalise la ponctuation et borne la longueur
+const sanitize = (s: string) => (s || '')
+  .replace(/[‘’ʼ]/g, "'")
+  .replace(/[“”«»]/g, '"')
+  .replace(/[–—]/g, '-')
+  .replace(/…/g, '...')
+  .replace(/[   ]/g, ' ')
+  .replace(/[▲▼→←➡➔]/g, '')
+  .replace(/[^\x00-\xFF]/g, '')
+  .trim()
+  .slice(0, 320)
+
+// ─── Palette ────────────────────────────────────────────────────────
 const C = {
   navy:        '#1E3A5F',
   blue:        '#2D5986',
   lightBlue:   '#E8F0FE',
   blueMid:     '#90CAF9',
   orange:      '#FF8C00',
+  lightOrange: '#FFF3E0',
+  amber:       '#D97706',
+  lightAmber:  '#FEF3C7',
   green:       '#2E7D32',
   lightGreen:  '#E6F4EA',
   red:         '#C62828',
   lightRed:    '#FCE8E6',
   gray:        '#F0F4F8',
+  grayMid:     '#DCE4EC',
   line:        '#E0E0E0',
   textDark:    '#1A1A1A',
   textMid:     '#444444',
@@ -70,103 +151,110 @@ const C = {
   white:       '#FFFFFF',
 }
 
-const CHART_COLORS = [
-  '#1E3A5F','#FF8C00','#2E7D32','#C62828','#6A1B9A',
-  '#00695C','#E65100','#1565C0','#37474F','#F57F17','#558B2F','#AD1457',
-]
-
-// ─── Styles ───────────────────────────────────────────────────────────
+// ─── Styles ───────────────────────────────────────────────────────
 const S = StyleSheet.create({
-  // ── Cover ──
-  coverBlueBg:    { backgroundColor: C.navy, padding: 56, paddingBottom: 48, flexGrow: 1 },
-  coverTagRow:    { flexDirection: 'row', alignItems: 'center', marginBottom: 40 },
+  coverBlueBg:    { backgroundColor: C.navy, padding: 56, paddingBottom: 44, flexGrow: 1 },
+  coverTagRow:    { flexDirection: 'row', alignItems: 'center', marginBottom: 44 },
   coverTagDot:    { width: 8, height: 8, borderRadius: 4, backgroundColor: C.orange, marginRight: 6 },
   coverTagText:   { color: C.orange, fontSize: 10, letterSpacing: 4 },
-  coverTitle:     { color: C.white, fontSize: 38, fontFamily: 'Helvetica-Bold', lineHeight: 1.2, marginBottom: 10 },
-  coverSub:       { color: C.blueMid, fontSize: 13, marginBottom: 28 },
-  coverDivider:   { width: 48, height: 3, backgroundColor: C.orange, marginBottom: 22 },
-  coverWeek:      { color: C.white, fontFamily: 'Helvetica-Bold', fontSize: 20, marginBottom: 4 },
-  coverPeriod:    { color: C.blueMid, fontSize: 11 },
-  coverWhiteBg:   { backgroundColor: C.white, padding: 40 },
-  coverLabel:     { color: C.textLight, fontSize: 9, letterSpacing: 2, marginBottom: 4 },
-  coverClient:    { color: C.navy, fontFamily: 'Helvetica-Bold', fontSize: 15, marginBottom: 14 },
-  coverMeta:      { color: C.textLight, fontSize: 9, marginBottom: 2 },
+  coverTitle:     { color: C.white, fontSize: 40, fontWeight: 700, lineHeight: 1.15, marginBottom: 10 },
+  coverSub:       { color: C.blueMid, fontSize: 13, marginBottom: 30 },
+  coverDivider:   { width: 52, height: 3, backgroundColor: C.orange, marginBottom: 24 },
+  coverWeek:      { color: C.white, fontWeight: 700, fontSize: 21, marginBottom: 4 },
+  coverPeriod:    { color: C.blueMid, fontSize: 11, marginBottom: 26 },
+  coverKpiRow:    { flexDirection: 'row', marginTop: 8 },
+  coverKpi:       { flex: 1, borderLeftWidth: 2, borderLeftColor: C.orange, paddingLeft: 10, marginRight: 16 },
+  coverKpiLabel:  { color: C.blueMid, fontSize: 7.5, letterSpacing: 1.5, marginBottom: 3 },
+  coverKpiValue:  { color: C.white, fontWeight: 700, fontSize: 15 },
+  coverWhiteBg:   { backgroundColor: C.white, paddingVertical: 30, paddingHorizontal: 56, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end' },
+  coverLabel:     { color: C.textLight, fontSize: 8, letterSpacing: 2, marginBottom: 3 },
+  coverClient:    { color: C.navy, fontWeight: 700, fontSize: 14 },
+  coverMeta:      { color: C.textLight, fontSize: 8, marginBottom: 2, textAlign: 'right' },
 
-  // ── Shared layout ──
-  page:           { backgroundColor: C.white, paddingTop: 0, paddingBottom: 40, paddingHorizontal: 0 },
-  contentBlock:   { paddingHorizontal: 36, paddingTop: 32 },
-  secHeader:      { flexDirection: 'row', alignItems: 'center', backgroundColor: C.navy, paddingVertical: 10, paddingHorizontal: 36, marginBottom: 18 },
-  secHeaderDot:   { width: 7, height: 7, borderRadius: 3.5, backgroundColor: C.orange, marginRight: 8 },
-  secHeaderText:  { color: C.white, fontFamily: 'Helvetica-Bold', fontSize: 11, letterSpacing: 1 },
+  page:           { backgroundColor: C.white, paddingTop: 0, paddingBottom: 42, paddingHorizontal: 0, fontFamily: FONT_FAMILY },
+  secHeader:      { flexDirection: 'row', alignItems: 'center', backgroundColor: C.navy, paddingVertical: 11, paddingHorizontal: 36, marginBottom: 18 },
+  secHeaderNum:   { color: C.orange, fontWeight: 700, fontSize: 11, marginRight: 10, letterSpacing: 1 },
+  secHeaderText:  { color: C.white, fontWeight: 700, fontSize: 11, letterSpacing: 1 },
   footer:         { position: 'absolute', bottom: 20, left: 36, right: 36, flexDirection: 'row', justifyContent: 'space-between', borderTopColor: C.line, borderTopWidth: 0.5, paddingTop: 6 },
   footerText:     { fontSize: 7.5, color: C.textLight },
 
-  // ── KPI boxes ──
+  execBox:        { marginHorizontal: 36, marginBottom: 16, backgroundColor: C.lightBlue, borderLeftWidth: 3, borderLeftColor: C.navy, borderRadius: 4, padding: 12 },
+  execLabel:      { fontSize: 7.5, letterSpacing: 1.5, color: C.blue, marginBottom: 4, fontWeight: 700 },
+  execText:       { fontSize: 9.5, color: C.textMid, lineHeight: 1.5 },
+
   kpiRow:         { flexDirection: 'row', paddingHorizontal: 36, marginBottom: 10 },
   kpiBox:         { flex: 1, borderRadius: 6, padding: 14, marginRight: 8 },
   kpiLabel:       { fontSize: 8, letterSpacing: 1, marginBottom: 6 },
-  kpiValue:       { fontFamily: 'Helvetica-Bold', fontSize: 17, color: C.white },
+  kpiValue:       { fontWeight: 700, fontSize: 17, color: C.white },
   kpiSub:         { fontSize: 9, marginTop: 3 },
 
-  // ── Tables ──
   tableWrap:      { paddingHorizontal: 36 },
   tHead:          { flexDirection: 'row', backgroundColor: C.blue, paddingVertical: 7, paddingHorizontal: 8 },
-  tHeadCell:      { color: C.white, fontFamily: 'Helvetica-Bold', fontSize: 8 },
-  tRow:           { flexDirection: 'row', paddingVertical: 6, paddingHorizontal: 8, borderBottomColor: C.line, borderBottomWidth: 0.5 },
-  tRowAlt:        { flexDirection: 'row', paddingVertical: 6, paddingHorizontal: 8, backgroundColor: C.gray, borderBottomColor: C.line, borderBottomWidth: 0.5 },
+  tHeadCell:      { color: C.white, fontWeight: 700, fontSize: 8 },
+  tRow:           { flexDirection: 'row', alignItems: 'center', paddingVertical: 6, paddingHorizontal: 8, borderBottomColor: C.line, borderBottomWidth: 0.5 },
+  tRowAlt:        { flexDirection: 'row', alignItems: 'center', paddingVertical: 6, paddingHorizontal: 8, backgroundColor: C.gray, borderBottomColor: C.line, borderBottomWidth: 0.5 },
   tTotal:         { flexDirection: 'row', paddingVertical: 7, paddingHorizontal: 8, backgroundColor: C.navy },
   tCell:          { fontSize: 8.5, color: C.textDark },
-  tCellB:         { fontSize: 8.5, color: C.textDark, fontFamily: 'Helvetica-Bold' },
+  tCellB:         { fontSize: 8.5, color: C.textDark, fontWeight: 700 },
   tCellR:         { fontSize: 8.5, color: C.textDark, textAlign: 'right' },
-  tCellRB:        { fontSize: 8.5, color: C.textDark, fontFamily: 'Helvetica-Bold', textAlign: 'right' },
-  tCellGreen:     { fontSize: 8.5, color: C.green, fontFamily: 'Helvetica-Bold', textAlign: 'right' },
-  tCellRed:       { fontSize: 8.5, color: C.red, fontFamily: 'Helvetica-Bold', textAlign: 'right' },
-  tTotalCell:     { fontSize: 8.5, color: C.white, fontFamily: 'Helvetica-Bold', textAlign: 'right' },
-  tTotalCellL:    { fontSize: 8.5, color: C.white, fontFamily: 'Helvetica-Bold' },
+  tCellRB:        { fontSize: 8.5, color: C.textDark, fontWeight: 700, textAlign: 'right' },
+  tCellGreen:     { fontSize: 8.5, color: C.green, fontWeight: 700, textAlign: 'right' },
+  tCellRed:       { fontSize: 8.5, color: C.red, fontWeight: 700, textAlign: 'right' },
+  tTotalCell:     { fontSize: 8.5, color: C.white, fontWeight: 700, textAlign: 'right' },
+  tTotalCellL:    { fontSize: 8.5, color: C.white, fontWeight: 700 },
 
-  // ── Charts ──
+  shareBarBg:     { height: 5, backgroundColor: C.grayMid, borderRadius: 2.5, flex: 1, marginLeft: 6, marginRight: 6 },
+  shareBarFill:   { height: 5, backgroundColor: C.navy, borderRadius: 2.5 },
+
   chartWrap:      { alignItems: 'center', paddingHorizontal: 36, marginBottom: 8 },
   chartCaption:   { fontSize: 8, color: C.textLight, textAlign: 'center', marginTop: 4, paddingHorizontal: 36 },
 
-  // ── Insights ──
   insightBlock:   { paddingHorizontal: 36 },
-  insightRow:     { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 12 },
+  insightRow:     { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 11 },
   insightBullet:  { width: 20, height: 20, borderRadius: 10, backgroundColor: C.navy, alignItems: 'center', justifyContent: 'center', marginRight: 12, flexShrink: 0 },
   recoBullet:     { width: 20, height: 20, borderRadius: 10, backgroundColor: C.orange, alignItems: 'center', justifyContent: 'center', marginRight: 12, flexShrink: 0 },
-  bulletNum:      { color: C.white, fontFamily: 'Helvetica-Bold', fontSize: 8 },
+  bulletNum:      { color: C.white, fontWeight: 700, fontSize: 8 },
   insightText:    { fontSize: 9.5, color: C.textMid, flex: 1, lineHeight: 1.55 },
+  vigilanceBox:   { marginHorizontal: 36, marginTop: 4, marginBottom: 14, backgroundColor: C.lightAmber, borderLeftWidth: 3, borderLeftColor: C.amber, borderRadius: 4, padding: 11 },
+  vigilanceTitle: { fontSize: 8, letterSpacing: 1.5, color: C.amber, fontWeight: 700, marginBottom: 5 },
+  vigilanceText:  { fontSize: 9, color: '#7C4A03', lineHeight: 1.5, marginBottom: 3 },
 
-  // ── Top/Flop columns ──
   topFlopWrap:    { flexDirection: 'row', paddingHorizontal: 36 },
-  topFlopCol:     { flex: 1 },
   topFlopLeft:    { flex: 1, marginRight: 10 },
   topFlopRight:   { flex: 1, marginLeft: 10 },
-  colLabel:       { padding: 7, marginBottom: 6 },
-  colLabelGreen:  { padding: 7, marginBottom: 6, backgroundColor: C.lightGreen },
-  colLabelRed:    { padding: 7, marginBottom: 6, backgroundColor: C.lightRed },
-  colLabelTextG:  { color: C.green, fontFamily: 'Helvetica-Bold', fontSize: 9 },
-  colLabelTextR:  { color: C.red, fontFamily: 'Helvetica-Bold', fontSize: 9 },
+  rankChip:       { width: 16, height: 16, borderRadius: 8, alignItems: 'center', justifyContent: 'center', marginRight: 6 },
+  rankChipText:   { fontSize: 7, fontWeight: 700, color: C.white },
+
+  statusBanner:   { marginHorizontal: 36, borderRadius: 8, padding: 18, marginBottom: 18 },
+  statusLabel:    { color: C.white, fontWeight: 700, fontSize: 16, marginBottom: 4, letterSpacing: 0.5 },
+  statusDesc:     { color: C.white, fontSize: 9.5, opacity: 0.9, lineHeight: 1.5 },
+  recapGrid:      { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 30 },
+  recapCard:      { width: '31%', marginHorizontal: '1.16%', marginBottom: 10, backgroundColor: C.gray, borderRadius: 6, padding: 11 },
+  recapLabel:     { fontSize: 7, letterSpacing: 1, color: C.textLight, marginBottom: 4 },
+  recapValue:     { fontSize: 13, fontWeight: 700, color: C.navy },
+  recapSub:       { fontSize: 7.5, color: C.textLight, marginTop: 2 },
+  actionBox:      { marginHorizontal: 36, marginTop: 8, backgroundColor: C.lightOrange, borderLeftWidth: 3, borderLeftColor: C.orange, borderRadius: 4, padding: 13 },
+  actionLabel:    { fontSize: 8, letterSpacing: 1.5, color: C.orange, fontWeight: 700, marginBottom: 5 },
+  actionText:     { fontSize: 10, color: '#7A4100', lineHeight: 1.55, fontWeight: 700 },
 })
 
-// ─── PDF Sub-components ───────────────────────────────────────────────
+// ─── PDF Sub-components ─────────────────────────────────────────────
 
-const SecHeader = ({ title }: { title: string }) => (
+const SecHeader = ({ num, title }: { num: string; title: string }) => (
   <View style={S.secHeader}>
-    <View style={S.secHeaderDot} />
+    <Text style={S.secHeaderNum}>{num}</Text>
     <Text style={S.secHeaderText}>{title}</Text>
   </View>
 )
 
 const Footer = ({ page, week, year }: { page: number; week: number; year: number }) => (
   <View style={S.footer} fixed>
-    <Text style={S.footerText}>PILOTE · Rapport S{week}/{year} · Document confidentiel</Text>
-    <Text style={S.footerText}>Page {page}</Text>
+    <Text style={S.footerText}>PILOTE - Rapport S{week}/{year} - Document confidentiel</Text>
+    <Text style={S.footerText}>Page {page} / 7</Text>
   </View>
 )
 
-const KpiBox = ({
-  label, value, sub, bg, subColor,
-}: { label: string; value: string; sub?: string; bg: string; subColor?: string }) => (
+const KpiBox = ({ label, value, sub, bg, subColor }: { label: string; value: string; sub?: string; bg: string; subColor?: string }) => (
   <View style={[S.kpiBox, { backgroundColor: bg }]}>
     <Text style={[S.kpiLabel, { color: `${C.white}99` }]}>{label}</Text>
     <Text style={S.kpiValue}>{value}</Text>
@@ -174,327 +262,385 @@ const KpiBox = ({
   </View>
 )
 
-// ─── PDF Document ───────────────────────────────────────────────────
+const ShareBar = ({ pct }: { pct: number }) => (
+  <View style={S.shareBarBg}>
+    <View style={[S.shareBarFill, { width: `${Math.min(100, Math.max(0, pct * 100)).toFixed(1)}%` }]} />
+  </View>
+)
+
+// ─── PDF Document ──────────────────────────────────────────────────────────────
 
 const PiloteReport = ({ r }: { r: ComputedReport }) => {
-  const { data, clientName, insights, pieBuffer, barBuffer, tops, flops, famMap, caVar } = r
+  const { data, clientName, insights, pieBuffer, tops, flops, famRows, caVar, status, execSummary } = r
   const { financier_n: fn, financier_n1: fn1, ventes_n: vn, ventes_n1: vn1 } = data
   const generatedOn = new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' })
+
+  const sortedByEcart = [...famRows].sort((a, b) => b.ecart - a.ecart)
+  const bestFam  = sortedByEcart[0]
+  const worstFam = sortedByEcart[sortedByEcart.length - 1]
+  const topProduct  = tops[0]
+  const flopProduct = flops[0]
+  const vigilance = insights.vigilance ?? []
 
   return (
     <Document title={`Rapport S${data.week_number} - ${data.period_n}`} author="PILOTE" language="fr">
 
-      {/* ══ PAGE 1 — COUVERTURE ════════════════════════════════════ */}
-      <Page size="A4" style={{ backgroundColor: C.white }}>
+      {/* PAGE 1 - COUVERTURE */}
+      <Page size="A4" style={{ backgroundColor: C.white, fontFamily: FONT_FAMILY }}>
         <View style={S.coverBlueBg}>
           <View style={S.coverTagRow}>
             <View style={S.coverTagDot} />
             <Text style={S.coverTagText}>PILOTE</Text>
           </View>
           <Text style={S.coverTitle}>Rapport{'\n'}Hebdomadaire</Text>
-          <Text style={S.coverSub}>Analyse comparative des ventes</Text>
+          <Text style={S.coverSub}>Analyse comparative des ventes et pilotage de la performance</Text>
           <View style={S.coverDivider} />
-          <Text style={S.coverWeek}>Semaine {data.week_number}  ·  {data.year}</Text>
+          <Text style={S.coverWeek}>Semaine {data.week_number} - {data.year}</Text>
           <Text style={S.coverPeriod}>{data.period_n}</Text>
+          <View style={S.coverKpiRow}>
+            <View style={S.coverKpi}>
+              <Text style={S.coverKpiLabel}>CA DE LA SEMAINE</Text>
+              <Text style={S.coverKpiValue}>{eur0(fn.ca_net)}</Text>
+            </View>
+            <View style={[S.coverKpi, { borderLeftColor: caVar >= 0 ? '#4CAF50' : '#EF5350' }]}>
+              <Text style={S.coverKpiLabel}>VS MÊME SEMAINE {data.year - 1}</Text>
+              <Text style={[S.coverKpiValue, { color: caVar >= 0 ? '#81C784' : '#EF9A9A' }]}>{signPct(caVar)}</Text>
+            </View>
+            <View style={S.coverKpi}>
+              <Text style={S.coverKpiLabel}>TICKETS</Text>
+              <Text style={S.coverKpiValue}>{String(fn.nb_tickets)}</Text>
+            </View>
+            <View style={S.coverKpi}>
+              <Text style={S.coverKpiLabel}>PANIER MOYEN</Text>
+              <Text style={S.coverKpiValue}>{eur(fn.moyenne_ticket)}</Text>
+            </View>
+          </View>
         </View>
         <View style={S.coverWhiteBg}>
-          {clientName && (
-            <>
-              <Text style={S.coverLabel}>CLIENT</Text>
-              <Text style={S.coverClient}>{clientName.toUpperCase()}</Text>
-            </>
-          )}
-          <Text style={S.coverMeta}>Généré le {generatedOn}</Text>
-          <Text style={S.coverMeta}>Période comparée (N-1) : {data.period_n1}</Text>
-          <Text style={S.coverMeta}>Analyse IA intégrée · Graphiques de répartition · Top & Flop produits</Text>
+          <View>
+            {clientName ? (
+              <>
+                <Text style={S.coverLabel}>CLIENT</Text>
+                <Text style={S.coverClient}>{clientName.toUpperCase()}</Text>
+              </>
+            ) : (
+              <Text style={S.coverClient}>BOUCHERIE ARTISANALE</Text>
+            )}
+          </View>
+          <View>
+            <Text style={S.coverMeta}>Généré le {generatedOn}</Text>
+            <Text style={S.coverMeta}>Période comparée (N-1) : {data.period_n1}</Text>
+            <Text style={S.coverMeta}>7 pages - Analyse IA - Graphique - Synthèse de semaine</Text>
+          </View>
         </View>
       </Page>
 
-      {/* ══ PAGE 2 — SYNTHÈSE FINANCIÈRE ══════════════════════════════ */}
+      {/* PAGE 2 - SYNTHESE FINANCIERE */}
       <Page size="A4" style={S.page}>
-        <SecHeader title="SYNTHÈSE FINANCIÈRE" />
-
-        {/* KPI Row 1 — Chiffre d'affaires */}
-        <Text style={{ paddingHorizontal: 36, fontSize: 9, color: C.textLight, marginBottom: 8 }}>
-          CHIFFRE D'AFFAIRES
-        </Text>
+        <SecHeader num="01" title="SYNTHÈSE FINANCIÈRE" />
+        <View style={S.execBox}>
+          <Text style={S.execLabel}>RÉSUMÉ EXÉCUTIF</Text>
+          <Text style={S.execText}>{execSummary}</Text>
+        </View>
+        <Text style={{ paddingHorizontal: 36, fontSize: 9, color: C.textLight, marginBottom: 8 }}>CHIFFRE D'AFFAIRES</Text>
         <View style={S.kpiRow}>
-          <KpiBox label="CA SEMAINE N" value={eur(fn.ca_net)}
-            sub={`S${data.week_number} · ${data.year}`} bg={C.navy} />
-          <KpiBox label="CA SEMAINE N-1" value={eur(fn1.ca_net)}
-            sub={`S${data.week_number} · ${data.year - 1}`} bg={C.blue} />
-          <KpiBox
-            label="VARIATION" value={signPct(caVar)}
-            sub={signEur(fn.ca_net - fn1.ca_net)}
-            bg={caVar >= 0 ? C.green : C.red}
-          />
+          <KpiBox label="CA SEMAINE N" value={eur(fn.ca_net)} sub={`S${data.week_number} - ${data.year}`} bg={C.navy} />
+          <KpiBox label="CA SEMAINE N-1" value={eur(fn1.ca_net)} sub={`S${data.week_number} - ${data.year - 1}`} bg={C.blue} />
+          <KpiBox label="VARIATION" value={signPct(caVar)} sub={signEur(fn.ca_net - fn1.ca_net)} bg={caVar >= 0 ? C.green : C.red} />
         </View>
-
-        {/* KPI Row 2 — Tickets */}
-        <Text style={{ paddingHorizontal: 36, fontSize: 9, color: C.textLight, marginTop: 4, marginBottom: 8 }}>
-          TICKETS & PANIER
-        </Text>
-        <View style={[S.kpiRow, { marginBottom: 20 }]}>
-          <KpiBox
-            label="TICKETS N" value={String(fn.nb_tickets)}
-            sub={`${fn.nb_tickets - fn1.nb_tickets >= 0 ? '+' : ''}${fn.nb_tickets - fn1.nb_tickets} vs N-1`}
-            bg={fn.nb_tickets >= fn1.nb_tickets ? C.green : C.red}
-          />
-          <KpiBox label="TICKETS N-1" value={String(fn1.nb_tickets)}
-            sub={`S${data.week_number} · ${data.year - 1}`} bg={C.blue} />
-          <KpiBox
-            label="PANIER MOYEN" value={eur(fn.moyenne_ticket)}
-            sub={`N-1 : ${eur(fn1.moyenne_ticket)}`}
-            bg={fn.moyenne_ticket >= fn1.moyenne_ticket ? C.green : C.red}
-          />
+        <Text style={{ paddingHorizontal: 36, fontSize: 9, color: C.textLight, marginTop: 4, marginBottom: 8 }}>TICKETS &amp; PANIER</Text>
+        <View style={[S.kpiRow, { marginBottom: 18 }]}>
+          <KpiBox label="TICKETS N" value={String(fn.nb_tickets)} sub={`${fn.nb_tickets - fn1.nb_tickets >= 0 ? '+' : ''}${fn.nb_tickets - fn1.nb_tickets} vs N-1`} bg={fn.nb_tickets >= fn1.nb_tickets ? C.green : C.red} />
+          <KpiBox label="TICKETS N-1" value={String(fn1.nb_tickets)} sub={`S${data.week_number} - ${data.year - 1}`} bg={C.blue} />
+          <KpiBox label="PANIER MOYEN" value={eur(fn.moyenne_ticket)} sub={`N-1 : ${eur(fn1.moyenne_ticket)}`} bg={fn.moyenne_ticket >= fn1.moyenne_ticket ? C.green : C.red} />
         </View>
-
-        {/* Table familles */}
-        <Text style={{ paddingHorizontal: 36, fontSize: 9.5, fontFamily: 'Helvetica-Bold', color: C.navy, marginBottom: 10 }}>
-          Récapitulatif par famille de produits
-        </Text>
+        <Text style={{ paddingHorizontal: 36, fontSize: 9.5, fontWeight: 700, color: C.navy, marginBottom: 10 }}>Récapitulatif par famille de produits</Text>
         <View style={S.tableWrap}>
           <View style={S.tHead}>
             <Text style={[S.tHeadCell, { flex: 3 }]}>FAMILLE</Text>
-            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N</Text>
-            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N-1</Text>
-            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>ÉCART</Text>
+            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N (€)</Text>
+            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N-1 (€)</Text>
+            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>ÉCART (€)</Text>
             <Text style={[S.tHeadCell, { flex: 1.2, textAlign: 'right' }]}>% CA</Text>
             <Text style={[S.tHeadCell, { flex: 1, textAlign: 'center' }]}>TEND.</Text>
           </View>
-          {vn.familles.map((fam, i) => {
-            const f1 = famMap.get(fam.nom.toUpperCase())
-            const ec = fam.total_montant - (f1?.total_montant ?? 0)
-            const w = vn.total ? fam.total_montant / vn.total : 0
-            const row = i % 2 === 0 ? S.tRow : S.tRowAlt
+          {famRows.map((fam, i) => {
+            const w = vn.total ? fam.caN / vn.total : 0
             return (
-              <View key={fam.id} style={row}>
+              <View key={i} style={i % 2 === 0 ? S.tRow : S.tRowAlt}>
                 <Text style={[S.tCellB, { flex: 3 }]}>{trunc(fam.nom, 28)}</Text>
-                <Text style={[S.tCellR, { flex: 2 }]}>{eur(fam.total_montant)}</Text>
-                <Text style={[S.tCellR, { flex: 2 }]}>{f1 ? eur(f1.total_montant) : '—'}</Text>
-                <Text style={[ec >= 0 ? S.tCellGreen : S.tCellRed, { flex: 2 }]}>{signEur(ec)}</Text>
+                <Text style={[S.tCellR, { flex: 2 }]}>{eur(fam.caN)}</Text>
+                <Text style={[S.tCellR, { flex: 2 }]}>{fam.caN1 !== null ? eur(fam.caN1) : '-'}</Text>
+                <Text style={[fam.ecart >= 0 ? S.tCellGreen : S.tCellRed, { flex: 2 }]}>{signEur(fam.ecart)}</Text>
                 <Text style={[S.tCellRB, { flex: 1.2 }]}>{pctStr(w)}</Text>
-                <Text style={[ec >= 0 ? S.tCellGreen : S.tCellRed, { flex: 1, textAlign: 'center' }]}>
-                  {ec >= 0 ? '▲' : '▼'}
-                </Text>
+                <Text style={[fam.ecart >= 0 ? S.tCellGreen : S.tCellRed, { flex: 1, textAlign: 'center' }]}>{fam.ecart >= 0 ? '▲' : '▼'}</Text>
               </View>
             )
           })}
           <View style={S.tTotal}>
-            <Text style={[S.tTotalCellL, { flex: 3 }]}>TOTAL GÉNÉRAL</Text>
+            <Text style={[S.tTotalCellL, { flex: 3 }]}>TOTAL GENERAL</Text>
             <Text style={[S.tTotalCell, { flex: 2 }]}>{eur(vn.total)}</Text>
             <Text style={[S.tTotalCell, { flex: 2 }]}>{eur(vn1.total)}</Text>
             <Text style={[S.tTotalCell, { flex: 2 }]}>{signEur(vn.total - vn1.total)}</Text>
             <Text style={[S.tTotalCell, { flex: 1.2 }]}>100%</Text>
-            <Text style={[S.tTotalCell, { flex: 1, textAlign: 'center' }]}>
-              {vn.total >= vn1.total ? '▲' : '▼'}
-            </Text>
+            <Text style={[S.tTotalCell, { flex: 1, textAlign: 'center' }]}>{vn.total >= vn1.total ? '▲' : '▼'}</Text>
           </View>
         </View>
-
         <Footer page={2} week={data.week_number} year={data.year} />
       </Page>
 
-      {/* ══ PAGE 3 — RÉPARTITION CA (CAMEMBERT) ═════════════════════════ */}
+      {/* PAGE 3 - REPARTITION CA */}
       <Page size="A4" style={S.page}>
-        <SecHeader title="RÉPARTITION DU CA PAR FAMILLE" />
+        <SecHeader num="02" title="RÉPARTITION DU CA PAR FAMILLE" />
         <View style={S.chartWrap}>
-          <Image src={{ data: pieBuffer, format: 'png' }} style={{ width: 490, height: 300 }} />
+          <Image src={{ data: pieBuffer, format: 'png' }} style={{ width: 490, height: 275 }} />
         </View>
-        <Text style={S.chartCaption}>
-          Poids de chaque famille dans le chiffre d'affaires total — Semaine {data.week_number} {data.year}
-        </Text>
-
-        {/* Table % CA N vs N-1 */}
+        <Text style={S.chartCaption}>Répartition du CA par famille (€ TTC) - Semaine {data.week_number} {data.year}</Text>
         <View style={[S.tableWrap, { marginTop: 14 }]}>
           <View style={S.tHead}>
-            <Text style={[S.tHeadCell, { flex: 3 }]}>FAMILLE</Text>
-            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N</Text>
-            <Text style={[S.tHeadCell, { flex: 1.5, textAlign: 'right' }]}>% N</Text>
-            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N-1</Text>
-            <Text style={[S.tHeadCell, { flex: 1.5, textAlign: 'right' }]}>% N-1</Text>
-            <Text style={[S.tHeadCell, { flex: 1.5, textAlign: 'right' }]}>ÉVOL. %</Text>
+            <Text style={[S.tHeadCell, { flex: 2.6 }]}>FAMILLE</Text>
+            <Text style={[S.tHeadCell, { flex: 1.8, textAlign: 'right' }]}>CA N (€)</Text>
+            <Text style={[S.tHeadCell, { flex: 2.6, textAlign: 'center' }]}>PART DU CA</Text>
+            <Text style={[S.tHeadCell, { flex: 1.8, textAlign: 'right' }]}>CA N-1 (€)</Text>
+            <Text style={[S.tHeadCell, { flex: 1.4, textAlign: 'right' }]}>ÉVOL. CA</Text>
           </View>
-          {vn.familles.map((fam, i) => {
-            const f1 = famMap.get(fam.nom.toUpperCase())
-            const wN = vn.total ? fam.total_montant / vn.total : 0
-            const wN1 = vn1.total && f1 ? f1.total_montant / vn1.total : 0
-            const evolPct = wN1 ? (wN - wN1) / wN1 : 0
+          {famRows.map((fam, i) => {
+            const wN = vn.total ? fam.caN / vn.total : 0
+            const evolCA = fam.caN1 ? (fam.caN - fam.caN1) / fam.caN1 : 0
             return (
-              <View key={fam.id} style={i % 2 === 0 ? S.tRow : S.tRowAlt}>
-                <Text style={[S.tCellB, { flex: 3 }]}>{trunc(fam.nom, 28)}</Text>
-                <Text style={[S.tCellR, { flex: 2 }]}>{eur(fam.total_montant)}</Text>
-                <Text style={[S.tCellRB, { flex: 1.5 }]}>{pctStr(wN)}</Text>
-                <Text style={[S.tCellR, { flex: 2 }]}>{f1 ? eur(f1.total_montant) : '—'}</Text>
-                <Text style={[S.tCellR, { flex: 1.5 }]}>{f1 ? pctStr(wN1) : '—'}</Text>
-                <Text style={[evolPct >= 0 ? S.tCellGreen : S.tCellRed, { flex: 1.5 }]}>
-                  {f1 ? signPct(evolPct) : '—'}
-                </Text>
+              <View key={i} style={i % 2 === 0 ? S.tRow : S.tRowAlt}>
+                <Text style={[S.tCellB, { flex: 2.6 }]}>{trunc(fam.nom, 24)}</Text>
+                <Text style={[S.tCellR, { flex: 1.8 }]}>{eur(fam.caN)}</Text>
+                <View style={{ flex: 2.6, flexDirection: 'row', alignItems: 'center' }}>
+                  <ShareBar pct={wN} />
+                  <Text style={{ fontSize: 8, color: C.textMid, width: 34, textAlign: 'right' }}>{pctStr(wN)}</Text>
+                </View>
+                <Text style={[S.tCellR, { flex: 1.8 }]}>{fam.caN1 !== null ? eur(fam.caN1) : '-'}</Text>
+                <Text style={[fam.caN1 ? (evolCA >= 0 ? S.tCellGreen : S.tCellRed) : S.tCellR, { flex: 1.4 }]}>{fam.caN1 ? signPct(evolCA) : '-'}</Text>
               </View>
             )
           })}
         </View>
-
         <Footer page={3} week={data.week_number} year={data.year} />
       </Page>
 
-      {/* ══ PAGE 4 — COMPARAISON N vs N-1 (BARRES) ══════════════════════ */}
+      {/* PAGE 4 - EVOLUTION PAR FAMILLE (tableau trié, sans graphique) */}
       <Page size="A4" style={S.page}>
-        <SecHeader title={`ÉVOLUTION PAR FAMILLE — ${data.year} vs ${data.year - 1}`} />
-        <View style={S.chartWrap}>
-          <Image src={{ data: barBuffer, format: 'png' }} style={{ width: 490, height: 360 }} />
-        </View>
-        <Text style={S.chartCaption}>
-          Comparaison du chiffre d'affaires par famille — Semaine {data.week_number} {data.year} vs Semaine {data.week_number} {data.year - 1}
+        <SecHeader num="03" title={`ÉVOLUTION PAR FAMILLE - ${data.year} vs ${data.year - 1}`} />
+        <Text style={{ paddingHorizontal: 36, fontSize: 8.5, color: C.textLight, marginBottom: 12 }}>
+          Familles triées du meilleur écart au moins bon - comparaison avec la même semaine {data.year - 1}
         </Text>
-
-        {/* Résumé textuel des variations */}
-        <View style={{ paddingHorizontal: 36, marginTop: 20 }}>
-          <Text style={{ fontSize: 9.5, fontFamily: 'Helvetica-Bold', color: C.navy, marginBottom: 10 }}>
-            Synthèse des écarts par famille
-          </Text>
+        <View style={S.tableWrap}>
           <View style={S.tHead}>
             <Text style={[S.tHeadCell, { flex: 3 }]}>FAMILLE</Text>
-            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N</Text>
-            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N-1</Text>
-            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>ÉCART €</Text>
+            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N (€)</Text>
+            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA N-1 (€)</Text>
+            <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>ÉCART (€)</Text>
             <Text style={[S.tHeadCell, { flex: 1.5, textAlign: 'right' }]}>ÉCART %</Text>
+            <Text style={[S.tHeadCell, { flex: 2.6, textAlign: 'center' }]}>POIDS DE L'ÉCART</Text>
           </View>
-          {vn.familles
-            .map(fam => {
-              const f1 = famMap.get(fam.nom.toUpperCase())
-              const ec = fam.total_montant - (f1?.total_montant ?? 0)
-              const ecPct = f1?.total_montant ? ec / f1.total_montant : 0
-              return { fam, f1, ec, ecPct }
+          {(() => {
+            const maxAbs = Math.max(1, ...sortedByEcart.map(f => Math.abs(f.ecart)))
+            return sortedByEcart.map((fam, i) => {
+              const ecPct = fam.caN1 ? fam.ecart / fam.caN1 : 0
+              const w = Math.abs(fam.ecart) / maxAbs
+              return (
+                <View key={i} style={i % 2 === 0 ? S.tRow : S.tRowAlt}>
+                  <Text style={[S.tCellB, { flex: 3 }]}>{trunc(fam.nom, 28)}</Text>
+                  <Text style={[S.tCellR, { flex: 2 }]}>{eur(fam.caN)}</Text>
+                  <Text style={[S.tCellR, { flex: 2 }]}>{fam.caN1 !== null ? eur(fam.caN1) : '-'}</Text>
+                  <Text style={[fam.ecart >= 0 ? S.tCellGreen : S.tCellRed, { flex: 2 }]}>{signEur(fam.ecart)}</Text>
+                  <Text style={[fam.ecart >= 0 ? S.tCellGreen : S.tCellRed, { flex: 1.5 }]}>{fam.caN1 ? signPct(ecPct) : '-'}</Text>
+                  <View style={{ flex: 2.6, flexDirection: 'row', alignItems: 'center', paddingLeft: 8 }}>
+                    <View style={S.shareBarBg}>
+                      <View style={[S.shareBarFill, { width: `${(w * 100).toFixed(1)}%`, backgroundColor: fam.ecart >= 0 ? C.green : C.red }]} />
+                    </View>
+                  </View>
+                </View>
+              )
             })
-            .sort((a, b) => b.ec - a.ec)
-            .map(({ fam, f1, ec, ecPct }, i) => (
-              <View key={fam.id} style={i % 2 === 0 ? S.tRow : S.tRowAlt}>
-                <Text style={[S.tCellB, { flex: 3 }]}>{trunc(fam.nom, 28)}</Text>
-                <Text style={[S.tCellR, { flex: 2 }]}>{eur(fam.total_montant)}</Text>
-                <Text style={[S.tCellR, { flex: 2 }]}>{f1 ? eur(f1.total_montant) : '—'}</Text>
-                <Text style={[ec >= 0 ? S.tCellGreen : S.tCellRed, { flex: 2 }]}>{signEur(ec)}</Text>
-                <Text style={[ec >= 0 ? S.tCellGreen : S.tCellRed, { flex: 1.5 }]}>
-                  {f1 ? signPct(ecPct) : '—'}
-                </Text>
-              </View>
-            ))}
+          })()}
         </View>
-
+        <View style={{ marginHorizontal: 36, marginTop: 16, backgroundColor: C.gray, borderRadius: 6, padding: 11 }}>
+          <Text style={{ fontSize: 8, color: C.textMid, lineHeight: 1.5 }}>
+            Lecture : la barre indique le poids de l'écart de chaque famille par rapport au plus gros écart de la semaine (vert = progression, rouge = recul). Les familles en tête expliquent l'essentiel de la variation du CA.
+          </Text>
+        </View>
         <Footer page={4} week={data.week_number} year={data.year} />
       </Page>
 
-      {/* ══ PAGE 5 — CE QUI PROGRESSE / CE QUI DÉCROCHE ══════════════════ */}
+      {/* PAGE 5 - TOP / FLOP */}
       <Page size="A4" style={S.page}>
-        <SecHeader title="CE QUI PROGRESSE — CE QUI DÉCROCHE" />
-
+        <SecHeader num="04" title="CE QUI PROGRESSE - CE QUI DÉCROCHE" />
+        <Text style={{ paddingHorizontal: 36, fontSize: 8.5, color: C.textLight, marginBottom: 12 }}>
+          Plus fortes progressions et plus fortes baisses de CA produit vs la même semaine {data.year - 1} (écarts calculés sur le CA total de chaque produit)
+        </Text>
         <View style={S.topFlopWrap}>
-          {/* TOP 10 */}
           <View style={S.topFlopLeft}>
-            <View style={{ backgroundColor: C.green, paddingVertical: 9, paddingHorizontal: 8 }}>
-              <Text style={{ color: C.white, fontFamily: 'Helvetica-Bold', fontSize: 9, letterSpacing: 0.5 }}>
-                CE QUI PROGRESSE
-              </Text>
+            <View style={{ backgroundColor: C.green, paddingVertical: 9, paddingHorizontal: 8, borderTopLeftRadius: 4, borderTopRightRadius: 4 }}>
+              <Text style={{ color: C.white, fontWeight: 700, fontSize: 9 }}>TOP PROGRESSIONS</Text>
             </View>
             <View style={{ flexDirection: 'row', backgroundColor: '#F1F5F9', paddingVertical: 5, paddingHorizontal: 8, borderBottomColor: '#CBD5E1', borderBottomWidth: 1 }}>
-              <Text style={[S.tHeadCell, { flex: 0.4, color: C.textLight }]}>#</Text>
-              <Text style={[S.tHeadCell, { flex: 3 }]}>PRODUIT</Text>
-              <Text style={[S.tHeadCell, { flex: 1.8, textAlign: 'right' }]}>CA N</Text>
-              <Text style={[S.tHeadCell, { flex: 1.2, textAlign: 'right' }]}>ÉVOL.</Text>
+              <Text style={[S.tHeadCell, { flex: 0.7, color: C.textLight }]}>#</Text>
+              <Text style={[S.tHeadCell, { flex: 3, color: C.textMid }]}>PRODUIT</Text>
+              <Text style={[S.tHeadCell, { flex: 1.8, textAlign: 'right', color: C.textMid }]}>CA N (€)</Text>
+              <Text style={[S.tHeadCell, { flex: 1.4, textAlign: 'right', color: C.textMid }]}>ÉCART (€)</Text>
             </View>
-            {tops.map((t, i) => {
-              const n1 = t.n - t.ecart
-              const pct = n1 > 0 ? (t.ecart / n1 * 100) : 100
-              return (
-                <View key={i} style={[i % 2 === 0 ? S.tRow : S.tRowAlt, { paddingHorizontal: 8, borderBottomColor: '#EEF2F7', borderBottomWidth: 0.6 }]}>
-                  <Text style={[S.tCell, { flex: 0.4, fontSize: 7.5, color: C.textLight }]}>{i + 1}</Text>
-                  <Text style={[S.tCell, { flex: 3, fontSize: 7.5 }]}>{trunc(t.designation, 24)}</Text>
-                  <Text style={[S.tCellR, { flex: 1.8, fontSize: 7.5 }]}>{eur(t.n)}</Text>
-                  <Text style={[S.tCellGreen, { flex: 1.2, fontSize: 8, textAlign: 'right' }]}>+{pct.toFixed(0)}%</Text>
+            {tops.map((t, i) => (
+              <View key={i} style={[i % 2 === 0 ? S.tRow : S.tRowAlt, { paddingHorizontal: 8 }]}>
+                <View style={{ flex: 0.7, flexDirection: 'row', alignItems: 'center' }}>
+                  <View style={[S.rankChip, { backgroundColor: i < 3 ? C.green : C.grayMid }]}>
+                    <Text style={[S.rankChipText, i >= 3 ? { color: C.textMid } : {}]}>{i + 1}</Text>
+                  </View>
                 </View>
-              )
-            })}
+                <Text style={[S.tCell, { flex: 3, fontSize: 7.5 }]}>{trunc(t.designation, 24)}</Text>
+                <Text style={[S.tCellR, { flex: 1.8, fontSize: 7.5 }]}>{eur(t.n)}</Text>
+                <Text style={[S.tCellGreen, { flex: 1.4, fontSize: 7.5 }]}>+{eur0(Math.abs(t.ecart))}</Text>
+              </View>
+            ))}
+            {tops.length === 0 && (
+              <View style={S.tRow}><Text style={[S.tCell, { fontSize: 8, color: C.textLight }]}>Aucune progression détectée</Text></View>
+            )}
           </View>
-
-          {/* FLOP 10 */}
           <View style={S.topFlopRight}>
-            <View style={{ backgroundColor: C.red, paddingVertical: 9, paddingHorizontal: 8 }}>
-              <Text style={{ color: C.white, fontFamily: 'Helvetica-Bold', fontSize: 9, letterSpacing: 0.5 }}>
-                CE QUI DÉCROCHE
-              </Text>
+            <View style={{ backgroundColor: C.red, paddingVertical: 9, paddingHorizontal: 8, borderTopLeftRadius: 4, borderTopRightRadius: 4 }}>
+              <Text style={{ color: C.white, fontWeight: 700, fontSize: 9 }}>TOP BAISSES</Text>
             </View>
             <View style={{ flexDirection: 'row', backgroundColor: '#F1F5F9', paddingVertical: 5, paddingHorizontal: 8, borderBottomColor: '#CBD5E1', borderBottomWidth: 1 }}>
-              <Text style={[S.tHeadCell, { flex: 0.4, color: C.textLight }]}>#</Text>
-              <Text style={[S.tHeadCell, { flex: 3 }]}>PRODUIT</Text>
-              <Text style={[S.tHeadCell, { flex: 1.8, textAlign: 'right' }]}>CA N</Text>
-              <Text style={[S.tHeadCell, { flex: 1.2, textAlign: 'right' }]}>ÉVOL.</Text>
+              <Text style={[S.tHeadCell, { flex: 0.7, color: C.textLight }]}>#</Text>
+              <Text style={[S.tHeadCell, { flex: 3, color: C.textMid }]}>PRODUIT</Text>
+              <Text style={[S.tHeadCell, { flex: 1.8, textAlign: 'right', color: C.textMid }]}>CA N (€)</Text>
+              <Text style={[S.tHeadCell, { flex: 1.4, textAlign: 'right', color: C.textMid }]}>ÉCART (€)</Text>
             </View>
-            {flops.map((f, i) => {
-              const n1 = f.n - f.ecart
-              const pct = n1 > 0 ? Math.abs(f.ecart / n1 * 100) : 100
-              return (
-                <View key={i} style={[i % 2 === 0 ? S.tRow : S.tRowAlt, { paddingHorizontal: 8, borderBottomColor: '#EEF2F7', borderBottomWidth: 0.6 }]}>
-                  <Text style={[S.tCell, { flex: 0.4, fontSize: 7.5, color: C.textLight }]}>{i + 1}</Text>
-                  <Text style={[S.tCell, { flex: 3, fontSize: 7.5 }]}>{trunc(f.designation, 24)}</Text>
-                  <Text style={[S.tCellR, { flex: 1.8, fontSize: 7.5 }]}>{eur(f.n)}</Text>
-                  <Text style={[S.tCellRed, { flex: 1.2, fontSize: 8, textAlign: 'right' }]}>-{pct.toFixed(0)}%</Text>
+            {flops.map((f, i) => (
+              <View key={i} style={[i % 2 === 0 ? S.tRow : S.tRowAlt, { paddingHorizontal: 8 }]}>
+                <View style={{ flex: 0.7, flexDirection: 'row', alignItems: 'center' }}>
+                  <View style={[S.rankChip, { backgroundColor: i < 3 ? C.red : C.grayMid }]}>
+                    <Text style={[S.rankChipText, i >= 3 ? { color: C.textMid } : {}]}>{i + 1}</Text>
+                  </View>
                 </View>
-              )
-            })}
+                <Text style={[S.tCell, { flex: 3, fontSize: 7.5 }]}>{trunc(f.designation, 24)}</Text>
+                <Text style={[S.tCellR, { flex: 1.8, fontSize: 7.5 }]}>{eur(f.n)}</Text>
+                <Text style={[S.tCellRed, { flex: 1.4, fontSize: 7.5 }]}>-{eur0(Math.abs(f.ecart))}</Text>
+              </View>
+            ))}
+            {flops.length === 0 && (
+              <View style={S.tRow}><Text style={[S.tCell, { fontSize: 8, color: C.textLight }]}>Aucune baisse détectée</Text></View>
+            )}
           </View>
         </View>
-
+        <View style={{ marginHorizontal: 36, marginTop: 16, backgroundColor: C.gray, borderRadius: 6, padding: 11 }}>
+          <Text style={{ fontSize: 8, color: C.textMid, lineHeight: 1.5 }}>
+            Lecture : CA N = total des ventes du produit sur la semaine ; l'écart compare ce total à la même semaine de {data.year - 1}. Les produits en tête de progression sont à mettre en avant en vitrine ; les baisses marquées méritent une vérification (approvisionnement, prix, présence en rayon).
+          </Text>
+        </View>
         <Footer page={5} week={data.week_number} year={data.year} />
       </Page>
 
-      {/* ══ PAGE 6 — ANALYSE IA & RECOMMANDATIONS ═══════════════════════ */}
+      {/* PAGE 6 - ANALYSE IA */}
       <Page size="A4" style={S.page}>
-        <SecHeader title="ANALYSE INTELLIGENTE — INSIGHTS CLÉS" />
-
-        <Text style={{ paddingHorizontal: 36, fontSize: 8.5, color: C.textLight, marginBottom: 16 }}>
-          Analyse générée par intelligence artificielle · Semaine {data.week_number} {data.year}
-        </Text>
-
+        <SecHeader num="05" title="ANALYSE INTELLIGENTE - INSIGHTS CLÉS" />
+        <Text style={{ paddingHorizontal: 36, fontSize: 8.5, color: C.textLight, marginBottom: 14 }}>Analyse générée par intelligence artificielle - Semaine {data.week_number} {data.year}</Text>
         <View style={S.insightBlock}>
           {insights.insights.map((txt, i) => (
             <View key={i} style={S.insightRow}>
-              <View style={S.insightBullet}>
-                <Text style={S.bulletNum}>{i + 1}</Text>
-              </View>
+              <View style={S.insightBullet}><Text style={S.bulletNum}>{i + 1}</Text></View>
               <Text style={S.insightText}>{txt}</Text>
             </View>
           ))}
         </View>
-
-        {/* Recommandations */}
-        <View style={{ marginTop: 24 }}>
-          <SecHeader title="RECOMMANDATIONS POUR LA SEMAINE PROCHAINE" />
+        {vigilance.length > 0 && (
+          <View style={S.vigilanceBox}>
+            <Text style={S.vigilanceTitle}>POINTS DE VIGILANCE</Text>
+            {vigilance.map((txt, i) => (
+              <Text key={i} style={S.vigilanceText}>- {txt}</Text>
+            ))}
+          </View>
+        )}
+        <View style={{ marginTop: 10 }}>
+          <SecHeader num="06" title="RECOMMANDATIONS POUR LA SEMAINE PROCHAINE" />
           <View style={S.insightBlock}>
             {insights.recommendations.map((txt, i) => (
               <View key={i} style={S.insightRow}>
-                <View style={S.recoBullet}>
-                  <Text style={S.bulletNum}>{i + 1}</Text>
-                </View>
+                <View style={S.recoBullet}><Text style={S.bulletNum}>{i + 1}</Text></View>
                 <Text style={S.insightText}>{txt}</Text>
               </View>
             ))}
           </View>
         </View>
-
         <Footer page={6} week={data.week_number} year={data.year} />
+      </Page>
+
+      {/* PAGE 7 - SYNTHESE DE LA SEMAINE */}
+      <Page size="A4" style={S.page}>
+        <SecHeader num="07" title="SYNTHÈSE DE LA SEMAINE" />
+        <View style={[S.statusBanner, { backgroundColor: status.color }]}>
+          <Text style={S.statusLabel}>{status.label}</Text>
+          <Text style={S.statusDesc}>{status.desc}</Text>
+        </View>
+        <Text style={{ paddingHorizontal: 36, fontSize: 9, color: C.textLight, marginBottom: 10 }}>LES CHIFFRES À RETENIR</Text>
+        <View style={S.recapGrid}>
+          <View style={S.recapCard}>
+            <Text style={S.recapLabel}>CA SEMAINE</Text>
+            <Text style={S.recapValue}>{eur0(fn.ca_net)}</Text>
+            <Text style={S.recapSub}>{signEur(fn.ca_net - fn1.ca_net)} vs {data.year - 1}</Text>
+          </View>
+          <View style={[S.recapCard, { backgroundColor: caVar >= 0 ? C.lightGreen : C.lightRed }]}>
+            <Text style={S.recapLabel}>ÉVOLUTION</Text>
+            <Text style={[S.recapValue, { color: caVar >= 0 ? C.green : C.red }]}>{signPct(caVar)}</Text>
+            <Text style={S.recapSub}>vs S{data.week_number} {data.year - 1}</Text>
+          </View>
+          <View style={S.recapCard}>
+            <Text style={S.recapLabel}>PANIER MOYEN</Text>
+            <Text style={S.recapValue}>{eur(fn.moyenne_ticket)}</Text>
+            <Text style={S.recapSub}>{fn.nb_tickets} tickets ({fn.nb_tickets - fn1.nb_tickets >= 0 ? '+' : ''}{fn.nb_tickets - fn1.nb_tickets})</Text>
+          </View>
+          <View style={S.recapCard}>
+            <Text style={S.recapLabel}>FAMILLE EN FORME</Text>
+            <Text style={[S.recapValue, { fontSize: 10.5 }]}>{bestFam ? trunc(bestFam.nom, 20) : '-'}</Text>
+            <Text style={[S.recapSub, { color: C.green }]}>{bestFam ? signEur(bestFam.ecart) : ''}</Text>
+          </View>
+          <View style={S.recapCard}>
+            <Text style={S.recapLabel}>FAMILLE EN RETRAIT</Text>
+            <Text style={[S.recapValue, { fontSize: 10.5 }]}>{worstFam ? trunc(worstFam.nom, 20) : '-'}</Text>
+            <Text style={[S.recapSub, { color: worstFam && worstFam.ecart < 0 ? C.red : C.textLight }]}>{worstFam ? signEur(worstFam.ecart) : ''}</Text>
+          </View>
+          <View style={S.recapCard}>
+            <Text style={S.recapLabel}>PRODUIT VEDETTE</Text>
+            <Text style={[S.recapValue, { fontSize: 10.5 }]}>{topProduct ? trunc(topProduct.designation, 20) : '-'}</Text>
+            <Text style={[S.recapSub, { color: C.green }]}>{topProduct ? '+' + eur0(Math.abs(topProduct.ecart)) + ' vs N-1' : ''}</Text>
+          </View>
+        </View>
+        <View style={{ marginHorizontal: 36, marginTop: 8, marginBottom: 4, backgroundColor: C.lightBlue, borderLeftWidth: 3, borderLeftColor: C.navy, borderRadius: 4, padding: 12 }}>
+          <Text style={S.execLabel}>À RETENIR CETTE SEMAINE</Text>
+          <Text style={S.execText}>{insights.resume}</Text>
+        </View>
+        <View style={S.actionBox}>
+          <Text style={S.actionLabel}>ACTION PRIORITAIRE POUR LA SEMAINE PROCHAINE</Text>
+          <Text style={S.actionText}>{insights.recommendations[0] ?? 'Poursuivre la dynamique actuelle et surveiller les familles en retrait.'}</Text>
+        </View>
+        {flopProduct && (
+          <Text style={{ paddingHorizontal: 36, marginTop: 12, fontSize: 8, color: C.textLight }}>
+            À surveiller aussi : {trunc(flopProduct.designation, 40)} ({'-'}{eur0(Math.abs(flopProduct.ecart))} vs N-1).
+          </Text>
+        )}
+        <Text style={{ paddingHorizontal: 36, marginTop: 18, fontSize: 8, color: C.textLight }}>
+          Rapport généré automatiquement par PILOTE le {generatedOn}. Données issues de vos exports de caisse (S{data.week_number} {data.year} et S{data.week_number} {data.year - 1}).
+        </Text>
+        <Footer page={7} week={data.week_number} year={data.year} />
       </Page>
 
     </Document>
   )
 }
 
-// ─── Data extraction ────────────────────────────────────────────────
+// ─── Data extraction ─────────────────────────────────────────────────────────
 
 async function parsePDF(file: File): Promise<string> {
   const buffer = Buffer.from(await file.arrayBuffer())
   const _m = await import('pdf-parse') as any
   const fn = typeof _m.default === 'function' ? _m.default : _m
-  if (typeof fn !== 'function') throw new Error('pdf-parse not callable: ' + typeof _m.default)
+  if (typeof fn !== 'function') throw new Error('pdf-parse not callable')
   const data = await fn(buffer)
   return data.text
 }
@@ -507,7 +653,21 @@ function extractJSONObject(text: string): string {
     if (text[i] === '{') depth++
     else if (text[i] === '}') { depth--; if (depth === 0) return text.slice(start, i + 1) }
   }
-  throw new Error('Unclosed JSON object in response: ' + text.slice(0, 200))
+  throw new Error('Unclosed JSON')
+}
+
+// Coercition robuste : l'IA peut renvoyer null/chaines si le mauvais fichier est
+// fourni — on ne laisse JAMAIS un null atteindre .toFixed
+function toNum(v: unknown): number {
+  const n = typeof v === 'number' ? v : parseFloat(String(v ?? ''))
+  return Number.isFinite(n) ? n : 0
+}
+function cleanFin(f: any): FinancierData {
+  return {
+    ca_net: toNum(f?.ca_net),
+    nb_tickets: Math.round(toNum(f?.nb_tickets)),
+    moyenne_ticket: toNum(f?.moyenne_ticket),
+  }
 }
 
 async function extractFinancials(fin_n: string, fin_n1: string): Promise<{
@@ -515,327 +675,354 @@ async function extractFinancials(fin_n: string, fin_n1: string): Promise<{
   financier_n: FinancierData; financier_n1: FinancierData
 }> {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' })
-  const response = await client.messages.create({
-    model: 'claude-haiku-4-5-20251001',
-    max_tokens: 512,
-    messages: [{ role: 'user', content: 'Extrais les donnees financieres CRISALID. Retourne UNIQUEMENT ce JSON sans texte avant/apres:\n{"period_n":"15-21 juin 2026","period_n1":"16-22 juin 2025","week_number":25,"year":2026,"financier_n":{"ca_net":20742.43,"nb_tickets":496,"moyenne_ticket":41.82},"financier_n1":{"ca_net":19316.76,"nb_tickets":453,"moyenne_ticket":42.64}}\n\n=== FINANCIER N ===\n' + fin_n.slice(0, 3000) + '\n=== FINANCIER N-1 ===\n' + fin_n1.slice(0, 3000) }],
+  const r = await client.messages.create({
+    model: 'claude-haiku-4-5-20251001', max_tokens: 512,
+    messages: [{ role: 'user', content: 'Extrais les donnees financieres CRISALID. Retourne UNIQUEMENT ce JSON:\n{"period_n":"15-21 juin 2026","period_n1":"16-22 juin 2025","week_number":25,"year":2026,"financier_n":{"ca_net":20742.43,"nb_tickets":496,"moyenne_ticket":41.82},"financier_n1":{"ca_net":19316.76,"nb_tickets":453,"moyenne_ticket":42.64}}\n\n=== FINANCIER N ===\n' + fin_n.slice(0, 3000) + '\n=== FINANCIER N-1 ===\n' + fin_n1.slice(0, 3000) }],
   })
-  const text = response.content[0].type === 'text' ? response.content[0].text : ''
-  return JSON.parse(extractJSONObject(text))
+  return JSON.parse(extractJSONObject(r.content[0].type === 'text' ? r.content[0].text : ''))
+}
+
+// ─── Semaine ISO deterministe ─────────────────────────────────────────────────
+// La semaine du rapport est TOUJOURS calculee en code a partir des dates de la
+// periode extraite (ex: "29 juin - 5 juillet 2026" => S27), jamais par l'IA.
+
+const MONTHS_FR: Record<string, number> = {
+  janvier: 0, fevrier: 1, mars: 2, avril: 3, mai: 4, juin: 5,
+  juillet: 6, aout: 7, septembre: 8, octobre: 9, novembre: 10, decembre: 11,
+}
+
+function isoWeekOf(d: Date): { week: number; year: number } {
+  const t = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()))
+  const dayNum = t.getUTCDay() || 7
+  t.setUTCDate(t.getUTCDate() + 4 - dayNum)
+  const yearStart = new Date(Date.UTC(t.getUTCFullYear(), 0, 1))
+  return { week: Math.ceil((((t.getTime() - yearStart.getTime()) / 86400000) + 1) / 7), year: t.getUTCFullYear() }
+}
+
+function weekFromPeriod(period: string): { week: number; year: number } | null {
+  try {
+    const p = (period || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+    const years = p.match(/20\d{2}/g) || []
+    if (years.length === 0) return null
+    let year = parseInt(years[0])
+    const dayMatch = p.match(/(\d{1,2})(?!\d)/)
+    if (!dayMatch) return null
+    const day = parseInt(dayMatch[1])
+    if (day < 1 || day > 31) return null
+    // Premier nom de mois present dans la chaine = mois du jour de debut
+    let monthIdx: number | null = null
+    let firstPos = Infinity
+    for (const [name, idx] of Object.entries(MONTHS_FR)) {
+      const pos = p.indexOf(name)
+      if (pos !== -1 && pos < firstPos) { firstPos = pos; monthIdx = idx }
+    }
+    if (monthIdx === null) return null
+    // Periode dec -> janv ou seule l'annee de fin est affichee
+    if (years.length === 1 && monthIdx === 11 && p.includes('janv')) year -= 1
+    const start = new Date(Date.UTC(year, monthIdx, day))
+    if (isNaN(start.getTime())) return null
+    return isoWeekOf(start)
+  } catch {
+    return null
+  }
 }
 
 function parseNum(s: string): number {
-  // Handles both French (3 081,17 or 3081,17) and standard (3081.17) formats
   return parseFloat(s.trim().replace(/\s/g, '').replace(',', '.')) || 0
 }
 
 async function extractVentesData(ventes_text: string): Promise<{ total: number; familles: Famille[] }> {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' })
-  const response = await client.messages.create({
-    model: 'claude-haiku-4-5-20251001',
-    max_tokens: 2048,
-    messages: [{ role: 'user', content: `Extrais les totaux par famille du fichier CRISALID.
-Retourne UNIQUEMENT ces lignes (une par ligne), sans texte avant ou après:
-TOTAL|20742.43
-VIANDE DE BOEUF|1|3081.17
-CHARCUTERIE|2|2500.00
-PORC|3|1800.50
-
-Format:
-- 1ère ligne: TOTAL|montant_total
-- Puis une ligne par famille: NOM_FAMILLE|ID|montant_famille
-Utilise le point (.) comme séparateur décimal. N'inclus PAS les articles individuels.
-
-Règles CRITIQUES sur les montants :
-- Prends UNIQUEMENT le montant en euros (CA) de la PÉRIODE affichée — JAMAIS le cumul annuel, JAMAIS les quantités vendues, JAMAIS un code PLU ou un numéro.
-- Un montant de famille ne peut JAMAIS dépasser le TOTAL de la période.
-- Si les colonnes sont collées dans le texte, sépare bien quantité et montant : le montant a 2 décimales.
-
-${ventes_text.slice(0, 6000)}` }],
+  const r = await client.messages.create({
+    model: 'claude-haiku-4-5-20251001', max_tokens: 1024,
+    // Slice 12000 chars pour capturer TOUTES les familles (pas seulement les grandes)
+    messages: [{ role: 'user', content: `Extrais les totaux par famille du fichier CRISALID.\nRetourne UNIQUEMENT ces lignes (une par ligne):\nTOTAL|20742.43\nVIANDE DE BOEUF|1|3081.17\nCHARCUTERIE|2|2500.00\n\nFormat: 1ere ligne TOTAL|montant, puis NOM|ID|montant par famille. Point comme separateur decimal. Montant = CA en euros de la PERIODE uniquement (jamais cumul annuel, jamais quantites, jamais code PLU) ; un montant de famille ne depasse jamais le TOTAL.\n\n${ventes_text.slice(0, 12000)}` }],
   })
-  const text = response.content[0].type === 'text' ? response.content[0].text.trim() : ''
-  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0)
+  const text = r.content[0].type === 'text' ? r.content[0].text.trim() : ''
+  const lines = text.split('\n').map((l: string) => l.trim()).filter((l: string) => l)
   let total = 0
   const familles: Famille[] = []
   for (const line of lines) {
     const parts = line.split('|')
-    if (parts[0].toUpperCase() === 'TOTAL' && parts[1]) {
-      total = parseNum(parts[1])
-    } else if (parts.length >= 3) {
+    if (parts[0].toUpperCase() === 'TOTAL' && parts[1]) total = parseNum(parts[1])
+    else if (parts.length >= 3) {
       const montant = parseNum(parts[2])
-      if (montant > 0) {
-        familles.push({ id: parts[1]?.trim() || String(familles.length + 1), nom: parts[0].trim(), total_montant: montant, produits: [] })
-      }
+      if (montant > 0) familles.push({ id: parts[1]?.trim() || String(familles.length + 1), nom: parts[0].trim(), total_montant: montant, produits: [] })
     }
   }
-  // ── Garde-fous déterministes anti-aberrations (ex. épicerie à 6 chiffres sur une petite semaine) ──
-  // Un montant de famille ne peut jamais dépasser le CA total de la période. Erreurs classiques
-  // d'extraction : virgule décimale perdue (×100), séparateur de milliers avalé (×1000),
-  // colonne cumul annuel ou code PLU pris pour un montant → corrigées ou écartées.
-  const ref = total > 0 ? total : familles.reduce((s, f) => Math.max(s, f.total_montant), 0)
+  // ── Garde-fous deterministes anti-aberrations (ex. epicerie a 6 chiffres sur une petite semaine) ──
+  // Un montant de famille ne peut jamais depasser le CA total de la periode. Erreurs classiques
+  // d'extraction : virgule decimale perdue (x100), separateur de milliers avale (x1000),
+  // colonne cumul annuel ou code PLU pris pour un montant -> corrige ou ecarte.
   const cleaned: Famille[] = []
   for (const f of familles) {
     let m = f.total_montant
     if (total > 0 && m > total * 1.005) {
       if (m / 100 <= total * 1.005) m = Math.round(m) / 100
       else if (m / 1000 <= total * 1.005) m = Math.round(m) / 1000
-      else { console.warn('[ventes] famille écartée (montant aberrant) :', f.nom, f.total_montant, '> CA total', total); continue }
-      console.warn('[ventes] montant corrigé (décimale perdue) :', f.nom, f.total_montant, '→', m)
+      else { console.warn('[ventes] famille ecartee (montant aberrant):', f.nom, f.total_montant, '> CA total', total); continue }
+      console.warn('[ventes] montant corrige (decimale perdue):', f.nom, f.total_montant, '->', m)
     }
     cleaned.push({ ...f, total_montant: m })
-  }
-  const sum = cleaned.reduce((s, f) => s + f.total_montant, 0)
-  if (total > 0 && sum > total * 1.1) {
-    console.warn('[ventes] somme des familles', sum.toFixed(2), '> CA total', total.toFixed(2), '— vérifier l\'export source (ref max famille:', ref.toFixed(2), ')')
   }
   return { total, familles: cleaned }
 }
 
-async function extractTopFlop(textN: string, textN1: string): Promise<{
-  tops: { designation: string; n: number; ecart: number }[]
-  flops: { designation: string; n: number; ecart: number }[]
-}> {
+/** Extrait le CA TOTAL par produit d'un fichier ventes CRISALID.
+ *  IMPORTANT : on extrait N et N-1 séparément puis on calcule les écarts en code —
+ *  l'IA ne fait AUCUNE comparaison ni aucun calcul.
+ *  PERF : plafonne aux ~60 plus gros produits (max_tokens 2200) pour tenir sous les 60s Vercel. */
+async function extractProductAmounts(text: string): Promise<Map<string, number>> {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' })
-  const response = await client.messages.create({
-    model: 'claude-haiku-4-5-20251001',
-    max_tokens: 2048,
-    messages: [{ role: 'user', content: `Compare les ventes produit par produit entre N et N-1. Identifie les 10 articles avec la plus forte progression et les 10 avec la plus forte baisse en euros.
-Retourne UNIQUEMENT ce JSON:
-{"tops":[{"d":"NOM PRODUIT","n":634.37,"e":150.00}],"flops":[{"d":"NOM PRODUIT","n":100.00,"e":-80.00}]}
-Format: {"tops":[{"d":"designation","n":montant_N,"e":ecart_positif},...x10],"flops":[{"d":"designation","n":montant_N,"e":ecart_negatif},...x10]}
-
-=== VENTES N ===
-${textN.slice(0, 3000)}
-
-=== VENTES N-1 ===
-${textN1.slice(0, 3000)}` }],
+  const r = await client.messages.create({
+    model: 'claude-haiku-4-5-20251001', max_tokens: 2200,
+    messages: [{ role: 'user', content: `Extrais du fichier de ventes CRISALID le CA TOTAL de CHAQUE produit sur la semaine.\n` +
+      `ATTENTION CRITIQUE : la valeur a extraire est le MONTANT TOTAL en euros des ventes du produit (colonne montant/total/CA), JAMAIS le prix unitaire, JAMAIS le prix au kilo, JAMAIS la quantite.\n` +
+      `Un produit courant fait typiquement des dizaines a des centaines d'euros de CA hebdomadaire.\n` +
+      `Ignore les lignes de famille/sous-total/total general : uniquement les produits individuels.\n` +
+      `Limite-toi aux 60 produits au plus gros CA (ignore les tout petits montants).\n` +
+      `Retourne UNIQUEMENT des lignes au format NOM|MONTANT (point decimal, une ligne par produit, aucun autre texte) :\n` +
+      `STEAK HACHE|412.35\nROTI DE PORC|187.20\n\n${text.slice(0, 9000)}` }],
   })
-  const text = response.content[0].type === 'text' ? response.content[0].text : ''
-  try {
-    type R = { tops: { d: string; n: number; e: number }[]; flops: { d: string; n: number; e: number }[] }
-    const r: R = JSON.parse(extractJSONObject(text))
-    return {
-      tops:  (r.tops  || []).slice(0, 10).map(x => ({ designation: x.d, n: x.n, ecart: x.e })),
-      flops: (r.flops || []).slice(0, 10).map(x => ({ designation: x.d, n: x.n, ecart: x.e })),
-    }
-  } catch {
-    return { tops: [], flops: [] }
+  const out = new Map<string, number>()
+  const raw = r.content[0].type === 'text' ? r.content[0].text : ''
+  for (const line of raw.split('\n')) {
+    const parts = line.trim().split('|')
+    if (parts.length < 2) continue
+    const name = parts[0].trim().toUpperCase()
+    const amount = parseNum(parts[1])
+    if (name && name !== 'TOTAL' && amount > 0) out.set(name, (out.get(name) ?? 0) + amount)
   }
+  return out
 }
 
-async function extractData(texts: {
-  fin_n: string; fin_n1: string; ventes_n: string; ventes_n1: string
-}): Promise<ReportData> {
-  const [financials, ventes_n, ventes_n1, topFlop] = await Promise.all([
+/** Calcule les tops/flops en code a partir des CA produits N et N-1 (zero IA, zero erreur de calcul) */
+function computeTopFlop(prodN: Map<string, number>, prodN1: Map<string, number>): {
+  tops: { designation: string; n: number; ecart: number }[]
+  flops: { designation: string; n: number; ecart: number }[]
+} {
+  const names = new Set<string>([...prodN.keys(), ...prodN1.keys()])
+  const diffs: { designation: string; n: number; ecart: number }[] = []
+  for (const name of names) {
+    const n  = prodN.get(name)  ?? 0
+    const n1 = prodN1.get(name) ?? 0
+    diffs.push({ designation: name, n, ecart: +(n - n1).toFixed(2) })
+  }
+  const tops  = diffs.filter(d => d.ecart > 0).sort((a, b) => b.ecart - a.ecart).slice(0, 10)
+  const flops = diffs.filter(d => d.ecart < 0).sort((a, b) => a.ecart - b.ecart).slice(0, 10)
+  return { tops, flops }
+}
+
+async function extractData(texts: { fin_n: string; fin_n1: string; ventes_n: string; ventes_n1: string }): Promise<ExtractedData> {
+  const [financials, ventes_n, ventes_n1, prodN, prodN1] = await Promise.all([
     extractFinancials(texts.fin_n, texts.fin_n1),
     extractVentesData(texts.ventes_n),
     extractVentesData(texts.ventes_n1),
-    extractTopFlop(texts.ventes_n, texts.ventes_n1),
+    extractProductAmounts(texts.ventes_n),
+    extractProductAmounts(texts.ventes_n1),
   ])
+  const topFlop = computeTopFlop(prodN, prodN1)
+  // Semaine ISO recalculee en code depuis les dates de la periode
+  const isoFixed = weekFromPeriod(String(financials.period_n || ''))
   return {
-    period_n: financials.period_n, period_n1: financials.period_n1,
-    week_number: financials.week_number, year: financials.year,
-    financier_n: financials.financier_n, financier_n1: financials.financier_n1,
-    ventes_n, ventes_n1,
-    tops: topFlop.tops,
-    flops: topFlop.flops,
+    period_n: String(financials.period_n || ''), period_n1: String(financials.period_n1 || ''),
+    week_number: isoFixed?.week ?? toNum(financials.week_number),
+    year: isoFixed?.year ?? toNum(financials.year),
+    financier_n: cleanFin(financials.financier_n), financier_n1: cleanFin(financials.financier_n1),
+    ventes_n, ventes_n1, tops: topFlop.tops, flops: topFlop.flops,
+    prodN, prodN1,
   }
 }
 
-// ─── Claude Sonnet — Insights bullet-points ─────────────────────────────────
+// ─── Historisation caisse ─────────────────────────────────────────────────────
 
-async function generateInsights(data: ReportData): Promise<Insights> {
+async function archiveWeekData(
+  serviceSupabase: ReturnType<typeof createServiceClient>,
+  clientId: string,
+  week: number,
+  year: number,
+  fin: FinancierData,
+  familles: Famille[],
+  produits: Map<string, number>,
+) {
+  const familiesDetail = familles.map((f: Famille) => ({ nom: f.nom, montant: f.total_montant }))
+  await serviceSupabase.from('weekly_ca').delete()
+    .eq('client_id', clientId).eq('week_number', week).eq('year', year)
+  await serviceSupabase.from('weekly_ca').insert({
+    client_id: clientId,
+    week_number: week,
+    year,
+    ca_total: fin.ca_net,
+    families_detail: familiesDetail,
+    nb_tickets: fin.nb_tickets,
+    moyenne_ticket: fin.moyenne_ticket,
+  })
+
+  await serviceSupabase.from('weekly_sales_products').delete()
+    .eq('client_id', clientId).eq('week_number', week).eq('year', year)
+  const rows = [...produits.entries()].map(([product, amount]) => ({
+    client_id: clientId, week_number: week, year, product, amount,
+  }))
+  if (rows.length > 0) await serviceSupabase.from('weekly_sales_products').insert(rows)
+}
+
+// ─── Calculs métier ──────────────────────────────────────────────────────────
+
+/** Familles fusionnées N/N-1, triées par CA N desc, plafonnées à 12 lignes (le reste en AUTRES) */
+function buildFamRows(vn: { total: number; familles: Famille[] }, vn1: { total: number; familles: Famille[] }, max = 12): FamRow[] {
+  const map1 = new Map<string, number>()
+  for (const f of vn1.familles) map1.set(f.nom.toUpperCase(), f.total_montant)
+  const rows: FamRow[] = vn.familles
+    .map(f => {
+      const caN1 = map1.has(f.nom.toUpperCase()) ? map1.get(f.nom.toUpperCase())! : null
+      return { nom: f.nom, caN: f.total_montant, caN1, ecart: f.total_montant - (caN1 ?? 0) }
+    })
+    .sort((a, b) => b.caN - a.caN)
+  if (rows.length <= max) return rows
+  const head = rows.slice(0, max - 1)
+  const tail = rows.slice(max - 1)
+  const caN  = tail.reduce((s, r) => s + r.caN, 0)
+  const caN1 = tail.reduce((s, r) => s + (r.caN1 ?? 0), 0)
+  head.push({ nom: 'AUTRES FAMILLES', caN, caN1: caN1 > 0 ? caN1 : null, ecart: caN - caN1 })
+  return head
+}
+
+/** Statut de semaine selon les seuils métier boucherie (analyse N vs N-1) */
+function buildStatus(caVar: number): WeekStatus {
+  const v = caVar * 100
+  if (v > 10)  return { label: 'SEMAINE EN FORTE PROGRESSION', color: '#2E7D32', light: '#E6F4EA', desc: 'Le CA progresse nettement par rapport à la même semaine l\'an dernier. Capitalisez sur cette dynamique : notez ce qui a changé (météo, événements, offres) pour pouvoir le reproduire.' }
+  if (v > 0)   return { label: 'SEMAINE EN PROGRESSION', color: '#43A047', light: '#E6F4EA', desc: 'Le CA est en hausse par rapport à la même semaine l\'an dernier. La trajectoire est bonne : surveillez les familles en retrait pour transformer cette progression en tendance.' }
+  if (v > -5)  return { label: 'SEMAINE STABLE - À SURVEILLER', color: '#D97706', light: '#FEF3C7', desc: 'Le CA est en léger retrait par rapport à la même semaine l\'an dernier. Rien d\'alarmant, mais identifiez les familles et produits qui décrochent pour réagir vite.' }
+  return { label: 'SEMAINE EN RECUL', color: '#C62828', light: '#FCE8E6', desc: 'Le CA recule sensiblement par rapport à la même semaine l\'an dernier. Vérifiez la comparabilité des semaines (jours fériés, fermetures) puis concentrez-vous sur les recommandations page 6.' }
+}
+
+/** Résumé exécutif calculé (independant de l'IA — toujours disponible) */
+function buildExecSummary(data: ReportData, famRows: FamRow[], caVar: number): string {
+  const fn = data.financier_n, fn1 = data.financier_n1
+  const sorted = [...famRows].sort((a, b) => b.ecart - a.ecart)
+  const best = sorted[0], worst = sorted[sorted.length - 1]
+  const dTickets = fn.nb_tickets - fn1.nb_tickets
+  const panierUp = fn.moyenne_ticket >= fn1.moyenne_ticket
+  const p1 = caVar >= 0
+    ? `CA de ${eur0(fn.ca_net)} sur la semaine ${data.week_number}, en progression de ${(caVar * 100).toFixed(1)}% par rapport à la même semaine ${data.year - 1}.`
+    : `CA de ${eur0(fn.ca_net)} sur la semaine ${data.week_number}, en retrait de ${Math.abs(caVar * 100).toFixed(1)}% par rapport à la même semaine ${data.year - 1}.`
+  const p2 = `${dTickets >= 0 ? dTickets + ' tickets de plus' : Math.abs(dTickets) + ' tickets de moins'} qu'en ${data.year - 1}, avec un panier moyen ${panierUp ? 'en hausse' : 'en baisse'} à ${eur(fn.moyenne_ticket)}.`
+  const p3 = best && worst && best !== worst
+    ? `${trunc(best.nom, 24)} tire la performance (${signEur(best.ecart)}) tandis que ${trunc(worst.nom, 24)} recule (${signEur(worst.ecart)}).`
+    : ''
+  return sanitize(`${p1} ${p2} ${p3}`.trim())
+}
+
+/** Insights via Haiku (rapide) — Sonnet depassait le budget 60s de Vercel Hobby */
+async function generateInsights(data: ReportData, famRows: FamRow[]): Promise<Insights> {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' })
   const fn = data.financier_n, fn1 = data.financier_n1
   const caVar = fn1.ca_net ? ((fn.ca_net - fn1.ca_net) / fn1.ca_net * 100).toFixed(1) : '0'
-  const famMapI = new Map<string, Famille>()
-  for (const f of data.ventes_n1.familles) famMapI.set(f.nom.toUpperCase(), f)
-  const famSummary = data.ventes_n.familles.map(f => {
-    const f1 = famMapI.get(f.nom.toUpperCase())
-    const ec = f.total_montant - (f1?.total_montant ?? 0)
-    const pctCA = data.ventes_n.total ? (f.total_montant / data.ventes_n.total * 100).toFixed(1) : '0'
-    return `${f.nom} : ${f.total_montant.toFixed(0)} € (${pctCA}% du CA), écart N-1 : ${ec >= 0 ? '+' : ''}${ec.toFixed(0)} €`
+  const famSummary = famRows.map(f => {
+    const pctCA = data.ventes_n.total ? (f.caN / data.ventes_n.total * 100).toFixed(1) : '0'
+    return `${f.nom} : ${f.caN.toFixed(0)} EUR (${pctCA}% du CA), ecart N-1 : ${f.ecart >= 0 ? '+' : ''}${f.ecart.toFixed(0)} EUR`
   }).join('\n')
-
-  const response = await client.messages.create({
-    model: 'claude-sonnet-4-6',
-    max_tokens: 1024,
-    messages: [{
-      role: 'user',
-      content: `Tu es expert en analyse de ventes pour une boucherie artisanale. Génère des insights concis et des recommandations en français professionnel.
-
-DONNÉES SEMAINE ${data.week_number} (${data.period_n}) :
-CA N : ${fn.ca_net.toFixed(2)} € | CA N-1 : ${fn1.ca_net.toFixed(2)} € | Variation : ${caVar}%
-Tickets N : ${fn.nb_tickets} | Panier moyen N : ${fn.moyenne_ticket.toFixed(2)} € | Panier moyen N-1 : ${fn1.moyenne_ticket.toFixed(2)} €
-
-VENTES PAR FAMILLE :
-${famSummary}
-
-Retourne UNIQUEMENT ce JSON sans aucun texte avant ou après :
-{"insights":["insight 1","insight 2","insight 3","insight 4","insight 5"],"recommendations":["reco 1","reco 2","reco 3"]}
-
-Règles :
-• Insights : faits précis avec chiffres (ex. "Le CA progresse de X %, tiré par la famille…")
-• Recommandations : actions concrètes spécifiques à la boucherie (ex. "Mettre en avant…", "Renforcer le stock de…")
-• Tout en français, ton direct et professionnel, une phrase par bullet`,
-    }],
+  const topsStr  = data.tops.slice(0, 5).map(t => `${t.designation} (+${Math.abs(t.ecart).toFixed(0)} EUR)`).join(', ')
+  const flopsStr = data.flops.slice(0, 5).map(f => `${f.designation} (${f.ecart.toFixed(0)} EUR)`).join(', ')
+  const r = await client.messages.create({
+    model: 'claude-haiku-4-5-20251001', max_tokens: 900,
+    messages: [{ role: 'user', content: `Tu es expert en analyse de ventes pour une boucherie artisanale francaise. Ton : positif d'abord, chiffre et concret, actionnable, respectueux du metier (le boucher connait son metier, tu confirmes et enrichis).\n\nDONNEES SEMAINE ${data.week_number} (${data.period_n}) :\nCA N : ${fn.ca_net.toFixed(2)} EUR | CA N-1 : ${fn1.ca_net.toFixed(2)} EUR | Variation : ${caVar}%\nTickets N : ${fn.nb_tickets} (N-1 : ${fn1.nb_tickets}) | Panier moyen N : ${fn.moyenne_ticket.toFixed(2)} EUR (N-1 : ${fn1.moyenne_ticket.toFixed(2)} EUR)\n\nVENTES PAR FAMILLE :\n${famSummary}\n\nTOP PRODUITS EN PROGRESSION : ${topsStr || 'n/a'}\nPRODUITS EN BAISSE : ${flopsStr || 'n/a'}\n\nRappels metier : une semaine avec jour ferie fait mecaniquement -15 a -20% de CA ; saisonnalite boucherie (pic Paques S15-16, ete, fetes S50-51, creux janvier-fevrier) ; le traiteur a la meilleure marge (50-65%) ; variation > +-25% sans explication saisonniere = a investiguer.\n\nRetourne UNIQUEMENT ce JSON :\n{"resume":"2 phrases max qui resument la semaine","insights":["insight 1","insight 2","insight 3","insight 4","insight 5"],"vigilance":["point de vigilance 1","point de vigilance 2"],"recommendations":["reco 1","reco 2","reco 3"]}\n\nInsights : faits precis avec chiffres (une phrase chacun). Vigilance : risques ou anomalies a surveiller (2 max, une phrase). Recommandations : actions concretes de boucherie pour la semaine prochaine, la premiere etant LA priorite. Tout en francais.` }],
   })
-
-  const text = response.content[0].type === 'text' ? response.content[0].text : ''
   try {
-    return JSON.parse(extractJSONObject(text))
+    const parsed = JSON.parse(extractJSONObject(r.content[0].type === 'text' ? r.content[0].text : ''))
+    return {
+      resume:          sanitize(parsed.resume || ''),
+      insights:        (parsed.insights || []).slice(0, 5).map(sanitize).filter(Boolean),
+      vigilance:       (parsed.vigilance || []).slice(0, 2).map(sanitize).filter(Boolean),
+      recommendations: (parsed.recommendations || []).slice(0, 3).map(sanitize).filter(Boolean),
+    }
   } catch {
     return {
-      insights: ['Analyse non disponible pour cette semaine.'],
-      recommendations: ['Contactez votre conseiller PILOTE pour une analyse personnalisée.'],
+      resume: 'Analyse indisponible cette semaine.',
+      insights: ['Analyse non disponible.'],
+      vigilance: [],
+      recommendations: ['Contactez votre conseiller PILOTE.'],
     }
   }
 }
 
-// ─── QuickChart — Graphiques PNG ───────────────────────────────────────
+// ─── QuickChart ───────────────────────────────────────────────────────────────
+// REGLES ABSOLUES QuickChart :
+// 1. Aucun caractere non-ASCII dans la config JSON
+// 2. ticks.callback interdit — crash Chart.js 2.9.4 dans le sandbox
+// 3. title.text doit etre une string simple (pas un array)
+// 4. outlabeledPie : leader lines vers les labels externes
+// 5. PIE = TOUTES les familles (pas de groupement) — le dashboard fait le top4+Autres
 
-async function getChartBuffers(data: ReportData): Promise<{ pieBuffer: Buffer; barBuffer: Buffer }> {
-  const famMapC = new Map<string, Famille>()
-  for (const f of data.ventes_n1.familles) famMapC.set(f.nom.toUpperCase(), f)
-  const famNames = data.ventes_n.familles.map(f => trunc(f.nom, 18))
+async function getPieBuffer(data: ReportData): Promise<Buffer> {
+  // Strip diacritics + non-ASCII (QuickChart sandbox rule)
+  const toAscii = (s: string) =>
+    s.normalize('NFD')
+      .replace(/[̀-ͯ]/g, '')
+      .replace(/[^\x00-\x7F]/g, '?')
+
+  const famNames = data.ventes_n.familles.map(f => trunc(toAscii(f.nom), 18))
   const famCA    = data.ventes_n.familles.map(f => +f.total_montant.toFixed(2))
-  const famCA1   = data.ventes_n.familles.map(f => +(famMapC.get(f.nom.toUpperCase())?.total_montant ?? 0).toFixed(2))
 
-  // ── G2 : Donut — D'où vient votre CA ? ─────────────────────────────
-  const donutPalette = ['#1E40AF','#2563EB','#3B82F6','#60A5FA','#93C5FD','#BFDBFE','#DBEAFE','#EFF6FF','#172554','#1D4ED8']
-    .slice(0, famNames.length)
+  const donutPalette = [
+    '#1E3A5F', '#DC2626', '#D97706', '#059669',
+    '#7C3AED', '#0891B2', '#BE185D', '#65A30D', '#9333EA', '#F59E0B',
+  ].slice(0, famNames.length)
 
   const pieConfig = {
-    type: 'doughnut',
+    type: 'outlabeledPie',
     data: {
       labels: famNames,
       datasets: [{
         data: famCA,
         backgroundColor: donutPalette,
-        borderWidth: 3,
+        borderWidth: 2,
         borderColor: '#FFFFFF',
       }],
     },
     options: {
-      cutoutPercentage: 55,
-      legend: {
-        position: 'right',
-        labels: {
-          fontSize: 11,
-          padding: 14,
-          boxWidth: 14,
-          fontColor: '#1E293B',
-        },
-      },
       title: {
         display: true,
-        text: "D'où vient votre CA ?",
+        text: 'Repartition CA - S' + data.week_number + ' ' + data.year,
         fontSize: 14,
         fontColor: '#1E293B',
         fontStyle: 'bold',
-        padding: 18,
+        padding: 14,
       },
+      legend: { display: false },
       plugins: {
-        datalabels: {
-          display: true,
-          formatter: 'function(value,ctx){var d=ctx.chart.data.datasets[0].data;var t=d.reduce(function(a,b){return a+b;},0);var p=value/t*100;return p<5?"":p.toFixed(0)+"%";}',
+        datalabels: { display: false },
+        outlabels: {
+          text: '%l\n%p',
           color: 'white',
-          font: { size: 11, weight: 'bold' },
+          stretch: 38,
+          font: { resizable: true, minSize: 8, maxSize: 12, size: 11, weight: 'bold' },
+          padding: { top: 4, bottom: 4, left: 7, right: 7 },
+          borderRadius: 4,
         },
       },
     },
   }
 
-  // ── G1 : Barres groupées verticales N vs N-1 ──────────────────────────────
-  const barConfig = {
-    type: 'bar',
-    data: {
-      labels: famNames,
-      datasets: [
-        {
-          label: `Année préc. (${data.year - 1})`,
-          data: famCA1,
-          backgroundColor: '#94A3B8',
-          barThickness: 24,
-        },
-        {
-          label: `Cette année (${data.year})`,
-          data: famCA,
-          backgroundColor: '#2563EB',
-          barThickness: 24,
-        },
-      ],
-    },
-    options: {
-      title: {
-        display: true,
-        text: [`Comparatif des ventes par rayon`, `Semaine ${data.week_number} · ${data.year} vs ${data.year - 1}`],
-        fontSize: 14,
-        fontColor: '#1E293B',
-        fontStyle: 'bold',
-        padding: 18,
-      },
-      legend: {
-        position: 'top',
-        labels: { fontSize: 11, padding: 18, boxWidth: 14, fontColor: '#1E293B' },
-      },
-      layout: { padding: { top: 24, bottom: 10, left: 10, right: 10 } },
-      scales: {
-        xAxes: [{
-          ticks: { fontSize: 11, fontColor: '#1E293B', fontStyle: 'bold' },
-          gridLines: { display: false },
-        }],
-        yAxes: [{
-          ticks: {
-            beginAtZero: true,
-            fontSize: 9,
-            fontColor: '#64748B',
-            callback: "function(v){if(v===0)return '';return v>=1000?(v/1000).toFixed(0)+'k €':v+' €';}",
-          },
-          gridLines: { color: '#E8EDF3', drawBorder: false, lineWidth: 0.8 },
-        }],
-      },
-      plugins: {
-        datalabels: {
-          display: true,
-          anchor: 'start',
-          align: 'end',
-          offset: 2,
-          clamp: true,
-          formatter: "function(v){if(v<100)return '';return v>=1000?(v/1000).toFixed(1)+'k':String(Math.round(v));}",
-          font: { size: 8, weight: 'bold' },
-          color: 'white',
-        },
-      },
-    },
+  const pieBody = JSON.stringify({ chart: pieConfig, width: 820, height: 460, backgroundColor: 'white', version: '2.9.4' })
+
+  const pieRes = await fetch('https://quickchart.io/chart', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: pieBody })
+
+  if (!pieRes.ok) {
+    const ct = pieRes.headers.get('content-type') || ''
+    const body = ct.includes('image') ? '[binary image]' : (await pieRes.text()).slice(0, 300)
+    throw new Error(`QuickChart pie ${pieRes.status} | ${body}`)
   }
 
-  const QC = 'https://quickchart.io/chart'
-  const [pieRes, barRes] = await Promise.all([
-    fetch(QC, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chart: pieConfig, width: 720, height: 370, backgroundColor: 'white', version: '2.9.4' }) }),
-    fetch(QC, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chart: barConfig, width: 720, height: 470, backgroundColor: 'white', version: '2.9.4' }) }),
-  ])
-
-  if (!pieRes.ok) throw new Error('QuickChart pie: ' + await pieRes.text())
-  if (!barRes.ok) throw new Error('QuickChart bar: ' + await barRes.text())
-
-  const [pieBuffer, barBuffer] = await Promise.all([
-    pieRes.arrayBuffer().then(ab => Buffer.from(ab)),
-    barRes.arrayBuffer().then(ab => Buffer.from(ab)),
-  ])
-  return { pieBuffer, barBuffer }
+  return Buffer.from(await pieRes.arrayBuffer())
 }
-
-// ─── PDF rendering ──────────────────────────────────────────────────
 
 async function generatePDF(report: ComputedReport): Promise<Buffer> {
-  const element = React.createElement(PiloteReport, { r: report })
-  return renderToBuffer(element)
+  await ensureFonts()
+  return renderToBuffer(React.createElement(PiloteReport, { r: report }))
 }
 
-// ─── POST Handler ───────────────────────────────────────────────────
+// ─── POST Handler ───────────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
   try {
@@ -855,30 +1042,30 @@ export async function POST(req: NextRequest) {
     if (!finN || !finN1 || !venN || !venN1)
       return NextResponse.json({ error: 'Les 4 fichiers PDF sont requis' }, { status: 400 })
 
-    // 1. Parse PDFs (parallel)
     const [tFN, tFN1, tVN, tVN1] = await Promise.all([
       parsePDF(finN), parsePDF(finN1), parsePDF(venN), parsePDF(venN1),
     ])
 
-    // 2. Extract structured data (3 Haiku calls parallel)
     const data = await extractData({ fin_n: tFN, fin_n1: tFN1, ventes_n: tVN, ventes_n1: tVN1 })
 
-    // 3. Insights + Charts in parallel (Sonnet + 2 QuickChart)
-    const [insightsResult, chartsResult] = await Promise.all([
-      generateInsights(data),
-      getChartBuffers(data),
-    ])
+    // Garde-fou : si aucun CA n'est detecte dans le Releve Financier, le fichier est
+    // probablement le mauvais (souvent une inversion Financier <-> Ventes par familles)
+    if (data.financier_n.ca_net <= 0) {
+      return NextResponse.json({
+        error: 'Aucun chiffre d\'affaires detecte dans le " Releve Financier - Semaine N ". Verifiez que les fichiers ne sont pas inverses : le Releve Financier va dans les 2 premiers champs, les Ventes par familles dans les 2 derniers.',
+      }, { status: 400 })
+    }
 
-    // 4. Pre-compute derived data
-    const famMap = new Map<string, Famille>()
-    for (const f of data.ventes_n1.familles) famMap.set(f.nom.toUpperCase(), f)
-    const tops  = data.tops
-    const flops = data.flops
+    const famRows = buildFamRows(data.ventes_n, data.ventes_n1)
     const caVar = data.financier_n1.ca_net
       ? (data.financier_n.ca_net - data.financier_n1.ca_net) / data.financier_n1.ca_net
       : 0
 
-    // 5. Get client info
+    const [insightsResult, pieBuffer] = await Promise.all([
+      generateInsights(data, famRows),
+      getPieBuffer(data),
+    ])
+
     let clientEmail: string | null = null
     let clientName:  string | null = null
     if (clientId) {
@@ -886,16 +1073,15 @@ export async function POST(req: NextRequest) {
       if (client) { clientEmail = client.email; clientName = client.name }
     }
 
-    // 6. Build ComputedReport + generate PDF
     const report: ComputedReport = {
       data, clientName, insights: insightsResult,
-      pieBuffer: chartsResult.pieBuffer,
-      barBuffer: chartsResult.barBuffer,
-      tops, flops, famMap, caVar,
+      pieBuffer,
+      tops: data.tops, flops: data.flops, famRows, caVar,
+      status: buildStatus(caVar),
+      execSummary: buildExecSummary(data, famRows, caVar),
     }
     const pdfBuffer = await generatePDF(report)
 
-    // 7. Upload to Supabase storage
     const fileName = `rapport-s${data.week_number}-${data.year}-${Date.now()}.pdf`
     const { error: uploadError } = await serviceSupabase.storage.from('reports').upload(
       fileName, pdfBuffer, { contentType: 'application/pdf', upsert: false },
@@ -905,8 +1091,7 @@ export async function POST(req: NextRequest) {
     const { data: urlData } = serviceSupabase.storage.from('reports').getPublicUrl(fileName)
     const fileUrl = urlData.publicUrl
 
-    // 8. Save to DB
-    const title = `Analyse S${data.week_number} - ${data.period_n}${clientName ? ' — ' + clientName : ''}`
+    const title = `Analyse S${data.week_number} - ${data.period_n}${clientName ? ' - ' + clientName : ''}`
     const { error: dbError } = await serviceSupabase.from('reports').insert({
       profile_id: profile.id, title,
       week_number: data.week_number, year: data.year,
@@ -915,31 +1100,46 @@ export async function POST(req: NextRequest) {
     })
     if (dbError) return NextResponse.json({ error: 'DB: ' + dbError.message }, { status: 500 })
 
-    // 9. Email
-    const toEmail = clientEmail || profile.delivery_email || user.email || ''
-    const resend = new Resend(process.env.RESEND_API_KEY ?? '')
-    await resend.emails.send({
-      from: 'PILOTE <onboarding@resend.dev>',
-      to: toEmail,
-      subject: `Rapport hebdomadaire ${title}`,
-      html: `<div style="font-family:sans-serif;max-width:600px;margin:0 auto">
-        <div style="background:#1E3A5F;padding:32px 40px">
-          <div style="color:#FF8C00;font-size:11px;letter-spacing:4px;margin-bottom:10px">PILOTE</div>
-          <h2 style="color:#FFFFFF;margin:0;font-size:22px">Votre rapport est prêt</h2>
-        </div>
-        <div style="padding:32px 40px;border:1px solid #E0E0E0;border-top:none">
-          <p style="color:#444;margin-top:0"><strong>${title}</strong></p>
-          <p style="color:#666;font-size:14px">6 pages · Analyse IA · Graphiques de répartition · Top &amp; Flop produits</p>
-          <div style="margin:28px 0;text-align:center">
-            <a href="${fileUrl}"
-               style="background:#1E3A5F;color:white;padding:14px 32px;border-radius:8px;text-decoration:none;font-weight:bold;font-size:15px">
-              Télécharger le rapport PDF
-            </a>
-          </div>
-          <p style="color:#999;font-size:11px;text-align:center">Rapport confidentiel · Généré automatiquement par PILOTE</p>
-        </div>
-      </div>`,
-    })
+    // Email non bloquant : un echec Resend ne doit ni planter ni ralentir la generation
+    try {
+      const toEmail = clientEmail || profile.delivery_email || user.email || ''
+      if (toEmail) {
+        const resend = new Resend(process.env.RESEND_API_KEY ?? '')
+        await resend.emails.send({
+          from: 'PILOTE <onboarding@resend.dev>',
+          to: toEmail,
+          subject: `Rapport hebdomadaire ${title}`,
+          html: `<div style="font-family:'Plus Jakarta Sans','Segoe UI',system-ui,-apple-system,sans-serif;max-width:600px;margin:0 auto;background:#ffffff">
+  <div style="background:#1E3A5F;padding:36px 40px 32px">
+    <div style="font-size:15px;font-weight:800;letter-spacing:4px;color:#ffffff;margin-bottom:22px">PILOTE<span style="color:#FF8C00">.</span></div>
+    <div style="font-size:11px;font-weight:600;letter-spacing:2px;color:#c5d2e2;text-transform:uppercase;margin-bottom:6px">Semaine ${data.week_number} · ${data.year}</div>
+    <h1 style="color:#ffffff;margin:0;font-size:24px;font-weight:800;letter-spacing:-0.5px">Votre rapport hebdomadaire est prêt</h1>
+    <div style="width:44px;height:3px;background:#FF8C00;border-radius:2px;margin-top:16px"></div>
+  </div>
+  <div style="padding:32px 40px;border:1px solid #e4eaf1;border-top:none;border-radius:0 0 12px 12px">
+    <p style="color:#111827;font-size:15px;font-weight:700;margin:0 0 6px">${title}</p>
+    <p style="color:#6b7280;font-size:13px;line-height:1.6;margin:0 0 24px">7 pages · Analyse IA · Graphique de répartition · Top &amp; Flop produits · Synthèse de la semaine</p>
+    <div style="background:#f2f5f9;border-left:3px solid #1E3A5F;border-radius:6px;padding:14px 16px;margin-bottom:28px">
+      <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;color:#1E3A5F;text-transform:uppercase;margin-bottom:4px">Période analysée</div>
+      <div style="color:#374151;font-size:13px">${data.period_n} — comparée à ${data.period_n1}</div>
+    </div>
+    <div style="text-align:center;margin-bottom:28px">
+      <a href="${fileUrl}" style="display:inline-block;background:#1E3A5F;color:#ffffff;padding:14px 36px;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px">Télécharger le rapport PDF</a>
+    </div>
+    <p style="color:#9ca3af;font-size:11px;text-align:center;margin:0;border-top:1px solid #f3f4f6;padding-top:16px">Rapport confidentiel · Généré automatiquement par <span style="font-weight:700;color:#1E3A5F">PILOTE<span style="color:#FF8C00">.</span></span></p>
+  </div>
+</div>`,
+        })
+      }
+    } catch (emailErr) {
+      console.error('Email rapport non envoye:', emailErr)
+    }
+
+    if (clientId) {
+      // Historisation : semaine N ET semaine N-1 (meme semaine, annee precedente).
+      await archiveWeekData(serviceSupabase, clientId, data.week_number, data.year, data.financier_n, data.ventes_n.familles, data.prodN)
+      await archiveWeekData(serviceSupabase, clientId, data.week_number, data.year - 1, data.financier_n1, data.ventes_n1.familles, data.prodN1)
+    }
 
     return NextResponse.json({ success: true, title, file_url: fileUrl })
 
