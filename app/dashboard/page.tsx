@@ -6,7 +6,7 @@ import { formatDate } from '@/lib/utils'
 import Link from 'next/link'
 import { DonutChart } from './DashboardChart'
 
-// ─── Helpers dates ────────────────────────────────────────────────────────────
+// ─── Helpers dates ──────────────────────────────────────────────────────────────────
 
 function getISOWeek(date: Date): { week: number; year: number } {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
@@ -162,6 +162,8 @@ export default async function DashboardPage() {
   let hasIntegration = false
   let anyPlanning = false
   let employeeCount = 0
+  let aVerifierCount = 0
+  let famillesNonMappees = 0
 
   if (clientId) {
     // ── CA de la semaine écoulée (fallback : dernier CA connu) ──
@@ -191,6 +193,29 @@ export default async function DashboardPage() {
     for (const inv of invoices || []) {
       if (inv.is_fixed_charge) chargesFixesSem += parseFloat(String(inv.prorata_ht || 0))
       else achatsVariables += parseFloat(String(inv.amount_ht || 0))
+    }
+
+    // ── Fiabilité des marges : factures importées « à vérifier » + familles non catégorisées ──
+    const [{ count: avCount }, { data: mapRows }, { data: famWeeks }] = await Promise.all([
+      serviceSupabase.from('invoices').select('id', { count: 'exact', head: true })
+        .eq('client_id', clientId).eq('status', 'a_verifier'),
+      serviceSupabase.from('margin_mappings').select('source_type, source_name').eq('client_id', clientId),
+      serviceSupabase.from('weekly_ca').select('families_detail').eq('client_id', clientId)
+        .eq('year', currentYear).order('week_number', { ascending: false }).limit(4),
+    ])
+    aVerifierCount = avCount || 0
+    const mappings = mapRows || []
+    if (mappings.length > 0) {
+      const mapped = new Set(mappings.filter(m => m.source_type === 'famille').map(m => String(m.source_name).toUpperCase()))
+      const detected = new Set<string>()
+      for (const w of famWeeks || []) {
+        if (!Array.isArray(w.families_detail)) continue
+        for (const f of w.families_detail as FamilyRow[]) {
+          const nom = String(f.nom || '').trim()
+          if (nom && !mapped.has(nom.toUpperCase())) detected.add(nom.toUpperCase())
+        }
+      }
+      famillesNonMappees = detected.size
     }
 
     // ── Intégration comptable connectée ? (checklist de démarrage) ──
@@ -279,10 +304,12 @@ export default async function DashboardPage() {
     ? ((caTrend[caTrend.length - 1].ca - caTrend[caTrend.length - 2].ca) / caTrend[caTrend.length - 2].ca) * 100
     : null
 
-  const attention: { color: string; text: string }[] = [
+  const attention: { color: string; text: string; href?: string; cta?: string }[] = [
     ...legalAlerts.map(t => ({ color: 'bg-red-500', text: `Planning S${currentWeek} · ${t}` })),
     ...cddAlerts.map(t => ({ color: 'bg-amber-500', text: t })),
     ...(ratioMS !== null && ratioMS > 40 ? [{ color: 'bg-amber-500', text: `Masse salariale à ${ratioMS.toFixed(0)} % du CA (cible < 35 %)` }] : []),
+    ...(aVerifierCount > 0 ? [{ color: 'bg-amber-500', text: `${aVerifierCount} facture${aVerifierCount > 1 ? 's' : ''} importée${aVerifierCount > 1 ? 's' : ''} « à vérifier » — exclue${aVerifierCount > 1 ? 's' : ''} des marges tant que non validée${aVerifierCount > 1 ? 's' : ''}`, href: '/dashboard/facturation', cta: 'Valider' }] : []),
+    ...(famillesNonMappees > 0 ? [{ color: 'bg-pilote', text: `${famillesNonMappees} famille${famillesNonMappees > 1 ? 's' : ''} de vente non catégorisée${famillesNonMappees > 1 ? 's' : ''} — les marges par groupe utilisent un classement automatique en attendant`, href: '/dashboard/marges?config=1', cta: 'Catégoriser' }] : []),
   ]
 
   // ── Checklist de démarrage (onboarding nouveau client) ──
@@ -316,6 +343,7 @@ export default async function DashboardPage() {
             { href: '/dashboard/planning',     icon: CalendarDays, label: 'Planning' },
             { href: '/dashboard/facturation',  icon: Receipt,      label: 'Facturation' },
             { href: '/dashboard/valorisation', icon: Calculator,   label: 'Valorisation' },
+            { href: '/dashboard/marges',       icon: TrendingUp,   label: 'Marges' },
           ].map(l => (
             <Link key={l.href} href={l.href}
               className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 bg-white border border-gray-200 rounded-lg px-3 h-9 hover:border-pilote hover:text-pilote hover:shadow-card transition-all">
@@ -369,7 +397,12 @@ export default async function DashboardPage() {
             {attention.slice(0, 6).map((a, i) => (
               <div key={i} className="flex items-center gap-2.5">
                 <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${a.color}`} />
-                <p className="text-xs text-gray-600">{a.text}</p>
+                <p className="text-xs text-gray-600 flex-1">{a.text}</p>
+                {a.href && (
+                  <Link href={a.href} className="text-[11px] font-bold text-pilote hover:underline whitespace-nowrap flex-shrink-0">
+                    {a.cta ?? 'Voir'} →
+                  </Link>
+                )}
               </div>
             ))}
           </div>
