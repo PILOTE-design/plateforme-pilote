@@ -20,6 +20,7 @@ type Invoice = {
   category: string; amount_ht: number; tva_rate: number; amount_ttc: number
   notes?: string; week_number: number; year: number
   is_fixed_charge?: boolean; period_days?: number | null; prorata_ht?: number | null
+  status?: string | null
 }
 
 type WeeklyCA = { ca_total: number; ca_boucherie: number; ca_charcuterie: number; ca_traiteur: number; ca_vente: number }
@@ -251,6 +252,26 @@ export default function FacturationPage() {
     else toast({ variant: 'error', title: 'Erreur', description: 'La catégorie n\'a pas pu être modifiée.' })
   }
 
+  /** Valide une facture « à vérifier » — seules les validées entrent dans le calcul des marges */
+  async function validateInvoice(inv: Invoice) {
+    setInvoices(prev => prev.map(i => i.id === inv.id ? { ...i, status: 'validee' } : i))
+    setFixedAll(prev => prev.map(i => i.id === inv.id ? { ...i, status: 'validee' } : i))
+    const res = await fetch(`/api/invoices/${inv.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'validee' }) })
+    if (res.ok) toast({ variant: 'success', title: 'Facture validée' })
+    else { toast({ variant: 'error', title: 'Erreur', description: 'La validation a échoué.' }); load() }
+  }
+
+  /** Valide d'un coup toutes les factures « à vérifier » */
+  async function validateAllPending() {
+    const pending = [...new Map([...invoices, ...fixedAll].filter(i => i.status === 'a_verifier').map(i => [i.id, i])).values()]
+    if (pending.length === 0) return
+    setInvoices(prev => prev.map(i => i.status === 'a_verifier' ? { ...i, status: 'validee' } : i))
+    setFixedAll(prev => prev.map(i => i.status === 'a_verifier' ? { ...i, status: 'validee' } : i))
+    await Promise.all(pending.map(i => fetch(`/api/invoices/${i.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'validee' }) })))
+    toast({ variant: 'success', title: `${pending.length} facture${pending.length > 1 ? 's' : ''} validée${pending.length > 1 ? 's' : ''}` })
+    load()
+  }
+
   /** Bascule manuelle charge fixe <-> achat variable */
   async function toggleFixed(inv: Invoice) {
     const makeFixed = !inv.is_fixed_charge
@@ -360,6 +381,7 @@ export default function FacturationPage() {
   const sortedVariable   = [...variableInvoices].sort(
     (a, b) => (b.invoice_date || '').localeCompare(a.invoice_date || '') || b.amount_ht - a.amount_ht,
   )
+  const pendingCount = new Set([...invoices, ...fixedAll].filter(i => i.status === 'a_verifier').map(i => i.id)).size
   const variableTotalHt  = variableInvoices.reduce((s, i) => s + i.amount_ht, 0)
   const variableTotalTtc = variableInvoices.reduce((s, i) => s + i.amount_ttc, 0)
   const fixedTotalHt     = fixedInvoices.reduce((s, i) => s + i.amount_ht, 0)
@@ -552,6 +574,15 @@ export default function FacturationPage() {
           </div>
         )}
 
+        {/* Factures à vérifier — importées automatiquement, exclues des marges tant que non validées */}
+        {pendingCount > 0 && (
+          <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 flex items-center gap-2.5">
+            <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+            <p className="text-sm text-amber-800"><strong>{pendingCount} facture{pendingCount > 1 ? 's' : ''} à vérifier</strong> — importée{pendingCount > 1 ? 's' : ''} automatiquement, exclue{pendingCount > 1 ? 's' : ''} du calcul des marges tant que non validée{pendingCount > 1 ? 's' : ''}.</p>
+            <button onClick={validateAllPending} className="ml-auto text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-lg px-3 py-1.5 transition-colors flex-shrink-0">Tout valider</button>
+          </div>
+        )}
+
         {/* ── Achats de la semaine (liste plate, catégorie en pastille) ── */}
         <div className="bg-white rounded-2xl border border-gray-100 shadow-card overflow-hidden">
           <div className="px-5 py-3.5 border-b border-gray-100 flex items-center justify-between">
@@ -600,6 +631,12 @@ export default function FacturationPage() {
                           <div>
                             <div className="font-semibold text-sm text-gray-900">{inv.supplier_name}</div>
                             {inv.invoice_number && <div className="text-xs text-gray-400">{inv.invoice_number}</div>}
+                            {inv.status === 'a_verifier' && (
+                              <button onClick={() => validateInvoice(inv)} title="Importée automatiquement — cliquer pour valider (elle comptera dans les marges)"
+                                className="mt-0.5 inline-flex items-center gap-1 text-[9px] font-bold text-amber-700 bg-amber-100 hover:bg-amber-200 px-1.5 py-0.5 rounded-full transition-colors">
+                                à vérifier · valider
+                              </button>
+                            )}
                           </div>
                         </div>
                       </td>
@@ -656,7 +693,7 @@ export default function FacturationPage() {
               <div className="w-8 h-8 rounded-lg bg-white ring-1 ring-pilote-200/60 flex items-center justify-center flex-shrink-0"><Repeat className="w-4 h-4 text-pilote" /></div>
               <div>
                 <h2 className="font-bold text-gray-900">Charges structurelles</h2>
-                <p className="text-[11px] text-gray-400">Toutes les charges fixes dont la période couvre la semaine {week} — quelle que soit leur date de facture</p>
+                <p className="text-[11px] text-gray-400">Toutes les charges fixes dont la période couvre la semaine {week} — la catégorie détermine le groupe de marge qui les supporte</p>
               </div>
             </div>
             {fixedInvoices.length > 0 && (
@@ -681,6 +718,7 @@ export default function FacturationPage() {
               <thead>
                 <tr className="bg-gray-50 text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
                   <th className="px-4 py-2.5 text-left">Fournisseur</th>
+                  <th className="px-4 py-2.5 text-left">Catégorie</th>
                   <th className="px-4 py-2.5 text-left">Facturée le</th>
                   <th className="px-4 py-2.5 text-right">Montant HT</th>
                   <th className="px-4 py-2.5 text-center">Période</th>
@@ -697,8 +735,24 @@ export default function FacturationPage() {
                         <div>
                           <div className="font-semibold text-sm text-gray-900">{inv.supplier_name}</div>
                           {inv.invoice_number && <div className="text-xs text-gray-400">{inv.invoice_number}</div>}
+                          {inv.status === 'a_verifier' && (
+                            <button onClick={() => validateInvoice(inv)} title="Importée automatiquement — cliquer pour valider (elle comptera dans les marges)"
+                              className="mt-0.5 inline-flex items-center gap-1 text-[9px] font-bold text-amber-700 bg-amber-100 hover:bg-amber-200 px-1.5 py-0.5 rounded-full transition-colors">
+                              à vérifier · valider
+                            </button>
+                          )}
                         </div>
                       </div>
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <select
+                        value={inv.category}
+                        onChange={e => updateCategory(inv, e.target.value)}
+                        className={`text-xs font-semibold rounded-full pl-2.5 pr-1.5 py-0.5 border-0 cursor-pointer focus:outline-none focus:ring-2 focus:ring-pilote-200 ${catInfo(inv.category).color}`}
+                        title="Catégorie de la charge — détermine le groupe de marge qui la supporte"
+                      >
+                        {CATEGORIES.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
+                      </select>
                     </td>
                     <td className="px-4 py-2.5 text-sm text-gray-600">{new Date(inv.invoice_date).toLocaleDateString('fr-FR')}</td>
                     <td className="px-4 py-2.5 text-right font-semibold text-sm text-gray-900">{fmtEuro(inv.amount_ht)}</td>
@@ -731,7 +785,7 @@ export default function FacturationPage() {
               </tbody>
               <tfoot>
                 <tr className="bg-pilote text-white">
-                  <td colSpan={2} className="px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-white/60">Total charges structurelles</td>
+                  <td colSpan={3} className="px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-white/60">Total charges structurelles</td>
                   <td className="px-4 py-2.5 text-right font-bold">{fmtEuro(fixedTotalHt)}</td>
                   <td className="px-4 py-2.5"></td>
                   <td className="px-4 py-2.5 text-right font-bold text-yellow-300">≈ {fmtEuro(fixedWeekly)}/sem</td>
