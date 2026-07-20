@@ -6,7 +6,6 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useToast } from '@/components/ui/toast'
 import { useConfirm } from '@/components/ui/confirm-dialog'
-import { KpiCard } from '@/components/ui/kpi-card'
 import {
   Receipt, ChevronLeft, ChevronRight, Plus, Trash2,
   TrendingUp, TrendingDown, ShoppingCart, Users, Euro,
@@ -14,7 +13,7 @@ import {
   Link2, Link2Off, RefreshCw, ArrowUpRight, Repeat, Undo2
 } from 'lucide-react'
 
-// ─── Types ──────────────────────────────────────
+// ─── Types ──────────────────────
 
 type Invoice = {
   id: string; supplier_name: string; invoice_number?: string; invoice_date: string
@@ -42,15 +41,17 @@ type ProviderMeta = {
   helpUrl: string; description: string
 }
 
-// ─── Constantes ────────────────────────────────────
+// ─── Constantes ────────────────────────
 
+// Palette catégories : teintes sourdes et cohérentes (fond -50, texte -700) + point de
+// couleur pour la barre de répartition — évite l'effet « arc-en-ciel » criard.
 const CATEGORIES = [
-  { key: 'viande',         label: 'Viande',         color: 'bg-red-100 text-red-800'       },
-  { key: 'charcuterie',    label: 'Charcuterie',    color: 'bg-orange-100 text-orange-800'  },
-  { key: 'epicerie',       label: 'Épicerie',       color: 'bg-yellow-100 text-yellow-800'  },
-  { key: 'emballage',      label: 'Emballage',      color: 'bg-blue-100 text-blue-800'     },
-  { key: 'frais_generaux', label: 'Frais généraux', color: 'bg-purple-100 text-purple-800' },
-  { key: 'autre',          label: 'Autre',          color: 'bg-gray-100 text-gray-700'     },
+  { key: 'viande',         label: 'Viande',         color: 'bg-red-50 text-red-700',       dot: '#b91c1c' },
+  { key: 'charcuterie',    label: 'Charcuterie',    color: 'bg-orange-50 text-orange-700', dot: '#c2410c' },
+  { key: 'epicerie',       label: 'Épicerie',       color: 'bg-amber-50 text-amber-700',   dot: '#b45309' },
+  { key: 'emballage',      label: 'Emballage',      color: 'bg-sky-50 text-sky-700',       dot: '#0369a1' },
+  { key: 'frais_generaux', label: 'Frais généraux', color: 'bg-violet-50 text-violet-700', dot: '#6d28d9' },
+  { key: 'autre',          label: 'Autre',          color: 'bg-gray-100 text-gray-600',    dot: '#6b7280' },
 ]
 
 const TVA_RATES = [0, 5.5, 10, 20]
@@ -74,7 +75,7 @@ const PROVIDERS_META: ProviderMeta[] = [
   { id: 'ebp',       name: 'EBP',       logo: 'EBP', color: 'bg-orange-500', tokenLabel: 'Token API EBP en ligne', tokenPlaceholder: 'Token depuis EBP → Paramètres → API', needsCompanyId: true, companyIdLabel: 'Identifiant dossier EBP', helpUrl: 'https://developer.ebp.com', description: 'EBP en ligne — import factures fournisseurs automatique' },
 ]
 
-// ─── Helpers ──────────────────────────────────────────────────────────────
+// ─── Helpers ────────────────────────────────────────────────────────────────────
 
 function getISOWeek(date: Date) {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
@@ -97,6 +98,11 @@ function fmtDate(d: Date) { return d.toLocaleDateString('fr-FR', { day: 'numeric
 function fmtEuro(n: number) { return n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €' }
 function catInfo(key: string) { return CATEGORIES.find(c => c.key === key) ?? CATEGORIES[CATEGORIES.length - 1] }
 
+/** Initiales du fournisseur pour la pastille d'avatar (2 lettres max) */
+function initials(name: string) {
+  return name.trim().split(/\s+/).slice(0, 2).map(w => w[0] || '').join('').toUpperCase() || '·'
+}
+
 function weeklyShare(amountHt: number, days?: number | null) {
   return Math.round((amountHt * 7 / (days || 30)) * 100) / 100
 }
@@ -118,7 +124,7 @@ function getLastWeek() {
   return getISOWeek(ref)
 }
 
-// ─── Composant principal ────────────────────────────────────────────────────────
+// ─── Composant principal ──────────────────────────────────────────────────────────────
 
 export default function FacturationPage() {
   const router = useRouter()
@@ -362,38 +368,45 @@ export default function FacturationPage() {
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
 
-      {/* Header */}
-      <div className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-2.5">
-          <Receipt className="w-5 h-5 text-pilote" />
-          <h1 className="text-lg font-bold tracking-tight text-gray-900">Facturation &amp; Achats</h1>
+      {/* Header héro */}
+      <div className="bg-white border-b border-gray-200 px-6 py-5 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 bg-gradient-to-br from-pilote to-pilote-hover rounded-2xl flex items-center justify-center flex-shrink-0 shadow-card">
+            <Receipt className="w-6 h-6 text-white" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-extrabold tracking-tight text-gray-900">Facturation &amp; Achats</h1>
+            <p className="text-sm text-gray-500">Achats de la semaine · Charges structurelles · CA &amp; marge</p>
+          </div>
         </div>
         <div className="flex items-center gap-2">
-          <Button onClick={() => setShowCA(true)} variant="outline" className="h-8 text-sm px-3 border-pilote text-pilote hover:bg-pilote-50">
+          <Button onClick={() => setShowCA(true)} variant="outline" className="h-9 text-sm px-3.5 rounded-xl border-pilote text-pilote hover:bg-pilote-50 transition-colors">
             <Euro className="w-3.5 h-3.5 mr-1.5" />Saisir le CA
           </Button>
-          <Button onClick={() => setShowAdd(true)} className="bg-pilote hover:bg-pilote-hover text-white h-8 text-sm px-3">
+          <Button onClick={() => setShowAdd(true)} className="bg-pilote hover:bg-pilote-hover text-white h-9 text-sm px-3.5 rounded-xl shadow-card active:scale-95 transition-all">
             <Plus className="w-3.5 h-3.5 mr-1.5" />Ajouter une facture
           </Button>
-          <button onClick={() => setShowSettings(true)} className="p-2 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-700">
+          <button onClick={() => setShowSettings(true)} className="p-2 rounded-xl hover:bg-gray-100 text-gray-400 hover:text-gray-700 transition-colors">
             <Settings className="w-4 h-4" />
           </button>
         </div>
       </div>
 
       {/* Week nav */}
-      <div className="bg-white border-b border-gray-100 px-6 py-2.5 flex items-center gap-3">
-        <button onClick={prevWeek} className="p-1.5 rounded hover:bg-gray-100"><ChevronLeft className="w-4 h-4 text-gray-500" /></button>
-        <div className="flex items-center gap-2">
-          <span className="font-semibold text-gray-900 text-sm">Semaine {week}</span>
-          <span className="text-gray-300 text-sm">·</span>
-          <span className="text-xs text-gray-500">{fmtDate(mon)} – {fmtDate(sun)}</span>
-          {isCurrentWeek && <span className="text-[10px] bg-pilote text-white px-1.5 py-0.5 rounded font-medium">En cours</span>}
-          {isLastWeek && !isCurrentWeek && <span className="text-[10px] bg-amber-500 text-white px-1.5 py-0.5 rounded font-medium">Semaine écoulée</span>}
+      <div className="bg-white border-b border-gray-100 px-6 py-2.5 flex items-center gap-2">
+        <div className="flex items-center gap-1 bg-gray-50 border border-gray-200 rounded-xl px-1 py-0.5">
+          <button onClick={prevWeek} className="p-1.5 rounded-lg hover:bg-white hover:shadow-sm transition-all"><ChevronLeft className="w-4 h-4 text-gray-500" /></button>
+          <div className="flex items-center gap-2 px-2">
+            <span className="font-bold text-gray-900 text-sm">Semaine {week}</span>
+            <span className="text-gray-300 text-sm">·</span>
+            <span className="text-xs text-gray-500 tabular">{fmtDate(mon)} – {fmtDate(sun)}</span>
+            {isCurrentWeek && <span className="text-[10px] bg-pilote text-white px-1.5 py-0.5 rounded-md font-semibold">En cours</span>}
+            {isLastWeek && !isCurrentWeek && <span className="text-[10px] bg-amber-500 text-white px-1.5 py-0.5 rounded-md font-semibold">Semaine écoulée</span>}
+          </div>
+          <button onClick={nextWeek} className="p-1.5 rounded-lg hover:bg-white hover:shadow-sm transition-all"><ChevronRight className="w-4 h-4 text-gray-500" /></button>
         </div>
-        <button onClick={nextWeek} className="p-1.5 rounded hover:bg-gray-100"><ChevronRight className="w-4 h-4 text-gray-500" /></button>
-        {!isLastWeek && <button onClick={() => { setWeek(lastWeek.week); setYear(lastWeek.year) }} className="text-xs text-pilote hover:underline">← Semaine écoulée</button>}
-        {!isCurrentWeek && <button onClick={() => { setWeek(cw); setYear(cy) }} className="text-xs text-gray-400 hover:underline">Semaine en cours →</button>}
+        {!isLastWeek && <button onClick={() => { setWeek(lastWeek.week); setYear(lastWeek.year) }} className="text-xs text-pilote font-medium hover:underline">← Semaine écoulée</button>}
+        {!isCurrentWeek && <button onClick={() => { setWeek(cw); setYear(cy) }} className="text-xs text-gray-400 hover:text-gray-600 hover:underline transition-colors">Semaine en cours →</button>}
 
         {/* Intégrations compactes */}
         <div className="ml-auto flex items-center gap-2">
@@ -450,47 +463,89 @@ export default function FacturationPage() {
         {/* KPIs */}
         {summary !== null && (
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <KpiCard icon={Euro} label="CA semaine" value={summary.ca_total > 0 ? fmtEuro(summary.ca_total) : '—'} sub={summary.ca_total === 0 ? 'Cliquer sur « Saisir le CA »' : ''} color="bg-pilote-50 text-pilote" />
-            <KpiCard icon={ShoppingCart} label="Achats HT" value={fmtEuro(variableTotalHt + fixedWeekly)} sub={`${variableInvoices.length} facture${variableInvoices.length > 1 ? 's' : ''} + fixes ≈ ${fmtEuro(fixedWeekly)}/sem`} color="bg-pilote-50 text-pilote" />
-            <KpiCard icon={Users} label="Masse salariale" value={fmtEuro(summary.masse_salariale)} sub={summary.ratio_ms !== null ? `${summary.ratio_ms} % du CA` : 'Depuis le planning'} color="bg-pilote-50 text-pilote" />
-            <KpiCard icon={summary.marge_brute >= 0 ? TrendingUp : TrendingDown} label="Marge brute" value={summary.ca_total > 0 ? fmtEuro(summary.marge_brute) : '—'} sub={summary.taux_marge !== null ? `Taux : ${summary.taux_marge} %` : 'Saisir le CA pour calculer'} color={summary.marge_brute >= 0 ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-500'} warn={summary.marge_brute < 0} />
+            {[
+              { icon: Euro,         label: 'CA semaine',      value: summary.ca_total > 0 ? fmtEuro(summary.ca_total) : '—',
+                sub: summary.ca_total === 0 ? 'Cliquer sur « Saisir le CA »' : `${fmtDate(mon)} – ${fmtDate(sun)}`,
+                chip: 'bg-pilote-50 text-pilote' },
+              { icon: ShoppingCart, label: 'Achats HT',       value: fmtEuro(variableTotalHt + fixedWeekly),
+                sub: `${variableInvoices.length} facture${variableInvoices.length > 1 ? 's' : ''} + fixes ≈ ${fmtEuro(fixedWeekly)}/sem`,
+                chip: 'bg-pilote-50 text-pilote' },
+              { icon: Users,        label: 'Masse salariale', value: fmtEuro(summary.masse_salariale),
+                sub: summary.ratio_ms !== null ? `${summary.ratio_ms} % du CA` : 'Depuis le planning',
+                chip: 'bg-pilote-50 text-pilote' },
+              { icon: summary.marge_brute >= 0 ? TrendingUp : TrendingDown, label: 'Marge brute',
+                value: summary.ca_total > 0 ? fmtEuro(summary.marge_brute) : '—',
+                sub: summary.taux_marge !== null ? `Taux : ${summary.taux_marge} %` : 'Saisir le CA pour calculer',
+                chip: summary.marge_brute >= 0 ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-500' },
+            ].map(k => (
+              <div key={k.label} className="bg-white rounded-2xl border border-gray-100 shadow-card p-4 transition-all hover:shadow-md hover:-translate-y-0.5">
+                <div className="flex items-center gap-2 mb-2.5">
+                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${k.chip}`}><k.icon className="w-4 h-4" /></div>
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">{k.label}</p>
+                </div>
+                <p className="text-xl font-extrabold leading-tight text-gray-900 tabular">{k.value}</p>
+                <p className="text-xs text-gray-400 mt-0.5 truncate">{k.sub}</p>
+              </div>
+            ))}
           </div>
         )}
 
         {/* Résultat net */}
         {summary !== null && summary.ca_total > 0 && (
-          <div className={`rounded-xl border p-4 flex items-center justify-between ${
-            summary.resultat_net >= 0 ? 'bg-green-50/70 border-green-200' : 'bg-red-50/70 border-red-200'
+          <div className={`rounded-2xl border p-5 flex items-center justify-between shadow-card ${
+            summary.resultat_net >= 0 ? 'bg-gradient-to-r from-green-50 via-green-50/40 to-white border-green-200' : 'bg-gradient-to-r from-red-50 via-red-50/40 to-white border-red-200'
           }`}>
             <div>
-              <p className="text-xs font-bold uppercase tracking-wider text-gray-500">Résultat net estimé (après achats et charges salariales)</p>
-              <p className={`text-3xl font-extrabold tracking-tight mt-1 tabular ${summary.resultat_net >= 0 ? 'text-green-700' : 'text-red-700'}`}>{fmtEuro(summary.resultat_net)}</p>
-              <p className="text-xs text-gray-400 mt-0.5">CA {fmtEuro(summary.ca_total)} − Achats {fmtEuro(summary.achats_ht)} − Salaires {fmtEuro(summary.masse_salariale)}</p>
+              <p className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Résultat net estimé de la semaine</p>
+              <p className={`text-4xl font-extrabold tracking-tight mt-1 tabular ${summary.resultat_net >= 0 ? 'text-green-700' : 'text-red-700'}`}>{fmtEuro(summary.resultat_net)}</p>
+              <div className="flex flex-wrap items-center gap-1.5 mt-2.5 text-[11px] tabular">
+                <span className="bg-white/80 border border-gray-200 rounded-md px-2 py-0.5 text-gray-600">CA <strong className="text-gray-900">{fmtEuro(summary.ca_total)}</strong></span>
+                <span className="text-gray-400">−</span>
+                <span className="bg-white/80 border border-gray-200 rounded-md px-2 py-0.5 text-gray-600">Achats <strong className="text-gray-900">{fmtEuro(summary.achats_ht)}</strong></span>
+                <span className="text-gray-400">−</span>
+                <span className="bg-white/80 border border-gray-200 rounded-md px-2 py-0.5 text-gray-600">Salaires <strong className="text-gray-900">{fmtEuro(summary.masse_salariale)}</strong></span>
+              </div>
             </div>
-            <div className={`w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0 ${summary.resultat_net >= 0 ? 'bg-green-100' : 'bg-red-100'}`}>
-              {summary.resultat_net >= 0 ? <TrendingUp className="w-6 h-6 text-green-600" /> : <TrendingDown className="w-6 h-6 text-red-600" />}
+            <div className={`w-14 h-14 rounded-2xl flex items-center justify-center flex-shrink-0 ${summary.resultat_net >= 0 ? 'bg-green-100' : 'bg-red-100'}`}>
+              {summary.resultat_net >= 0 ? <TrendingUp className="w-7 h-7 text-green-600" /> : <TrendingDown className="w-7 h-7 text-red-600" />}
             </div>
           </div>
         )}
 
-        {/* Achats par catégorie */}
+        {/* Répartition des achats — barre de distribution + légende */}
         {summary !== null && summary.achats_ht > 0 && (
-          <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-gray-400 mb-3">Achats par catégorie</h3>
-            <div className="flex flex-wrap gap-2">
-              {Object.entries(summary.achats_by_category).map(([cat, amt]) => {
-                const info = catInfo(cat)
-                const pct = summary.achats_ht > 0 ? Math.round((amt / summary.achats_ht) * 100) : 0
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-card p-5">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-gray-400">Répartition des achats</h3>
+              <span className="text-xs text-gray-400 tabular">{fmtEuro(summary.achats_ht)} HT</span>
+            </div>
+            <div className="h-2.5 rounded-full overflow-hidden flex bg-gray-100">
+              {CATEGORIES.map(cat => {
+                const amt = summary.achats_by_category[cat.key] as number | undefined
+                if (!amt || amt <= 0) return null
+                const pct = (amt / summary.achats_ht) * 100
+                return <div key={cat.key} style={{ width: `${pct}%`, backgroundColor: cat.dot }} title={`${cat.label} · ${fmtEuro(amt)} (${Math.round(pct)} %)`} className="transition-all hover:opacity-80" />
+              })}
+            </div>
+            <div className="flex flex-wrap gap-x-5 gap-y-2 mt-3.5">
+              {CATEGORIES.map(cat => {
+                const amt = summary.achats_by_category[cat.key] as number | undefined
+                if (!amt || amt <= 0) return null
+                const pct = Math.round((amt / summary.achats_ht) * 100)
                 return (
-                  <div key={cat} className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold ${info.color}`}>
-                    <span>{info.label}</span><span className="font-bold">{fmtEuro(amt as number)}</span><span className="opacity-60">{pct} %</span>
+                  <div key={cat.key} className="flex items-center gap-1.5 text-xs">
+                    <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: cat.dot }} />
+                    <span className="text-gray-600 font-medium">{cat.label}</span>
+                    <span className="font-bold text-gray-900 tabular">{fmtEuro(amt)}</span>
+                    <span className="text-gray-400">{pct} %</span>
                   </div>
                 )
               })}
               {fixedWeekly > 0 && (
-                <div className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold bg-gray-100 text-gray-600 border border-gray-200" title={`${fixedInvoices.length} charge(s) structurelle(s) couvrant cette semaine`}>
-                  <Repeat className="w-3 h-3" />
-                  <span>Charges structurelles</span><span className="font-bold">≈ {fmtEuro(fixedWeekly)}/sem</span>
+                <div className="flex items-center gap-1.5 text-xs" title={`${fixedInvoices.length} charge(s) structurelle(s) couvrant cette semaine`}>
+                  <Repeat className="w-3 h-3 text-gray-400" />
+                  <span className="text-gray-600 font-medium">Charges structurelles</span>
+                  <span className="font-bold text-gray-900 tabular">≈ {fmtEuro(fixedWeekly)}/sem</span>
                 </div>
               )}
             </div>
@@ -498,10 +553,10 @@ export default function FacturationPage() {
         )}
 
         {/* ── Achats de la semaine (liste plate, catégorie en pastille) ── */}
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-          <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
-            <h2 className="font-semibold text-gray-800">Achats de la semaine {week}</h2>
-            <span className="text-xs text-gray-400">{variableInvoices.length} facture{variableInvoices.length > 1 ? 's' : ''} · {fmtEuro(variableTotalHt)} HT</span>
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-card overflow-hidden">
+          <div className="px-5 py-3.5 border-b border-gray-100 flex items-center justify-between">
+            <h2 className="font-bold text-gray-900">Achats de la semaine {week}</h2>
+            <span className="text-xs text-gray-400 tabular">{variableInvoices.length} facture{variableInvoices.length > 1 ? 's' : ''} · {fmtEuro(variableTotalHt)} HT</span>
           </div>
           {loading ? (
             <div className="p-6 animate-pulse space-y-3">
@@ -510,11 +565,15 @@ export default function FacturationPage() {
               <div className="h-10 bg-gray-100 rounded-lg" />
             </div>
           ) : variableInvoices.length === 0 ? (
-            <div className="py-10 text-center">
-              <ShoppingCart className="w-8 h-8 text-gray-200 mx-auto mb-2" />
-              <p className="text-sm text-gray-400">Aucun achat variable sur la semaine {week}</p>
-              <p className="text-xs text-gray-300 mt-1">Lancez un sync pour importer les factures de cette semaine</p>
-              <button onClick={() => setShowAdd(true)} className="mt-3 text-sm text-pilote hover:underline font-medium">+ Ajouter une facture manuellement</button>
+            <div className="py-14 flex flex-col items-center justify-center text-center bg-gradient-to-b from-pilote-50/30 to-white">
+              <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-pilote-50 to-pilote-100 ring-1 ring-pilote-200/60 flex items-center justify-center mb-4 shadow-sm">
+                <ShoppingCart className="w-6 h-6 text-pilote" />
+              </div>
+              <p className="text-sm font-bold text-gray-900">Aucun achat sur la semaine {week}</p>
+              <p className="text-xs text-gray-400 mt-1 max-w-xs">Lancez un sync pour importer les factures, ou ajoutez-les à la main.</p>
+              <button onClick={() => setShowAdd(true)} className="mt-4 inline-flex items-center gap-1.5 text-sm font-semibold text-white bg-pilote hover:bg-pilote-hover rounded-xl px-4 py-2 shadow-card active:scale-95 transition-all">
+                <Plus className="w-3.5 h-3.5" />Ajouter une facture
+              </button>
             </div>
           ) : (
             <table className="w-full tabular">
@@ -536,8 +595,13 @@ export default function FacturationPage() {
                   return (
                     <tr key={inv.id} className="border-t border-gray-50 hover:bg-gray-50 group transition-colors">
                       <td className="px-4 py-2.5">
-                        <div className="font-semibold text-sm text-gray-900">{inv.supplier_name}</div>
-                        {inv.invoice_number && <div className="text-xs text-gray-400">{inv.invoice_number}</div>}
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-8 h-8 rounded-lg bg-pilote-50 text-pilote flex items-center justify-center text-[11px] font-extrabold flex-shrink-0">{initials(inv.supplier_name)}</div>
+                          <div>
+                            <div className="font-semibold text-sm text-gray-900">{inv.supplier_name}</div>
+                            {inv.invoice_number && <div className="text-xs text-gray-400">{inv.invoice_number}</div>}
+                          </div>
+                        </div>
                       </td>
                       <td className="px-4 py-2.5">
                         <select
@@ -586,12 +650,12 @@ export default function FacturationPage() {
         </div>
 
         {/* ── Charges structurelles couvrant la semaine ── */}
-        <div className="bg-white rounded-xl border border-pilote-100 shadow-card overflow-hidden">
-          <div className="px-4 py-3 border-b border-pilote-100 bg-pilote-50/60 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Repeat className="w-4 h-4 text-pilote" />
+        <div className="bg-white rounded-2xl border border-pilote-100 shadow-card overflow-hidden">
+          <div className="px-5 py-3.5 border-b border-pilote-100 bg-pilote-50/60 flex items-center justify-between">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-white ring-1 ring-pilote-200/60 flex items-center justify-center flex-shrink-0"><Repeat className="w-4 h-4 text-pilote" /></div>
               <div>
-                <h2 className="font-semibold text-gray-800">Charges structurelles</h2>
+                <h2 className="font-bold text-gray-900">Charges structurelles</h2>
                 <p className="text-[11px] text-gray-400">Toutes les charges fixes dont la période couvre la semaine {week} — quelle que soit leur date de facture</p>
               </div>
             </div>
@@ -605,10 +669,12 @@ export default function FacturationPage() {
           {loading ? (
             <div className="p-6 animate-pulse"><div className="h-10 bg-gray-100 rounded-lg" /></div>
           ) : fixedInvoices.length === 0 ? (
-            <div className="py-8 text-center">
-              <Repeat className="w-7 h-7 text-gray-200 mx-auto mb-2" />
-              <p className="text-sm text-gray-400">Aucune charge structurelle ne couvre cette semaine</p>
-              <p className="text-xs text-gray-300 mt-1">Survolez une facture ci-dessus et cliquez sur l&apos;icône de récurrence pour la marquer comme charge fixe</p>
+            <div className="py-10 flex flex-col items-center justify-center text-center">
+              <div className="w-12 h-12 rounded-2xl bg-gray-50 ring-1 ring-gray-200/70 flex items-center justify-center mb-3">
+                <Repeat className="w-5 h-5 text-gray-300" />
+              </div>
+              <p className="text-sm font-semibold text-gray-700">Aucune charge structurelle sur cette semaine</p>
+              <p className="text-xs text-gray-400 mt-1 max-w-sm">Survolez une facture ci-dessus et cliquez sur l&apos;icône de récurrence pour la marquer comme charge fixe (loyer, EDF, assurance...)</p>
             </div>
           ) : (
             <table className="w-full tabular">
@@ -626,8 +692,13 @@ export default function FacturationPage() {
                 {fixedInvoices.map((inv, i) => (
                   <tr key={inv.id} className={`border-t border-gray-100 hover:bg-pilote-50/40 group transition-colors ${i % 2 === 0 ? '' : 'bg-gray-50/50'}`}>
                     <td className="px-4 py-2.5">
-                      <div className="font-semibold text-sm text-gray-900">{inv.supplier_name}</div>
-                      {inv.invoice_number && <div className="text-xs text-gray-400">{inv.invoice_number}</div>}
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-8 h-8 rounded-lg bg-gray-100 text-gray-500 flex items-center justify-center text-[11px] font-extrabold flex-shrink-0">{initials(inv.supplier_name)}</div>
+                        <div>
+                          <div className="font-semibold text-sm text-gray-900">{inv.supplier_name}</div>
+                          {inv.invoice_number && <div className="text-xs text-gray-400">{inv.invoice_number}</div>}
+                        </div>
+                      </div>
                     </td>
                     <td className="px-4 py-2.5 text-sm text-gray-600">{new Date(inv.invoice_date).toLocaleDateString('fr-FR')}</td>
                     <td className="px-4 py-2.5 text-right font-semibold text-sm text-gray-900">{fmtEuro(inv.amount_ht)}</td>
