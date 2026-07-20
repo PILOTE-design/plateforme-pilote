@@ -822,16 +822,16 @@ export default function PlanningPage() {
 
       {/* ── Grid ── */}
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[860px] border-collapse">
+        <table className="w-full table-fixed border-collapse">
           <thead>
             <tr className="bg-white">
-              <th className="w-52 px-4 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider sticky left-0 bg-white z-10 border-b border-r border-gray-200">Employé</th>
+              <th className="w-44 px-3 py-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider sticky left-0 bg-white z-10 border-b border-r border-gray-200">Employé</th>
               {weekDates.map((date, i) => {
                 const isToday = date.toISOString().slice(0, 10) === todayISO
                 const isWE    = i >= 5
                 const fName   = weekHolidays[i]
                 return (
-                  <th key={i} className={`px-2 py-2 text-center min-w-[155px] border-b border-r border-gray-200 ${
+                  <th key={i} className={`px-1 py-2 text-center border-b border-r border-gray-200 ${
                     isToday ? 'bg-pilote' : fName ? 'bg-amber-50' : isWE ? 'bg-gray-50' : 'bg-white'
                   }`}>
                     <div className={`text-xs font-bold uppercase tracking-wide ${
@@ -851,8 +851,8 @@ export default function PlanningPage() {
                   </th>
                 )
               })}
-              <th className="px-3 py-3 text-center text-[11px] font-semibold text-gray-400 uppercase tracking-wider border-b border-r border-gray-200 w-20">Total</th>
-              <th className="px-3 py-3 text-center text-[11px] font-semibold text-gray-400 uppercase tracking-wider border-b border-gray-200 w-24">Coût</th>
+              <th className="px-2 py-3 text-center text-[11px] font-semibold text-gray-400 uppercase tracking-wider border-b border-r border-gray-200 w-16">Total</th>
+              <th className="px-2 py-3 text-center text-[11px] font-semibold text-gray-400 uppercase tracking-wider border-b border-gray-200 w-20">Coût</th>
             </tr>
           </thead>
           <tbody>
@@ -995,7 +995,7 @@ export default function PlanningPage() {
                         <td key={jour} className="p-0 border-b border-r border-gray-200 align-stretch group/cell">
                           <div className="relative h-full" data-cell="true" onClick={e => e.stopPropagation()}>
                             <div
-                              className={`cursor-pointer transition-all ${cellBg} ${overDay ? 'ring-2 ring-inset ring-red-400' : ''} w-full h-full min-h-[145px] px-2 pt-2 pb-2 flex flex-col select-none`}
+                              className={`cursor-pointer transition-all ${cellBg} ${overDay ? 'ring-2 ring-inset ring-red-400' : ''} w-full h-full min-h-[145px] px-1.5 pt-2 pb-2 flex flex-col select-none`}
                               onClick={e => { e.stopPropagation(); setContractPopover(null); setDetailModal({ empId: emp.id, jour, idx }) }}
                             >
                               {/* ── Top: type + copy ── */}
@@ -1034,7 +1034,7 @@ export default function PlanningPage() {
                               {/* Un jour férié PEUT être travaillé (majoration +100 % CCN 992) :
                                   la saisie de travail reste disponible sur les jours fériés */}
                               {type === 'travail' ? (
-                                <div className="flex-1 flex flex-col py-1.5 gap-1 px-1.5">
+                                <div className="flex-1 flex flex-col py-1.5 gap-1 px-0.5">
                                   {/* Poste global (legacy — uniquement si pas de poste par créneau) */}
                                   {catSel && (
                                     <div className="flex justify-center">
@@ -1045,10 +1045,9 @@ export default function PlanningPage() {
                                   )}
 
                                   {/* Matin row — horaires + poste du créneau */}
-                                  <div className={`flex items-center gap-1 rounded-md px-1.5 py-[3px] ${
+                                  <div className={`flex items-center gap-1 rounded-md px-1 py-[3px] ${
                                     sd.matin_debut || catM ? 'bg-gray-50 border border-gray-200/70' : 'bg-gray-50/50'
                                   }`}>
-                                    <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${sd.matin_debut || catM ? pal.dot : 'bg-gray-200'}`} />
                                     <span className="text-[8px] font-bold text-gray-400 w-3 shrink-0">M</span>
                                     <span className={`text-[9px] font-semibold truncate ${sd.matin_debut ? 'text-gray-700' : 'text-gray-300'}`}>
                                       {sd.matin_debut ? `${sd.matin_debut}→${sd.matin_fin || '?'}` : '--:--'}
@@ -1059,10 +1058,9 @@ export default function PlanningPage() {
                                   </div>
 
                                   {/* Après-midi row — horaires + poste du créneau */}
-                                  <div className={`flex items-center gap-1 rounded-md px-1.5 py-[3px] ${
+                                  <div className={`flex items-center gap-1 rounded-md px-1 py-[3px] ${
                                     sd.apmidi_debut || catA ? 'bg-gray-50 border border-gray-200/70' : 'bg-gray-50/50'
                                   }`}>
-                                    <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${sd.apmidi_debut || catA ? pal.dot : 'bg-gray-200'}`} />
                                     <span className="text-[8px] font-bold text-gray-400 w-3 shrink-0">AM</span>
                                     <span className={`text-[9px] font-semibold truncate ${sd.apmidi_debut ? 'text-gray-700' : 'text-gray-300'}`}>
                                       {sd.apmidi_debut ? `${sd.apmidi_debut}→${sd.apmidi_fin || '?'}` : '--:--'}
