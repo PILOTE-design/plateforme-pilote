@@ -10,7 +10,6 @@ import { useConfirm } from '@/components/ui/confirm-dialog'
 
 type CutCategory = 'premier' | 'deuxieme' | 'troisieme' | 'abat' | 'os'
 type AnimalType  = 'boeuf' | 'veau' | 'agneau' | 'porc' | 'volaille'
-type BoeufDecoupe = 'b1' | 'b2'
 
 interface Breed { id: string; name: string; carcassYield: number; avgWeight: string; origin: string; description: string }
 interface Cut   { id: string; name: string; category: CutCategory; yieldPct: number; marketPrice: number; group?: string[] }
@@ -51,58 +50,62 @@ const BOEUF_BREEDS: Breed[] = [
 // marketPrice = prix de référence indicatif, modifiable par pièce.
 const BOEUF_CUTS: Cut[] = [
   // ── BCUH ──
-  { id: 'jarret_avec_os',         name: 'Jarret avec os',          category: 'troisieme', yieldPct: 0, marketPrice: 12, group: ['BCUH', 'Jarret'] },
-  { id: 'jarret_sans_os',         name: 'Jarret sans os',          category: 'troisieme', yieldPct: 0, marketPrice: 14, group: ['BCUH', 'Jarret'] },
-  { id: 'araignee_b',             name: 'Araignée',                category: 'premier',   yieldPct: 0, marketPrice: 32, group: ['BCUH', 'Globe'] },
-  { id: 'tende_tranche',          name: 'Tende de tranche',        category: 'premier',   yieldPct: 0, marketPrice: 18, group: ['BCUH', 'Globe'] },
-  { id: 'coeur_tranche',          name: 'Cœur de tranche',         category: 'deuxieme',  yieldPct: 0, marketPrice: 17, group: ['BCUH', 'Globe'] },
-  { id: 'entame',                 name: 'Entame',                  category: 'deuxieme',  yieldPct: 0, marketPrice: 15, group: ['BCUH', 'Globe'] },
-  { id: 'chapeau',                name: 'Chapeau',                 category: 'deuxieme',  yieldPct: 0, marketPrice: 15, group: ['BCUH', 'Globe'] },
-  { id: 'talon',                  name: 'Talon',                   category: 'troisieme', yieldPct: 0, marketPrice: 12, group: ['BCUH', 'Globe'] },
-  { id: 'rond_tranche_grasse',    name: 'Rond de tranche grasse',  category: 'deuxieme',  yieldPct: 0, marketPrice: 16, group: ['BCUH', 'Globe', 'Tranche grasse'] },
-  { id: 'plat_tranche_grasse',    name: 'Plat de tranche grasse',  category: 'deuxieme',  yieldPct: 0, marketPrice: 15, group: ['BCUH', 'Globe', 'Tranche grasse'] },
-  { id: 'mouvant_tranche_grasse', name: 'Mouvant de tranche grasse', category: 'deuxieme', yieldPct: 0, marketPrice: 15, group: ['BCUH', 'Globe', 'Tranche grasse'] },
-  { id: 'gite_noix',              name: 'Gîte à la noix',          category: 'deuxieme',  yieldPct: 0, marketPrice: 17, group: ['BCUH', 'Globe', 'Semelle'] },
-  { id: 'rond_de_gite',           name: 'Rond de gîte',            category: 'deuxieme',  yieldPct: 0, marketPrice: 18, group: ['BCUH', 'Globe', 'Semelle'] },
-  { id: 'nerveux',                name: 'Nerveux',                 category: 'troisieme', yieldPct: 0, marketPrice: 11, group: ['BCUH', 'Globe', 'Semelle'] },
-  { id: 'oreille_gite',           name: 'Oreille de gîte',         category: 'troisieme', yieldPct: 0, marketPrice: 12, group: ['BCUH', 'Globe', 'Semelle'] },
-  { id: 'filet_rtk',              name: 'Filet de rumsteck',       category: 'premier',   yieldPct: 0, marketPrice: 22, group: ['BCUH', 'RTK', 'Rumsteck classique'] },
-  { id: 'coeur_rtk',              name: 'Cœur de rumsteck',        category: 'premier',   yieldPct: 0, marketPrice: 24, group: ['BCUH', 'RTK', 'Rumsteck classique'] },
-  { id: 'langue_de_chat',         name: 'Langue de chat',          category: 'premier',   yieldPct: 0, marketPrice: 22, group: ['BCUH', 'RTK', 'Rumsteck classique'] },
-  { id: 'baronne',                name: 'Baronne',                 category: 'premier',   yieldPct: 0, marketPrice: 20, group: ['BCUH', 'RTK'] },
-  { id: 'coeur_hanche',           name: 'Cœur de hanche',          category: 'deuxieme',  yieldPct: 0, marketPrice: 18, group: ['BCUH', 'Hanche'] },
-  { id: 'fausse_araignee',        name: 'Fausse araignée',         category: 'premier',   yieldPct: 0, marketPrice: 20, group: ['BCUH', 'Hanche'] },
-  { id: 'dessus_hanche',          name: 'Dessus de hanche',        category: 'deuxieme',  yieldPct: 0, marketPrice: 16, group: ['BCUH', 'Hanche'] },
-  { id: 'poire',                  name: 'Poire',                   category: 'premier',   yieldPct: 0, marketPrice: 26, group: ['BCUH', 'Hanche'] },
-  { id: 'merlan',                 name: 'Merlan',                  category: 'premier',   yieldPct: 0, marketPrice: 26, group: ['BCUH', 'Hanche'] },
+  { id: 'jarret_avec_os',         name: 'Jarret avec os',          category: 'troisieme', yieldPct: 0, marketPrice: 12, group: ['ART8', 'BCUH', 'Jarret'] },
+  { id: 'jarret_sans_os',         name: 'Jarret sans os',          category: 'troisieme', yieldPct: 0, marketPrice: 14, group: ['ART8', 'BCUH', 'Jarret'] },
+  { id: 'araignee_b',             name: 'Araignée',                category: 'premier',   yieldPct: 0, marketPrice: 32, group: ['ART8', 'BCUH', 'Globe'] },
+  { id: 'tende_tranche',          name: 'Tende de tranche',        category: 'premier',   yieldPct: 0, marketPrice: 18, group: ['ART8', 'BCUH', 'Globe'] },
+  { id: 'coeur_tranche',          name: 'Cœur de tranche',         category: 'deuxieme',  yieldPct: 0, marketPrice: 17, group: ['ART8', 'BCUH', 'Globe'] },
+  { id: 'entame',                 name: 'Entame',                  category: 'deuxieme',  yieldPct: 0, marketPrice: 15, group: ['ART8', 'BCUH', 'Globe'] },
+  { id: 'chapeau',                name: 'Chapeau',                 category: 'deuxieme',  yieldPct: 0, marketPrice: 15, group: ['ART8', 'BCUH', 'Globe'] },
+  { id: 'talon',                  name: 'Talon',                   category: 'troisieme', yieldPct: 0, marketPrice: 12, group: ['ART8', 'BCUH', 'Globe'] },
+  { id: 'rond_tranche_grasse',    name: 'Rond de tranche grasse',  category: 'deuxieme',  yieldPct: 0, marketPrice: 16, group: ['ART8', 'BCUH', 'Globe', 'Tranche grasse'] },
+  { id: 'plat_tranche_grasse',    name: 'Plat de tranche grasse',  category: 'deuxieme',  yieldPct: 0, marketPrice: 15, group: ['ART8', 'BCUH', 'Globe', 'Tranche grasse'] },
+  { id: 'mouvant_tranche_grasse', name: 'Mouvant de tranche grasse', category: 'deuxieme', yieldPct: 0, marketPrice: 15, group: ['ART8', 'BCUH', 'Globe', 'Tranche grasse'] },
+  { id: 'gite_noix',              name: 'Gîte à la noix',          category: 'deuxieme',  yieldPct: 0, marketPrice: 17, group: ['ART8', 'BCUH', 'Globe', 'Semelle'] },
+  { id: 'rond_de_gite',           name: 'Rond de gîte',            category: 'deuxieme',  yieldPct: 0, marketPrice: 18, group: ['ART8', 'BCUH', 'Globe', 'Semelle'] },
+  { id: 'nerveux',                name: 'Nerveux',                 category: 'troisieme', yieldPct: 0, marketPrice: 11, group: ['ART8', 'BCUH', 'Globe', 'Semelle'] },
+  { id: 'oreille_gite',           name: 'Oreille de gîte',         category: 'troisieme', yieldPct: 0, marketPrice: 12, group: ['ART8', 'BCUH', 'Globe', 'Semelle'] },
+  { id: 'filet_rtk',              name: 'Filet de rumsteck',       category: 'premier',   yieldPct: 0, marketPrice: 22, group: ['ART8', 'BCUH', 'RTK', 'Rumsteck classique'] },
+  { id: 'coeur_rtk',              name: 'Cœur de rumsteck',        category: 'premier',   yieldPct: 0, marketPrice: 24, group: ['ART8', 'BCUH', 'RTK', 'Rumsteck classique'] },
+  { id: 'langue_de_chat',         name: 'Langue de chat',          category: 'premier',   yieldPct: 0, marketPrice: 22, group: ['ART8', 'BCUH', 'RTK', 'Rumsteck classique'] },
+  { id: 'baronne',                name: 'Baronne',                 category: 'premier',   yieldPct: 0, marketPrice: 20, group: ['ART8', 'BCUH', 'RTK'] },
+  { id: 'coeur_hanche',           name: 'Cœur de hanche',          category: 'deuxieme',  yieldPct: 0, marketPrice: 18, group: ['ART8', 'BCUH', 'Hanche'] },
+  { id: 'fausse_araignee',        name: 'Fausse araignée',         category: 'premier',   yieldPct: 0, marketPrice: 20, group: ['ART8', 'BCUH', 'Hanche'] },
+  { id: 'dessus_hanche',          name: 'Dessus de hanche',        category: 'deuxieme',  yieldPct: 0, marketPrice: 16, group: ['ART8', 'BCUH', 'Hanche'] },
+  { id: 'poire',                  name: 'Poire',                   category: 'premier',   yieldPct: 0, marketPrice: 26, group: ['ART8', 'BCUH', 'Hanche'] },
+  { id: 'merlan',                 name: 'Merlan',                  category: 'premier',   yieldPct: 0, marketPrice: 26, group: ['ART8', 'BCUH', 'Hanche'] },
   // ── DEHMT ──
-  { id: 'faux_filet_b',           name: 'Faux-filet',              category: 'premier',   yieldPct: 0, marketPrice: 29, group: ['DEHMT'] },
-  { id: 'filet_b',                name: 'Filet',                   category: 'premier',   yieldPct: 0, marketPrice: 45, group: ['DEHMT'] },
-  { id: 'dessus_de_cote',         name: 'Dessus de côté',          category: 'deuxieme',  yieldPct: 0, marketPrice: 14, group: ['DEHMT', 'Carré côté'] },
+  { id: 'faux_filet_b',           name: 'Faux-filet',              category: 'premier',   yieldPct: 0, marketPrice: 29, group: ['ART8', 'DEHMT'] },
+  { id: 'filet_b',                name: 'Filet',                   category: 'premier',   yieldPct: 0, marketPrice: 45, group: ['ART8', 'DEHMT'] },
+  { id: 'dessus_de_cote',         name: 'Dessus de côté',          category: 'deuxieme',  yieldPct: 0, marketPrice: 14, group: ['ART8', 'DEHMT', 'Carré côté'] },
   // ── BAVETTE ──
-  { id: 'flanchet',               name: 'Flanchet',                category: 'deuxieme',  yieldPct: 0, marketPrice: 12, group: ['BAVETTE'] },
-  { id: 'bavette_aloyau_b',       name: "Bavette d'aloyau",        category: 'premier',   yieldPct: 0, marketPrice: 22, group: ['BAVETTE'] },
-  { id: 'fausse_bavette',         name: 'Fausse bavette',          category: 'deuxieme',  yieldPct: 0, marketPrice: 14, group: ['BAVETTE'] },
+  { id: 'flanchet',               name: 'Flanchet',                category: 'deuxieme',  yieldPct: 0, marketPrice: 12, group: ['ART8', 'BAVETTE'] },
+  { id: 'bavette_aloyau_b',       name: "Bavette d'aloyau",        category: 'premier',   yieldPct: 0, marketPrice: 22, group: ['ART8', 'BAVETTE'] },
+  { id: 'fausse_bavette',         name: 'Fausse bavette',          category: 'deuxieme',  yieldPct: 0, marketPrice: 14, group: ['ART8', 'BAVETTE'] },
 ]
 // Découpe B2 — nomenclature CEFIMEV (avant du bœuf : épaule + collier basse-côte).
 // Arborescence : grande pièce → sous-pièce. Prix de référence indicatifs, modifiables.
 const BOEUF_B2_CUTS: Cut[] = [
   // ── ÉPAULE (B 4.1) ──
-  { id: 'b2_jarret_avant',      name: 'Jarret (avant)',          category: 'troisieme', yieldPct: 0, marketPrice: 12, group: ['Épaule'] },
-  { id: 'b2_boite_a_moelle',    name: 'Boîte à moelle',          category: 'deuxieme',  yieldPct: 0, marketPrice: 12, group: ['Épaule'] },
-  { id: 'b2_dessus_macreuse',   name: 'Dessus de macreuse',      category: 'premier',   yieldPct: 0, marketPrice: 19, group: ['Épaule', 'Macreuse à biftecks'] },
-  { id: 'b2_macreuse_roti',     name: 'Macreuse (rôti)',         category: 'premier',   yieldPct: 0, marketPrice: 18, group: ['Épaule', 'Macreuse à biftecks'] },
-  { id: 'b2_paleron',           name: 'Paleron',                 category: 'deuxieme',  yieldPct: 0, marketPrice: 14, group: ['Épaule'] },
-  { id: 'b2_dessus_palette',    name: 'Dessus de palette',       category: 'deuxieme',  yieldPct: 0, marketPrice: 13, group: ['Épaule'] },
-  { id: 'b2_jumeau',            name: 'Jumeau',                  category: 'premier',   yieldPct: 0, marketPrice: 16, group: ['Épaule'] },
+  { id: 'b2_jarret_avant',      name: 'Jarret (avant)',          category: 'troisieme', yieldPct: 0, marketPrice: 12, group: ['AVANTCAPA', 'Épaule'] },
+  { id: 'b2_boite_a_moelle',    name: 'Boîte à moelle',          category: 'deuxieme',  yieldPct: 0, marketPrice: 12, group: ['AVANTCAPA', 'Épaule'] },
+  { id: 'b2_dessus_macreuse',   name: 'Dessus de macreuse',      category: 'premier',   yieldPct: 0, marketPrice: 19, group: ['AVANTCAPA', 'Épaule', 'Macreuse à biftecks'] },
+  { id: 'b2_macreuse_roti',     name: 'Macreuse (rôti)',         category: 'premier',   yieldPct: 0, marketPrice: 18, group: ['AVANTCAPA', 'Épaule', 'Macreuse à biftecks'] },
+  { id: 'b2_paleron',           name: 'Paleron',                 category: 'deuxieme',  yieldPct: 0, marketPrice: 14, group: ['AVANTCAPA', 'Épaule'] },
+  { id: 'b2_dessus_palette',    name: 'Dessus de palette',       category: 'deuxieme',  yieldPct: 0, marketPrice: 13, group: ['AVANTCAPA', 'Épaule'] },
+  { id: 'b2_jumeau',            name: 'Jumeau',                  category: 'premier',   yieldPct: 0, marketPrice: 16, group: ['AVANTCAPA', 'Épaule'] },
   // ── COLLIER BASSE-CÔTE (B 4.2) ──
-  { id: 'b2_persille',          name: 'Persillé',                category: 'deuxieme',  yieldPct: 0, marketPrice: 15, group: ['Collier basse-côte', 'Basse côte'] },
-  { id: 'b2_basse_cote',        name: 'Basse côte (entrecôte minute)', category: 'premier', yieldPct: 0, marketPrice: 17, group: ['Collier basse-côte', 'Basse côte'] },
-  { id: 'b2_veine_maigre',      name: 'Veine maigre',            category: 'troisieme', yieldPct: 0, marketPrice: 12, group: ['Collier basse-côte', 'Collier'] },
-  { id: 'b2_saliere',           name: 'Salière',                 category: 'deuxieme',  yieldPct: 0, marketPrice: 13, group: ['Collier basse-côte', 'Collier'] },
-  { id: 'b2_veine_grasse',      name: 'Veine grasse',            category: 'deuxieme',  yieldPct: 0, marketPrice: 11, group: ['Collier basse-côte', 'Collier'] },
-  { id: 'b2_filet_mignon_col',  name: 'Filet mignon (de collier)', category: 'premier', yieldPct: 0, marketPrice: 14, group: ['Collier basse-côte', 'Collier'] },
+  { id: 'b2_persille',          name: 'Persillé',                category: 'deuxieme',  yieldPct: 0, marketPrice: 15, group: ['AVANTCAPA', 'Collier basse-côte', 'Basse côte'] },
+  { id: 'b2_basse_cote',        name: 'Basse côte (entrecôte minute)', category: 'premier', yieldPct: 0, marketPrice: 17, group: ['AVANTCAPA', 'Collier basse-côte', 'Basse côte'] },
+  { id: 'b2_veine_maigre',      name: 'Veine maigre',            category: 'troisieme', yieldPct: 0, marketPrice: 12, group: ['AVANTCAPA', 'Collier basse-côte', 'Collier'] },
+  { id: 'b2_saliere',           name: 'Salière',                 category: 'deuxieme',  yieldPct: 0, marketPrice: 13, group: ['AVANTCAPA', 'Collier basse-côte', 'Collier'] },
+  { id: 'b2_veine_grasse',      name: 'Veine grasse',            category: 'deuxieme',  yieldPct: 0, marketPrice: 11, group: ['AVANTCAPA', 'Collier basse-côte', 'Collier'] },
+  { id: 'b2_filet_mignon_col',  name: 'Filet mignon (de collier)', category: 'premier', yieldPct: 0, marketPrice: 14, group: ['AVANTCAPA', 'Collier basse-côte', 'Collier'] },
 ]
+
+// L'arbre bœuf complet : ART8 (arrière) et AVANTCAPA (avant) sont les deux grandes
+// catégories dépliables du détail par pièce — une seule et même bête.
+const BOEUF_ALL_CUTS: Cut[] = [...BOEUF_CUTS, ...BOEUF_B2_CUTS]
 
 // ── Arborescence de découpe (dérivée du champ `group`) ──
 interface TreeNode { name: string; path: string; children: TreeNode[]; cut?: Cut }
@@ -227,7 +230,7 @@ const VOLAILLE_CUTS: Cut[] = [
 // ─── Config espèces ─── poids et prix par défaut exprimés en CARCASSE ───────────
 
 const ANIMALS: Record<AnimalType, AnimalConfig> = {
-  boeuf:    { label: 'Bœuf',    emoji: '🐄', accent: 'red',    breedLabel: 'Race bovine',   breeds: BOEUF_BREEDS,    cuts: BOEUF_CUTS,    defaultWeight: '520', defaultPurchaseKg: '6.00',  defaultLabor: '150' },
+  boeuf:    { label: 'Bœuf',    emoji: '🐄', accent: 'red',    breedLabel: 'Race bovine',   breeds: BOEUF_BREEDS,    cuts: BOEUF_ALL_CUTS, defaultWeight: '520', defaultPurchaseKg: '6.00',  defaultLabor: '150' },
   veau:     { label: 'Veau',    emoji: '🐮', accent: 'pink',   breedLabel: 'Type de veau',  breeds: VEAU_BREEDS,     cuts: VEAU_CUTS,     defaultWeight: '125', defaultPurchaseKg: '9.00',  defaultLabor: '80'  },
   agneau:   { label: 'Agneau',  emoji: '🐑', accent: 'green',  breedLabel: 'Race ovine',    breeds: AGNEAU_BREEDS,   cuts: AGNEAU_CUTS,   defaultWeight: '20',  defaultPurchaseKg: '10.00', defaultLabor: '30'  },
   porc:     { label: 'Porc',    emoji: '🐖', accent: 'orange', breedLabel: 'Race porcine',  breeds: PORC_BREEDS,     cuts: PORC_CUTS,     defaultWeight: '85',  defaultPurchaseKg: '2.90',  defaultLabor: '60'  },
@@ -235,13 +238,6 @@ const ANIMALS: Record<AnimalType, AnimalConfig> = {
 }
 
 const ANIMAL_TYPES: AnimalType[] = ['boeuf', 'veau', 'agneau', 'porc', 'volaille']
-
-// ART8 (arrière) + AVANTCAPA (avant) = les deux parties d'UNE SEULE ET MÊME bête.
-// La bascule sert à saisir chaque moitié de la carcasse, pas à choisir entre deux découpes.
-const BOEUF_DECOUPES: { id: BoeufDecoupe; label: string; hint: string; cuts: Cut[] }[] = [
-  { id: 'b1', label: 'ART8',      hint: 'Arrière — BCUH · DEHMT · Bavette', cuts: BOEUF_CUTS },
-  { id: 'b2', label: 'AVANTCAPA', hint: 'Avant — épaule + collier (CEFIMEV)', cuts: BOEUF_B2_CUTS },
-]
 
 // ─── Catégories ─────────────────────────────────────────────
 
@@ -415,15 +411,11 @@ export default function ValorisationPage() {
   const [cutWeights,    setCutWeights]    = useState<Record<string, string>>({})
   // Nœuds dépliés de l'arborescence de découpe (par chemin)
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set())
-  // Découpe choisie pour le bœuf (uniquement pour l'espèce bœuf)
-  const [boeufDecoupe, setBoeufDecoupe] = useState<BoeufDecoupe>('b1')
 
   const config = ANIMALS[animalType]
   const breeds = config.breeds
-  // Pour le bœuf, les pièces dépendent de la partie sélectionnée (ART8 arrière / AVANTCAPA avant)
-  const cuts   = animalType === 'boeuf'
-    ? (BOEUF_DECOUPES.find(d => d.id === boeufDecoupe)?.cuts ?? BOEUF_CUTS)
-    : config.cuts
+  // Bœuf : un seul arbre — ART8 (arrière) et AVANTCAPA (avant) en catégories principales dépliables
+  const cuts   = config.cuts
   // Bœuf et veau s'achètent en demi-carcasse : le poids saisi est celui d'un demi, la quantité un nombre de demis
   const isHalf = animalType === 'boeuf' || animalType === 'veau'
   // Prix de référence par pièce : valeur saisie si présente, sinon prix indicatif de la pièce
@@ -457,14 +449,7 @@ export default function ValorisationPage() {
     setCutWeights({})
     setExpandedNodes(new Set())
     setShowBreedInfo(false)
-    setBoeufDecoupe('b1')
   }, [animalType]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Reset des poids saisis / nœuds dépliés quand on bascule de découpe bœuf
-  useEffect(() => {
-    setCutWeights({})
-    setExpandedNodes(new Set())
-  }, [boeufDecoupe])
 
   // Pré-remplissage depuis la facturation
   useEffect(() => {
@@ -819,28 +804,6 @@ export default function ValorisationPage() {
           )
         })}
       </div>
-
-      {/* ── Partie de la bête (bœuf uniquement) — ART8 + AVANTCAPA = la même carcasse ── */}
-      {animalType === 'boeuf' && (
-        <div className="flex items-center gap-3 mb-5 flex-wrap">
-          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Partie de la bête</span>
-          <div className="inline-flex bg-gray-100 p-1 rounded-xl">
-            {BOEUF_DECOUPES.map(d => {
-              const active = boeufDecoupe === d.id
-              return (
-                <button key={d.id} onClick={() => setBoeufDecoupe(d.id)}
-                  className={`flex flex-col items-start px-4 py-1.5 rounded-lg transition-all ${
-                    active ? 'bg-white shadow-sm ring-1 ring-gray-900/5' : 'hover:bg-white/60'
-                  }`}>
-                  <span className={`text-sm font-semibold leading-tight ${active ? 'text-gray-900' : 'text-gray-500'}`}>{d.label}</span>
-                  <span className={`text-[10px] leading-tight ${active ? 'text-pilote' : 'text-gray-400'}`}>{d.hint}</span>
-                </button>
-              )
-            })}
-          </div>
-          <span className="text-[11px] text-gray-400">Une seule et même bête — <strong className="text-gray-600">ART8</strong> = l&apos;arrière, <strong className="text-gray-600">AVANTCAPA</strong> = l&apos;avant</span>
-        </div>
-      )}
 
       {/* ── Onglets Calculateur / Suivi ── */}
       <div className="flex gap-1 mb-6 bg-gray-100 p-1 rounded-xl w-fit">
