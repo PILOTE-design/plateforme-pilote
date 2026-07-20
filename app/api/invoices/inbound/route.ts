@@ -117,24 +117,41 @@ Si montant HT absent, déduire de TTC : HT = TTC / 1.{tva_rate/100+1}`
   const tvaRate   = parseFloat(invoiceData.tva_rate)   || 20
   const amountTTC = parseFloat(invoiceData.amount_ttc) || parseFloat((amountHT * (1 + tvaRate / 100)).toFixed(2))
 
+  // ── MÉMOIRE FOURNISSEUR → CATÉGORIE ──
+  // Si ce fournisseur a déjà été catégorisé par le boucher, sa dernière catégorie
+  // l'emporte sur la supposition de l'IA : la charte des marges reste cohérente
+  // sans re-tri manuel. (Comparaison insensible à la casse via ilike sans joker.)
+  let category: string = invoiceData.category || 'autre'
+  const supplierName = String(invoiceData.supplier_name).trim()
+  const { data: previous } = await serviceSupabase
+    .from('invoices')
+    .select('category')
+    .eq('client_id', clientRow.id)
+    .ilike('supplier_name', supplierName)
+    .order('invoice_date', { ascending: false })
+    .limit(1)
+  const remembered = previous && previous.length > 0 ? previous[0].category : null
+  const memoryApplied = Boolean(remembered && remembered !== category)
+  if (remembered) category = remembered
+
   const { data: invoice, error } = await serviceSupabase
     .from('invoices')
     .insert({
       client_id:      clientRow.id,
       week_number:    week,
       year,
-      supplier_name:  invoiceData.supplier_name,
+      supplier_name:  supplierName,
       invoice_number: invoiceData.invoice_number || null,
       invoice_date:   invoiceDate.toISOString().slice(0, 10),
-      category:       invoiceData.category || 'autre',
+      category,
       amount_ht:      amountHT,
       tva_rate:       tvaRate,
       amount_ttc:     amountTTC,
-      notes:          `Importé automatiquement — objet: ${subject.slice(0, 100)}`,
+      notes:          `Importé automatiquement${memoryApplied ? ' · catégorie reprise de vos factures précédentes' : ''} — objet: ${subject.slice(0, 100)}`,
     })
     .select()
     .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ ok: true, invoice })
+  return NextResponse.json({ ok: true, invoice, memoryApplied })
 }
