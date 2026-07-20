@@ -152,6 +152,47 @@ function getFrenchHolidays(year: number): Map<string, string> {
   ])
 }
 
+// ── Vacances scolaires françaises par zone — calendriers officiels 2025-2026
+// et 2026-2027 (arrêté du 22 octobre 2025). Intervalles [début, reprise) :
+// du 1er jour de vacances (samedi) à la veille de la reprise des cours.
+type ZoneVac = 'A' | 'B' | 'C'
+const VACANCES_SCOLAIRES: { label: string; zones: ZoneVac[]; from: string; to: string }[] = [
+  // 2025-2026
+  { label: 'Toussaint', zones: ['A', 'B', 'C'], from: '2025-10-18', to: '2025-11-03' },
+  { label: 'Noël',      zones: ['A', 'B', 'C'], from: '2025-12-20', to: '2026-01-05' },
+  { label: 'Hiver',     zones: ['A'],           from: '2026-02-07', to: '2026-02-23' },
+  { label: 'Hiver',     zones: ['B'],           from: '2026-02-14', to: '2026-03-02' },
+  { label: 'Hiver',     zones: ['C'],           from: '2026-02-21', to: '2026-03-09' },
+  { label: 'Printemps', zones: ['A'],           from: '2026-04-04', to: '2026-04-20' },
+  { label: 'Printemps', zones: ['B'],           from: '2026-04-11', to: '2026-04-27' },
+  { label: 'Printemps', zones: ['C'],           from: '2026-04-18', to: '2026-05-04' },
+  { label: 'Été',       zones: ['A', 'B', 'C'], from: '2026-07-04', to: '2026-09-01' },
+  // 2026-2027
+  { label: 'Toussaint', zones: ['A', 'B', 'C'], from: '2026-10-17', to: '2026-11-02' },
+  { label: 'Noël',      zones: ['A', 'B', 'C'], from: '2026-12-19', to: '2027-01-04' },
+  { label: 'Hiver',     zones: ['C'],           from: '2027-02-06', to: '2027-02-22' },
+  { label: 'Hiver',     zones: ['A'],           from: '2027-02-13', to: '2027-03-01' },
+  { label: 'Hiver',     zones: ['B'],           from: '2027-02-20', to: '2027-03-08' },
+  { label: 'Printemps', zones: ['C'],           from: '2027-04-03', to: '2027-04-19' },
+  { label: 'Printemps', zones: ['A'],           from: '2027-04-10', to: '2027-04-26' },
+  { label: 'Printemps', zones: ['B'],           from: '2027-04-17', to: '2027-05-03' },
+  { label: 'Été',       zones: ['A', 'B', 'C'], from: '2027-07-03', to: '2027-09-01' },
+]
+
+/** Vacances scolaires chevauchant la semaine affichée, par zone (A / B / C). */
+function getWeekVacances(weekDates: Date[]): { zone: ZoneVac; label: string }[] {
+  const monday = weekDates[0].toISOString().slice(0, 10)
+  const sunday = weekDates[6].toISOString().slice(0, 10)
+  const out: { zone: ZoneVac; label: string }[] = []
+  for (const v of VACANCES_SCOLAIRES) {
+    // chevauchement : les vacances commencent avant la fin de semaine ET la reprise est après le lundi
+    if (v.from <= sunday && v.to > monday) {
+      for (const z of v.zones) if (!out.some(o => o.zone === z)) out.push({ zone: z, label: v.label })
+    }
+  }
+  return out.sort((a, b) => a.zone.localeCompare(b.zone))
+}
+
 function getWeeksInMonth(year: number, month: number): { week: number; year: number }[] {
   const firstDay = new Date(Date.UTC(year, month - 1, 1))
   const lastDay  = new Date(Date.UTC(year, month, 0))
@@ -357,6 +398,7 @@ export default function PlanningPage() {
   // Jours fériés pour l'année affichée
   const holidays     = getFrenchHolidays(year)
   const weekHolidays = weekDates.map(d => holidays.get(d.toISOString().slice(0, 10)) ?? null)
+  const weekVacances = getWeekVacances(weekDates)
   const holidayFlags = weekHolidays.map(h => h !== null)
 
   const setEntriesSync = (updater: (prev: EntriesMap) => EntriesMap) => {
@@ -771,6 +813,17 @@ export default function PlanningPage() {
           <Copy className="w-3 h-3" />
           {copying ? 'Copie...' : `Copier S${week === 1 ? isoWeeksInYear(year - 1) : week - 1}`}
         </button>
+        {weekVacances.length > 0 && (
+          <div className="hidden md:flex items-center gap-1.5 ml-1">
+            <span className="text-[11px] font-medium text-gray-400">Vacances scolaires :</span>
+            {weekVacances.map(v => (
+              <span key={v.zone} title={`Vacances de ${v.label.toLowerCase()} — zone ${v.zone}`}
+                className="text-[10px] font-bold bg-violet-50 text-violet-700 border border-violet-200 px-1.5 py-0.5 rounded-full whitespace-nowrap">
+                Zone {v.zone} · {v.label}
+              </span>
+            ))}
+          </div>
+        )}
         <div className="ml-auto flex items-center gap-4 text-xs text-gray-400">
           <span><span className="font-semibold text-gray-700">{fmtH(grandH)}</span> total</span>
           <span><span className="font-semibold text-green-700">{grandCost.toFixed(0)} €</span> brut</span>
