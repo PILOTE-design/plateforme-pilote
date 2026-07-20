@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useMemo, useEffect, useCallback } from 'react'
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { Calculator, TrendingUp, Package, Info, AlertTriangle, CheckCircle, Save, Trash2, Clock, X, Loader2, Users, BarChart2, RotateCcw, ChevronRight } from 'lucide-react'
 import { useToast } from '@/components/ui/toast'
@@ -376,6 +376,12 @@ function normalizeValo(v: any): SavedValo {
   }
 }
 
+/** Brouillon de saisie : la valorisation en cours survit à la navigation (localStorage) */
+function loadDraft(): Record<string, any> {
+  if (typeof window === 'undefined') return {}
+  try { return JSON.parse(window.localStorage.getItem('valo_draft_v1') || '{}') || {} } catch { return {} }
+}
+
 // ─── Page ─────────────────────────────────────────────────
 
 export default function ValorisationPage() {
@@ -383,32 +389,34 @@ export default function ValorisationPage() {
   const { toast } = useToast()
   const { confirm: confirmAction } = useConfirm()
 
-  const [animalType,    setAnimalType]    = useState<AnimalType>('boeuf')
+  // Brouillon : la saisie en cours est enregistrée automatiquement et restaurée au retour sur la page
+  const [draft] = useState<Record<string, any>>(loadDraft)
+  const [animalType,    setAnimalType]    = useState<AnimalType>(draft.animalType ?? 'boeuf')
   const [activeTab,     setActiveTab]     = useState<'calc' | 'suivi'>('calc')
-  const [breedId,       setBreedId]       = useState('charolaise')
+  const [breedId,       setBreedId]       = useState(draft.breedId ?? 'charolaise')
   // Poids CARCASSE par animal (kg) — le boucher achète au kg de carcasse
-  const [carcassWeight, setCarcassWeight] = useState('520')
-  const [quantity,      setQuantity]      = useState('1')
+  const [carcassWeight, setCarcassWeight] = useState(draft.carcassWeight ?? '520')
+  const [quantity,      setQuantity]      = useState(draft.quantity ?? '1')
   // Prix d'achat en €/kg de CARCASSE
-  const [purchasePerKg, setPurchasePerKg] = useState('6.00')
-  const [overheadCost,  setOverheadCost]  = useState('0')
-  const [laborCost,     setLaborCost]     = useState('150')
-  const [decoupeHours,  setDecoupeHours]  = useState('')
+  const [purchasePerKg, setPurchasePerKg] = useState(draft.purchasePerKg ?? '6.00')
+  const [overheadCost,  setOverheadCost]  = useState(draft.overheadCost ?? '0')
+  const [laborCost,     setLaborCost]     = useState(draft.laborCost ?? '150')
+  const [decoupeHours,  setDecoupeHours]  = useState(draft.decoupeHours ?? '')
   const [weekLabor,     setWeekLabor]     = useState<WeekLabor | null>(null)
-  const [targetMargin,  setTargetMargin]  = useState(35)
+  const [targetMargin,  setTargetMargin]  = useState(draft.targetMargin ?? 35)
   const [showBreedInfo, setShowBreedInfo] = useState(false)
   const [catsByAnimal,     setCatsByAnimal]     = useState<CatsByAnimal>(() => loadPref('valo_cats_v1', DEFAULT_CATS()))
   const [excludedByAnimal, setExcludedByAnimal] = useState<CutsByAnimal>(() => loadPref('valo_excluded_v1', DEFAULT_EXCLUDED()))
   const [cutPricesByAnimal, setCutPricesByAnimal] = useState<PricesByAnimal>(() => loadPref('valo_prices_v1', DEFAULT_PRICES()))
-  const [purchaseDate,  setPurchaseDate]  = useState(new Date().toISOString().split('T')[0])
-  const [notes,         setNotes]         = useState('')
+  const [purchaseDate,  setPurchaseDate]  = useState(draft.purchaseDate ?? new Date().toISOString().split('T')[0])
+  const [notes,         setNotes]         = useState(draft.notes ?? '')
   const [history,       setHistory]       = useState<SavedValo[]>([])
   const [historyError,  setHistoryError]  = useState<string | null>(null)
   const [saving,        setSaving]        = useState(false)
   const [saved,         setSaved]         = useState(false)
   const [selected,      setSelected]      = useState<SavedValo | null>(null)
   // Poids saisis manuellement par le boucher, pièce par pièce (clé = id de la pièce)
-  const [cutWeights,    setCutWeights]    = useState<Record<string, string>>({})
+  const [cutWeights,    setCutWeights]    = useState<Record<string, string>>(draft.cutWeights ?? {})
   // Nœuds dépliés de l'arborescence de découpe (par chemin)
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set())
 
@@ -436,11 +444,23 @@ export default function ValorisationPage() {
     try { window.localStorage.setItem('valo_prices_v1', JSON.stringify(cutPricesByAnimal)) } catch {}
   }, [cutPricesByAnimal])
 
+  // Brouillon enregistré automatiquement : la valorisation en cours survit si on quitte la page
+  useEffect(() => {
+    try {
+      window.localStorage.setItem('valo_draft_v1', JSON.stringify({
+        animalType, breedId, carcassWeight, quantity, purchasePerKg, overheadCost, laborCost, decoupeHours, targetMargin, purchaseDate, notes, cutWeights,
+      }))
+    } catch {}
+  }, [animalType, breedId, carcassWeight, quantity, purchasePerKg, overheadCost, laborCost, decoupeHours, targetMargin, purchaseDate, notes, cutWeights])
+
   const includedCats = useMemo(() => new Set<CutCategory>(catsByAnimal[animalType] ?? CATEGORIES), [catsByAnimal, animalType])
   const excludedCuts = useMemo(() => new Set<string>(excludedByAnimal[animalType] ?? []), [excludedByAnimal, animalType])
 
-  // Reset quand on change d'espèce (les catégories/pièces de chaque famille sont conservées)
+  // Reset quand on change d'espèce (les catégories/pièces de chaque famille sont conservées).
+  // Ignoré au premier rendu pour ne pas écraser le brouillon restauré.
+  const firstMount = useRef(true)
   useEffect(() => {
+    if (firstMount.current) { firstMount.current = false; return }
     setBreedId(config.breeds[0].id)
     setCarcassWeight(config.defaultWeight)
     setPurchasePerKg(config.defaultPurchaseKg)
@@ -695,6 +715,24 @@ export default function ValorisationPage() {
     }
   }
 
+  /** Vide le brouillon et remet le formulaire à zéro */
+  function resetDraft() {
+    try { window.localStorage.removeItem('valo_draft_v1') } catch {}
+    setBreedId(config.breeds[0].id)
+    setCarcassWeight(config.defaultWeight)
+    setPurchasePerKg(config.defaultPurchaseKg)
+    setLaborCost(config.defaultLabor)
+    setOverheadCost('0')
+    setDecoupeHours('')
+    setCutWeights({})
+    setExpandedNodes(new Set())
+    setNotes('')
+    setQuantity('1')
+    setTargetMargin(35)
+    setPurchaseDate(new Date().toISOString().split('T')[0])
+    toast({ variant: 'success', title: 'Saisie réinitialisée' })
+  }
+
   async function deleteValo(id: string) {
     const ok = await confirmAction({
       title: 'Supprimer cette valorisation ?',
@@ -770,15 +808,27 @@ export default function ValorisationPage() {
             <p className="text-sm text-gray-500">Achat au kg de carcasse · Main d'œuvre réelle du planning · Coefficient · Suivi hebdo</p>
           </div>
         </div>
-        {activeTab === 'calc' && totalRevenue1 > 0 && (
-          <button onClick={saveValo} disabled={saving || saved}
-            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white shadow-card transition-all ${
-              saved ? 'bg-green-600' : 'bg-pilote hover:bg-pilote-hover'
-            }`}>
-            {saving ? <><Loader2 className="w-4 h-4 animate-spin" />Enregistrement...</>
-              : saved ? <><CheckCircle className="w-4 h-4" />Sauvegardé !</>
-              : <><Save className="w-4 h-4" />Sauvegarder le lot</>}
-          </button>
+        {activeTab === 'calc' && (
+          <div className="flex items-center gap-3">
+            <span className="hidden sm:flex items-center gap-1 text-[11px] text-gray-400"
+              title="La saisie en cours est conservée automatiquement — vous pouvez quitter la page et revenir">
+              <CheckCircle className="w-3 h-3 text-green-500" />Enregistré
+            </span>
+            <button onClick={resetDraft} title="Vider la saisie en cours et repartir de zéro"
+              className="text-xs text-gray-400 hover:text-red-500 hover:underline transition-colors">
+              Réinitialiser
+            </button>
+            {totalRevenue1 > 0 && (
+              <button onClick={saveValo} disabled={saving || saved}
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white shadow-card transition-all ${
+                  saved ? 'bg-green-600' : 'bg-pilote hover:bg-pilote-hover'
+                }`}>
+                {saving ? <><Loader2 className="w-4 h-4 animate-spin" />Enregistrement...</>
+                  : saved ? <><CheckCircle className="w-4 h-4" />Sauvegardé !</>
+                  : <><Save className="w-4 h-4" />Sauvegarder le lot</>}
+              </button>
+            )}
+          </div>
         )}
       </div>
 
