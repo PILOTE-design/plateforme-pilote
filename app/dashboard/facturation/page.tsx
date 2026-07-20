@@ -13,7 +13,7 @@ import {
   Link2, Link2Off, RefreshCw, ArrowUpRight, Repeat, Undo2
 } from 'lucide-react'
 
-// ─── Types ──────────────────────
+// ─── Types ──────────────────────────────
 
 type Invoice = {
   id: string; supplier_name: string; invoice_number?: string; invoice_date: string
@@ -31,6 +31,9 @@ type Summary = {
   taux_marge: number | null; resultat_net: number; ratio_ms: number | null
 }
 
+/** Mémoire fournisseur : dernière catégorie et dernier taux de TVA utilisés */
+type SupplierMemo = { name: string; category: string; tva_rate: number | null }
+
 type BillingIntegration = {
   provider: string; is_active: boolean; last_sync_at?: string
   last_sync_status?: 'success' | 'error' | 'pending'; invoices_synced?: number; company_id?: string
@@ -42,7 +45,7 @@ type ProviderMeta = {
   helpUrl: string; description: string
 }
 
-// ─── Constantes ────────────────────────
+// ─── Constantes ────────────────────
 
 // Palette catégories : teintes sourdes et cohérentes (fond -50, texte -700) + point de
 // couleur pour la barre de répartition — évite l'effet « arc-en-ciel » criard.
@@ -76,7 +79,7 @@ const PROVIDERS_META: ProviderMeta[] = [
   { id: 'ebp',       name: 'EBP',       logo: 'EBP', color: 'bg-orange-500', tokenLabel: 'Token API EBP en ligne', tokenPlaceholder: 'Token depuis EBP → Paramètres → API', needsCompanyId: true, companyIdLabel: 'Identifiant dossier EBP', helpUrl: 'https://developer.ebp.com', description: 'EBP en ligne — import factures fournisseurs automatique' },
 ]
 
-// ─── Helpers ────────────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────────────
 
 function getISOWeek(date: Date) {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
@@ -118,6 +121,21 @@ function coversWeek(inv: Invoice, monISO: string, sunISO: string): boolean {
   return start <= sunISO && endISO > monISO
 }
 
+/**
+ * Retrouve le fournisseur mémorisé correspondant à la saisie :
+ * correspondance exacte (insensible à la casse), sinon préfixe UNIQUE à partir
+ * de 3 caractères — « Big » suffit à retrouver Bigard, mais « B » ne décide rien.
+ */
+function matchSupplier(input: string, memos: SupplierMemo[]): SupplierMemo | null {
+  const q = input.trim().toLowerCase()
+  if (!q) return null
+  const exact = memos.find(m => m.name.toLowerCase() === q)
+  if (exact) return exact
+  if (q.length < 3) return null
+  const byPrefix = memos.filter(m => m.name.toLowerCase().startsWith(q))
+  return byPrefix.length === 1 ? byPrefix[0] : null
+}
+
 /** Semaine écoulée (ISO) : celle que le gérant doit voir en arrivant le lundi */
 function getLastWeek() {
   const ref = new Date()
@@ -125,7 +143,7 @@ function getLastWeek() {
   return getISOWeek(ref)
 }
 
-// ─── Composant principal ──────────────────────────────────────────────────────────────
+// ─── Composant principal ──────────────────────────────────────────────────
 
 export default function FacturationPage() {
   const router = useRouter()
@@ -144,8 +162,10 @@ export default function FacturationPage() {
   const [showProviders, setShowProviders] = useState(false)
   const [newInvoice, setNewInvoice] = useState<any>(EMPTY_INVOICE)
   const [saving,    setSaving]    = useState(false)
-  // Mémoire fournisseur → catégorie (pré-remplissage auto à la saisie d'un achat)
-  const [supplierMap, setSupplierMap] = useState<Record<string, string>>({})
+  // Mémoire fournisseur (pré-remplissage auto catégorie + TVA à la saisie d'un achat)
+  const [suppliersMemo, setSuppliersMemo] = useState<SupplierMemo[]>([])
+  // Le boucher a choisi catégorie ou TVA à la main → la mémoire ne l'écrase plus
+  const [memoTouched, setMemoTouched] = useState(false)
   const [caForm,    setCaForm]    = useState({ ca_total: '', ca_boucherie: '', ca_charcuterie: '', ca_traiteur: '', ca_vente: '' })
   const [settForm,  setSettForm]  = useState({ company_name: '', siret: '' })
 
@@ -199,21 +219,31 @@ export default function FacturationPage() {
   useEffect(() => { load() }, [load])
   useEffect(() => { loadIntegrations() }, [loadIntegrations])
 
-  // Charge la mémoire fournisseur → catégorie une fois (catégorie la plus récente par fournisseur)
+  // Charge la mémoire fournisseur (catégorie + TVA les plus récentes par fournisseur)
   useEffect(() => {
     fetch('/api/invoices?suppliers=1', { cache: 'no-store' })
       .then(r => r.json())
       .then(data => {
         if (!Array.isArray(data)) return
-        const m: Record<string, string> = {}
+        const list: SupplierMemo[] = []
         for (const s of data) {
-          const key = String(s?.supplier_name || '').trim().toLowerCase()
-          if (key && s?.category) m[key] = s.category
+          const name = String(s?.supplier_name || '').trim()
+          if (!name || !s?.category) continue
+          const tva = s.tva_rate === null || s.tva_rate === undefined ? null : parseFloat(String(s.tva_rate))
+          list.push({ name, category: s.category, tva_rate: Number.isFinite(tva) ? tva : null })
         }
-        setSupplierMap(m)
+        list.sort((a, b) => a.name.localeCompare(b.name, 'fr'))
+        setSuppliersMemo(list)
       })
       .catch(() => {})
   }, [invoices.length])
+
+  /** Ouvre le formulaire d'ajout sur un état vierge (mémoire fournisseur réarmée) */
+  function openAdd() {
+    setNewInvoice(EMPTY_INVOICE)
+    setMemoTouched(false)
+    setShowAdd(true)
+  }
 
   function prevWeek() { if (week === 1) { setYear(y => y - 1); setWeek(52) } else setWeek(w => w - 1) }
   function nextWeek() { if (week === 52) { setYear(y => y + 1); setWeek(1) } else setWeek(w => w + 1) }
@@ -223,7 +253,7 @@ export default function FacturationPage() {
     setSaving(true)
     const res = await fetch('/api/invoices', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...newInvoice, week_number: week, year }) })
     const data = await res.json()
-    if (data.id) { setShowAdd(false); setNewInvoice(EMPTY_INVOICE); load() }
+    if (data.id) { setShowAdd(false); setNewInvoice(EMPTY_INVOICE); setMemoTouched(false); load() }
     setSaving(false)
   }
 
@@ -370,6 +400,9 @@ export default function FacturationPage() {
   }
 
   const ttcAmount = parseFloat(newInvoice.amount_ht || '0') * (1 + parseFloat(newInvoice.tva_rate || '20') / 100)
+  // Fournisseur reconnu par la mémoire (exact ou préfixe unique) — null si choix manuel en cours
+  const supplierMatch = memoTouched ? null : matchSupplier(newInvoice.supplier_name || '', suppliersMemo)
+  const matchHasTva = supplierMatch !== null && supplierMatch.tva_rate !== null && TVA_RATES.includes(supplierMatch.tva_rate)
 
   // ── Achats variables de la semaine + charges structurelles couvrant la semaine ──
   const variableInvoices = invoices.filter(i => !i.is_fixed_charge)
@@ -405,7 +438,7 @@ export default function FacturationPage() {
           <Button onClick={() => setShowCA(true)} variant="outline" className="h-9 text-sm px-3.5 rounded-xl border-pilote text-pilote hover:bg-pilote-50 transition-colors">
             <Euro className="w-3.5 h-3.5 mr-1.5" />Saisir le CA
           </Button>
-          <Button onClick={() => setShowAdd(true)} className="bg-pilote hover:bg-pilote-hover text-white h-9 text-sm px-3.5 rounded-xl shadow-card active:scale-95 transition-all">
+          <Button onClick={openAdd} className="bg-pilote hover:bg-pilote-hover text-white h-9 text-sm px-3.5 rounded-xl shadow-card active:scale-95 transition-all">
             <Plus className="w-3.5 h-3.5 mr-1.5" />Ajouter une facture
           </Button>
           <button onClick={() => setShowSettings(true)} className="p-2 rounded-xl hover:bg-gray-100 text-gray-400 hover:text-gray-700 transition-colors">
@@ -602,7 +635,7 @@ export default function FacturationPage() {
               </div>
               <p className="text-sm font-bold text-gray-900">Aucun achat sur la semaine {week}</p>
               <p className="text-xs text-gray-400 mt-1 max-w-xs">Lancez un sync pour importer les factures, ou ajoutez-les à la main.</p>
-              <button onClick={() => setShowAdd(true)} className="mt-4 inline-flex items-center gap-1.5 text-sm font-semibold text-white bg-pilote hover:bg-pilote-hover rounded-xl px-4 py-2 shadow-card active:scale-95 transition-all">
+              <button onClick={openAdd} className="mt-4 inline-flex items-center gap-1.5 text-sm font-semibold text-white bg-pilote hover:bg-pilote-hover rounded-xl px-4 py-2 shadow-card active:scale-95 transition-all">
                 <Plus className="w-3.5 h-3.5" />Ajouter une facture
               </button>
             </div>
@@ -843,11 +876,18 @@ export default function FacturationPage() {
             <div className="space-y-4">
               <div className="col-span-2">
                 <label className="block text-xs font-semibold text-gray-600 mb-1">Fournisseur *</label>
-                <Input value={newInvoice.supplier_name} onChange={e => {
+                <Input list="suppliers-memo" value={newInvoice.supplier_name} onChange={e => {
                   const supplier_name = e.target.value
-                  const known = supplierMap[supplier_name.trim().toLowerCase()]
-                  setNewInvoice((p: any) => ({ ...p, supplier_name, ...(known ? { category: known } : {}) }))
-                }} placeholder="Maison Dupont" autoFocus />
+                  const m = memoTouched ? null : matchSupplier(supplier_name, suppliersMemo)
+                  setNewInvoice((p: any) => ({
+                    ...p, supplier_name,
+                    ...(m ? { category: m.category } : {}),
+                    ...(m && m.tva_rate !== null && TVA_RATES.includes(m.tva_rate) ? { tva_rate: String(m.tva_rate) } : {}),
+                  }))
+                }} placeholder="Bigard, Maison Dupont..." autoFocus />
+                <datalist id="suppliers-memo">
+                  {suppliersMemo.map(m => <option key={m.name.toLowerCase()} value={m.name} />)}
+                </datalist>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -863,15 +903,17 @@ export default function FacturationPage() {
                 <label className="block text-xs font-semibold text-gray-600 mb-1">Catégorie</label>
                 <div className="grid grid-cols-3 gap-1.5">
                   {CATEGORIES.map(cat => (
-                    <button key={cat.key} onClick={() => setNewInvoice((p: any) => ({ ...p, category: cat.key }))}
+                    <button key={cat.key} onClick={() => { setMemoTouched(true); setNewInvoice((p: any) => ({ ...p, category: cat.key })) }}
                       className={`py-1.5 px-2 rounded-lg text-xs font-semibold border-2 transition-all ${
                         newInvoice.category === cat.key ? 'border-pilote bg-pilote text-white' : 'border-gray-200 text-gray-600 hover:border-gray-300'
                       }`}>{cat.label}
                     </button>
                   ))}
                 </div>
-                {supplierMap[(newInvoice.supplier_name || '').trim().toLowerCase()] && (
-                  <p className="text-[11px] text-pilote mt-1.5">Pré-remplie d'après vos achats précédents chez ce fournisseur — modifiable.</p>
+                {supplierMatch && (
+                  <p className="text-[11px] text-pilote mt-1.5">
+                    {matchHasTva ? 'Catégorie et TVA pré-remplies' : 'Catégorie pré-remplie'} d'après vos achats chez {supplierMatch.name} — modifiable.
+                  </p>
                 )}
               </div>
               <div className="grid grid-cols-2 gap-3">
@@ -881,7 +923,7 @@ export default function FacturationPage() {
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-gray-600 mb-1">Taux TVA (%)</label>
-                  <select value={newInvoice.tva_rate} onChange={e => setNewInvoice((p: any) => ({ ...p, tva_rate: e.target.value }))} className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-pilote">
+                  <select value={newInvoice.tva_rate} onChange={e => { setMemoTouched(true); setNewInvoice((p: any) => ({ ...p, tva_rate: e.target.value })) }} className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-pilote">
                     {TVA_RATES.map(r => <option key={r} value={r}>{r === 0 ? '0 % (exonéré)' : `${r} %`}</option>)}
                   </select>
                 </div>
