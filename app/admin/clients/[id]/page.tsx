@@ -47,7 +47,7 @@ type Report = {
 type Tab = 'rapports' | 'planning' | 'facturation'
 interface TabDef { key: Tab; label: string; icon: React.ElementType; count?: number }
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+// ─── Constants ──────────────────────────────────────────────────────────────────
 
 const JOURS_SHORT = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim']
 const JOURS_DB    = ['lundi','mardi','mercredi','jeudi','vendredi','samedi','dimanche'] as const
@@ -85,7 +85,7 @@ const EMP_PAL = [
   { bg: 'bg-teal-100',   text: 'text-teal-900'    },
 ]
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Helpers ────────────────────────────────────────────────────────────────
 
 function isoWeek(date: Date) {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
@@ -96,6 +96,11 @@ function isoWeek(date: Date) {
     week: Math.ceil((((d.getTime() - y.getTime()) / 86400000) + 1) / 7),
     year: d.getUTCFullYear(),
   }
+}
+
+/** Nombre de semaines ISO de l'année (52 ou 53) — le 28 décembre est toujours dans la dernière */
+function isoWeeksInYear(y: number): number {
+  return isoWeek(new Date(y, 11, 28)).week
 }
 
 function getWeekDates(week: number, year: number): Date[] {
@@ -142,7 +147,7 @@ function getEntry(entries: PlanningEntry[], empId: string, week: number, year: n
   }
 }
 
-// ─── WeekNav ──────────────────────────────────────────────────────────────────
+// ─── WeekNav ────────────────────────────────────────────────────────────────
 
 function WeekNav({ week, year, setWeek, setYear }: {
   week: number; year: number
@@ -151,8 +156,8 @@ function WeekNav({ week, year, setWeek, setYear }: {
   const { week: cw, year: cy } = isoWeek(new Date())
   const dates = getWeekDates(week, year)
   const isCurrent = week === cw && year === cy
-  const prev = () => { if (week === 1) { setYear(year - 1); setWeek(52) } else setWeek(week - 1) }
-  const next = () => { if (week === 52) { setYear(year + 1); setWeek(1) } else setWeek(week + 1) }
+  const prev = () => { if (week === 1) { setYear(year - 1); setWeek(isoWeeksInYear(year - 1)) } else setWeek(week - 1) }
+  const next = () => { if (week >= isoWeeksInYear(year)) { setYear(year + 1); setWeek(1) } else setWeek(week + 1) }
   return (
     <div className="flex items-center gap-3 mb-4">
       <button onClick={prev} className="p-1.5 rounded hover:bg-gray-100">
@@ -489,7 +494,7 @@ function FacturationTab({ clientId }: { clientId: string }) {
   )
 }
 
-// ─── Main Page ────────────────────────────────────────────────────────────────
+// ─── Main Page ──────────────────────────────────────────────────────────────────
 
 export default function ClientDetailPage({ params }: { params: { id: string } }) {
   const [tab, setTab]           = useState<Tab>('rapports')

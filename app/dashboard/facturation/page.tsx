@@ -136,6 +136,11 @@ function matchSupplier(input: string, memos: SupplierMemo[]): SupplierMemo | nul
   return byPrefix.length === 1 ? byPrefix[0] : null
 }
 
+/** Nombre de semaines ISO de l'année (52 ou 53) — le 28 décembre est toujours dans la dernière */
+function isoWeeksInYear(y: number): number {
+  return getISOWeek(new Date(y, 11, 28)).week
+}
+
 /** Semaine écoulée (ISO) : celle que le gérant doit voir en arrivant le lundi */
 function getLastWeek() {
   const ref = new Date()
@@ -245,8 +250,8 @@ export default function FacturationPage() {
     setShowAdd(true)
   }
 
-  function prevWeek() { if (week === 1) { setYear(y => y - 1); setWeek(52) } else setWeek(w => w - 1) }
-  function nextWeek() { if (week === 52) { setYear(y => y + 1); setWeek(1) } else setWeek(w => w + 1) }
+  function prevWeek() { if (week === 1) { setYear(y => y - 1); setWeek(isoWeeksInYear(year - 1)) } else setWeek(w => w - 1) }
+  function nextWeek() { if (week >= isoWeeksInYear(year)) { setYear(y => y + 1); setWeek(1) } else setWeek(w => w + 1) }
 
   async function addInvoice() {
     if (!newInvoice.supplier_name || !newInvoice.invoice_date || !newInvoice.amount_ht) return
