@@ -33,7 +33,7 @@ interface AnimalConfig {
 }
 interface WeekLabor { hours: number; cost: number; rate: number; decoupeHours: number; decoupeCost: number; week: number; year: number }
 
-// ─── Données Bœuf ────────────────────────────────────────────
+// ─── Données Bœuf ──────────────────────────────────────────
 
 const BOEUF_BREEDS: Breed[] = [
   { id: 'charolaise',       name: 'Charolaise',         carcassYield: 0.645, avgWeight: '750-950 kg',  origin: 'Bourgogne',        description: 'Race à viande n°1 en France. Masses musculaires très développées. Viande ferme, peu persillée, idéale pour pièces à griller et rôtir.' },
@@ -236,10 +236,11 @@ const ANIMALS: Record<AnimalType, AnimalConfig> = {
 
 const ANIMAL_TYPES: AnimalType[] = ['boeuf', 'veau', 'agneau', 'porc', 'volaille']
 
-// Deux découpes possibles pour le bœuf, au choix de l'artisan (bascule en haut du calculateur)
+// ART8 (arrière) + AVANTCAPA (avant) = les deux parties d'UNE SEULE ET MÊME bête.
+// La bascule sert à saisir chaque moitié de la carcasse, pas à choisir entre deux découpes.
 const BOEUF_DECOUPES: { id: BoeufDecoupe; label: string; hint: string; cuts: Cut[] }[] = [
-  { id: 'b1', label: 'RT8',       hint: 'BCUH · DEHMT · Bavette', cuts: BOEUF_CUTS },
-  { id: 'b2', label: 'AVANTCAPA', hint: 'CEFIMEV · épaule + collier', cuts: BOEUF_B2_CUTS },
+  { id: 'b1', label: 'ART8',      hint: 'Arrière — BCUH · DEHMT · Bavette', cuts: BOEUF_CUTS },
+  { id: 'b2', label: 'AVANTCAPA', hint: 'Avant — épaule + collier (CEFIMEV)', cuts: BOEUF_B2_CUTS },
 ]
 
 // ─── Catégories ─────────────────────────────────────────────
@@ -419,7 +420,7 @@ export default function ValorisationPage() {
 
   const config = ANIMALS[animalType]
   const breeds = config.breeds
-  // Pour le bœuf, les pièces dépendent de la découpe sélectionnée (RT8 / AVANTCAPA)
+  // Pour le bœuf, les pièces dépendent de la partie sélectionnée (ART8 arrière / AVANTCAPA avant)
   const cuts   = animalType === 'boeuf'
     ? (BOEUF_DECOUPES.find(d => d.id === boeufDecoupe)?.cuts ?? BOEUF_CUTS)
     : config.cuts
@@ -819,10 +820,10 @@ export default function ValorisationPage() {
         })}
       </div>
 
-      {/* ── Choix de la découpe (bœuf uniquement) ── */}
+      {/* ── Partie de la bête (bœuf uniquement) — ART8 + AVANTCAPA = la même carcasse ── */}
       {animalType === 'boeuf' && (
         <div className="flex items-center gap-3 mb-5 flex-wrap">
-          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Découpe</span>
+          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Partie de la bête</span>
           <div className="inline-flex bg-gray-100 p-1 rounded-xl">
             {BOEUF_DECOUPES.map(d => {
               const active = boeufDecoupe === d.id
@@ -837,6 +838,7 @@ export default function ValorisationPage() {
               )
             })}
           </div>
+          <span className="text-[11px] text-gray-400">Une seule et même bête — <strong className="text-gray-600">ART8</strong> = l&apos;arrière, <strong className="text-gray-600">AVANTCAPA</strong> = l&apos;avant</span>
         </div>
       )}
 
