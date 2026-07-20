@@ -8,6 +8,10 @@
     {
       "path": "/api/reports/auto",
       "schedule": "0 5 * * 1"
+    },
+    {
+      "path": "/api/planning/send-weekly",
+      "schedule": "0 16 * * 0"
     }
   ]
 }

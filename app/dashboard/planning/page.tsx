@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useToast } from '@/components/ui/toast'
 import { useConfirm } from '@/components/ui/confirm-dialog'
-import { Plus, ChevronLeft, ChevronRight, Trash2, CalendarDays, FileDown, Copy, Clipboard, BarChart2, X, AlertTriangle } from 'lucide-react'
+import { Plus, ChevronLeft, ChevronRight, Trash2, CalendarDays, FileDown, Copy, Clipboard, BarChart2, X, AlertTriangle, Send } from 'lucide-react'
 import EmployeeProfileModal, { EmployeeProfile } from '@/components/EmployeeProfileModal'
 
 type DayType = 'travail' | 'conges' | 'maladie' | 'repos'
@@ -386,6 +386,7 @@ export default function PlanningPage() {
   const [showMonthly,    setShowMonthly]    = useState(false)
   const [monthlyData,    setMonthlyData]    = useState<MonthlyStat[] | null>(null)
   const [loadingMonthly, setLoadingMonthly] = useState(false)
+  const [sendingMail,    setSendingMail]    = useState(false)
 
   const { week: cw, year: cy } = getISOWeek(new Date())
   const isCurrentWeek = week === cw && year === cy
@@ -609,6 +610,34 @@ export default function PlanningPage() {
     }
   }
 
+  /** Envoie à chaque employé (ayant un email dans sa fiche) son planning individuel de la semaine.
+   *  Un envoi automatique a aussi lieu chaque dimanche soir pour la semaine à venir. */
+  async function sendPlanningMail() {
+    if (sendingMail) return
+    setSendingMail(true)
+    try {
+      const res = await fetch('/api/planning/send', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ week, year }),
+      })
+      const data = await res.json().catch(() => null)
+      if (!res.ok) {
+        toast({ variant: 'error', title: 'Envoi impossible', description: data?.error || `Erreur ${res.status}` })
+        return
+      }
+      const extras: string[] = []
+      if (data.noEmail > 0) extras.push(`${data.noEmail} sans adresse mail (fiche employé)`)
+      if (data.noPlanning > 0) extras.push(`${data.noPlanning} sans planning cette semaine`)
+      toast({
+        variant: data.sent > 0 ? 'success' : 'info',
+        title: data.sent > 0 ? `Planning envoyé à ${data.sent} employé${data.sent > 1 ? 's' : ''}` : 'Aucun email envoyé',
+        description: extras.length > 0 ? extras.join(' · ') : `Semaine ${week} — chacun ne reçoit que ses propres horaires.`,
+      })
+    } finally {
+      setSendingMail(false)
+    }
+  }
+
   function pasteDay(toEmpId: string, toJour: JourDB) {
     if (!copiedCell) return
     const fromEntry = getEntryState(copiedCell.empId)
@@ -784,6 +813,10 @@ export default function PlanningPage() {
               </Button>
               <Button onClick={exportPDF} variant="outline" className="h-8 text-sm px-3 border-pilote text-pilote hover:bg-pilote-50" title="Feuille d'émargement à imprimer et faire signer — sans données financières">
                 <FileDown className="w-3.5 h-3.5 mr-1.5" />Feuille d'émargement
+              </Button>
+              <Button onClick={sendPlanningMail} disabled={sendingMail} variant="outline" className="h-8 text-sm px-3 border-pilote text-pilote hover:bg-pilote-50"
+                title="Envoie à chaque employé son planning individuel de la semaine affichée (email requis dans la fiche). Envoi automatique chaque dimanche soir pour la semaine à venir.">
+                <Send className="w-3.5 h-3.5 mr-1.5" />{sendingMail ? 'Envoi...' : 'Envoyer aux employés'}
               </Button>
             </>
           )}
@@ -1048,7 +1081,7 @@ export default function PlanningPage() {
                         <td key={jour} className="p-0 border-b border-r border-gray-200 align-stretch group/cell">
                           <div className="relative h-full" data-cell="true" onClick={e => e.stopPropagation()}>
                             <div
-                              className={`cursor-pointer transition-all ${cellBg} ${overDay ? 'ring-2 ring-inset ring-red-400' : ''} w-full h-full min-h-[145px] px-1.5 pt-2 pb-2 flex flex-col select-none`}
+                              className={`cursor-pointer transition-all ${cellBg} ${overDay ? 'ring-2 ring-inset ring-red-400' : ''} w-full h-full min-h-[145px] px-1 pt-2 pb-2 flex flex-col select-none`}
                               onClick={e => { e.stopPropagation(); setContractPopover(null); setDetailModal({ empId: emp.id, jour, idx }) }}
                             >
                               {/* ── Top: type + copy ── */}
