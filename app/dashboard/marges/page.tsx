@@ -3,7 +3,8 @@ import { resolveClientId } from '@/lib/resolve-client-id'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Percent, Info, Settings2, AlertTriangle } from 'lucide-react'
 import Link from 'next/link'
-import MargesWizard, { GROUPES, defaultGroupeForFamille, defaultGroupeForCategorie, type Groupe, type MappingRow } from '@/components/MargesWizard'
+import MargesWizard from '@/components/MargesWizard'
+import { GROUPES, CATEGORIES_STRUCTURELLES, defaultGroupeForFamille, defaultGroupeForCategorie, type Groupe, type MappingRow } from '@/lib/marges-config'
 
 const fmt = (n: number) => n.toLocaleString('fr-FR', { maximumFractionDigits: 0 })
 
@@ -99,21 +100,28 @@ export default async function MargesPage({ searchParams }: { searchParams?: { co
   const caByGroupe = zero()
   for (const w of weeks) for (const f of w.familles) caByGroupe[groupeOfFamille(String(f.nom || ''))] += Number(f.montant) || 0
 
-  // Seules les factures VALIDÉES entrent dans le calcul — les imports « à vérifier » sont exclus
+  // Seules les factures VALIDÉES entrent dans le calcul — les imports « à vérifier » sont exclus.
+  // Les charges STRUCTURELLES (frais généraux : loyer, énergie…) ne sont affectées à aucun
+  // groupe : elles pèsent uniquement sur la marge globale.
   const aVerifier = invoices.filter(i => i.status === 'a_verifier')
   const valides   = invoices.filter(i => i.status !== 'a_verifier')
   const achatsByGroupe = zero()
   const fixesByGroupe  = zero()
+  let structurel = 0
   for (const inv of valides) {
-    const g = groupeOfCategorie(String(inv.category || 'autre'))
-    if (inv.is_fixed_charge) fixesByGroupe[g] += parseFloat(String(inv.prorata_ht || 0))
-    else achatsByGroupe[g] += parseFloat(String(inv.amount_ht || 0))
+    const cat = String(inv.category || 'autre')
+    const montant = inv.is_fixed_charge ? parseFloat(String(inv.prorata_ht || 0)) : parseFloat(String(inv.amount_ht || 0))
+    if (CATEGORIES_STRUCTURELLES.has(cat)) { structurel += montant; continue }
+    const g = groupeOfCategorie(cat)
+    if (inv.is_fixed_charge) fixesByGroupe[g] += montant
+    else achatsByGroupe[g] += montant
   }
 
   const caTotal     = weeks.reduce((s, w) => s + w.ca, 0)
   const achatsTotal = (Object.values(achatsByGroupe) as number[]).reduce((s, v) => s + v, 0)
   const fixesTotal  = (Object.values(fixesByGroupe)  as number[]).reduce((s, v) => s + v, 0)
-  const margeGlobale = caTotal > 0 ? ((caTotal - achatsTotal - fixesTotal) / caTotal) * 100 : null
+  const margeGroupes = caTotal > 0 ? ((caTotal - achatsTotal - fixesTotal) / caTotal) * 100 : null
+  const margeGlobale = caTotal > 0 ? ((caTotal - achatsTotal - fixesTotal - structurel) / caTotal) * 100 : null
 
   const rows = GROUPES.map(({ key }) => {
     const ca = caByGroupe[key]
@@ -189,13 +197,14 @@ export default async function MargesPage({ searchParams }: { searchParams?: { co
               <p className="text-2xl font-bold tracking-tight text-gray-900 tabular">{fmt(caTotal)} €</p>
             </CardContent></Card>
             <Card className="hover:shadow-card-hover transition-shadow"><CardContent className="p-5">
-              <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Achats validés + fixes</p>
-              <p className="text-2xl font-bold tracking-tight text-gray-900 tabular">{fmt(achatsTotal + fixesTotal)} €</p>
-              <p className="text-xs text-gray-400 mt-1 tabular">dont charges fixes {fmt(fixesTotal)} € (part hebdo)</p>
+              <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Achats validés + charges</p>
+              <p className="text-2xl font-bold tracking-tight text-gray-900 tabular">{fmt(achatsTotal + fixesTotal + structurel)} €</p>
+              <p className="text-xs text-gray-400 mt-1 tabular">dont fixes {fmt(fixesTotal)} € · structurel {fmt(structurel)} € (part hebdo)</p>
             </CardContent></Card>
             <Card className="hover:shadow-card-hover transition-shadow"><CardContent className="p-5">
               <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Marge globale</p>
               <p className={`text-2xl font-bold tracking-tight tabular ${margeColor(margeGlobale)}`}>{margeGlobale !== null ? `${margeGlobale.toFixed(1)} %` : '—'}</p>
+              {structurel > 0 && <p className="text-xs text-gray-400 mt-1">frais généraux inclus</p>}
             </CardContent></Card>
           </div>
 
@@ -203,7 +212,7 @@ export default async function MargesPage({ searchParams }: { searchParams?: { co
           <Card className="mb-6 overflow-hidden">
             <CardHeader>
               <CardTitle className="text-base">Marge par groupe</CardTitle>
-              <CardDescription>Lissée sur {weeks.length} semaine{weeks.length > 1 ? 's' : ''} · seules les factures validées comptent · charges fixes affectées au groupe de leur catégorie</CardDescription>
+              <CardDescription>Lissée sur {weeks.length} semaine{weeks.length > 1 ? 's' : ''} · seules les factures validées comptent · frais généraux hors groupes (marge globale uniquement)</CardDescription>
             </CardHeader>
             <CardContent className="p-0">
               <table className="w-full">
@@ -233,12 +242,12 @@ export default async function MargesPage({ searchParams }: { searchParams?: { co
                 </tbody>
                 <tfoot>
                   <tr className="bg-pilote text-white">
-                    <td className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-white/60">Total</td>
+                    <td className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-white/60">Total groupes</td>
                     <td className="px-4 py-3 text-right font-bold tabular">{fmt(caTotal)} €</td>
                     <td className="px-4 py-3 text-right font-bold tabular">{fmt(achatsTotal)} €</td>
                     <td className="px-4 py-3 text-right font-bold tabular text-white/70">{fmt(fixesTotal)} €</td>
                     <td className="px-4 py-3 text-right font-bold tabular text-green-300">{fmt(caTotal - achatsTotal - fixesTotal)} €</td>
-                    <td className="px-4 py-3 text-right font-bold tabular text-green-300">{margeGlobale !== null ? `${margeGlobale.toFixed(1)} %` : '—'}</td>
+                    <td className="px-4 py-3 text-right font-bold tabular text-green-300">{margeGroupes !== null ? `${margeGroupes.toFixed(1)} %` : '—'}</td>
                     <td className="px-4 py-3" />
                   </tr>
                 </tfoot>
@@ -252,6 +261,7 @@ export default async function MargesPage({ searchParams }: { searchParams?: { co
             <div className="text-xs text-gray-600 space-y-2 leading-relaxed">
               <p><span className="font-semibold text-gray-800">Comment lire :</span> marge lissée sur {weeks.length} semaine{weeks.length > 1 ? 's' : ''} — les achats d'une semaine se vendent sur les suivantes, le cumul gomme l'effet stock. Précise à 2-3 points près, la tendance est fiable.</p>
               <p><span className="font-semibold text-gray-800">Votre catégorisation :</span> chaque famille de vente et catégorie d'achat est rangée dans un groupe selon VOS choix (bouton « Modifier la catégorisation »). Le traiteur consomme de la matière boucherie : si sa part de CA monte, la marge boucherie doit suivre — sinon, un œil sur la valorisation carcasse.</p>
+              <p><span className="font-semibold text-gray-800">Charges structurelles :</span> les frais généraux (loyer, énergie, assurance…) ne sont affectés à aucun groupe — ils n'apparaissent que dans la marge globale, en haut de page.</p>
               <p><span className="font-semibold text-gray-800">Fiabilité :</span> seules les factures <strong>validées</strong> comptent — les imports automatiques restent « à vérifier » jusqu'à votre validation en page Facturation. Contrôle croisé : comparez avec la marge théorique de vos valorisations carcasse ; un écart durable = démarque (pertes, erreurs de prix, vol).</p>
             </div>
           </div>
