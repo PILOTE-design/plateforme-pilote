@@ -17,6 +17,11 @@ export default async function TendancesPage() {
   const serviceSupabase = createServiceClient()
   const clientId = await resolveClientId(serviceSupabase, user!.id, user?.email)
 
+  // Tendances = ANNÉE EN COURS uniquement. La génération de rapport archive aussi les
+  // semaines N-1 (année précédente) pour la comparaison — elles ne doivent PAS entrer
+  // dans la courbe de tendance, sinon des chiffres de l'an dernier polluent l'affichage.
+  const currentYear = new Date().getFullYear()
+
   let weekKeys: WeekKey[] = []
   const byProduct = new Map<string, Map<WeekKey, number>>()
   type CaRow = { key: WeekKey; ca: number; tickets: number | null; panier: number | null; familles: { nom: string; montant: number }[] }
@@ -28,12 +33,14 @@ export default async function TendancesPage() {
         .from('weekly_sales_products')
         .select('product, amount, week_number, year')
         .eq('client_id', clientId)
+        .eq('year', currentYear)
         .order('year', { ascending: false }).order('week_number', { ascending: false })
         .limit(8000),
       serviceSupabase
         .from('weekly_ca')
         .select('week_number, year, ca_total, nb_tickets, moyenne_ticket, families_detail')
         .eq('client_id', clientId)
+        .eq('year', currentYear)
         .order('year', { ascending: false }).order('week_number', { ascending: false })
         .limit(16),
     ])
@@ -130,7 +137,7 @@ export default async function TendancesPage() {
         <div>
           <h1 className="text-2xl font-extrabold tracking-tight text-gray-900">Tendances produits</h1>
           <p className="text-sm text-gray-500 mt-1">
-            Évolution semaine par semaine, alimentée automatiquement par vos rapports hebdomadaires
+            Évolution semaine par semaine sur {currentYear}, alimentée automatiquement par vos rapports hebdomadaires
             {lastKey && <span className="ml-2 text-xs bg-pilote-50 text-pilote px-2 py-0.5 rounded-full font-semibold tabular">{weekKeys.length} semaine{weekKeys.length > 1 ? 's' : ''} · dernière : {labelOf(lastKey)}</span>}
           </p>
         </div>
@@ -222,7 +229,7 @@ export default async function TendancesPage() {
             <Card className="mb-6">
               <CardHeader>
                 <CardTitle className="text-base">Tendance par famille</CardTitle>
-                <CardDescription>CA hebdomadaire des {weekKeys.length} dernières semaines archivées</CardDescription>
+                <CardDescription>CA hebdomadaire des {weekKeys.length} dernières semaines archivées · {currentYear}</CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="space-y-3">
