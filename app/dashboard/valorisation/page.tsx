@@ -61,9 +61,6 @@ const BOEUF_CUTS: Cut[] = [
   { id: 'merlan',                 name: 'Merlan',                  category: 'premier',   yieldPct: 0, marketPrice: 26, group: ['ART8', 'BCUH', 'Globe', 'Tende de tranche', 'Entame'] },
   { id: 'chapeau',                name: 'Chapeau',                 category: 'deuxieme',  yieldPct: 0, marketPrice: 15, group: ['ART8', 'BCUH', 'Globe', 'Tende de tranche'] },
   { id: 'talon',                  name: 'Talon',                   category: 'troisieme', yieldPct: 0, marketPrice: 12, group: ['ART8', 'BCUH', 'Globe', 'Tende de tranche'] },
-  { id: 'rond_tranche_grasse',    name: 'Rond de tranche grasse',  category: 'deuxieme',  yieldPct: 0, marketPrice: 16, group: ['ART8', 'BCUH', 'Globe', 'Tranche grasse'] },
-  { id: 'plat_tranche_grasse',    name: 'Plat de tranche grasse',  category: 'deuxieme',  yieldPct: 0, marketPrice: 15, group: ['ART8', 'BCUH', 'Globe', 'Tranche grasse'] },
-  { id: 'mouvant_tranche_grasse', name: 'Mouvant de tranche grasse', category: 'deuxieme', yieldPct: 0, marketPrice: 15, group: ['ART8', 'BCUH', 'Globe', 'Tranche grasse'] },
   { id: 'gite_noix',              name: 'Gîte à la noix',          category: 'deuxieme',  yieldPct: 0, marketPrice: 17, group: ['ART8', 'BCUH', 'Globe', 'Semelle'] },
   { id: 'rond_de_gite',           name: 'Rond de gîte',            category: 'deuxieme',  yieldPct: 0, marketPrice: 18, group: ['ART8', 'BCUH', 'Globe', 'Semelle'] },
   { id: 'nerveux',                name: 'Nerveux',                 category: 'troisieme', yieldPct: 0, marketPrice: 11, group: ['ART8', 'BCUH', 'Globe', 'Semelle'] },
@@ -77,7 +74,11 @@ const BOEUF_CUTS: Cut[] = [
   // ── DEHMT ──
   { id: 'faux_filet_b',           name: 'Faux-filet',              category: 'premier',   yieldPct: 0, marketPrice: 29, group: ['ART8', 'DEHMT'] },
   { id: 'filet_b',                name: 'Filet',                   category: 'premier',   yieldPct: 0, marketPrice: 45, group: ['ART8', 'DEHMT'] },
-  { id: 'dessus_de_cote',         name: 'Dessus de côté',          category: 'deuxieme',  yieldPct: 0, marketPrice: 14, group: ['ART8', 'DEHMT', 'Carré côté'] },
+  { id: 'onglet_b',               name: 'Onglet',                  category: 'premier',   yieldPct: 0, marketPrice: 28, group: ['ART8', 'DEHMT'] },
+  { id: 'chainette_filet',        name: 'Chaînette de filet',      category: 'deuxieme',  yieldPct: 0, marketPrice: 18, group: ['ART8', 'DEHMT'] },
+  // Dessus de côte = catégorie dépliable
+  { id: 'carre_de_cote',          name: 'Carré de côte',           category: 'premier',   yieldPct: 0, marketPrice: 18, group: ['ART8', 'DEHMT', 'Dessus de côte'] },
+  { id: 'cote_boeuf',             name: 'Côte',                    category: 'premier',   yieldPct: 0, marketPrice: 24, group: ['ART8', 'DEHMT', 'Dessus de côte'] },
   // ── BAVETTE ──
   { id: 'flanchet',               name: 'Flanchet',                category: 'deuxieme',  yieldPct: 0, marketPrice: 12, group: ['ART8', 'BAVETTE'] },
   { id: 'bavette_aloyau_b',       name: "Bavette d'aloyau",        category: 'premier',   yieldPct: 0, marketPrice: 22, group: ['ART8', 'BAVETTE'] },
@@ -101,6 +102,12 @@ const BOEUF_B2_CUTS: Cut[] = [
   { id: 'b2_saliere',           name: 'Salière',                 category: 'deuxieme',  yieldPct: 0, marketPrice: 13, group: ['AVANTCAPA', 'Collier basse-côte', 'Collier'] },
   { id: 'b2_veine_grasse',      name: 'Veine grasse',            category: 'deuxieme',  yieldPct: 0, marketPrice: 11, group: ['AVANTCAPA', 'Collier basse-côte', 'Collier'] },
   { id: 'b2_filet_mignon_col',  name: 'Filet mignon (de collier)', category: 'premier', yieldPct: 0, marketPrice: 14, group: ['AVANTCAPA', 'Collier basse-côte', 'Collier'] },
+  // ── CAPA ──
+  { id: 'capa_gros_bout_poitrine', name: 'Gros bout de poitrine sans os', category: 'troisieme', yieldPct: 0, marketPrice: 10, group: ['AVANTCAPA', 'CAPA'] },
+  { id: 'capa_plat_de_capa',       name: 'Plat de capa',                  category: 'deuxieme',  yieldPct: 0, marketPrice: 12, group: ['AVANTCAPA', 'CAPA'] },
+  { id: 'capa_hampe',              name: 'Hampe',                         category: 'premier',   yieldPct: 0, marketPrice: 24, group: ['AVANTCAPA', 'CAPA'] },
+  { id: 'capa_fausse_hampe',       name: 'Fausse hampe',                  category: 'deuxieme',  yieldPct: 0, marketPrice: 16, group: ['AVANTCAPA', 'CAPA'] },
+  { id: 'capa_plat_de_cote',       name: 'Plat de côte',                  category: 'troisieme', yieldPct: 0, marketPrice: 9,  group: ['AVANTCAPA', 'CAPA'] },
 ]
 
 // L'arbre bœuf complet : ART8 (arrière) et AVANTCAPA (avant) sont les deux grandes
