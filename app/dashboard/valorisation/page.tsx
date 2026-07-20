@@ -464,10 +464,12 @@ export default function ValorisationPage() {
   const excludedCuts = useMemo(() => new Set<string>(excludedByAnimal[animalType] ?? []), [excludedByAnimal, animalType])
 
   // Reset quand on change d'espèce (les catégories/pièces de chaque famille sont conservées).
-  // Ignoré au premier rendu pour ne pas écraser le brouillon restauré.
+  // Ignoré au premier rendu (brouillon restauré) et lors d'une réouverture depuis l'historique.
   const firstMount = useRef(true)
+  const skipNextAnimalReset = useRef(false)
   useEffect(() => {
     if (firstMount.current) { firstMount.current = false; return }
+    if (skipNextAnimalReset.current) { skipNextAnimalReset.current = false; return }
     setBreedId(config.breeds[0].id)
     setCarcassWeight(config.defaultWeight)
     setPurchasePerKg(config.defaultPurchaseKg)
@@ -738,6 +740,33 @@ export default function ValorisationPage() {
     setTargetMargin(35)
     setPurchaseDate(new Date().toISOString().split('T')[0])
     toast({ variant: 'success', title: 'Saisie réinitialisée' })
+  }
+
+  /** Recharge une valorisation sauvegardée dans le calculateur — poids par pièce inclus.
+   *  Sauvegarder ensuite crée un NOUVEAU lot (l'original reste dans l'historique). */
+  function reopenValo(v: SavedValo & { cut_weights?: Record<string, number> | null; decoupe_hours?: number | null }) {
+    const at = (v.animal_type as AnimalType) || 'boeuf'
+    if (at !== animalType) skipNextAnimalReset.current = true
+    setAnimalType(at)
+    setBreedId(v.breed_id)
+    setCarcassWeight(String(v.carcass_weight || v.live_weight || ''))
+    setQuantity(String(v.quantity ?? 1))
+    setPurchasePerKg(String(v.purchase_per_kg ?? ''))
+    setOverheadCost(String(v.overhead_cost ?? 0))
+    setLaborCost(String(v.labor_cost ?? 0))
+    setDecoupeHours(v.decoupe_hours ? String(v.decoupe_hours) : '')
+    setTargetMargin(Number(v.target_margin) || 35)
+    setPurchaseDate(v.purchase_date)
+    setNotes(v.notes ?? '')
+    const w: Record<string, string> = {}
+    if (v.cut_weights && typeof v.cut_weights === 'object') {
+      for (const [k, val] of Object.entries(v.cut_weights)) { const n = Number(val); if (n > 0) w[k] = String(n) }
+    }
+    setCutWeights(w)
+    setExpandedNodes(new Set())
+    setSelected(null)
+    setActiveTab('calc')
+    toast({ variant: 'success', title: 'Valorisation rechargée', description: `${v.breed_name} du ${new Date(v.purchase_date).toLocaleDateString('fr-FR')} — modifiez puis « Sauvegarder » pour créer un nouveau lot.` })
   }
 
   async function deleteValo(id: string) {
@@ -1451,6 +1480,11 @@ export default function ValorisationPage() {
                 <p className="text-sm text-gray-700 mt-0.5">{selected.notes}</p>
               </div>
             )}
+            <button onClick={() => reopenValo(selected as SavedValo & { cut_weights?: Record<string, number> | null; decoupe_hours?: number | null })}
+              title="Recharge tous les paramètres et poids par pièce de ce lot dans le calculateur"
+              className="mt-4 w-full flex items-center justify-center gap-2 bg-pilote hover:bg-pilote-hover text-white text-sm font-semibold rounded-xl py-2.5 shadow-card active:scale-[0.99] transition-all">
+              <RotateCcw className="w-4 h-4" />Rouvrir dans le calculateur
+            </button>
           </div>
         </div>
       )}
