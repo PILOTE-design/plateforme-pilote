@@ -70,7 +70,7 @@ export async function POST(request: NextRequest) {
 
   const { data, error } = await serviceSupabase
     .from('invoices')
-    .insert({ client_id: clientId, supplier_name, invoice_number, invoice_date, category, amount_ht: parseFloat(amount_ht), tva_rate: parseFloat(tva_rate), amount_ttc, notes, week_number: parseInt(week_number), year: parseInt(year) })
+    .insert({ client_id: clientId, supplier_name, invoice_number, invoice_date, category, amount_ht: parseFloat(amount_ht), tva_rate: parseFloat(tva_rate), amount_ttc, notes, week_number: parseInt(week_number), year: parseInt(year), status: 'validee' })
     .select()
     .single()
 
