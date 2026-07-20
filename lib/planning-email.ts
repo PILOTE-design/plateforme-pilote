@@ -52,7 +52,16 @@ function dayCell(entry: any, j: string, idx: number): string {
   return lines.join('<br>') + (h > 0 ? `<br><strong>${fmtH(h)}</strong>` : '')
 }
 
-function buildHtml(empName: string, businessName: string, week: number, entry: any, dates: Date[]): string {
+/** Horodatage de l'envoi (heure de Paris) — rend chaque email UNIQUE :
+ *  sans lui, Gmail regroupe les renvois dans une même conversation (1, 2, 3…). */
+function sendStamp(): string {
+  const now = new Date()
+  const d = now.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', timeZone: 'Europe/Paris' })
+  const t = now.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Paris' })
+  return `${d} ${t.replace(':', 'h')}`
+}
+
+function buildHtml(empName: string, businessName: string, week: number, entry: any, dates: Date[], stamp: string): string {
   const fmtD = (d: Date) => d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', timeZone: 'UTC' })
   let totalH = 0
   const rows = JOURS_DB.map((j, idx) => {
@@ -78,7 +87,8 @@ function buildHtml(empName: string, businessName: string, week: number, entry: a
         <strong>Total travaillé prévu : ${fmtH(totalH)}</strong>
       </p>
       <p style="margin:0;padding:10px 24px 16px;font-size:11px;color:#94a3b8;">
-        Planning transmis via PILOTE — en cas de question, adressez-vous à votre responsable. Le planning peut être ajusté en cours de semaine.
+        Version envoyée le ${stamp} — elle remplace tout planning reçu précédemment pour la semaine ${week}.
+        Planning transmis via PILOTE — en cas de question, adressez-vous à votre responsable.
       </p>
     </div>
   </div>`
@@ -105,6 +115,8 @@ export async function sendPlanningEmails(
     .eq('year', year)
   const byEmp = new Map((entries || []).map((e: any) => [e.employee_id, e]))
   const dates = getWeekDates(week, year)
+  // Objet unique par envoi : chaque renvoi apparaît comme un NOUVEAU mail bien distinct
+  const stamp = sendStamp()
 
   let sent = 0, noEmail = 0, noPlanning = 0
   for (const emp of employees) {
@@ -116,8 +128,8 @@ export async function sendPlanningEmails(
       await resend.emails.send({
         from: process.env.RESEND_FROM_EMAIL!,
         to: email,
-        subject: `Votre planning S${week} — ${businessName}`,
-        html: buildHtml(String(emp.name || '').split(' ')[0] || 'bonjour', businessName, week, entry, dates),
+        subject: `Votre planning S${week} — ${businessName} · ${stamp}`,
+        html: buildHtml(String(emp.name || '').split(' ')[0] || 'bonjour', businessName, week, entry, dates, stamp),
       })
       sent++
     } catch {
