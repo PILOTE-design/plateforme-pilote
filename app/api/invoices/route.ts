@@ -19,18 +19,22 @@ export async function GET(request: NextRequest) {
   const clientId = await resolveClientId(serviceSupabase, user.id, user.email)
   if (!clientId) return NextResponse.json([])
 
-  // Mémoire fournisseur → catégorie : renvoie la catégorie la plus récente utilisée pour
-  // chaque fournisseur, pour pré-remplir automatiquement la catégorie à la saisie d'un achat.
+  // Mémoire fournisseur : renvoie, pour chaque fournisseur connu, la catégorie et le taux
+  // de TVA les plus récents — sert au pré-remplissage auto du formulaire d'ajout d'achat.
   if (suppliers) {
     const { data: rows } = await serviceSupabase
-      .from('invoices').select('supplier_name, category, invoice_date')
+      .from('invoices').select('supplier_name, category, tva_rate, invoice_date')
       .eq('client_id', clientId).order('invoice_date', { ascending: false })
-    const map = new Map<string, string>()
+    const map = new Map<string, { supplier_name: string; category: string; tva_rate: number | null }>()
     for (const r of rows || []) {
-      const key = String(r.supplier_name || '').trim().toLowerCase()
-      if (key && !map.has(key)) map.set(key, r.category) // trié desc → 1re occurrence = plus récente
+      const name = String(r.supplier_name || '').trim()
+      const key = name.toLowerCase()
+      if (key && !map.has(key)) { // trié desc → 1re occurrence = plus récente
+        const tva = r.tva_rate === null || r.tva_rate === undefined ? null : parseFloat(String(r.tva_rate))
+        map.set(key, { supplier_name: name, category: r.category, tva_rate: Number.isFinite(tva as number) ? tva : null })
+      }
     }
-    return NextResponse.json(Array.from(map, ([supplier_name, category]) => ({ supplier_name, category })))
+    return NextResponse.json(Array.from(map.values()))
   }
 
   let query = serviceSupabase.from('invoices').select('*').eq('client_id', clientId)
