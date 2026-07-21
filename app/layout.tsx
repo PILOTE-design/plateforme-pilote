@@ -17,10 +17,28 @@ const mono = JetBrains_Mono({
   fallback: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Consolas', 'monospace'],
 })
 
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || 'https://getpilote.app'
+const TITLE = 'PILOTE — Analyses comparatives pour votre commerce'
+const DESCRIPTION =
+  'Recevez chaque semaine une analyse comparative automatisée pour piloter votre activité. Service dédié aux TPE : bouchers, boulangers, artisans.'
+
 export const metadata: Metadata = {
-  title: 'PILOTE — Analyses comparatives pour votre commerce',
-  description:
-    'Recevez chaque semaine une analyse comparative automatisée pour piloter votre activité. Service dédié aux TPE : bouchers, boulangers, artisans.',
+  metadataBase: new URL(SITE_URL),
+  title: TITLE,
+  description: DESCRIPTION,
+  openGraph: {
+    title: TITLE,
+    description: DESCRIPTION,
+    url: SITE_URL,
+    siteName: 'PILOTE',
+    locale: 'fr_FR',
+    type: 'website',
+  },
+  twitter: {
+    card: 'summary',
+    title: TITLE,
+    description: DESCRIPTION,
+  },
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
