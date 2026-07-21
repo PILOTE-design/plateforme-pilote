@@ -70,6 +70,7 @@ type Employee = {
   position?: string | null; hire_date?: string | null; contract_end_date?: string | null
   phone?: string | null; email?: string | null; notes?: string | null
   is_minor?: boolean; charges_patronales?: number; hs_cumules?: number
+  is_gerant?: boolean; receive_planning_email?: boolean
 }
 type PlanningEntry = {
   id?: string; employee_id: string; week_number: number; year: number
@@ -87,7 +88,7 @@ type MonthlyStat = {
   emp: Employee; hours: number; cost: number; charged: number; ot: number; worked: number; cp: number; sick: number
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ─── Helpers ───────────────────────────────────────────────────────────────
 
 function isoWeeksInYear(y: number): number {
   const d = new Date(y, 11, 28)
@@ -231,10 +232,12 @@ function calcWorkedH(entry: PlanningEntry) {
 }
 
 /** Coût de base : CP payés au taux normal ; majorations HS (+25 %/+50 %) calculées
- *  uniquement sur les heures travaillées (temps de travail effectif). */
-function calcBaseCost(entry: PlanningEntry, rate: number, contractH: number) {
+ *  uniquement sur les heures travaillées (temps de travail effectif).
+ *  Gérant/propriétaire : non salarié → TOUTES les heures au taux normal, aucune majoration. */
+function calcBaseCost(entry: PlanningEntry, rate: number, contractH: number, isGerant = false) {
   const workedH = calcWorkedH(entry)
   const cpH     = calcTotalH(entry, contractH) - workedH
+  if (isGerant) return (workedH + cpH) * rate
   const t2 = contractH + 8
   let workCost: number
   if (workedH <= contractH)      workCost = workedH * rate
@@ -256,8 +259,10 @@ function calcPremiums(entry: PlanningEntry, rate: number, holidayFlags: boolean[
   return sundayH * rate * 0.20 + holidayH * rate * 1.00
 }
 
-/** Coût brut complet CCN : base + heures sup + majorations dimanche/férié */
-function calcCostCCN(entry: PlanningEntry, rate: number, contractH: number, holidayFlags: boolean[]) {
+/** Coût brut complet CCN : base + heures sup + majorations dimanche/férié.
+ *  Gérant : taux normal uniquement — ni majoration HS, ni primes dimanche/férié. */
+function calcCostCCN(entry: PlanningEntry, rate: number, contractH: number, holidayFlags: boolean[], isGerant = false) {
+  if (isGerant) return calcBaseCost(entry, rate, contractH, true)
   return calcBaseCost(entry, rate, contractH) + calcPremiums(entry, rate, holidayFlags)
 }
 
@@ -266,9 +271,11 @@ function chargeMult(emp: Employee) {
   return 1 + (Number(emp.charges_patronales ?? 45) / 100)
 }
 
-/** Alertes légales Code du travail / CCN 992 pour la semaine (basées sur le travail effectif) */
+/** Alertes légales Code du travail / CCN 992 pour la semaine (basées sur le travail effectif).
+ *  Gérant/propriétaire : non salarié, durées maximales du Code du travail non applicables. */
 function getEmployeeAlerts(emp: Employee, entry: PlanningEntry): string[] {
   const msgs: string[] = []
+  if (emp.is_gerant) return msgs
   const maxDay = emp.is_minor ? 8 : 10
   let workedDays = 0
   JOURS_DB.forEach((j, idx) => {
@@ -358,7 +365,7 @@ function calcHoursFromSd(sd: ScheduleDetail): number | null {
   return (matin || 0) + (apmidi || 0)
 }
 
-// ─── Component ──────────────────────────────────────────────────────────────
+// ─── Component ─────────────────────────────────────────────────────────────
 
 export default function PlanningPage() {
   const { toast } = useToast()
@@ -628,6 +635,7 @@ export default function PlanningPage() {
       const extras: string[] = []
       if (data.noEmail > 0) extras.push(`${data.noEmail} sans adresse mail (fiche employé)`)
       if (data.noPlanning > 0) extras.push(`${data.noPlanning} sans planning cette semaine`)
+      if (data.disabled > 0) extras.push(`${data.disabled} envoi${data.disabled > 1 ? 's' : ''} désactivé${data.disabled > 1 ? 's' : ''} (fiche employé)`)
       toast({
         variant: data.sent > 0 ? 'success' : 'info',
         title: data.sent > 0 ? `Planning envoyé à ${data.sent} employé${data.sent > 1 ? 's' : ''}` : 'Aucun email envoyé',
@@ -684,7 +692,7 @@ export default function PlanningPage() {
           const ch = emp.contract_hours || 35
           const weekH = calcTotalH(entry, ch)
           const weekWorkedH = calcWorkedH(entry)
-          const weekCost = calcCostCCN(entry, Number(emp.hourly_rate), ch, wFlags)
+          const weekCost = calcCostCCN(entry, Number(emp.hourly_rate), ch, wFlags, emp.is_gerant ?? false)
           stats[entry.employee_id].hours   += weekH
           stats[entry.employee_id].cost    += weekCost
           stats[entry.employee_id].charged += weekCost * chargeMult(emp)
@@ -707,7 +715,7 @@ export default function PlanningPage() {
   const rowStats = employees.map(emp => {
     const e  = getEntryState(emp.id)
     const ch = emp.contract_hours || 35
-    const cost = calcCostCCN(e, Number(emp.hourly_rate), ch, holidayFlags)
+    const cost = calcCostCCN(e, Number(emp.hourly_rate), ch, holidayFlags, emp.is_gerant ?? false)
     return {
       empId: emp.id, name: emp.name,
       totalH: calcTotalH(e, ch),
@@ -991,7 +999,7 @@ export default function PlanningPage() {
                             <p
                               className="text-sm font-semibold text-gray-900 leading-tight truncate cursor-pointer hover:text-pilote transition-colors"
                               title="Ouvrir la fiche employé"
-                              onClick={e => { e.stopPropagation(); setProfileEmp({ ...emp, charges_patronales: emp.charges_patronales ?? 45, hs_cumules: emp.hs_cumules ?? 0, position: emp.position ?? null, hire_date: emp.hire_date ?? null, contract_end_date: emp.contract_end_date ?? null, phone: emp.phone ?? null, email: emp.email ?? null, notes: emp.notes ?? null, is_minor: emp.is_minor ?? false, cp_initial: emp.cp_initial ?? 0 }) }}
+                              onClick={e => { e.stopPropagation(); setProfileEmp({ ...emp, charges_patronales: emp.charges_patronales ?? 45, hs_cumules: emp.hs_cumules ?? 0, position: emp.position ?? null, hire_date: emp.hire_date ?? null, contract_end_date: emp.contract_end_date ?? null, phone: emp.phone ?? null, email: emp.email ?? null, notes: emp.notes ?? null, is_minor: emp.is_minor ?? false, is_gerant: emp.is_gerant ?? false, receive_planning_email: emp.receive_planning_email ?? true, cp_initial: emp.cp_initial ?? 0 }) }}
                             >{emp.name}</p>
                             {alerts.length > 0 && (
                               <span title={alerts.join('\n')} className="flex-shrink-0">
@@ -1069,7 +1077,7 @@ export default function PlanningPage() {
                       const catM     = CATEGORIES.find(c => c.key === sd.categorie_matin)
                       const catA     = CATEGORIES.find(c => c.key === sd.categorie_apmidi)
                       const catSel   = (!catM && !catA) ? CATEGORIES.find(c => c.key === sd.categorie) : undefined
-                      const maxDay   = emp.is_minor ? 8 : 10
+                      const maxDay   = emp.is_gerant ? 24 : emp.is_minor ? 8 : 10
                       const overDay  = type === 'travail' && hours > maxDay
 
                       const cellBg   = fName ? 'bg-amber-50/60' : 'bg-white hover:bg-gray-50/80'
@@ -1283,7 +1291,7 @@ export default function PlanningPage() {
         const mDate  = weekDates[mIdx]
         const mFName = weekHolidays[mIdx]
         const mComputed = calcHoursFromSd(mSd)
-        const mMaxDay = mEmp.is_minor ? 8 : 10
+        const mMaxDay = mEmp.is_gerant ? 24 : mEmp.is_minor ? 8 : 10
         const mEffH   = mComputed !== null ? mComputed : mHours
 
         return (
