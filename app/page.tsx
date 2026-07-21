@@ -217,8 +217,8 @@ export default function LandingPage() {
           <span className="text-[13px] font-extrabold tracking-[0.22em] text-pilote">PILOTE<span className="text-pilote-orange">.</span></span>
           <span>© {new Date().getFullYear()} PILOTE. Tous droits réservés.</span>
           <div className="flex gap-6">
-            <a href="#" className="hover:text-gray-700 transition-colors">Mentions légales</a>
-            <a href="#" className="hover:text-gray-700 transition-colors">CGV</a>
+            <Link href="/mentions-legales" className="hover:text-gray-700 transition-colors">Mentions légales</Link>
+            <Link href="/cgv" className="hover:text-gray-700 transition-colors">CGV</Link>
             <a href="mailto:nouvion.theo51@gmail.com" className="hover:text-gray-700 transition-colors">Contact</a>
           </div>
         </div>
