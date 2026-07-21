@@ -5,7 +5,7 @@ import { X, Save, User, Phone, Mail, FileText, Calendar, AlertTriangle } from 'l
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// ─── Types ────────────────────────────────────────────────────────────────────────
 
 export interface EmployeeProfile {
   id: string
@@ -24,6 +24,8 @@ export interface EmployeeProfile {
   email: string | null
   notes: string | null
   is_minor: boolean
+  is_gerant: boolean
+  receive_planning_email: boolean
 }
 
 interface Props {
@@ -46,7 +48,7 @@ const POSITIONS = [
   'apprenti charcutier', 'manager', 'responsable rayon',
 ]
 
-// ─── Modal Component ──────────────────────────────────────────────────────────
+// ─── Modal Component ────────────────────────────────────────────────────────────────
 
 export default function EmployeeProfileModal({ employee, onClose, onSaved }: Props) {
   const [form, setForm] = useState<EmployeeProfile | null>(null)
@@ -86,6 +88,8 @@ export default function EmployeeProfileModal({ employee, onClose, onSaved }: Pro
           email:              form.email || null,
           notes:              form.notes || null,
           is_minor:           form.is_minor,
+          is_gerant:          form.is_gerant,
+          receive_planning_email: form.receive_planning_email,
         }),
       })
       if (!res.ok) {
@@ -199,6 +203,18 @@ export default function EmployeeProfileModal({ employee, onClose, onSaved }: Pro
                   className="w-4 h-4 rounded accent-[#1E3A5F]"
                 />
                 <label htmlFor="is_minor" className="text-sm text-gray-700 cursor-pointer">Employé mineur (&lt;18 ans)</label>
+              </div>
+              <div className="col-span-2 flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="is_gerant"
+                  checked={form.is_gerant}
+                  onChange={e => set('is_gerant', e.target.checked)}
+                  className="w-4 h-4 rounded accent-[#1E3A5F]"
+                />
+                <label htmlFor="is_gerant" className="text-sm text-gray-700 cursor-pointer">
+                  Gérant / propriétaire — <span className="text-gray-500">heures payées au taux normal, sans majoration d&apos;heures sup ni primes dimanche/férié</span>
+                </label>
               </div>
             </div>
           </section>
@@ -343,6 +359,18 @@ export default function EmployeeProfileModal({ employee, onClose, onSaved }: Pro
                   onChange={e => set('email', e.target.value || null)}
                   className="h-9 text-sm"
                 />
+              </div>
+              <div className="col-span-2 flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="receive_planning_email"
+                  checked={form.receive_planning_email}
+                  onChange={e => set('receive_planning_email', e.target.checked)}
+                  className="w-4 h-4 rounded accent-[#1E3A5F]"
+                />
+                <label htmlFor="receive_planning_email" className="text-sm text-gray-700 cursor-pointer">
+                  Recevoir le planning par email <span className="text-gray-500">(envoi manuel et envoi automatique du dimanche)</span>
+                </label>
               </div>
             </div>
           </section>
