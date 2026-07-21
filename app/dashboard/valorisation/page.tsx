@@ -6,7 +6,7 @@ import { Calculator, TrendingUp, Package, Info, AlertTriangle, CheckCircle, Save
 import { useToast } from '@/components/ui/toast'
 import { useConfirm } from '@/components/ui/confirm-dialog'
 
-// ─── Types ────────────────────────────────────────────────
+// ─── Types ──────────────────────────────────
 
 type CutCategory = 'premier' | 'deuxieme' | 'troisieme' | 'abat' | 'os'
 type AnimalType  = 'boeuf' | 'veau' | 'agneau' | 'porc' | 'volaille'
@@ -32,7 +32,7 @@ interface AnimalConfig {
 }
 interface WeekLabor { hours: number; cost: number; rate: number; decoupeHours: number; decoupeCost: number; week: number; year: number }
 
-// ─── Données Bœuf ──────────────────────────────────────────
+// ─── Données Bœuf ─────────────────────────
 
 const BOEUF_BREEDS: Breed[] = [
   { id: 'charolaise',       name: 'Charolaise',         carcassYield: 0.645, avgWeight: '750-950 kg',  origin: 'Bourgogne',        description: 'Race à viande n°1 en France. Masses musculaires très développées. Viande ferme, peu persillée, idéale pour pièces à griller et rôtir.' },
@@ -138,7 +138,7 @@ function collectLeafCuts(node: TreeNode): Cut[] {
   return node.cut ? [node.cut] : node.children.flatMap(collectLeafCuts)
 }
 
-// ─── Données Veau ─────────────────────────────────────────
+// ─── Données Veau ────────────────────────
 
 const VEAU_BREEDS: Breed[] = [
   { id: 'veau_lait_limousin', name: 'Veau de lait Limousin',   carcassYield: 0.62, avgWeight: '160-200 kg', origin: 'Limousin',  description: 'Label Rouge. Élevé sous la mère. Chair rose pâle, très tendre et fine. Le standard haut de gamme.' },
@@ -147,24 +147,31 @@ const VEAU_BREEDS: Breed[] = [
   { id: 'veau_lourd',         name: 'Veau lourd finition',     carcassYield: 0.60, avgWeight: '250-300 kg', origin: 'France',    description: 'Animal plus âgé, viande légèrement plus ferme et goûteuse. Fort rendement.' },
   { id: 'veau_blanc_fermier', name: 'Veau blanc fermier IGP',  carcassYield: 0.63, avgWeight: '170-220 kg', origin: 'Aveyron',   description: 'IGP. Élevé sous la mère, lait fermier. Viande très blanche, extrêmement tendre. Produit premium.' },
 ]
+// Découpe veau en arborescence (planche fournie par le boucher) : Le pan (cuisseau + carré
+// de côtes) et La basse (épaule, poitrine, bas de carré). Même mécanique que le bœuf : poids
+// saisi manuellement ; marketPrice = prix de référence indicatif €/kg, modifiable par pièce.
 const VEAU_CUTS: Cut[] = [
-  { id: 'filet_veau',    name: 'Filet',                 category: 'premier',   yieldPct: 1.5,  marketPrice: 36 },
-  { id: 'noix_veau',     name: 'Noix / Quasi',           category: 'premier',   yieldPct: 5.5,  marketPrice: 28 },
-  { id: 'longe_veau',    name: 'Longe',                  category: 'premier',   yieldPct: 4.5,  marketPrice: 24 },
-  { id: 'cote_veau',     name: 'Côte première',          category: 'premier',   yieldPct: 5.0,  marketPrice: 22 },
-  { id: 'escalope_veau', name: 'Escalope (noix)',        category: 'premier',   yieldPct: 3.0,  marketPrice: 30 },
-  { id: 'ris_veau',      name: 'Ris de veau',            category: 'abat',      yieldPct: 0.3,  marketPrice: 28 },
-  { id: 'epaule_veau',   name: 'Épaule désossée',        category: 'deuxieme',  yieldPct: 7.0,  marketPrice: 16 },
-  { id: 'jarret_veau',   name: 'Jarret (osso-buco)',     category: 'deuxieme',  yieldPct: 5.0,  marketPrice: 18 },
-  { id: 'tendron_veau',  name: 'Tendron',                category: 'deuxieme',  yieldPct: 3.5,  marketPrice: 14 },
-  { id: 'poitrine_veau', name: 'Poitrine',               category: 'troisieme', yieldPct: 4.0,  marketPrice: 10 },
-  { id: 'collet_veau',   name: 'Collier',                category: 'troisieme', yieldPct: 3.0,  marketPrice: 9  },
-  { id: 'foie_veau',     name: 'Foie de veau',           category: 'abat',      yieldPct: 1.2,  marketPrice: 16 },
-  { id: 'rognons_veau',  name: 'Rognons',                category: 'abat',      yieldPct: 0.2,  marketPrice: 12 },
-  { id: 'os_veau',       name: 'Os à moelle',            category: 'os',        yieldPct: 8.0,  marketPrice: 2  },
+  // ── LE PAN ──
+  { id: 'veau_noix',                name: 'Noix',                          category: 'premier',   yieldPct: 0, marketPrice: 30, group: ['Le pan', 'Le cuisseau'] },
+  { id: 'veau_noix_patissiere',     name: 'Noix pâtissière',               category: 'premier',   yieldPct: 0, marketPrice: 32, group: ['Le pan', 'Le cuisseau'] },
+  { id: 'veau_sous_noix',           name: 'Sous-noix',                     category: 'premier',   yieldPct: 0, marketPrice: 28, group: ['Le pan', 'Le cuisseau'] },
+  { id: 'veau_quasi',               name: 'Quasi',                         category: 'premier',   yieldPct: 0, marketPrice: 30, group: ['Le pan', 'Le cuisseau'] },
+  { id: 'veau_tete_filet',          name: 'Tête de filet',                 category: 'premier',   yieldPct: 0, marketPrice: 34, group: ['Le pan', 'Le cuisseau'] },
+  { id: 'veau_jarret_cuisseau',     name: 'Jarret',                        category: 'deuxieme',  yieldPct: 0, marketPrice: 18, group: ['Le pan', 'Le cuisseau'] },
+  { id: 'veau_aiguillette_baronne', name: 'Aiguillette baronne',           category: 'premier',   yieldPct: 0, marketPrice: 26, group: ['Le pan', 'Le cuisseau'] },
+  { id: 'veau_cotes_filets',        name: 'Côtes filets',                  category: 'premier',   yieldPct: 0, marketPrice: 30, group: ['Le pan', 'Carré de côtes'] },
+  { id: 'veau_cotes_premieres',     name: 'Côtes premières',               category: 'premier',   yieldPct: 0, marketPrice: 24, group: ['Le pan', 'Carré de côtes'] },
+  // ── LA BASSE ──
+  { id: 'veau_epaule_jarret',       name: 'Jarret',                        category: 'deuxieme',  yieldPct: 0, marketPrice: 17, group: ['La basse', 'Épaule'] },
+  { id: 'veau_epaule',              name: 'Épaule',                        category: 'deuxieme',  yieldPct: 0, marketPrice: 17, group: ['La basse', 'Épaule'] },
+  { id: 'veau_poitrine_sans_os',    name: 'Poitrine sans os',              category: 'troisieme', yieldPct: 0, marketPrice: 14, group: ['La basse', 'Poitrine'] },
+  { id: 'veau_tendrons',            name: 'Tendrons',                      category: 'deuxieme',  yieldPct: 0, marketPrice: 14, group: ['La basse', 'Poitrine'] },
+  { id: 'veau_piece_paupiette',     name: 'Pièce à paupiette',             category: 'deuxieme',  yieldPct: 0, marketPrice: 22, group: ['La basse', 'Poitrine'] },
+  { id: 'veau_bas_carre_roti',      name: 'Rôti',                          category: 'deuxieme',  yieldPct: 0, marketPrice: 18, group: ['La basse', 'Bas de carré'] },
+  { id: 'veau_bas_carre_saute',     name: 'Sauté',                         category: 'troisieme', yieldPct: 0, marketPrice: 15, group: ['La basse', 'Bas de carré'] },
 ]
 
-// ─── Données Agneau ─────────────────────────────────────────
+// ─── Données Agneau ────────────────────────
 
 const AGNEAU_BREEDS: Breed[] = [
   { id: 'berrichon',         name: 'Berrichon du Cher',          carcassYield: 0.50, avgWeight: '35-45 kg', origin: 'Centre-Val de Loire', description: 'Race bouchère par excellence. Gigot charnu, viande tendre et rosée. Label Rouge Agneau du Berry.' },
@@ -175,21 +182,30 @@ const AGNEAU_BREEDS: Breed[] = [
   { id: 'lacaune',           name: 'Lacaune',                    carcassYield: 0.45, avgWeight: '30-40 kg', origin: 'Tarn-Aveyron',        description: 'Race mixte lait/viande. Viande plus maigre, qualité régulière.' },
   { id: 'agneau_lait',       name: 'Agneau de lait Pyrénées',    carcassYield: 0.56, avgWeight: '12-18 kg', origin: 'Pyrénées',            description: 'Très jeune animal, viande blanche rosée, texture fondante. Produit de fête, prix premium.' },
 ]
+// Découpe agneau en arborescence (planche fournie par le boucher) : gigot, côtes, épaule,
+// poitrine, collet. Même mécanique que le bœuf : poids saisi manuellement ; marketPrice =
+// prix de référence indicatif €/kg, modifiable par pièce.
 const AGNEAU_CUTS: Cut[] = [
-  { id: 'gigot_agneau',      name: 'Gigot entier',            category: 'premier',   yieldPct: 30,  marketPrice: 18 },
-  { id: 'carre_agneau',      name: 'Carré (côtes premières)', category: 'premier',   yieldPct: 12,  marketPrice: 22 },
-  { id: 'selle_agneau',      name: 'Selle double',            category: 'premier',   yieldPct: 8,   marketPrice: 20 },
-  { id: 'filet_agneau',      name: 'Filet / Noisette',        category: 'premier',   yieldPct: 3,   marketPrice: 28 },
-  { id: 'cotes_secondes',    name: 'Côtes secondes',          category: 'premier',   yieldPct: 8,   marketPrice: 14 },
-  { id: 'epaule_agneau',     name: 'Épaule',                  category: 'deuxieme',  yieldPct: 22,  marketPrice: 14 },
-  { id: 'souris_agneau',     name: 'Souris',                  category: 'deuxieme',  yieldPct: 4,   marketPrice: 18 },
-  { id: 'collier_agneau',    name: 'Collier',                 category: 'troisieme', yieldPct: 7,   marketPrice: 9  },
-  { id: 'poitrine_agneau',   name: 'Poitrine',                category: 'troisieme', yieldPct: 5,   marketPrice: 8  },
-  { id: 'foie_agneau',       name: 'Foie',                    category: 'abat',      yieldPct: 1.5, marketPrice: 8  },
-  { id: 'rognons_agneau',    name: 'Rognons',                 category: 'abat',      yieldPct: 0.3, marketPrice: 6  },
+  // ── LE GIGOT ──
+  { id: 'agneau_gigot_entier',    name: 'Gigot entier',                   category: 'premier',   yieldPct: 0, marketPrice: 20, group: ['Le gigot'] },
+  { id: 'agneau_souris',          name: 'Souris',                         category: 'deuxieme',  yieldPct: 0, marketPrice: 22, group: ['Le gigot'] },
+  { id: 'agneau_gigot_sans_os',   name: 'Gigot sans os',                  category: 'premier',   yieldPct: 0, marketPrice: 24, group: ['Le gigot'] },
+  { id: 'agneau_selle',           name: 'Selle',                          category: 'premier',   yieldPct: 0, marketPrice: 22, group: ['Le gigot'] },
+  { id: 'agneau_gigot_raccourci', name: 'Gigot raccourci',                category: 'premier',   yieldPct: 0, marketPrice: 21, group: ['Le gigot'] },
+  // ── CÔTES ──
+  { id: 'agneau_cotes_filet',     name: 'Filet',                          category: 'premier',   yieldPct: 0, marketPrice: 26, group: ['Côtes'] },
+  { id: 'agneau_cotes_prem_dec',  name: 'Côtes premières et découvertes', category: 'premier',   yieldPct: 0, marketPrice: 18, group: ['Côtes'] },
+  // ── ÉPAULE ──
+  { id: 'agneau_epaule_avec_os',  name: 'Avec os',                        category: 'deuxieme',  yieldPct: 0, marketPrice: 14, group: ['Épaule'] },
+  { id: 'agneau_epaule_sans_os',  name: 'Sans os',                        category: 'deuxieme',  yieldPct: 0, marketPrice: 16, group: ['Épaule'] },
+  // ── POITRINE ──
+  { id: 'agneau_poitrine_avec_os', name: 'Avec os',                       category: 'troisieme', yieldPct: 0, marketPrice: 8,  group: ['Poitrine'] },
+  { id: 'agneau_poitrine_sans_os', name: 'Sans os',                       category: 'troisieme', yieldPct: 0, marketPrice: 10, group: ['Poitrine'] },
+  // ── COLLET ──
+  { id: 'agneau_collet_avec_os',  name: 'Avec os',                        category: 'troisieme', yieldPct: 0, marketPrice: 9,  group: ['Collet'] },
 ]
 
-// ─── Données Porc ─────────────────────────────────────────────
+// ─── Données Porc ────────────────────────────
 
 const PORC_BREEDS: Breed[] = [
   { id: 'large_white',       name: 'Large White',          carcassYield: 0.77, avgWeight: '100-120 kg', origin: 'Bretagne/National', description: 'Race dominante en France. Très bon rendement. Viande maigre et tendre, idéale pour jambons et filets.' },
@@ -214,8 +230,7 @@ const PORC_CUTS: Cut[] = [
   { id: 'os_porc',           name: 'Os et crosse',             category: 'os',        yieldPct: 8,    marketPrice: 1  },
 ]
 
-// ─── Données Volaille ────────────────────────────────────────
-
+// ─── Données Volaille ───────────────────────
 const VOLAILLE_BREEDS: Breed[] = [
   { id: 'poulet_fermier',  name: 'Poulet fermier Label Rouge', carcassYield: 0.75, avgWeight: '2-3 kg',   origin: 'France',    description: 'Label Rouge. Élevage 81 jours min. Chair ferme et goûteuse. Le standard de qualité en volaille artisanale.' },
   { id: 'poulet_bresse',   name: 'Poulet de Bresse AOC',       carcassYield: 0.72, avgWeight: '1.8-2.5 kg', origin: 'Ain/Bresse', description: 'Seule volaille AOC de France. Chair exceptionnellement tendre et persillée. Produit ultra premium.' },
@@ -247,7 +262,7 @@ const ANIMALS: Record<AnimalType, AnimalConfig> = {
 
 const ANIMAL_TYPES: AnimalType[] = ['boeuf', 'veau', 'agneau', 'porc', 'volaille']
 
-// ─── Catégories ─────────────────────────────────────────────
+// ─── Catégories ───────────────────────────
 
 const CATEGORY_LABELS: Record<CutCategory, string> = {
   premier: '1er choix', deuxieme: '2e choix',
@@ -279,7 +294,7 @@ function makeWeekLabel(week: number, year: number): string {
   return `S${week} ${year}  ·  ${weekStart.getDate()} ${MONTHS_FR[weekStart.getMonth()]}`
 }
 
-// ─── Main d'œuvre boucherie depuis le planning ─────────────────────────
+// ─── Main d'œuvre boucherie depuis le planning ─────────────
 
 const JOURS_PLANNING = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
 
@@ -390,7 +405,7 @@ function loadDraft(): Record<string, any> {
   try { return JSON.parse(window.localStorage.getItem('valo_draft_v1') || '{}') || {} } catch { return {} }
 }
 
-// ─── Page ─────────────────────────────────────────────────
+// ─── Page ────────────────────────────────
 
 export default function ValorisationPage() {
   const params = useSearchParams()
