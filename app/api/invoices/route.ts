@@ -54,6 +54,41 @@ export async function GET(request: NextRequest) {
   return NextResponse.json(data)
 }
 
+/**
+ * Règle de tri fournisseur : applique une catégorie à TOUTES les factures d'un
+ * fournisseur (toutes semaines confondues, comparaison insensible à la casse).
+ * Les imports futurs suivront automatiquement — la mémoire fournisseur reprend
+ * la catégorie de la facture la plus récente, désormais cohérente partout.
+ */
+export async function PATCH(request: NextRequest) {
+  const supabase = createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const serviceSupabase = createServiceClient()
+  const clientId = await resolveClientId(serviceSupabase, user.id, user.email)
+  if (!clientId) return NextResponse.json({ error: 'Client introuvable' }, { status: 404 })
+
+  const body = await request.json().catch(() => ({}))
+  const supplierName = String(body.supplier_name || '').trim()
+  const category = String(body.category || '')
+  const VALID_CATEGORIES = ['viande', 'charcuterie', 'epicerie', 'emballage', 'frais_generaux', 'autre']
+  if (!supplierName || !VALID_CATEGORIES.includes(category)) {
+    return NextResponse.json({ error: 'supplier_name et category valides requis' }, { status: 400 })
+  }
+
+  const { data, error } = await serviceSupabase
+    .from('invoices')
+    .update({ category })
+    .eq('client_id', clientId)
+    .ilike('supplier_name', supplierName.replace(/[%_]/g, '\\$&')) // sans joker → égalité insensible à la casse
+    .neq('category', category)
+    .select('id')
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ ok: true, updated: data?.length ?? 0 })
+}
+
 export async function POST(request: NextRequest) {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()

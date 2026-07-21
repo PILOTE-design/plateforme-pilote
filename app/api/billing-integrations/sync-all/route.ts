@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/server'
 import { PROVIDERS } from '@/lib/billing-providers'
 import { classifyFixedCharges } from '@/lib/billing-providers/classify'
+import { loadSupplierCategories, rememberedCategory } from '@/lib/supplier-memory'
 
 function getWeekBounds(weekNumber: number, year: number): [Date, Date] {
   const jan4 = new Date(Date.UTC(year, 0, 4))
@@ -63,6 +64,10 @@ async function runSyncAll(req: NextRequest) {
   let totalImported = 0
   const results: Record<string, any> = {}
 
+  // Mémoire de tri fournisseur → catégorie, chargée au plus une fois par client :
+  // la catégorie choisie par le boucher l'emporte sur celle devinée par le connecteur.
+  const memoryByClient = new Map<string, Map<string, string>>()
+
   for (const integ of integrations) {
     const prov = PROVIDERS[integ.provider]
     if (!prov) continue
@@ -76,12 +81,19 @@ async function runSyncAll(req: NextRequest) {
       // Classification IA des charges fixes (fallback : détection mots-clés déjà appliquée)
       const enriched = await classifyFixedCharges(syncResult.invoices)
 
+      let supplierMemory = memoryByClient.get(integ.client_id)
+      if (!supplierMemory) {
+        supplierMemory = await loadSupplierCategories(service, integ.client_id)
+        memoryByClient.set(integ.client_id, supplierMemory)
+      }
+      const memory = supplierMemory
+
       const rows = enriched.map(inv => ({
         client_id:      integ.client_id,
         supplier_name:  inv.supplier_name,
         invoice_number: inv.invoice_number ?? null,
         invoice_date:   inv.invoice_date,
-        category:       inv.category ?? 'autre',
+        category:       rememberedCategory(memory, inv.supplier_name) ?? inv.category ?? 'autre',
         amount_ht:      inv.amount_ht,
         tva_rate:       inv.tva_rate,
         amount_ttc:     inv.amount_ttc,

@@ -148,7 +148,7 @@ function getLastWeek() {
   return getISOWeek(ref)
 }
 
-// ─── Composant principal ──────────────────────────────────────────────────
+// ─── Composant principal ────────────────────────────────────────────────
 
 export default function FacturationPage() {
   const router = useRouter()
@@ -277,14 +277,48 @@ export default function FacturationPage() {
     load()
   }
 
-  /** Change la catégorie d'un achat directement dans la liste (persisté aussitôt) */
+  /**
+   * Change la catégorie d'un achat — puis propose d'en faire une règle de tri :
+   * appliquer la catégorie à TOUTES les factures du fournisseur (toutes semaines),
+   * reprise ensuite par tous les imports (syncs logiciels + email).
+   */
   async function updateCategory(inv: Invoice, category: string) {
     if (category === inv.category) return
     setInvoices(prev => prev.map(i => i.id === inv.id ? { ...i, category } : i))
     setFixedAll(prev => prev.map(i => i.id === inv.id ? { ...i, category } : i))
     const res = await fetch(`/api/invoices/${inv.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ category }) })
-    if (res.ok) { toast({ variant: 'success', title: 'Catégorie mise à jour' }); load() }
-    else toast({ variant: 'error', title: 'Erreur', description: 'La catégorie n\'a pas pu être modifiée.' })
+    if (!res.ok) {
+      toast({ variant: 'error', title: 'Erreur', description: 'La catégorie n\'a pas pu être modifiée.' })
+      load()
+      return
+    }
+    const catLabel = catInfo(category).label
+    const applyAll = await confirmAction({
+      title: `Toujours classer ${inv.supplier_name} en « ${catLabel} » ?`,
+      description: 'La catégorie sera appliquée à toutes les factures de ce fournisseur, toutes semaines confondues, puis reprise par les prochains imports. Sinon, seule cette facture change.',
+      confirmLabel: 'Oui, toutes les semaines',
+      cancelLabel: 'Juste celle-ci',
+      variant: 'default',
+    })
+    if (applyAll) {
+      const bulk = await fetch('/api/invoices', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ supplier_name: inv.supplier_name, category }) })
+      const d = await bulk.json().catch(() => ({} as any))
+      if (bulk.ok) {
+        const n = typeof d.updated === 'number' ? d.updated : 0
+        toast({
+          variant: 'success',
+          title: `${inv.supplier_name} → ${catLabel}`,
+          description: n > 0
+            ? `Règle enregistrée — ${n} autre${n > 1 ? 's' : ''} facture${n > 1 ? 's' : ''} reclassée${n > 1 ? 's' : ''}.`
+            : 'Règle enregistrée — les prochains imports suivront.',
+        })
+      } else {
+        toast({ variant: 'error', title: 'Erreur', description: 'La règle n\'a pas pu être appliquée aux autres factures.' })
+      }
+    } else {
+      toast({ variant: 'success', title: 'Catégorie mise à jour' })
+    }
+    load()
   }
 
   /** Valide une facture « à vérifier » — seules les validées entrent dans le calcul des marges */
@@ -683,7 +717,7 @@ export default function FacturationPage() {
                           value={inv.category}
                           onChange={e => updateCategory(inv, e.target.value)}
                           className={`text-xs font-semibold rounded-full pl-2.5 pr-1.5 py-0.5 border-0 cursor-pointer focus:outline-none focus:ring-2 focus:ring-pilote-200 ${cat.color}`}
-                          title="Modifier la catégorie"
+                          title="Modifier la catégorie — possibilité d'appliquer à tout le fournisseur"
                         >
                           {CATEGORIES.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
                         </select>
