@@ -33,6 +33,8 @@ export async function PATCH(
     'charges_patronales', 'hs_cumules',
     // Champs RH
     'position', 'hire_date', 'contract_end_date', 'phone', 'email', 'notes', 'is_minor',
+    // Gérant (pas de majoration HS) + envoi du planning par email activable/désactivable
+    'is_gerant', 'receive_planning_email',
   ]
   const updates: Record<string, unknown> = {}
   for (const key of allowed) {
