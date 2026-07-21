@@ -6,7 +6,7 @@ import { Calculator, TrendingUp, Package, Info, AlertTriangle, CheckCircle, Save
 import { useToast } from '@/components/ui/toast'
 import { useConfirm } from '@/components/ui/confirm-dialog'
 
-// ─── Types ──────────────────────────────────
+// ─── Types ──────────────────────────────
 
 type CutCategory = 'premier' | 'deuxieme' | 'troisieme' | 'abat' | 'os'
 type AnimalType  = 'boeuf' | 'veau' | 'agneau' | 'porc' | 'volaille'
@@ -32,7 +32,7 @@ interface AnimalConfig {
 }
 interface WeekLabor { hours: number; cost: number; rate: number; decoupeHours: number; decoupeCost: number; week: number; year: number }
 
-// ─── Données Bœuf ─────────────────────────
+// ─── Données Bœuf ──────────────────────
 
 const BOEUF_BREEDS: Breed[] = [
   { id: 'charolaise',       name: 'Charolaise',         carcassYield: 0.645, avgWeight: '750-950 kg',  origin: 'Bourgogne',        description: 'Race à viande n°1 en France. Masses musculaires très développées. Viande ferme, peu persillée, idéale pour pièces à griller et rôtir.' },
@@ -138,7 +138,7 @@ function collectLeafCuts(node: TreeNode): Cut[] {
   return node.cut ? [node.cut] : node.children.flatMap(collectLeafCuts)
 }
 
-// ─── Données Veau ────────────────────────
+// ─── Données Veau ───────────────────────
 
 const VEAU_BREEDS: Breed[] = [
   { id: 'veau_lait_limousin', name: 'Veau de lait Limousin',   carcassYield: 0.62, avgWeight: '160-200 kg', origin: 'Limousin',  description: 'Label Rouge. Élevé sous la mère. Chair rose pâle, très tendre et fine. Le standard haut de gamme.' },
@@ -171,7 +171,7 @@ const VEAU_CUTS: Cut[] = [
   { id: 'veau_bas_carre_saute',     name: 'Sauté',                         category: 'troisieme', yieldPct: 0, marketPrice: 15, group: ['La basse', 'Bas de carré'] },
 ]
 
-// ─── Données Agneau ────────────────────────
+// ─── Données Agneau ───────────────────────
 
 const AGNEAU_BREEDS: Breed[] = [
   { id: 'berrichon',         name: 'Berrichon du Cher',          carcassYield: 0.50, avgWeight: '35-45 kg', origin: 'Centre-Val de Loire', description: 'Race bouchère par excellence. Gigot charnu, viande tendre et rosée. Label Rouge Agneau du Berry.' },
@@ -201,11 +201,11 @@ const AGNEAU_CUTS: Cut[] = [
   // ── POITRINE ──
   { id: 'agneau_poitrine_avec_os', name: 'Avec os',                       category: 'troisieme', yieldPct: 0, marketPrice: 8,  group: ['Poitrine'] },
   { id: 'agneau_poitrine_sans_os', name: 'Sans os',                       category: 'troisieme', yieldPct: 0, marketPrice: 10, group: ['Poitrine'] },
-  // ── COLLET ──
-  { id: 'agneau_collet_avec_os',  name: 'Avec os',                        category: 'troisieme', yieldPct: 0, marketPrice: 9,  group: ['Collet'] },
+  // ── VIANDES FABRICATION (pièces sans grande catégorie) ──
+  { id: 'agneau_collet_avec_os',  name: 'Collet avec os',                 category: 'troisieme', yieldPct: 0, marketPrice: 9,  group: ['Viandes fabrication'] },
 ]
 
-// ─── Données Porc ────────────────────────────
+// ─── Données Porc ─────────────────────────
 
 const PORC_BREEDS: Breed[] = [
   { id: 'large_white',       name: 'Large White',          carcassYield: 0.77, avgWeight: '100-120 kg', origin: 'Bretagne/National', description: 'Race dominante en France. Très bon rendement. Viande maigre et tendre, idéale pour jambons et filets.' },
@@ -230,7 +230,7 @@ const PORC_CUTS: Cut[] = [
   { id: 'os_porc',           name: 'Os et crosse',             category: 'os',        yieldPct: 8,    marketPrice: 1  },
 ]
 
-// ─── Données Volaille ───────────────────────
+// ─── Données Volaille ────────────────────
 const VOLAILLE_BREEDS: Breed[] = [
   { id: 'poulet_fermier',  name: 'Poulet fermier Label Rouge', carcassYield: 0.75, avgWeight: '2-3 kg',   origin: 'France',    description: 'Label Rouge. Élevage 81 jours min. Chair ferme et goûteuse. Le standard de qualité en volaille artisanale.' },
   { id: 'poulet_bresse',   name: 'Poulet de Bresse AOC',       carcassYield: 0.72, avgWeight: '1.8-2.5 kg', origin: 'Ain/Bresse', description: 'Seule volaille AOC de France. Chair exceptionnellement tendre et persillée. Produit ultra premium.' },
@@ -262,7 +262,7 @@ const ANIMALS: Record<AnimalType, AnimalConfig> = {
 
 const ANIMAL_TYPES: AnimalType[] = ['boeuf', 'veau', 'agneau', 'porc', 'volaille']
 
-// ─── Catégories ───────────────────────────
+// ─── Catégories ────────────────────────
 
 const CATEGORY_LABELS: Record<CutCategory, string> = {
   premier: '1er choix', deuxieme: '2e choix',
@@ -346,10 +346,10 @@ function computeBoucherieLabor(entries: any[], emps: any[]): { hours: number; co
       if (h === 0 && m === 0 && a === 0 && sd.categorie === 'boucherie') h = Number(en[j]) || 0
       hours += h
       cost  += h * rate
-      // Temps de découpe explicite (champ dédié du planning)
-      const dh = isBoucherie ? (parseFloat(sd.decoupe) || 0) : 0
-      decoupeHours += dh
-      decoupeCost  += dh * rate
+      // Temps de découpe explicite en MINUTES (champ dédié du planning)
+      const dMin = isBoucherie ? (parseFloat(sd.decoupe) || 0) : 0
+      decoupeHours += dMin
+      decoupeCost  += (dMin / 60) * rate
     }
   }
   return { hours, cost, decoupeHours, decoupeCost }
@@ -405,7 +405,7 @@ function loadDraft(): Record<string, any> {
   try { return JSON.parse(window.localStorage.getItem('valo_draft_v1') || '{}') || {} } catch { return {} }
 }
 
-// ─── Page ────────────────────────────────
+// ─── Page ───────────────────────────
 
 export default function ValorisationPage() {
   const params = useSearchParams()
@@ -517,18 +517,18 @@ export default function ValorisationPage() {
       setWeekLabor({ hours, cost, rate: hours > 0 ? cost / hours : 0, decoupeHours: dH, decoupeCost: dC, week: w, year: y })
       // Le temps de découpe du planning devient la main d'œuvre imputée à la valorisation
       if (dH > 0) {
-        setDecoupeHours(String(Math.round(dH * 100) / 100))
+        setDecoupeHours(String(Math.round(dH)))
         setLaborCost(String(Math.round(dC * 100) / 100))
       }
     }).catch(() => setWeekLabor(null))
   }, [purchaseDate])
 
   /** Saisie du temps de découpe : impute automatiquement la main d'œuvre au taux réel du planning */
-  function setDecoupe(h: string) {
-    setDecoupeHours(h)
-    const hours = parseFloat(h) || 0
-    if (weekLabor && weekLabor.rate > 0 && hours > 0) {
-      setLaborCost(String(Math.round(hours * weekLabor.rate * 100) / 100))
+  function setDecoupe(min: string) {
+    setDecoupeHours(min)
+    const minutes = parseFloat(min) || 0
+    if (weekLabor && weekLabor.rate > 0 && minutes > 0) {
+      setLaborCost(String(Math.round((minutes / 60) * weekLabor.rate * 100) / 100))
     }
   }
 
@@ -1163,7 +1163,7 @@ export default function ValorisationPage() {
                 {weekLabor && weekLabor.decoupeHours > 0 ? (
                   <div className="mb-3 p-2.5 bg-pilote-50 border border-pilote-100 rounded-lg">
                     <p className="text-[11px] font-semibold text-pilote-800">
-                      Découpe S{weekLabor.week} (planning) : {weekLabor.decoupeHours.toFixed(2)}h · {eur(weekLabor.decoupeCost)} chargé
+                      Découpe S{weekLabor.week} (planning) : {weekLabor.decoupeHours.toFixed(0)} min · {eur(weekLabor.decoupeCost)} chargé
                     </p>
                     <p className="text-[10px] text-pilote-800/70 mt-0.5">
                       Imputé automatiquement à la main d'œuvre ci-dessous — taux réel {eur(weekLabor.rate)}/h. Modifiable.
@@ -1175,12 +1175,12 @@ export default function ValorisationPage() {
                   </p>
                 )}
                 <div className="mb-4">
-                  <label className="block text-xs font-medium text-gray-700 mb-1.5">Temps de découpe (h) <span className="text-gray-400 font-normal">— depuis le planning, modifiable</span></label>
-                  <input type="number" step="0.25" min="0" value={decoupeHours} onChange={e => setDecoupe(e.target.value)}
-                    placeholder="ex : 3.5"
+                  <label className="block text-xs font-medium text-gray-700 mb-1.5">Temps de découpe (min) <span className="text-gray-400 font-normal">— depuis le planning, modifiable</span></label>
+                  <input type="number" step="1" min="0" value={decoupeHours} onChange={e => setDecoupe(e.target.value)}
+                    placeholder="ex : 120"
                     className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200`} />
                   {decoupeHours && weekLabor && weekLabor.rate > 0 && (
-                    <p className="text-xs text-pilote mt-1 font-medium">= {eur((parseFloat(decoupeHours) || 0) * weekLabor.rate)} imputés au taux réel du planning</p>
+                    <p className="text-xs text-pilote mt-1 font-medium">= {eur(((parseFloat(decoupeHours) || 0) / 60) * weekLabor.rate)} imputés au taux réel du planning</p>
                   )}
                 </div>
                 <div className="mb-4">

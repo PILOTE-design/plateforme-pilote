@@ -22,7 +22,7 @@ type ScheduleDetail = {
   categorie?: string        // legacy : poste pour toute la journée
   categorie_matin?: string  // poste du créneau matin
   categorie_apmidi?: string // poste du créneau après-midi
-  decoupe?: string          // temps de découpe du jour (h) — imputé à la valorisation
+  decoupe?: string          // temps de découpe du jour (min) — imputé à la valorisation
 }
 type ScheduleDetails = Partial<Record<JourDB, ScheduleDetail>>
 
@@ -88,7 +88,7 @@ type MonthlyStat = {
   emp: Employee; hours: number; cost: number; charged: number; ot: number; worked: number; cp: number; sick: number
 }
 
-// ─── Helpers ───────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────
 
 function isoWeeksInYear(y: number): number {
   const d = new Date(y, 11, 28)
@@ -365,7 +365,7 @@ function calcHoursFromSd(sd: ScheduleDetail): number | null {
   return (matin || 0) + (apmidi || 0)
 }
 
-// ─── Component ─────────────────────────────────────────────────────────────
+// ─── Component ──────────────────────────────────────────────
 
 export default function PlanningPage() {
   const { toast } = useToast()
@@ -1471,14 +1471,14 @@ export default function PlanningPage() {
                         <span className="text-xs text-gray-400 w-20 shrink-0">Découpe</span>
                         <div className="flex items-center gap-1.5">
                           <input
-                            type="number" min="0" max="24" step="0.25"
+                            type="number" min="0" max="600" step="1"
                             value={mSd.decoupe ?? ''}
                             onChange={e => handleScheduleDetailChange(detailModal.empId, mJour, 'decoupe', e.target.value)}
                             onBlur={() => handleScheduleDetailBlur(detailModal.empId)}
-                            placeholder="ex : 2"
+                            placeholder="ex : 120"
                             className="w-16 border border-gray-300 rounded-lg px-2 py-1.5 text-sm font-semibold text-gray-900 text-center focus:outline-none focus:border-gray-500 transition-colors"
                           />
-                          <span className="text-xs text-gray-400">h de découpe</span>
+                          <span className="text-xs text-gray-400">min de découpe</span>
                         </div>
                       </div>
                     )}
