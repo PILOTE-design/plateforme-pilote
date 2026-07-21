@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { PROVIDERS } from '@/lib/billing-providers'
 import { classifyFixedCharges } from '@/lib/billing-providers/classify'
+import { loadSupplierCategories, rememberedCategory } from '@/lib/supplier-memory'
 
 export const maxDuration = 60 // Vercel Pro: 60s max, Hobby: 10s (mieux que défaut)
 
@@ -56,6 +57,11 @@ export async function POST(req: NextRequest) {
   const [from, to] = getWeekBounds(week, year)
   const results: Record<string, any> = {}
 
+  // ── MÉMOIRE DE TRI FOURNISSEUR ──
+  // La catégorie déjà choisie par le boucher pour un fournisseur l'emporte sur
+  // celle devinée par le connecteur (cohérent avec l'import email).
+  const supplierMemory = await loadSupplierCategories(service, clientRow.id)
+
   for (const integ of integrations) {
     const prov = PROVIDERS[integ.provider]
     if (!prov) continue
@@ -74,7 +80,7 @@ export async function POST(req: NextRequest) {
         supplier_name:  inv.supplier_name,
         invoice_number: inv.invoice_number ?? null,
         invoice_date:   inv.invoice_date,
-        category:       inv.category ?? 'autre',
+        category:       rememberedCategory(supplierMemory, inv.supplier_name) ?? inv.category ?? 'autre',
         amount_ht:      inv.amount_ht,
         tva_rate:       inv.tva_rate,
         amount_ttc:     inv.amount_ttc,
