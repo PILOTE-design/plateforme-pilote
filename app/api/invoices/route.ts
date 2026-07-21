@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { resolveClientId } from '@/lib/resolve-client-id'
+import { sameSupplierFamily } from '@/lib/supplier-memory'
 
 export const dynamic = 'force-dynamic'
 
@@ -56,9 +57,10 @@ export async function GET(request: NextRequest) {
 
 /**
  * Règle de tri fournisseur : applique une catégorie à TOUTES les factures d'un
- * fournisseur (toutes semaines confondues, comparaison insensible à la casse).
- * Les imports futurs suivront automatiquement — la mémoire fournisseur reprend
- * la catégorie de la facture la plus récente, désormais cohérente partout.
+ * fournisseur, toutes semaines confondues — variantes du nom comprises :
+ * « DAVID MASTER » couvre « DAVID MASTER SAS », « David Master 2 »…
+ * (même famille de noms, voir lib/supplier-memory). Les imports futurs suivront
+ * automatiquement — la mémoire fournisseur reprend la facture la plus récente.
  */
 export async function PATCH(request: NextRequest) {
   const supabase = createClient()
@@ -77,16 +79,28 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: 'supplier_name et category valides requis' }, { status: 400 })
   }
 
-  const { data, error } = await serviceSupabase
+  // Sélection en deux temps : on lit les factures du client puis on filtre par
+  // famille de noms en JS (limite de mot impossible à exprimer proprement en ilike).
+  const { data: rows, error: readError } = await serviceSupabase
     .from('invoices')
-    .update({ category })
+    .select('id, supplier_name, category')
     .eq('client_id', clientId)
-    .ilike('supplier_name', supplierName.replace(/[%_]/g, '\\$&')) // sans joker → égalité insensible à la casse
-    .neq('category', category)
-    .select('id')
+  if (readError) return NextResponse.json({ error: readError.message }, { status: 500 })
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ ok: true, updated: data?.length ?? 0 })
+  const ids = (rows || [])
+    .filter(r => r.category !== category && sameSupplierFamily(String(r.supplier_name || ''), supplierName))
+    .map(r => r.id as string)
+
+  // Mise à jour par lots (borne large : un client TPE reste loin de ces volumes)
+  for (let i = 0; i < ids.length; i += 500) {
+    const { error } = await serviceSupabase
+      .from('invoices')
+      .update({ category })
+      .in('id', ids.slice(i, i + 500))
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+
+  return NextResponse.json({ ok: true, updated: ids.length })
 }
 
 export async function POST(request: NextRequest) {

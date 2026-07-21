@@ -5,6 +5,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/server'
+import { loadSupplierCategories, rememberedCategory } from '@/lib/supplier-memory'
 import Anthropic from '@anthropic-ai/sdk'
 
 // Clé de repli au build : le constructeur Anthropic lève une erreur si la clé est absente,
@@ -120,17 +121,12 @@ Si montant HT absent, déduire de TTC : HT = TTC / 1.{tva_rate/100+1}`
   // ── MÉMOIRE FOURNISSEUR → CATÉGORIE ──
   // Si ce fournisseur a déjà été catégorisé par le boucher, sa dernière catégorie
   // l'emporte sur la supposition de l'IA : la charte des marges reste cohérente
-  // sans re-tri manuel. (Comparaison insensible à la casse via ilike sans joker.)
+  // sans re-tri manuel. Correspondance par FAMILLE de noms (lib partagée) :
+  // « DAVID MASTER SAS » est classé avec « DAVID MASTER ».
   let category: string = invoiceData.category || 'autre'
   const supplierName = String(invoiceData.supplier_name).trim()
-  const { data: previous } = await serviceSupabase
-    .from('invoices')
-    .select('category')
-    .eq('client_id', clientRow.id)
-    .ilike('supplier_name', supplierName)
-    .order('invoice_date', { ascending: false })
-    .limit(1)
-  const remembered = previous && previous.length > 0 ? previous[0].category : null
+  const supplierMemory = await loadSupplierCategories(serviceSupabase, clientRow.id)
+  const remembered = rememberedCategory(supplierMemory, supplierName)
   const memoryApplied = Boolean(remembered && remembered !== category)
   if (remembered) category = remembered
 

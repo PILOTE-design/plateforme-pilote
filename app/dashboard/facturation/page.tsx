@@ -121,18 +121,35 @@ function coversWeek(inv: Invoice, monISO: string, sunISO: string): boolean {
   return start <= sunISO && endISO > monISO
 }
 
+/** Normalise un nom fournisseur pour comparaison : casse, espaces superflus */
+function normSupplier(name: string): string {
+  return name.trim().toLowerCase().replace(/\s+/g, ' ')
+}
+
 /**
  * Retrouve le fournisseur mémorisé correspondant à la saisie :
- * correspondance exacte (insensible à la casse), sinon préfixe UNIQUE à partir
- * de 3 caractères — « Big » suffit à retrouver Bigard, mais « B » ne décide rien.
+ * 1. correspondance exacte (insensible à la casse) ;
+ * 2. FAMILLE de noms : un fournisseur connu est le début de la saisie sur une
+ *    limite de mot — « DAVID MASTER SAS » retrouve « DAVID MASTER » (le connu
+ *    le plus long l'emporte) ;
+ * 3. préfixe UNIQUE à partir de 3 caractères — « Big » suffit pour Bigard.
  */
 function matchSupplier(input: string, memos: SupplierMemo[]): SupplierMemo | null {
-  const q = input.trim().toLowerCase()
+  const q = normSupplier(input)
   if (!q) return null
-  const exact = memos.find(m => m.name.toLowerCase() === q)
+  const exact = memos.find(m => normSupplier(m.name) === q)
   if (exact) return exact
+  let fam: SupplierMemo | null = null
+  let famLen = 0
+  for (const m of memos) {
+    const n = normSupplier(m.name)
+    if (n.length < q.length && q.startsWith(n) && !/[\p{L}\p{N}]/u.test(q.charAt(n.length)) && n.length > famLen) {
+      fam = m; famLen = n.length
+    }
+  }
+  if (fam) return fam
   if (q.length < 3) return null
-  const byPrefix = memos.filter(m => m.name.toLowerCase().startsWith(q))
+  const byPrefix = memos.filter(m => normSupplier(m.name).startsWith(q))
   return byPrefix.length === 1 ? byPrefix[0] : null
 }
 
@@ -295,7 +312,7 @@ export default function FacturationPage() {
     const catLabel = catInfo(category).label
     const applyAll = await confirmAction({
       title: `Toujours classer ${inv.supplier_name} en « ${catLabel} » ?`,
-      description: 'La catégorie sera appliquée à toutes les factures de ce fournisseur, toutes semaines confondues, puis reprise par les prochains imports. Sinon, seule cette facture change.',
+      description: 'La catégorie sera appliquée à toutes les factures de ce fournisseur — variantes du nom comprises (« SAS », « SARL »...) — toutes semaines confondues, puis reprise par les prochains imports. Sinon, seule cette facture change.',
       confirmLabel: 'Oui, toutes les semaines',
       cancelLabel: 'Juste celle-ci',
       variant: 'default',
@@ -439,7 +456,7 @@ export default function FacturationPage() {
   }
 
   const ttcAmount = parseFloat(newInvoice.amount_ht || '0') * (1 + parseFloat(newInvoice.tva_rate || '20') / 100)
-  // Fournisseur reconnu par la mémoire (exact ou préfixe unique) — null si choix manuel en cours
+  // Fournisseur reconnu par la mémoire (exact, famille ou préfixe unique) — null si choix manuel en cours
   const supplierMatch = memoTouched ? null : matchSupplier(newInvoice.supplier_name || '', suppliersMemo)
   const matchHasTva = supplierMatch !== null && supplierMatch.tva_rate !== null && TVA_RATES.includes(supplierMatch.tva_rate)
 
