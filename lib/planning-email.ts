@@ -1,6 +1,6 @@
 import { resend } from '@/lib/resend'
 
-// ─── Envoi du planning individuel par email ─────────────────────────────────
+// ─── Envoi du planning individuel par email ───────────────────────────
 // Partagé entre le bouton « Envoyer aux employés » (page planning) et le cron
 // du dimanche soir. Chaque employé reçoit UNIQUEMENT ses propres horaires —
 // aucune donnée financière (taux, coûts, salaires) n'apparaît dans l'email.
@@ -95,17 +95,19 @@ function buildHtml(empName: string, businessName: string, week: number, entry: a
 }
 
 /** Envoie à chaque employé (ayant un email) son planning individuel de la semaine.
- *  Les employés sans entrée de planning cette semaine-là ne reçoivent rien. */
+ *  Les employés sans entrée de planning cette semaine-là ne reçoivent rien.
+ *  La coche « Recevoir le planning par email » de la fiche employé est respectée :
+ *  décochée → aucun envoi (compté dans `disabled`). */
 export async function sendPlanningEmails(
   service: any,
   clientId: string,
   week: number,
   year: number,
   businessName: string
-): Promise<{ sent: number; noEmail: number; noPlanning: number }> {
-  const { data: emps } = await service.from('employees').select('id, name, email').eq('client_id', clientId)
+): Promise<{ sent: number; noEmail: number; noPlanning: number; disabled: number }> {
+  const { data: emps } = await service.from('employees').select('id, name, email, receive_planning_email').eq('client_id', clientId)
   const employees = emps || []
-  if (employees.length === 0) return { sent: 0, noEmail: 0, noPlanning: 0 }
+  if (employees.length === 0) return { sent: 0, noEmail: 0, noPlanning: 0, disabled: 0 }
 
   const { data: entries } = await service
     .from('planning_entries')
@@ -118,8 +120,9 @@ export async function sendPlanningEmails(
   // Objet unique par envoi : chaque renvoi apparaît comme un NOUVEAU mail bien distinct
   const stamp = sendStamp()
 
-  let sent = 0, noEmail = 0, noPlanning = 0
+  let sent = 0, noEmail = 0, noPlanning = 0, disabled = 0
   for (const emp of employees) {
+    if (emp.receive_planning_email === false) { disabled++; continue }
     const email = String(emp.email || '').trim()
     if (!email) { noEmail++; continue }
     const entry = byEmp.get(emp.id)
@@ -136,5 +139,5 @@ export async function sendPlanningEmails(
       // un échec individuel ne bloque pas les autres envois
     }
   }
-  return { sent, noEmail, noPlanning }
+  return { sent, noEmail, noPlanning, disabled }
 }
