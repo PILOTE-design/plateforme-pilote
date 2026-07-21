@@ -27,19 +27,35 @@ export default async function AdminClientsPage() {
             {list.length} compte{list.length !== 1 ? 's' : ''}
           </p>
         </div>
-        <Link
-          href="/admin/reports/nouveau"
-          className="inline-flex items-center gap-2 bg-[#1E3A5F] text-white text-sm font-semibold px-4 py-2.5 rounded-xl hover:bg-[#2a4f7c] transition-colors shadow-sm"
-        >
-          <Plus className="w-4 h-4" />
-          Nouveau rapport
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link
+            href="/admin/clients/nouveau"
+            className="inline-flex items-center gap-2 bg-white text-pilote border border-gray-200 text-sm font-semibold px-4 py-2.5 rounded-xl hover:bg-gray-50 transition-colors shadow-sm"
+          >
+            <Plus className="w-4 h-4" />
+            Nouveau client
+          </Link>
+          <Link
+            href="/admin/reports/nouveau"
+            className="inline-flex items-center gap-2 bg-[#1E3A5F] text-white text-sm font-semibold px-4 py-2.5 rounded-xl hover:bg-[#2a4f7c] transition-colors shadow-sm"
+          >
+            <FileText className="w-4 h-4" />
+            Nouveau rapport
+          </Link>
+        </div>
       </div>
 
       {list.length === 0 ? (
         <div className="bg-white rounded-2xl border border-gray-100 p-16 text-center shadow-sm">
           <Users className="w-10 h-10 text-gray-200 mx-auto mb-3" />
-          <p className="text-gray-400">Aucun client pour le moment</p>
+          <p className="text-gray-400 mb-5">Aucun client pour le moment</p>
+          <Link
+            href="/admin/clients/nouveau"
+            className="inline-flex items-center gap-2 bg-pilote text-white text-sm font-semibold px-4 py-2.5 rounded-xl hover:bg-pilote-hover transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            Ajouter un client
+          </Link>
         </div>
       ) : (
         <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden shadow-sm">
