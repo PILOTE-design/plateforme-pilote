@@ -5,6 +5,16 @@ import { normalizeSupplierName } from '@/lib/supplier-memory'
 
 export const dynamic = 'force-dynamic'
 
+// Extrait le nom de SOCIÉTÉ d'un libellé fournisseur : « Facture X - 6109622F… » → « X ».
+// Permet de regrouper toutes les factures d'une même société sous une seule règle.
+function supplierSociete(raw: string): string {
+  let s = String(raw || '').trim()
+  s = s.replace(/^factures?\s+/i, '')       // préfixe « Facture »/« Factures »
+  s = s.split(/\s+[-–—]\s+/)[0]             // avant le 1er « - » (n° de facture)
+  return s.trim()
+}
+const societeKey = (raw: string) => normalizeSupplierName(supplierSociete(raw))
+
 // Répartition (%) des achats par rayon, fournisseur par fournisseur.
 // GET → { splits: [...], suppliers: [{ key, name }] }  (fournisseurs connus depuis les factures)
 // PUT → { splits: [...] }  remplace l'intégralité des règles du client
@@ -29,13 +39,16 @@ export async function GET() {
     .eq('client_id', clientId)
     .order('invoice_date', { ascending: false })
 
-  // Fournisseurs distincts (clé normalisée), libellé = occurrence la plus récente
+  // Sociétés distinctes (une seule ligne par société, sans n° de facture), triées par nom
   const seen = new Map<string, string>()
   for (const r of invRows || []) {
-    const key = normalizeSupplierName(r.supplier_name)
-    if (key && !seen.has(key)) seen.set(key, String(r.supplier_name || '').trim())
+    const soc = supplierSociete(r.supplier_name)
+    const key = normalizeSupplierName(soc)
+    if (key && !seen.has(key)) seen.set(key, soc)
   }
-  const suppliers = Array.from(seen.entries()).map(([key, name]) => ({ key, name }))
+  const suppliers = Array.from(seen.entries())
+    .map(([key, name]) => ({ key, name }))
+    .sort((a, b) => a.name.localeCompare(b.name, 'fr'))
 
   return NextResponse.json({
     splits: (splitRows || []).map((s: any) => ({
@@ -68,8 +81,8 @@ export async function PUT(req: NextRequest) {
   const rows = rowsIn
     .map((r: any) => ({
       client_id: clientId,
-      supplier_key: normalizeSupplierName(r.supplier_key || r.supplier_label || ''),
-      supplier_label: String(r.supplier_label || r.supplier_key || '').trim() || null,
+      supplier_key: societeKey(r.supplier_key || r.supplier_label || ''),
+      supplier_label: supplierSociete(r.supplier_label || r.supplier_key || '') || null,
       pct_boucherie: clamp(r.pct_boucherie),
       pct_charcuterie: clamp(r.pct_charcuterie),
       pct_traiteur: clamp(r.pct_traiteur),
@@ -108,7 +121,7 @@ export async function POST(req: NextRequest) {
   const s = body?.split
   if (!s) return NextResponse.json({ error: 'Format invalide' }, { status: 400 })
 
-  const key = normalizeSupplierName(s.supplier_key || s.supplier_label || '')
+  const key = societeKey(s.supplier_key || s.supplier_label || '')
   if (!key) return NextResponse.json({ error: 'Société manquante' }, { status: 400 })
 
   const clamp = (n: any) => { const v = parseFloat(String(n)); return isNaN(v) ? 0 : Math.min(100, Math.max(0, v)) }
@@ -129,7 +142,7 @@ export async function POST(req: NextRequest) {
   const { error } = await svc.from('supplier_rayon_splits').upsert({
     client_id: clientId,
     supplier_key: key,
-    supplier_label: String(s.supplier_label || s.supplier_key || '').trim() || null,
+    supplier_label: supplierSociete(s.supplier_label || s.supplier_key || '') || null,
     ...pcts,
     updated_at: new Date().toISOString(),
   }, { onConflict: 'client_id,supplier_key' })
