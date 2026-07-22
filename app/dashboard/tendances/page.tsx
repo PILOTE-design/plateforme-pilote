@@ -3,6 +3,7 @@ import { resolveClientId } from '@/lib/resolve-client-id'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { TrendingUp, TrendingDown, LineChart, Euro, Ticket, ShoppingBasket } from 'lucide-react'
 import Link from 'next/link'
+import ProduitsParFamille from './ProduitsParFamille'
 
 const fmt  = (n: number) => n.toLocaleString('fr-FR', { maximumFractionDigits: 0 })
 const fmt2 = (n: number) => n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -11,19 +12,22 @@ type WeekKey = string // "2026-27"
 const keyOf = (year: number, week: number): WeekKey => `${year}-${String(week).padStart(2, '0')}`
 const labelOf = (k: WeekKey) => `S${parseInt(k.split('-')[1])}`
 
+// Palette camembert — famille navy/orange PILOTE + dérivés
+const PIE = ['#1E3A5F', '#FF8C00', '#2a4f7c', '#4a7ab5', '#ffb454', '#7d92ad', '#c5d2e2', '#9aa8bd']
+
 export default async function TendancesPage() {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   const serviceSupabase = createServiceClient()
   const clientId = await resolveClientId(serviceSupabase, user!.id, user?.email)
 
-  // Tendances = ANNÉE EN COURS uniquement. La génération de rapport archive aussi les
-  // semaines N-1 (année précédente) pour la comparaison — elles ne doivent PAS entrer
-  // dans la courbe de tendance, sinon des chiffres de l'an dernier polluent l'affichage.
+  // Tendances = ANNÉE EN COURS pour la courbe. Les semaines N-1 servent uniquement à la
+  // comparaison année précédente (KPIs), pas à la courbe de tendance.
   const currentYear = new Date().getFullYear()
 
   let weekKeys: WeekKey[] = []
   const byProduct = new Map<string, Map<WeekKey, number>>()
+  const familleOf = new Map<string, string | null>()
   type CaRow = { key: WeekKey; ca: number; tickets: number | null; panier: number | null; familles: { nom: string; montant: number }[] }
   let caRows: CaRow[] = []
 
@@ -31,7 +35,7 @@ export default async function TendancesPage() {
     const [{ data: prodRows }, { data: caData }] = await Promise.all([
       serviceSupabase
         .from('weekly_sales_products')
-        .select('product, amount, week_number, year')
+        .select('product, amount, week_number, year, famille')
         .eq('client_id', clientId)
         .eq('year', currentYear)
         .order('year', { ascending: false }).order('week_number', { ascending: false })
@@ -56,6 +60,8 @@ export default async function TendancesPage() {
       const name = String(r.product)
       if (!byProduct.has(name)) byProduct.set(name, new Map())
       byProduct.get(name)!.set(k, parseFloat(String(r.amount || 0)))
+      // rows triées desc → 1re occurrence = famille la plus récente
+      if (r.famille && !familleOf.get(name)) familleOf.set(name, String(r.famille))
     }
 
     caRows = (caData || [])
@@ -73,6 +79,22 @@ export default async function TendancesPage() {
   const lastKey = weekKeys[weekKeys.length - 1]
   const prevKey = weekKeys[weekKeys.length - 2]
 
+  // Comparaison année précédente : même semaine, année N-1 (données archivées par les rapports)
+  let n1Ca: { ca: number; tickets: number | null; panier: number | null } | null = null
+  if (clientId && lastKey) {
+    const [ly, lw] = lastKey.split('-').map(Number)
+    const { data: n1 } = await serviceSupabase
+      .from('weekly_ca')
+      .select('ca_total, nb_tickets, moyenne_ticket')
+      .eq('client_id', clientId).eq('week_number', lw).eq('year', ly - 1)
+      .maybeSingle()
+    if (n1) n1Ca = {
+      ca: parseFloat(String(n1.ca_total || 0)),
+      tickets: n1.nb_tickets != null ? Number(n1.nb_tickets) : null,
+      panier: n1.moyenne_ticket != null ? parseFloat(String(n1.moyenne_ticket)) : null,
+    }
+  }
+
   // Ecarts produit derniere semaine vs precedente
   const deltas: { name: string; last: number; delta: number }[] = []
   if (lastKey && prevKey) {
@@ -83,14 +105,18 @@ export default async function TendancesPage() {
       deltas.push({ name, last, delta: last - prev })
     }
   }
-  const hausses = deltas.filter(d => d.delta > 0).sort((a, b) => b.delta - a.delta).slice(0, 8)
-  const baisses = deltas.filter(d => d.delta < 0).sort((a, b) => a.delta - b.delta).slice(0, 8)
+  const hausses = deltas.filter(d => d.delta > 0).sort((a, b) => b.delta - a.delta).slice(0, 5)
+  const baisses = deltas.filter(d => d.delta < 0).sort((a, b) => a.delta - b.delta).slice(0, 5)
 
-  // Tableau : produits tries par CA de la derniere semaine
-  const products = [...byProduct.entries()]
-    .map(([name, series]) => ({ name, series, last: lastKey ? (series.get(lastKey) ?? 0) : 0 }))
-    .sort((a, b) => b.last - a.last)
-    .slice(0, 40)
+  // Données pour le composant produits/familles (tous les produits, avec famille + série)
+  const clientProducts = [...byProduct.entries()]
+    .map(([name, series]) => {
+      const vals = weekKeys.map(k => series.get(k) ?? 0)
+      const last = lastKey ? (series.get(lastKey) ?? 0) : 0
+      const prev = prevKey ? (series.get(prevKey) ?? 0) : 0
+      return { name, famille: familleOf.get(name) ?? null, vals, last, prevDelta: last - prev }
+    })
+    .filter(p => p.vals.some(v => v > 0))
 
   // Tendance familles (depuis weekly_ca.families_detail)
   const famSeries = new Map<string, Map<WeekKey, number>>()
@@ -111,6 +137,18 @@ export default async function TendancesPage() {
   const lastCa = caRows[caRows.length - 1]
   const prevCa = caRows[caRows.length - 2]
 
+  // Camembert : répartition du CA de la dernière semaine par famille (top 7 + Autres)
+  const donutRaw = (lastCa?.familles ?? [])
+    .map(f => ({ nom: String(f.nom), montant: Number(f.montant) || 0 }))
+    .filter(f => f.montant > 0)
+    .sort((a, b) => b.montant - a.montant)
+  let donut = donutRaw
+  if (donutRaw.length > 7) {
+    const rest = donutRaw.slice(7).reduce((s, d) => s + d.montant, 0)
+    donut = [...donutRaw.slice(0, 7), { nom: 'Autres', montant: rest }]
+  }
+  const donutTotal = donut.reduce((s, d) => s + d.montant, 0)
+
   const hasData = weekKeys.length >= 1
   const hasComparison = weekKeys.length >= 2
 
@@ -125,6 +163,44 @@ export default async function TendancesPage() {
             style={{ height: `${Math.max(8, (v / max) * 100)}%` }} />
         ))}
       </div>
+    )
+  }
+
+  // Camembert SVG (donut) — segments via stroke-dasharray, sans dépendance
+  function Donut() {
+    const R = 54, SW = 22, C = 2 * Math.PI * R
+    let offset = 0
+    return (
+      <svg viewBox="0 0 140 140" className="w-36 h-36 flex-shrink-0">
+        <g transform="rotate(-90 70 70)">
+          <circle cx="70" cy="70" r={R} fill="none" stroke="#f1f5f9" strokeWidth={SW} />
+          {donut.map((d, i) => {
+            const frac = donutTotal > 0 ? d.montant / donutTotal : 0
+            const len = frac * C
+            const seg = (
+              <circle key={i} cx="70" cy="70" r={R} fill="none"
+                stroke={PIE[i % PIE.length]} strokeWidth={SW}
+                strokeDasharray={`${len} ${C - len}`} strokeDashoffset={-offset} />
+            )
+            offset += len
+            return seg
+          })}
+        </g>
+      </svg>
+    )
+  }
+
+  function pctChange(last: number | null, base: number | null | undefined): number | null {
+    if (last == null || base == null || base <= 0) return null
+    return ((last - base) / base) * 100
+  }
+  function Cmp({ pct, label }: { pct: number | null; label: string }) {
+    if (pct === null) return <p className="text-[11px] text-gray-300 tabular">— vs {label}</p>
+    const up = pct >= 0
+    return (
+      <p className={`text-[11px] font-semibold tabular ${up ? 'text-green-600' : 'text-red-500'}`}>
+        {up ? '▲' : '▼'} {up ? '+' : ''}{pct.toFixed(1)} % vs {label}
+      </p>
     )
   }
 
@@ -154,13 +230,13 @@ export default async function TendancesPage() {
         </Card>
       ) : (
         <>
-          {/* KPIs d'evolution */}
+          {/* KPIs d'evolution — vs semaine précédente ET vs année précédente (N-1) */}
           {lastCa && (
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
               {[
-                { icon: Euro, label: 'CA', val: `${fmt(lastCa.ca)} €`, prev: prevCa ? lastCa.ca - prevCa.ca : null, isEuro: true },
-                { icon: Ticket, label: 'Tickets', val: lastCa.tickets != null ? String(lastCa.tickets) : '—', prev: prevCa?.tickets != null && lastCa.tickets != null ? lastCa.tickets - prevCa.tickets : null, isEuro: false },
-                { icon: ShoppingBasket, label: 'Panier moyen', val: lastCa.panier != null ? `${fmt2(lastCa.panier)} €` : '—', prev: prevCa?.panier != null && lastCa.panier != null ? lastCa.panier - prevCa.panier : null, isEuro: true },
+                { icon: Euro, label: 'CA', val: `${fmt(lastCa.ca)} €`, last: lastCa.ca, s1: prevCa?.ca ?? null, n1: n1Ca?.ca ?? null },
+                { icon: Ticket, label: 'Tickets', val: lastCa.tickets != null ? String(lastCa.tickets) : '—', last: lastCa.tickets, s1: prevCa?.tickets ?? null, n1: n1Ca?.tickets ?? null },
+                { icon: ShoppingBasket, label: 'Panier moyen', val: lastCa.panier != null ? `${fmt2(lastCa.panier)} €` : '—', last: lastCa.panier, s1: prevCa?.panier ?? null, n1: n1Ca?.panier ?? null },
               ].map((kpi, i) => (
                 <Card key={i} className="hover:shadow-card-hover transition-shadow">
                   <CardContent className="p-5">
@@ -171,24 +247,23 @@ export default async function TendancesPage() {
                       <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">{kpi.label} · {labelOf(lastKey)}</p>
                     </div>
                     <p className="text-2xl font-bold tracking-tight text-gray-900 tabular">{kpi.val}</p>
-                    {kpi.prev !== null && prevKey && (
-                      <p className={`text-xs font-semibold mt-1 tabular ${kpi.prev >= 0 ? 'text-green-600' : 'text-red-500'}`}>
-                        {kpi.prev >= 0 ? '+' : ''}{kpi.isEuro ? `${fmt2(kpi.prev)} €` : fmt(kpi.prev)} vs {labelOf(prevKey)}
-                      </p>
-                    )}
+                    <div className="mt-1.5 space-y-0.5">
+                      <Cmp pct={pctChange(kpi.last, kpi.s1)} label={prevKey ? labelOf(prevKey) : 'S-1'} />
+                      <Cmp pct={pctChange(kpi.last, kpi.n1)} label="N-1" />
+                    </div>
                   </CardContent>
                 </Card>
               ))}
             </div>
           )}
 
-          {/* Top hausses / baisses */}
+          {/* Top hausses / baisses — 5 produits chacun */}
           {hasComparison && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
               <Card>
                 <CardHeader>
                   <CardTitle className="text-base flex items-center gap-2"><TrendingUp className="w-4 h-4 text-green-600" />Ce qui monte</CardTitle>
-                  <CardDescription>{labelOf(lastKey)} vs {labelOf(prevKey)}</CardDescription>
+                  <CardDescription>Top 5 · {labelOf(lastKey)} vs {labelOf(prevKey)}</CardDescription>
                 </CardHeader>
                 <CardContent>
                   {hausses.length === 0 ? <p className="text-sm text-gray-400 text-center py-4">Aucune hausse détectée</p> : (
@@ -206,7 +281,7 @@ export default async function TendancesPage() {
               <Card>
                 <CardHeader>
                   <CardTitle className="text-base flex items-center gap-2"><TrendingDown className="w-4 h-4 text-red-500" />Ce qui décroche</CardTitle>
-                  <CardDescription>{labelOf(lastKey)} vs {labelOf(prevKey)}</CardDescription>
+                  <CardDescription>Top 5 · {labelOf(lastKey)} vs {labelOf(prevKey)}</CardDescription>
                 </CardHeader>
                 <CardContent>
                   {baisses.length === 0 ? <p className="text-sm text-gray-400 text-center py-4">Aucune baisse détectée</p> : (
@@ -224,71 +299,57 @@ export default async function TendancesPage() {
             </div>
           )}
 
-          {/* Familles */}
+          {/* Répartition & tendance par famille */}
           {familles.length > 0 && (
             <Card className="mb-6">
               <CardHeader>
-                <CardTitle className="text-base">Tendance par famille</CardTitle>
-                <CardDescription>CA hebdomadaire des {weekKeys.length} dernières semaines archivées · {currentYear}</CardDescription>
+                <CardTitle className="text-base">Répartition & tendance par famille</CardTitle>
+                <CardDescription>Camembert : part de CA de {lastKey ? labelOf(lastKey) : ''} · barres : {weekKeys.length} dernières semaines</CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="space-y-3">
-                  {familles.slice(0, 10).map(f => (
-                    <div key={f.name} className="flex items-center gap-4">
-                      <span className="text-sm text-gray-700 w-44 truncate flex-shrink-0">{f.name}</span>
-                      <Spark series={f.series} />
-                      <span className="text-sm font-semibold text-gray-900 ml-auto whitespace-nowrap tabular">{fmt(f.last)} €</span>
-                      {hasComparison && (
-                        <span className={`text-xs font-semibold w-20 text-right tabular ${f.delta >= 0 ? 'text-green-600' : 'text-red-500'}`}>
-                          {f.delta >= 0 ? '+' : ''}{fmt(f.delta)} €
-                        </span>
-                      )}
+                <div className="flex flex-col md:flex-row gap-6">
+                  {donutTotal > 0 && (
+                    <div className="flex items-center gap-4 md:w-1/2">
+                      <Donut />
+                      <div className="flex-1 space-y-1.5">
+                        {donut.map((d, i) => (
+                          <div key={d.nom} className="flex items-center gap-2 text-xs">
+                            <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: PIE[i % PIE.length] }} />
+                            <span className="text-gray-700 truncate flex-1">{d.nom}</span>
+                            <span className="font-semibold text-gray-900 tabular">{donutTotal > 0 ? Math.round((d.montant / donutTotal) * 100) : 0} %</span>
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                  ))}
+                  )}
+                  <div className="md:flex-1 space-y-3">
+                    {familles.slice(0, 8).map(f => (
+                      <div key={f.name} className="flex items-center gap-3">
+                        <span className="text-sm text-gray-700 w-32 truncate flex-shrink-0">{f.name}</span>
+                        <Spark series={f.series} />
+                        <span className="text-sm font-semibold text-gray-900 ml-auto whitespace-nowrap tabular">{fmt(f.last)} €</span>
+                        {hasComparison && (
+                          <span className={`text-xs font-semibold w-16 text-right tabular ${f.delta >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                            {f.delta >= 0 ? '+' : ''}{fmt(f.delta)} €
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </CardContent>
             </Card>
           )}
 
-          {/* Tableau produits */}
+          {/* Produits par famille + 20/80 (composant interactif) */}
           <Card className="overflow-hidden">
-            <CardHeader>
-              <CardTitle className="text-base">Tous les produits</CardTitle>
-              <CardDescription>Top 40 par CA de la semaine {lastKey ? labelOf(lastKey) : ''} · mini-graphe = {weekKeys.length} semaines</CardDescription>
-            </CardHeader>
             <CardContent className="p-0">
-              {products.length === 0 ? (
-                <p className="text-sm text-gray-400 text-center py-8">Aucun produit archivé pour l'instant</p>
-              ) : (
-                <table className="w-full">
-                  <thead>
-                    <tr className="bg-gray-50 text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
-                      <th className="px-4 py-2.5 text-left">Produit</th>
-                      <th className="px-4 py-2.5 text-center">Évolution</th>
-                      <th className="px-4 py-2.5 text-right">CA {lastKey ? labelOf(lastKey) : ''}</th>
-                      {hasComparison && <th className="px-4 py-2.5 text-right">vs {labelOf(prevKey)}</th>}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {products.map((p) => {
-                      const prev = prevKey ? (p.series.get(prevKey) ?? 0) : 0
-                      const delta = p.last - prev
-                      return (
-                        <tr key={p.name} className="border-t border-gray-100 hover:bg-gray-50 transition-colors">
-                          <td className="px-4 py-2 text-sm font-medium text-gray-900">{p.name}</td>
-                          <td className="px-4 py-2"><div className="flex justify-center"><Spark series={p.series} /></div></td>
-                          <td className="px-4 py-2 text-right text-sm font-semibold text-gray-900 tabular">{fmt2(p.last)} €</td>
-                          {hasComparison && (
-                            <td className={`px-4 py-2 text-right text-xs font-bold tabular ${delta >= 0 ? 'text-green-600' : 'text-red-500'}`}>
-                              {delta >= 0 ? '+' : ''}{fmt(delta)} €
-                            </td>
-                          )}
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              )}
+              <ProduitsParFamille
+                products={clientProducts}
+                lastLabel={lastKey ? labelOf(lastKey) : ''}
+                prevLabel={prevKey ? labelOf(prevKey) : ''}
+                hasComparison={hasComparison}
+              />
             </CardContent>
           </Card>
         </>
