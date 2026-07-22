@@ -10,7 +10,7 @@ import {
   Receipt, ChevronLeft, ChevronRight, Plus, Trash2,
   TrendingUp, TrendingDown, ShoppingCart, Users, Euro,
   Save, X, Settings, Check, Loader2, AlertCircle,
-  Link2, Link2Off, RefreshCw, ArrowUpRight, Repeat, Undo2
+  Link2, Link2Off, RefreshCw, ArrowUpRight, Repeat, Undo2, PieChart
 } from 'lucide-react'
 
 // ─── Types ──────────────────────────────
@@ -25,14 +25,27 @@ type Invoice = {
 
 type WeeklyCA = { ca_total: number; ca_boucherie: number; ca_charcuterie: number; ca_traiteur: number; ca_vente: number }
 
+type RayonMargin = { ca: number; achats: number; marge: number; taux: number | null }
 type Summary = {
   achats_ht: number; achats_by_category: Record<string, number>; masse_salariale: number
   ca_total: number; ca_detail: WeeklyCA | null; marge_brute: number
   taux_marge: number | null; resultat_net: number; ratio_ms: number | null
+  achats_by_rayon?: Record<string, number>
+  achats_non_ventiles?: number
+  marge_by_rayon?: Record<string, RayonMargin>
 }
 
 /** Mémoire fournisseur : dernière catégorie et dernier taux de TVA utilisés */
 type SupplierMemo = { name: string; category: string; tva_rate: number | null }
+
+/** Répartition d'un fournisseur sur les rayons (en %) */
+type RayonSplit = { supplier_key: string; supplier_label: string | null; pct_boucherie: number; pct_charcuterie: number; pct_traiteur: number; pct_vente: number }
+const RAYONS = [
+  { key: 'boucherie',   label: 'Boucherie',   dot: '#1E3A5F' },
+  { key: 'charcuterie', label: 'Charcuterie', dot: '#FF8C00' },
+  { key: 'traiteur',    label: 'Traiteur',    dot: '#2a4f7c' },
+  { key: 'vente',       label: 'Vente',       dot: '#c5d2e2' },
+] as const
 
 type BillingIntegration = {
   provider: string; is_active: boolean; last_sync_at?: string
@@ -182,6 +195,11 @@ export default function FacturationPage() {
   const [showCA,    setShowCA]    = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [showProviders, setShowProviders] = useState(false)
+  const [showSplits,     setShowSplits]     = useState(false)
+  const [splits,         setSplits]         = useState<RayonSplit[]>([])
+  const [splitSuppliers, setSplitSuppliers] = useState<{ key: string; name: string }[]>([])
+  const [splitDraft,     setSplitDraft]     = useState<Record<string, { label: string; boucherie: string; charcuterie: string; traiteur: string; vente: string }>>({})
+  const [splitSaving,    setSplitSaving]    = useState(false)
   const [newInvoice, setNewInvoice] = useState<any>(EMPTY_INVOICE)
   const [saving,    setSaving]    = useState(false)
   // Mémoire fournisseur (pré-remplissage auto catégorie + TVA à la saisie d'un achat)
@@ -238,8 +256,18 @@ export default function FacturationPage() {
     if (res?.ok) { const data = await res.json(); setIntegrations(Array.isArray(data) ? data : []) }
   }, [])
 
+  const loadSplits = useCallback(async () => {
+    const res = await fetch('/api/supplier-splits', { cache: 'no-store' }).catch(() => null)
+    if (!res?.ok) return
+    const data = await res.json().catch(() => null)
+    if (!data) return
+    setSplits(Array.isArray(data.splits) ? data.splits : [])
+    setSplitSuppliers(Array.isArray(data.suppliers) ? data.suppliers : [])
+  }, [])
+
   useEffect(() => { load() }, [load])
   useEffect(() => { loadIntegrations() }, [loadIntegrations])
+  useEffect(() => { loadSplits() }, [loadSplits, invoices.length])
 
   // Charge la mémoire fournisseur (catégorie + TVA les plus récentes par fournisseur)
   useEffect(() => {
@@ -265,6 +293,52 @@ export default function FacturationPage() {
     setNewInvoice(EMPTY_INVOICE)
     setMemoTouched(false)
     setShowAdd(true)
+  }
+
+  /** Ouvre la répartition par rayon : fusionne fournisseurs connus + règles enregistrées */
+  function openSplits() {
+    const draft: Record<string, { label: string; boucherie: string; charcuterie: string; traiteur: string; vente: string }> = {}
+    for (const s of splitSuppliers) {
+      draft[s.key] = { label: s.name || s.key, boucherie: '', charcuterie: '', traiteur: '', vente: '' }
+    }
+    for (const sp of splits) {
+      draft[sp.supplier_key] = {
+        label: sp.supplier_label || draft[sp.supplier_key]?.label || sp.supplier_key,
+        boucherie:   sp.pct_boucherie   ? String(sp.pct_boucherie)   : '',
+        charcuterie: sp.pct_charcuterie ? String(sp.pct_charcuterie) : '',
+        traiteur:    sp.pct_traiteur    ? String(sp.pct_traiteur)    : '',
+        vente:       sp.pct_vente       ? String(sp.pct_vente)       : '',
+      }
+    }
+    setSplitDraft(draft)
+    setShowSplits(true)
+  }
+
+  async function saveSplits() {
+    setSplitSaving(true)
+    try {
+      const rows = Object.entries(splitDraft).map(([key, v]) => ({
+        supplier_key: key,
+        supplier_label: v.label,
+        pct_boucherie:   parseFloat(v.boucherie)   || 0,
+        pct_charcuterie: parseFloat(v.charcuterie) || 0,
+        pct_traiteur:    parseFloat(v.traiteur)    || 0,
+        pct_vente:       parseFloat(v.vente)       || 0,
+      }))
+      const res = await fetch('/api/supplier-splits', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ splits: rows }),
+      })
+      if (!res.ok) { toast({ variant: 'error', title: 'Enregistrement impossible', description: `Erreur ${res.status}` }); return }
+      toast({ variant: 'success', title: 'Répartition enregistrée' })
+      setShowSplits(false)
+      await loadSplits()
+      await load()
+    } catch {
+      toast({ variant: 'error', title: 'Erreur réseau', description: "La répartition n'a pas été enregistrée." })
+    } finally {
+      setSplitSaving(false)
+    }
   }
 
   function prevWeek() { if (week === 1) { setYear(y => y - 1); setWeek(isoWeeksInYear(year - 1)) } else setWeek(w => w - 1) }
@@ -497,6 +571,10 @@ export default function FacturationPage() {
           <Button onClick={openAdd} className="bg-pilote hover:bg-pilote-hover text-white h-9 text-sm px-3.5 rounded-xl shadow-card active:scale-95 transition-all">
             <Plus className="w-3.5 h-3.5 mr-1.5" />Ajouter une facture
           </Button>
+          <button onClick={openSplits} title="Répartir les achats par rayon, fournisseur par fournisseur"
+            className="h-9 text-sm px-3 rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors flex items-center gap-1.5">
+            <PieChart className="w-3.5 h-3.5" />Répartition
+          </button>
           <button onClick={() => setShowSettings(true)} className="p-2 rounded-xl hover:bg-gray-100 text-gray-400 hover:text-gray-700 transition-colors">
             <Settings className="w-4 h-4" />
           </button>
@@ -660,6 +738,39 @@ export default function FacturationPage() {
                 </div>
               )}
             </div>
+          </div>
+        )}
+
+        {/* Marge par rayon — achats fournisseur ventilés par rayon (répartition %) */}
+        {summary?.marge_by_rayon && summary.ca_total > 0 && (
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-card p-5">
+            <div className="flex items-center justify-between mb-3.5">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-gray-400">Marge par rayon</h3>
+              <button onClick={openSplits} className="text-xs font-medium text-pilote hover:underline">Régler la répartition</button>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {RAYONS.map(r => {
+                const d = summary.marge_by_rayon![r.key]
+                if (!d) return null
+                return (
+                  <div key={r.key} className="rounded-xl border border-gray-100 p-3">
+                    <div className="flex items-center gap-1.5 mb-1.5">
+                      <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: r.dot }} />
+                      <span className="text-xs font-semibold text-gray-600">{r.label}</span>
+                    </div>
+                    <p className={`text-lg font-extrabold tabular ${d.marge >= 0 ? 'text-gray-900' : 'text-red-600'}`}>{d.ca > 0 ? fmtEuro(d.marge) : '—'}</p>
+                    <p className="text-[11px] text-gray-400 mt-0.5">CA {fmtEuro(d.ca)} · achats {fmtEuro(d.achats)}</p>
+                    {d.taux !== null && <p className="text-[11px] text-gray-400">Taux {d.taux.toFixed(1)} %</p>}
+                  </div>
+                )
+              })}
+            </div>
+            {(summary.achats_non_ventiles ?? 0) > 0 && (
+              <p className="text-[11px] text-gray-400 mt-3">
+                {fmtEuro(summary.achats_non_ventiles!)} d&apos;achats non répartis — fournisseurs sans répartition définie.
+                <button onClick={openSplits} className="ml-1 text-pilote hover:underline">Compléter</button>
+              </p>
+            )}
           </div>
         )}
 
@@ -1001,6 +1112,62 @@ export default function FacturationPage() {
       )}
 
       {/* Modal : CA */}
+      {/* Modal : Répartition des achats par rayon (par fournisseur) */}
+      {showSplits && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 backdrop-blur-sm p-4" onClick={() => setShowSplits(false)}>
+          <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-start justify-between p-5 border-b border-gray-100">
+              <div>
+                <h2 className="text-base font-bold text-gray-900">Répartition des achats par rayon</h2>
+                <p className="text-xs text-gray-500 mt-0.5 max-w-md">Pour chaque fournisseur, indiquez la part (%) de ses achats affectée à chaque rayon. Appliqué automatiquement à toutes ses factures.</p>
+              </div>
+              <button onClick={() => setShowSplits(false)} className="p-1.5 rounded-lg hover:bg-gray-100"><X className="w-4 h-4 text-gray-500" /></button>
+            </div>
+            <div className="p-5 overflow-y-auto">
+              <div className="hidden md:flex items-center gap-2 px-2 pb-2 text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                <span className="flex-1">Fournisseur</span>
+                <span className="w-14 text-center">Bouch.</span>
+                <span className="w-14 text-center">Charc.</span>
+                <span className="w-14 text-center">Trait.</span>
+                <span className="w-14 text-center">Vente</span>
+                <span className="w-12 text-center">Total</span>
+              </div>
+              {Object.keys(splitDraft).length === 0 ? (
+                <p className="text-sm text-gray-400 py-8 text-center">Aucun fournisseur connu pour l&apos;instant — ajoutez des factures d&apos;achat d&apos;abord.</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {Object.entries(splitDraft).sort((a, b) => a[1].label.localeCompare(b[1].label, 'fr')).map(([key, v]) => {
+                    const tot = (parseFloat(v.boucherie) || 0) + (parseFloat(v.charcuterie) || 0) + (parseFloat(v.traiteur) || 0) + (parseFloat(v.vente) || 0)
+                    const totOk = tot === 0 || Math.abs(tot - 100) < 0.5
+                    const upd = (field: 'boucherie' | 'charcuterie' | 'traiteur' | 'vente', val: string) =>
+                      setSplitDraft(prev => ({ ...prev, [key]: { ...prev[key], [field]: val } }))
+                    return (
+                      <div key={key} className="flex flex-col md:flex-row md:items-center gap-2 p-2 rounded-xl hover:bg-gray-50">
+                        <span className="flex-1 text-sm font-medium text-gray-800 truncate" title={v.label}>{v.label}</span>
+                        <div className="flex items-center gap-2">
+                          {(['boucherie', 'charcuterie', 'traiteur', 'vente'] as const).map(f => (
+                            <input key={f} type="number" min="0" max="100" value={v[f]} onChange={e => upd(f, e.target.value)}
+                              placeholder="0" className="w-14 border border-gray-200 rounded-md px-2 py-1 text-sm text-right tabular focus:outline-none focus:ring-2 focus:ring-pilote-200" />
+                          ))}
+                          <span className={`w-12 text-center text-xs font-bold tabular ${totOk ? 'text-gray-400' : 'text-orange-500'}`}>{tot ? `${Math.round(tot)}%` : '—'}</span>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+              <p className="text-[11px] text-gray-400 mt-3">Le total par fournisseur devrait faire 100 %. Ceux laissés à 0 restent « non répartis » et n&apos;entrent pas dans la marge par rayon.</p>
+            </div>
+            <div className="flex gap-2 p-5 border-t border-gray-100">
+              <Button variant="outline" className="flex-1" onClick={() => setShowSplits(false)}>Annuler</Button>
+              <Button onClick={saveSplits} disabled={splitSaving} className="flex-1 bg-pilote hover:bg-pilote-hover text-white">
+                {splitSaving ? <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" />Enregistrement...</> : <><Save className="w-4 h-4 mr-1.5" />Enregistrer</>}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showCA && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 backdrop-blur-sm" onClick={() => setShowCA(false)}>
           <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
