@@ -57,10 +57,10 @@ const BOEUF_CUTS: Cut[] = [
   { id: 'tranche_grasse_ronde',   name: 'Ronde tranche grasse',    category: 'deuxieme',  yieldPct: 0, marketPrice: 15, group: ['ART8', 'BCUH', 'Globe', 'Tranche grasse'] },
   { id: 'tranche_grasse_plat',    name: 'Plat de tranche grasse',  category: 'deuxieme',  yieldPct: 0, marketPrice: 15, group: ['ART8', 'BCUH', 'Globe', 'Tranche grasse'] },
   { id: 'tranche_grasse_mouvante', name: 'Mouvante tranche grasse', category: 'deuxieme', yieldPct: 0, marketPrice: 15, group: ['ART8', 'BCUH', 'Globe', 'Tranche grasse'] },
-  // Tende de tranche : sous-groupe Entame + pièces directes (Milieu = ex-cœur de tranche)
+  // Tende de tranche : toutes les pièces en direct (Milieu = ex-cœur de tranche)
   { id: 'coeur_tranche',          name: 'Milieu',                  category: 'deuxieme',  yieldPct: 0, marketPrice: 17, group: ['ART8', 'BCUH', 'Globe', 'Tende de tranche'] },
-  { id: 'fausse_araignee',        name: 'Fausse araignée',         category: 'premier',   yieldPct: 0, marketPrice: 20, group: ['ART8', 'BCUH', 'Globe', 'Tende de tranche', 'Entame'] },
-  { id: 'dessous_tranche',        name: 'Dessous de tranche',      category: 'deuxieme',  yieldPct: 0, marketPrice: 16, group: ['ART8', 'BCUH', 'Globe', 'Tende de tranche', 'Entame'] },
+  { id: 'fausse_araignee',        name: 'Fausse araignée',         category: 'premier',   yieldPct: 0, marketPrice: 20, group: ['ART8', 'BCUH', 'Globe', 'Tende de tranche'] },
+  { id: 'entame',                 name: 'Entame',                  category: 'deuxieme',  yieldPct: 0, marketPrice: 16, group: ['ART8', 'BCUH', 'Globe', 'Tende de tranche'] },
   { id: 'poire',                  name: 'Poire',                   category: 'premier',   yieldPct: 0, marketPrice: 26, group: ['ART8', 'BCUH', 'Globe', 'Tende de tranche'] },
   { id: 'merlan',                 name: 'Merlan',                  category: 'premier',   yieldPct: 0, marketPrice: 26, group: ['ART8', 'BCUH', 'Globe', 'Tende de tranche'] },
   { id: 'chapeau',                name: 'Chapeau',                 category: 'deuxieme',  yieldPct: 0, marketPrice: 15, group: ['ART8', 'BCUH', 'Globe', 'Tende de tranche'] },
@@ -71,7 +71,7 @@ const BOEUF_CUTS: Cut[] = [
   { id: 'nerveux',                name: 'Nerveux',                 category: 'troisieme', yieldPct: 0, marketPrice: 11, group: ['ART8', 'BCUH', 'Globe', 'Semelle'] },
   { id: 'plat_de_nerveux',        name: 'Plat de nerveux',         category: 'troisieme', yieldPct: 0, marketPrice: 11, group: ['ART8', 'BCUH', 'Globe', 'Semelle'] },
   { id: 'oreille_gite',           name: 'Oreille de gîte',         category: 'troisieme', yieldPct: 0, marketPrice: 12, group: ['ART8', 'BCUH', 'Globe', 'Semelle'] },
-  { id: 'jarret_semelle',         name: 'Jarret',                  category: 'troisieme', yieldPct: 0, marketPrice: 12, group: ['ART8', 'BCUH', 'Globe', 'Semelle'] },
+  { id: 'jarret_semelle',         name: 'Jarret avec os',          category: 'troisieme', yieldPct: 0, marketPrice: 12, group: ['ART8', 'BCUH', 'Globe', 'Semelle'] },
   { id: 'filet_rtk',              name: 'Filet de rumsteck',       category: 'premier',   yieldPct: 0, marketPrice: 22, group: ['ART8', 'BCUH', 'RTK'] },
   { id: 'coeur_rtk',              name: 'Cœur de rumsteck',        category: 'premier',   yieldPct: 0, marketPrice: 24, group: ['ART8', 'BCUH', 'RTK'] },
   { id: 'langue_de_chat',         name: 'Langue de chat',          category: 'premier',   yieldPct: 0, marketPrice: 22, group: ['ART8', 'BCUH', 'RTK'] },
@@ -82,14 +82,18 @@ const BOEUF_CUTS: Cut[] = [
   { id: 'filet_b',                name: 'Filet',                   category: 'premier',   yieldPct: 0, marketPrice: 45, group: ['ART8', 'DEHMT'] },
   { id: 'onglet_b',               name: 'Onglet',                  category: 'premier',   yieldPct: 0, marketPrice: 28, group: ['ART8', 'DEHMT'] },
   { id: 'chainette_filet',        name: 'Chaînette de filet',      category: 'deuxieme',  yieldPct: 0, marketPrice: 18, group: ['ART8', 'DEHMT'] },
-  // DEHMT : Dessus de côte en direct ; Carré de côte = catégorie dépliable (Filet + Côte)
+  // DEHMT : Dessus de côte et Carré de côte, pièces directes (non dépliables)
   { id: 'dessus_de_cote',         name: 'Dessus de côte',          category: 'premier',   yieldPct: 0, marketPrice: 18, group: ['ART8', 'DEHMT'] },
-  { id: 'carre_cote_filet',       name: 'Filet',                   category: 'premier',   yieldPct: 0, marketPrice: 22, group: ['ART8', 'DEHMT', 'Carré de côte'] },
-  { id: 'cote_boeuf',             name: 'Côte',                    category: 'premier',   yieldPct: 0, marketPrice: 24, group: ['ART8', 'DEHMT', 'Carré de côte'] },
+  { id: 'carre_de_cote',          name: 'Carré de côte',           category: 'premier',   yieldPct: 0, marketPrice: 22, group: ['ART8', 'DEHMT'] },
   // ── BAVETTE ──
   { id: 'flanchet',               name: 'Flanchet',                category: 'deuxieme',  yieldPct: 0, marketPrice: 12, group: ['ART8', 'BAVETTE'] },
   { id: 'bavette_aloyau_b',       name: "Bavette d'aloyau",        category: 'premier',   yieldPct: 0, marketPrice: 22, group: ['ART8', 'BAVETTE'] },
   { id: 'fausse_bavette',         name: 'Fausse bavette',          category: 'deuxieme',  yieldPct: 0, marketPrice: 14, group: ['ART8', 'BAVETTE'] },
+  // ── DIVERS (viandes de fabrication et sous-produits, toute la bête) ──
+  { id: 'boeuf_viande_hachee',       name: 'Viande hachée',        category: 'deuxieme',  yieldPct: 0, marketPrice: 14, group: ['Divers'] },
+  { id: 'boeuf_viandes_fabrication', name: 'Viandes fabrication',  category: 'troisieme', yieldPct: 0, marketPrice: 8,  group: ['Divers'] },
+  { id: 'boeuf_dechets_animaux',     name: 'Déchets animaux',      category: 'troisieme', yieldPct: 0, marketPrice: 0,  group: ['Divers'] },
+  { id: 'boeuf_os_a_moelle',         name: 'Os à moelle',          category: 'os',        yieldPct: 0, marketPrice: 3,  group: ['Divers'] },
 ]
 // Découpe B2 — nomenclature CEFIMEV (avant du bœuf : épaule + collier basse-côte).
 // Arborescence : grande pièce → sous-pièce. Prix de référence indicatifs, modifiables.
