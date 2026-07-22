@@ -499,9 +499,41 @@ export default function ValorisationPage() {
   useEffect(() => {
     try { window.localStorage.setItem('valo_excluded_v1', JSON.stringify(excludedByAnimal)) } catch {}
   }, [excludedByAnimal])
+  // Prix personnalisés — cache local instantané + persistance en base (débounced)
+  const priceSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const skipPriceSave  = useRef(true)
   useEffect(() => {
     try { window.localStorage.setItem('valo_prices_v1', JSON.stringify(cutPricesByAnimal)) } catch {}
+    if (skipPriceSave.current) { skipPriceSave.current = false; return }
+    if (priceSaveTimer.current) clearTimeout(priceSaveTimer.current)
+    priceSaveTimer.current = setTimeout(() => {
+      fetch('/api/valorisation-prices', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prices: cutPricesByAnimal }),
+      }).catch(() => {})
+    }, 700)
   }, [cutPricesByAnimal])
+
+  // Au montage : charge les prix persistés en base (source de vérité), fusionnés au cache local
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/valorisation-prices')
+      .then(r => r.ok ? r.json() : null)
+      .then((payload: { prices?: Partial<PricesByAnimal> } | null) => {
+        if (cancelled || !payload?.prices) return
+        const dbPrices = payload.prices
+        skipPriceSave.current = true
+        setCutPricesByAnimal(prev => {
+          const merged: PricesByAnimal = { ...prev }
+          for (const a of Object.keys(dbPrices) as AnimalType[]) {
+            merged[a] = { ...(prev[a] ?? {}), ...(dbPrices[a] ?? {}) }
+          }
+          return merged
+        })
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [])
 
   // Brouillon enregistré automatiquement : la valorisation en cours survit si on quitte la page
   useEffect(() => {
