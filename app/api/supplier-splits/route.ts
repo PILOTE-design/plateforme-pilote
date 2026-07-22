@@ -15,6 +15,33 @@ function supplierSociete(raw: string): string {
 }
 const societeKey = (raw: string) => normalizeSupplierName(supplierSociete(raw))
 
+// Rayon dominant → catégorie d'achat des factures de la société
+const RAYON_TO_CATEGORY: Record<string, string> = { boucherie: 'viande', charcuterie: 'charcuterie', traiteur: 'autre', vente: 'autre' }
+function categoryFromPcts(p: { pct_boucherie: number; pct_charcuterie: number; pct_traiteur: number; pct_vente: number }): string | null {
+  const entries: Array<[string, number]> = [
+    ['boucherie', p.pct_boucherie], ['charcuterie', p.pct_charcuterie], ['traiteur', p.pct_traiteur], ['vente', p.pct_vente],
+  ]
+  const top = entries.sort((a, b) => b[1] - a[1])[0]
+  if (!top || top[1] <= 0) return null
+  return RAYON_TO_CATEGORY[top[0]] ?? null
+}
+// Recatégorise toutes les factures d'une société (par clé société) vers `category`
+async function retagInvoices(svc: ReturnType<typeof createServiceClient>, clientId: string, rows: Array<{ key: string; category: string }>) {
+  if (rows.length === 0) return
+  const { data } = await svc.from('invoices').select('id, supplier_name').eq('client_id', clientId)
+  const byKey = new Map(rows.map(r => [r.key, r.category]))
+  const updates = new Map<string, string[]>() // category → invoice ids
+  for (const inv of data || []) {
+    const cat = byKey.get(societeKey(inv.supplier_name))
+    if (!cat) continue
+    if (!updates.has(cat)) updates.set(cat, [])
+    updates.get(cat)!.push(inv.id)
+  }
+  for (const [cat, ids] of updates) {
+    if (ids.length) await svc.from('invoices').update({ category: cat }).in('id', ids)
+  }
+}
+
 // Répartition (%) des achats par rayon, fournisseur par fournisseur.
 // GET → { splits: [...], suppliers: [{ key, name }] }  (fournisseurs connus depuis les factures)
 // PUT → { splits: [...] }  remplace l'intégralité des règles du client
@@ -104,6 +131,11 @@ export async function PUT(req: NextRequest) {
     const { error: insErr } = await svc.from('supplier_rayon_splits').insert(rows)
     if (insErr) return NextResponse.json({ error: insErr.message }, { status: 500 })
   }
+  // Recatégorise les factures des sociétés concernées selon leur rayon dominant
+  const retag = rows
+    .map(r => ({ key: r.supplier_key, category: categoryFromPcts(r) }))
+    .filter((r): r is { key: string; category: string } => !!r.category)
+  await retagInvoices(svc, clientId, retag)
   return NextResponse.json({ ok: true, count: rows.length })
 }
 
@@ -148,5 +180,10 @@ export async function POST(req: NextRequest) {
   }, { onConflict: 'client_id,supplier_key' })
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  // Recatégorise les factures existantes de cette société selon son rayon dominant
+  const cat = categoryFromPcts(pcts)
+  if (cat) await retagInvoices(svc, clientId, [{ key, category: cat }])
+
   return NextResponse.json({ ok: true })
 }
