@@ -47,6 +47,26 @@ const RAYONS = [
   { key: 'vente',       label: 'Vente',       dot: '#c5d2e2' },
 ] as const
 
+// Correspondance société → répartition mémorisée (exacte ou par famille de noms).
+// Réutilise normSupplier (défini plus bas, hoisté).
+function sameSupplierFam(a: string, b: string): boolean {
+  const na = normSupplier(a), nb = normSupplier(b)
+  if (!na || !nb) return false
+  if (na === nb) return true
+  const [short, long] = na.length <= nb.length ? [na, nb] : [nb, na]
+  return long.startsWith(short) && !/[\p{L}\p{N}]/u.test(long.charAt(short.length))
+}
+function matchSplit(name: string, splits: RayonSplit[]): RayonSplit | null {
+  const q = normSupplier(name)
+  if (!q) return null
+  let best: RayonSplit | null = null
+  for (const s of splits) {
+    if (s.supplier_key === q) return s
+    if (sameSupplierFam(s.supplier_key, q) && (best === null || s.supplier_key.length > best.supplier_key.length)) best = s
+  }
+  return best
+}
+
 type BillingIntegration = {
   provider: string; is_active: boolean; last_sync_at?: string
   last_sync_status?: 'success' | 'error' | 'pending'; invoices_synced?: number; company_id?: string
@@ -200,6 +220,9 @@ export default function FacturationPage() {
   const [splitSuppliers, setSplitSuppliers] = useState<{ key: string; name: string }[]>([])
   const [splitDraft,     setSplitDraft]     = useState<Record<string, { label: string; boucherie: string; charcuterie: string; traiteur: string; vente: string }>>({})
   const [splitSaving,    setSplitSaving]    = useState(false)
+  // Répartition saisie sur la facture en cours (mémorisée par société)
+  const [newSplit,       setNewSplit]       = useState<{ boucherie: string; charcuterie: string; traiteur: string; vente: string }>({ boucherie: '', charcuterie: '', traiteur: '', vente: '' })
+  const [splitTouched,   setSplitTouched]   = useState(false)
   const [newInvoice, setNewInvoice] = useState<any>(EMPTY_INVOICE)
   const [saving,    setSaving]    = useState(false)
   // Mémoire fournisseur (pré-remplissage auto catégorie + TVA à la saisie d'un achat)
@@ -292,8 +315,24 @@ export default function FacturationPage() {
   function openAdd() {
     setNewInvoice(EMPTY_INVOICE)
     setMemoTouched(false)
+    setNewSplit({ boucherie: '', charcuterie: '', traiteur: '', vente: '' })
+    setSplitTouched(false)
     setShowAdd(true)
   }
+
+  // Pré-remplit la répartition depuis la mémoire de la société saisie (tant qu'on n'y a pas touché)
+  useEffect(() => {
+    if (!showAdd || splitTouched) return
+    const m = matchSplit(newInvoice.supplier_name || '', splits)
+    setNewSplit(m
+      ? {
+          boucherie:   m.pct_boucherie   ? String(m.pct_boucherie)   : '',
+          charcuterie: m.pct_charcuterie ? String(m.pct_charcuterie) : '',
+          traiteur:    m.pct_traiteur    ? String(m.pct_traiteur)    : '',
+          vente:       m.pct_vente       ? String(m.pct_vente)       : '',
+        }
+      : { boucherie: '', charcuterie: '', traiteur: '', vente: '' })
+  }, [newInvoice.supplier_name, splits, showAdd, splitTouched])
 
   /** Ouvre la répartition par rayon : fusionne fournisseurs connus + règles enregistrées */
   function openSplits() {
@@ -349,7 +388,23 @@ export default function FacturationPage() {
     setSaving(true)
     const res = await fetch('/api/invoices', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...newInvoice, week_number: week, year }) })
     const data = await res.json()
-    if (data.id) { setShowAdd(false); setNewInvoice(EMPTY_INVOICE); setMemoTouched(false); load() }
+    if (data.id) {
+      // Mémorise la répartition par rayon de cette société — ré-appliquée à ses prochaines factures
+      const pcts = {
+        pct_boucherie:   parseFloat(newSplit.boucherie)   || 0,
+        pct_charcuterie: parseFloat(newSplit.charcuterie) || 0,
+        pct_traiteur:    parseFloat(newSplit.traiteur)    || 0,
+        pct_vente:       parseFloat(newSplit.vente)       || 0,
+      }
+      if (pcts.pct_boucherie || pcts.pct_charcuterie || pcts.pct_traiteur || pcts.pct_vente) {
+        await fetch('/api/supplier-splits', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ split: { supplier_key: newInvoice.supplier_name, supplier_label: newInvoice.supplier_name, ...pcts } }),
+        }).catch(() => {})
+        loadSplits()
+      }
+      setShowAdd(false); setNewInvoice(EMPTY_INVOICE); setMemoTouched(false); setSplitTouched(false); load()
+    }
     setSaving(false)
   }
 
@@ -1099,6 +1154,26 @@ export default function FacturationPage() {
               <div>
                 <label className="block text-xs font-semibold text-gray-600 mb-1">Notes</label>
                 <Input value={newInvoice.notes} onChange={e => setNewInvoice((p: any) => ({ ...p, notes: e.target.value }))} placeholder="Livraison lundi matin..." />
+              </div>
+              <div className="border-t border-gray-100 pt-3">
+                <label className="block text-xs font-semibold text-gray-600 mb-0.5">Répartition par rayon (%)</label>
+                <p className="text-[11px] text-gray-400 mb-2">Mémorisée pour <span className="font-semibold text-gray-600">{newInvoice.supplier_name || 'cette société'}</span> — ré-appliquée automatiquement à ses prochaines factures.</p>
+                <div className="grid grid-cols-4 gap-2">
+                  {RAYONS.map(r => (
+                    <div key={r.key}>
+                      <span className="block text-[10px] text-gray-400 mb-0.5">{r.label}</span>
+                      <Input type="number" min="0" max="100" value={(newSplit as any)[r.key]}
+                        onChange={e => { setSplitTouched(true); setNewSplit((p) => ({ ...p, [r.key]: e.target.value })) }}
+                        placeholder="0" />
+                    </div>
+                  ))}
+                </div>
+                {(() => {
+                  const t = (parseFloat(newSplit.boucherie) || 0) + (parseFloat(newSplit.charcuterie) || 0) + (parseFloat(newSplit.traiteur) || 0) + (parseFloat(newSplit.vente) || 0)
+                  if (!t) return null
+                  const ok = Math.abs(t - 100) < 0.5
+                  return <p className={`text-[11px] mt-1.5 ${ok ? 'text-gray-400' : 'text-orange-500'}`}>Total {Math.round(t)} %{ok ? '' : ' — devrait faire 100 %'}</p>
+                })()}
               </div>
               <div className="flex gap-3 pt-1">
                 <Button variant="outline" className="flex-1" onClick={() => setShowAdd(false)}>Annuler</Button>

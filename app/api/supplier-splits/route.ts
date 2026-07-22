@@ -93,3 +93,47 @@ export async function PUT(req: NextRequest) {
   }
   return NextResponse.json({ ok: true, count: rows.length })
 }
+
+// POST → upsert d'UNE seule société (sans toucher aux autres). Utilisé à la saisie d'une facture.
+export async function POST(req: NextRequest) {
+  const supabase = createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return NextResponse.json({ error: 'Non autorisé' }, { status: 401 })
+
+  const svc = createServiceClient()
+  const clientId = await resolveClientId(svc, user.id, user.email)
+  if (!clientId) return NextResponse.json({ error: 'Client introuvable' }, { status: 400 })
+
+  const body = await req.json().catch(() => null)
+  const s = body?.split
+  if (!s) return NextResponse.json({ error: 'Format invalide' }, { status: 400 })
+
+  const key = normalizeSupplierName(s.supplier_key || s.supplier_label || '')
+  if (!key) return NextResponse.json({ error: 'Société manquante' }, { status: 400 })
+
+  const clamp = (n: any) => { const v = parseFloat(String(n)); return isNaN(v) ? 0 : Math.min(100, Math.max(0, v)) }
+  const pcts = {
+    pct_boucherie: clamp(s.pct_boucherie),
+    pct_charcuterie: clamp(s.pct_charcuterie),
+    pct_traiteur: clamp(s.pct_traiteur),
+    pct_vente: clamp(s.pct_vente),
+  }
+
+  // Tout à zéro → on retire la règle de cette société
+  if (!(pcts.pct_boucherie || pcts.pct_charcuterie || pcts.pct_traiteur || pcts.pct_vente)) {
+    const { error } = await svc.from('supplier_rayon_splits').delete().eq('client_id', clientId).eq('supplier_key', key)
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ ok: true, removed: true })
+  }
+
+  const { error } = await svc.from('supplier_rayon_splits').upsert({
+    client_id: clientId,
+    supplier_key: key,
+    supplier_label: String(s.supplier_label || s.supplier_key || '').trim() || null,
+    ...pcts,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: 'client_id,supplier_key' })
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json({ ok: true })
+}
