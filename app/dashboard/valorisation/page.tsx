@@ -54,7 +54,9 @@ const BOEUF_CUTS: Cut[] = [
   { id: 'jarret_avec_os',         name: 'Jarret avec os',          category: 'troisieme', yieldPct: 0, marketPrice: 12, group: ['ART8', 'BCUH', 'Jarret'] },
   { id: 'jarret_sans_os',         name: 'Jarret sans os',          category: 'troisieme', yieldPct: 0, marketPrice: 14, group: ['ART8', 'BCUH', 'Jarret'] },
   { id: 'araignee_b',             name: 'Araignée',                category: 'premier',   yieldPct: 0, marketPrice: 32, group: ['ART8', 'BCUH', 'Globe'] },
-  { id: 'tranche_grasse',         name: 'Tranche grasse',          category: 'deuxieme',  yieldPct: 0, marketPrice: 15, group: ['ART8', 'BCUH', 'Globe'] },
+  { id: 'tranche_grasse_ronde',   name: 'Ronde tranche grasse',    category: 'deuxieme',  yieldPct: 0, marketPrice: 15, group: ['ART8', 'BCUH', 'Globe', 'Tranche grasse'] },
+  { id: 'tranche_grasse_plat',    name: 'Plat de tranche grasse',  category: 'deuxieme',  yieldPct: 0, marketPrice: 15, group: ['ART8', 'BCUH', 'Globe', 'Tranche grasse'] },
+  { id: 'tranche_grasse_mouvante', name: 'Mouvante tranche grasse', category: 'deuxieme', yieldPct: 0, marketPrice: 15, group: ['ART8', 'BCUH', 'Globe', 'Tranche grasse'] },
   // Tende de tranche : sous-groupe Entame + pièces directes (Milieu = ex-cœur de tranche)
   { id: 'coeur_tranche',          name: 'Milieu',                  category: 'deuxieme',  yieldPct: 0, marketPrice: 17, group: ['ART8', 'BCUH', 'Globe', 'Tende de tranche'] },
   { id: 'fausse_araignee',        name: 'Fausse araignée',         category: 'premier',   yieldPct: 0, marketPrice: 20, group: ['ART8', 'BCUH', 'Globe', 'Tende de tranche', 'Entame'] },
@@ -70,20 +72,20 @@ const BOEUF_CUTS: Cut[] = [
   { id: 'plat_de_nerveux',        name: 'Plat de nerveux',         category: 'troisieme', yieldPct: 0, marketPrice: 11, group: ['ART8', 'BCUH', 'Globe', 'Semelle'] },
   { id: 'oreille_gite',           name: 'Oreille de gîte',         category: 'troisieme', yieldPct: 0, marketPrice: 12, group: ['ART8', 'BCUH', 'Globe', 'Semelle'] },
   { id: 'jarret_semelle',         name: 'Jarret',                  category: 'troisieme', yieldPct: 0, marketPrice: 12, group: ['ART8', 'BCUH', 'Globe', 'Semelle'] },
-  { id: 'filet_rtk',              name: 'Filet de rumsteck',       category: 'premier',   yieldPct: 0, marketPrice: 22, group: ['ART8', 'BCUH', 'RTK', 'Rumsteck classique'] },
-  { id: 'coeur_rtk',              name: 'Cœur de rumsteck',        category: 'premier',   yieldPct: 0, marketPrice: 24, group: ['ART8', 'BCUH', 'RTK', 'Rumsteck classique'] },
-  { id: 'langue_de_chat',         name: 'Langue de chat',          category: 'premier',   yieldPct: 0, marketPrice: 22, group: ['ART8', 'BCUH', 'RTK', 'Rumsteck classique'] },
-  { id: 'baronne',                name: 'Baronne',                 category: 'premier',   yieldPct: 0, marketPrice: 20, group: ['ART8', 'BCUH', 'RTK'] },
+  { id: 'filet_rtk',              name: 'Filet de rumsteck',       category: 'premier',   yieldPct: 0, marketPrice: 22, group: ['ART8', 'BCUH', 'RTK'] },
+  { id: 'coeur_rtk',              name: 'Cœur de rumsteck',        category: 'premier',   yieldPct: 0, marketPrice: 24, group: ['ART8', 'BCUH', 'RTK'] },
+  { id: 'langue_de_chat',         name: 'Langue de chat',          category: 'premier',   yieldPct: 0, marketPrice: 22, group: ['ART8', 'BCUH', 'RTK'] },
+  { id: 'baronne',                name: 'Aiguillette baronne',     category: 'premier',   yieldPct: 0, marketPrice: 20, group: ['ART8', 'BCUH', 'RTK'] },
   { id: 'aiguillette_rtk',        name: 'Aiguillette de rumsteck', category: 'premier',   yieldPct: 0, marketPrice: 22, group: ['ART8', 'BCUH', 'RTK'] },
   // ── DEHMT ──
   { id: 'faux_filet_b',           name: 'Faux-filet',              category: 'premier',   yieldPct: 0, marketPrice: 29, group: ['ART8', 'DEHMT'] },
   { id: 'filet_b',                name: 'Filet',                   category: 'premier',   yieldPct: 0, marketPrice: 45, group: ['ART8', 'DEHMT'] },
   { id: 'onglet_b',               name: 'Onglet',                  category: 'premier',   yieldPct: 0, marketPrice: 28, group: ['ART8', 'DEHMT'] },
   { id: 'chainette_filet',        name: 'Chaînette de filet',      category: 'deuxieme',  yieldPct: 0, marketPrice: 18, group: ['ART8', 'DEHMT'] },
-  // Carré de côte, Dessus de côte et Côte : pièces directes du DEHMT
-  { id: 'carre_de_cote',          name: 'Carré de côte',           category: 'premier',   yieldPct: 0, marketPrice: 18, group: ['ART8', 'DEHMT'] },
+  // DEHMT : Dessus de côte en direct ; Carré de côte = catégorie dépliable (Filet + Côte)
   { id: 'dessus_de_cote',         name: 'Dessus de côte',          category: 'premier',   yieldPct: 0, marketPrice: 18, group: ['ART8', 'DEHMT'] },
-  { id: 'cote_boeuf',             name: 'Côte',                    category: 'premier',   yieldPct: 0, marketPrice: 24, group: ['ART8', 'DEHMT'] },
+  { id: 'carre_cote_filet',       name: 'Filet',                   category: 'premier',   yieldPct: 0, marketPrice: 22, group: ['ART8', 'DEHMT', 'Carré de côte'] },
+  { id: 'cote_boeuf',             name: 'Côte',                    category: 'premier',   yieldPct: 0, marketPrice: 24, group: ['ART8', 'DEHMT', 'Carré de côte'] },
   // ── BAVETTE ──
   { id: 'flanchet',               name: 'Flanchet',                category: 'deuxieme',  yieldPct: 0, marketPrice: 12, group: ['ART8', 'BAVETTE'] },
   { id: 'bavette_aloyau_b',       name: "Bavette d'aloyau",        category: 'premier',   yieldPct: 0, marketPrice: 22, group: ['ART8', 'BAVETTE'] },
@@ -166,7 +168,12 @@ const VEAU_CUTS: Cut[] = [
   { id: 'veau_cotes_filets',        name: 'Côtes filets',                  category: 'premier',   yieldPct: 0, marketPrice: 30, group: ['Le pan', 'Carré de côtes'] },
   { id: 'veau_cotes_premieres',     name: 'Côtes premières',               category: 'premier',   yieldPct: 0, marketPrice: 24, group: ['Le pan', 'Carré de côtes'] },
   // ── LA BASSE ──
-  { id: 'veau_epaule_jarret',       name: 'Jarret',                        category: 'deuxieme',  yieldPct: 0, marketPrice: 17, group: ['La basse', 'Épaule'] },
+  { id: 'veau_epaule_boule',        name: "Boule d'épaule",                category: 'deuxieme',  yieldPct: 0, marketPrice: 18, group: ['La basse', 'Épaule'] },
+  { id: 'veau_epaule_paleron',      name: 'Paleron',                       category: 'deuxieme',  yieldPct: 0, marketPrice: 16, group: ['La basse', 'Épaule'] },
+  { id: 'veau_epaule_jumeau',       name: 'Jumeau',                        category: 'deuxieme',  yieldPct: 0, marketPrice: 17, group: ['La basse', 'Épaule'] },
+  { id: 'veau_epaule_boite_moelle', name: 'Boîte à moelle',                category: 'troisieme', yieldPct: 0, marketPrice: 12, group: ['La basse', 'Épaule'] },
+  { id: 'veau_epaule_jarret_os',    name: 'Jarret avec os',                category: 'deuxieme',  yieldPct: 0, marketPrice: 17, group: ['La basse', 'Épaule'] },
+  { id: 'veau_epaule_jarret_sans',  name: 'Jarret sans os',                category: 'deuxieme',  yieldPct: 0, marketPrice: 18, group: ['La basse', 'Épaule'] },
   { id: 'veau_epaule',              name: 'Épaule',                        category: 'deuxieme',  yieldPct: 0, marketPrice: 17, group: ['La basse', 'Épaule'] },
   { id: 'veau_poitrine_sans_os',    name: 'Poitrine sans os',              category: 'troisieme', yieldPct: 0, marketPrice: 14, group: ['La basse', 'Poitrine'] },
   { id: 'veau_tendrons',            name: 'Tendrons',                      category: 'deuxieme',  yieldPct: 0, marketPrice: 14, group: ['La basse', 'Poitrine'] },
@@ -466,15 +473,15 @@ export default function ValorisationPage() {
   const [cutWeights,    setCutWeights]    = useState<Record<string, string>>(draft.cutWeights ?? {})
   // Nœuds dépliés de l'arborescence de découpe (par chemin)
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set())
-  // N° de lot par grande partie (clé = nom du nœud de 1er niveau), saisi par le gérant
-  const [lotNumbers,    setLotNumbers]    = useState<Record<string, string>>(draft.lotNumbers ?? {})
+  // N° de lot de la bête / du lot valorisé, saisi par le gérant
+  const [lotNumber,     setLotNumber]     = useState<string>(draft.lotNumber ?? '')
 
   const config = ANIMALS[animalType]
   const breeds = config.breeds
   // Bœuf : un seul arbre — ART8 (arrière) et AVANTCAPA (avant) en catégories principales dépliables
   const cuts   = config.cuts
   // Bœuf et veau s'achètent en demi-carcasse : le poids saisi est celui d'un demi, la quantité un nombre de demis
-  const isHalf = animalType === 'boeuf' || animalType === 'veau'
+  const isHalf = animalType === 'boeuf' || animalType === 'veau' || animalType === 'porc'
   // Prix de référence par pièce : valeur saisie si présente, sinon prix indicatif de la pièce
   const cutPrices = cutPricesByAnimal[animalType] ?? {}
   const priceOf = (cut: Cut) => { const v = parseFloat(cutPrices[cut.id] ?? ''); return isNaN(v) ? cut.marketPrice : v }
@@ -497,10 +504,10 @@ export default function ValorisationPage() {
   useEffect(() => {
     try {
       window.localStorage.setItem('valo_draft_v1', JSON.stringify({
-        animalType, breedId, carcassWeight, quantity, purchasePerKg, overheadCost, laborCost, decoupeHours, targetMargin, purchaseDate, notes, cutWeights, lotNumbers,
+        animalType, breedId, carcassWeight, quantity, purchasePerKg, overheadCost, laborCost, decoupeHours, targetMargin, purchaseDate, notes, cutWeights, lotNumber,
       }))
     } catch {}
-  }, [animalType, breedId, carcassWeight, quantity, purchasePerKg, overheadCost, laborCost, decoupeHours, targetMargin, purchaseDate, notes, cutWeights, lotNumbers])
+  }, [animalType, breedId, carcassWeight, quantity, purchasePerKg, overheadCost, laborCost, decoupeHours, targetMargin, purchaseDate, notes, cutWeights, lotNumber])
 
   const includedCats = useMemo(() => new Set<CutCategory>(catsByAnimal[animalType] ?? CATEGORIES), [catsByAnimal, animalType])
   const excludedCuts = useMemo(() => new Set<string>(excludedByAnimal[animalType] ?? []), [excludedByAnimal, animalType])
@@ -518,7 +525,7 @@ export default function ValorisationPage() {
     setLaborCost(config.defaultLabor)
     setDecoupeHours('')
     setCutWeights({})
-    setLotNumbers({})
+    setLotNumber('')
     setExpandedNodes(new Set())
     setShowBreedInfo(false)
   }, [animalType]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -672,27 +679,13 @@ export default function ValorisationPage() {
       out.push(
         <tr key={node.path} className="border-t border-gray-100 bg-gray-50/60 hover:bg-gray-100 cursor-pointer transition-colors" onClick={() => toggleNode(node.path)}>
           <td colSpan={6} className="px-4 py-2" style={{ paddingLeft: 12 + depth * 18 }}>
-            <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center justify-between">
               <span className="flex items-center gap-1.5 font-semibold text-xs uppercase tracking-wide text-gray-700">
                 <ChevronRight className={`w-3.5 h-3.5 text-gray-400 transition-transform ${open ? 'rotate-90' : ''}`} />
                 {node.name}
                 <span className="text-[10px] font-normal text-gray-400 normal-case">({leaves.length})</span>
               </span>
-              <div className="flex items-center gap-3">
-                {depth === 0 && (
-                  <div className="flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
-                    <span className="text-[10px] font-medium text-gray-400 uppercase tracking-wide">N° lot</span>
-                    <input
-                      type="text"
-                      value={lotNumbers[node.name] ?? ''}
-                      onChange={e => setLotNumbers(prev => ({ ...prev, [node.name]: e.target.value }))}
-                      placeholder="—"
-                      className="w-28 border border-gray-200 rounded-md px-2 py-1 text-xs text-gray-800 bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200"
-                    />
-                  </div>
-                )}
-                {w > 0 && <span className="text-xs text-gray-400 tabular-nums">{kgStr(w)} · {eur(rev)}</span>}
-              </div>
+              {w > 0 && <span className="text-xs text-gray-400 tabular-nums">{kgStr(w)} · {eur(rev)}</span>}
             </div>
           </td>
         </tr>
@@ -764,7 +757,7 @@ export default function ValorisationPage() {
           coefficient: Math.round(coefficient * 10000) / 10000,
           decoupe_hours: parseFloat(decoupeHours) || 0,
           cut_weights: activeResults.reduce((acc, r) => { acc[r.cut.id] = Math.round(r.weight * 100) / 100; return acc }, {} as Record<string, number>),
-          lot_numbers: Object.fromEntries(Object.entries(lotNumbers).filter(([, v]) => (v ?? '').trim() !== '')),
+          lot_numbers: lotNumber.trim() || null,
         }),
       })
       if (!res.ok) {
@@ -792,7 +785,7 @@ export default function ValorisationPage() {
     setOverheadCost('0')
     setDecoupeHours('')
     setCutWeights({})
-    setLotNumbers({})
+    setLotNumber('')
     setExpandedNodes(new Set())
     setNotes('')
     setQuantity('1')
@@ -803,7 +796,7 @@ export default function ValorisationPage() {
 
   /** Recharge une valorisation sauvegardée dans le calculateur — poids par pièce inclus.
    *  Sauvegarder ensuite crée un NOUVEAU lot (l'original reste dans l'historique). */
-  function reopenValo(v: SavedValo & { cut_weights?: Record<string, number> | null; decoupe_hours?: number | null; lot_numbers?: Record<string, string> | null }) {
+  function reopenValo(v: SavedValo & { cut_weights?: Record<string, number> | null; decoupe_hours?: number | null; lot_numbers?: string | null }) {
     const at = (v.animal_type as AnimalType) || 'boeuf'
     if (at !== animalType) skipNextAnimalReset.current = true
     setAnimalType(at)
@@ -822,7 +815,7 @@ export default function ValorisationPage() {
       for (const [k, val] of Object.entries(v.cut_weights)) { const n = Number(val); if (n > 0) w[k] = String(n) }
     }
     setCutWeights(w)
-    setLotNumbers((v.lot_numbers && typeof v.lot_numbers === 'object') ? v.lot_numbers as Record<string, string> : {})
+    setLotNumber(typeof v.lot_numbers === 'string' ? v.lot_numbers : '')
     setExpandedNodes(new Set())
     setSelected(null)
     setActiveTab('calc')
@@ -1184,9 +1177,15 @@ export default function ValorisationPage() {
                     </p>
                   )}
                 </div>
-                <div>
+                <div className="mb-4">
                   <label className="block text-xs font-medium text-gray-700 mb-1.5">Date d&apos;achat</label>
                   <input type="date" value={purchaseDate} onChange={e => setPurchaseDate(e.target.value)}
+                    className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200`} />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-1.5">N° de lot <span className="text-gray-400 font-normal">— traçabilité, saisi par le gérant</span></label>
+                  <input type="text" value={lotNumber} onChange={e => setLotNumber(e.target.value)}
+                    placeholder="ex : n° de lot abattoir"
                     className={`w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200`} />
                 </div>
               </div>
@@ -1540,7 +1539,7 @@ export default function ValorisationPage() {
                 <p className="text-sm text-gray-700 mt-0.5">{selected.notes}</p>
               </div>
             )}
-            <button onClick={() => reopenValo(selected as SavedValo & { cut_weights?: Record<string, number> | null; decoupe_hours?: number | null; lot_numbers?: Record<string, string> | null })}
+            <button onClick={() => reopenValo(selected as SavedValo & { cut_weights?: Record<string, number> | null; decoupe_hours?: number | null; lot_numbers?: string | null })}
               title="Recharge tous les paramètres et poids par pièce de ce lot dans le calculateur"
               className="mt-4 w-full flex items-center justify-center gap-2 bg-pilote hover:bg-pilote-hover text-white text-sm font-semibold rounded-xl py-2.5 shadow-card active:scale-[0.99] transition-all">
               <RotateCcw className="w-4 h-4" />Rouvrir dans le calculateur
