@@ -174,7 +174,6 @@ const VEAU_CUTS: Cut[] = [
   { id: 'veau_epaule_boite_moelle', name: 'Boîte à moelle',                category: 'troisieme', yieldPct: 0, marketPrice: 12, group: ['La basse', 'Épaule'] },
   { id: 'veau_epaule_jarret_os',    name: 'Jarret avec os',                category: 'deuxieme',  yieldPct: 0, marketPrice: 17, group: ['La basse', 'Épaule'] },
   { id: 'veau_epaule_jarret_sans',  name: 'Jarret sans os',                category: 'deuxieme',  yieldPct: 0, marketPrice: 18, group: ['La basse', 'Épaule'] },
-  { id: 'veau_epaule',              name: 'Épaule',                        category: 'deuxieme',  yieldPct: 0, marketPrice: 17, group: ['La basse', 'Épaule'] },
   { id: 'veau_poitrine_sans_os',    name: 'Poitrine sans os',              category: 'troisieme', yieldPct: 0, marketPrice: 14, group: ['La basse', 'Poitrine'] },
   { id: 'veau_tendrons',            name: 'Tendrons',                      category: 'deuxieme',  yieldPct: 0, marketPrice: 14, group: ['La basse', 'Poitrine'] },
   { id: 'veau_piece_paupiette',     name: 'Pièce à paupiette',             category: 'deuxieme',  yieldPct: 0, marketPrice: 22, group: ['La basse', 'Poitrine'] },
