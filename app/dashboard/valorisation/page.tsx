@@ -6,7 +6,7 @@ import { Calculator, TrendingUp, Package, Info, AlertTriangle, CheckCircle, Save
 import { useToast } from '@/components/ui/toast'
 import { useConfirm } from '@/components/ui/confirm-dialog'
 
-// ─── Types ────────────────────────────────
+// ─── Types ─────────────────────────
 
 type CutCategory = 'premier' | 'deuxieme' | 'troisieme' | 'abat' | 'os'
 type AnimalType  = 'boeuf' | 'veau' | 'agneau' | 'porc' | 'volaille'
@@ -32,7 +32,7 @@ interface AnimalConfig {
 }
 interface WeekLabor { hours: number; cost: number; rate: number; decoupeHours: number; decoupeCost: number; week: number; year: number }
 
-// ─── Données Bœuf ───────────────────────
+// ─── Données Bœuf ─────────────────────
 
 const BOEUF_BREEDS: Breed[] = [
   { id: 'charolaise',       name: 'Charolaise',         carcassYield: 0.645, avgWeight: '750-950 kg',  origin: 'Bourgogne',        description: 'Race à viande n°1 en France. Masses musculaires très développées. Viande ferme, peu persillée, idéale pour pièces à griller et rôtir.' },
@@ -148,7 +148,7 @@ function collectLeafCuts(node: TreeNode): Cut[] {
   return node.cut ? [node.cut] : node.children.flatMap(collectLeafCuts)
 }
 
-// ─── Données Veau ────────────────────────
+// ─── Données Veau ──────────────────────
 
 const VEAU_BREEDS: Breed[] = [
   { id: 'veau_lait_limousin', name: 'Veau de lait Limousin',   carcassYield: 0.62, avgWeight: '160-200 kg', origin: 'Limousin',  description: 'Label Rouge. Élevé sous la mère. Chair rose pâle, très tendre et fine. Le standard haut de gamme.' },
@@ -219,7 +219,7 @@ const AGNEAU_CUTS: Cut[] = [
   { id: 'agneau_collet_avec_os',  name: 'Collet avec os',                 category: 'troisieme', yieldPct: 0, marketPrice: 9,  group: ['Viandes fabrication'] },
 ]
 
-// ─── Données Porc ──────────────────────────
+// ─── Données Porc ────────────────────────
 
 const PORC_BREEDS: Breed[] = [
   { id: 'large_white',       name: 'Large White',          carcassYield: 0.77, avgWeight: '100-120 kg', origin: 'Bretagne/National', description: 'Race dominante en France. Très bon rendement. Viande maigre et tendre, idéale pour jambons et filets.' },
@@ -296,7 +296,7 @@ const ANIMALS: Record<AnimalType, AnimalConfig> = {
 
 const ANIMAL_TYPES: AnimalType[] = ['boeuf', 'veau', 'agneau', 'porc', 'volaille']
 
-// ─── Catégories ─────────────────────────
+// ─── Catégories ───────────────────────
 
 const CATEGORY_LABELS: Record<CutCategory, string> = {
   premier: '1er choix', deuxieme: '2e choix',
@@ -439,7 +439,7 @@ function loadDraft(): Record<string, any> {
   try { return JSON.parse(window.localStorage.getItem('valo_draft_v1') || '{}') || {} } catch { return {} }
 }
 
-// ─── Page ────────────────────────────────
+// ─── Page ────────────────────
 
 export default function ValorisationPage() {
   const params = useSearchParams()
@@ -842,31 +842,52 @@ export default function ValorisationPage() {
       isHalf,
       carcassWeight: Math.round(carcassW1 * 10) / 10,
       purchasePerKg: ppkg,
-      sellableWeight: totalSellable1 * qty,
-      totalCost: Math.round(totalCostLot * 100) / 100,
-      totalRevenue: Math.round(totalRevenueLot * 100) / 100,
+      costPerBete: Math.round(totalCost1 * 100) / 100,
+      revenuePerBete: Math.round(totalRevenue1 * 100) / 100,
       marginPct: actualMargin1,
       coefficient,
       notes: notes || null,
+      pieces: activeResults.map(r => ({
+        name: r.cut.name,
+        category: r.cut.category,
+        weight: Math.round(r.weight * 100) / 100,
+        price: Math.round(r.sellingPrice * 100) / 100,
+        revenue: Math.round(r.revenue * 100) / 100,
+      })),
       generatedAt: new Date().toISOString(),
     }
   }
-  function savedValoPdfPayload(v: SavedValo & { lot_numbers?: string | null }) {
+  function savedValoPdfPayload(v: SavedValo & { lot_numbers?: string | null; cut_weights?: Record<string, number> | null }) {
     const at = v.animal_type as AnimalType
+    const qtyS = v.quantity ?? 1
+    const coef = Number(v.coefficient) || 1
+    const cutDefs = new Map((ANIMALS[at]?.cuts ?? []).map(c => [c.id, c]))
+    const prices = cutPricesByAnimal[at] ?? {}
+    const cw = v.cut_weights || {}
+    const pieces = Object.entries(cw).map(([id, w]) => {
+      const cut = cutDefs.get(id)
+      const weight = Number(w) || 0
+      if (!cut || weight <= 0) return null
+      const base = parseFloat(prices[id] ?? '')
+      const ref = isNaN(base) ? cut.marketPrice : base
+      const price = ref * coef
+      return { name: cut.name, category: cut.category, weight: Math.round(weight * 100) / 100, price: Math.round(price * 100) / 100, revenue: Math.round(price * weight * 100) / 100 }
+    }).filter((x): x is { name: string; category: CutCategory; weight: number; price: number; revenue: number } => x !== null)
     return {
       animalLabel: ANIMALS[at]?.label,
       breedName: v.breed_name,
       purchaseDate: v.purchase_date,
       lotNumber: v.lot_numbers ?? null,
-      quantity: v.quantity ?? 1,
+      quantity: qtyS,
       isHalf: at === 'boeuf' || at === 'veau' || at === 'porc',
       carcassWeight: v.carcass_weight,
       purchasePerKg: v.purchase_per_kg,
-      totalCost: v.total_cost,
-      totalRevenue: v.total_revenue,
+      costPerBete: Math.round(((Number(v.total_cost) || 0) / qtyS) * 100) / 100,
+      revenuePerBete: Math.round(((Number(v.total_revenue) || 0) / qtyS) * 100) / 100,
       marginPct: v.margin_rate,
-      coefficient: v.coefficient,
+      coefficient: coef,
       notes: v.notes ?? null,
+      pieces,
       generatedAt: new Date().toISOString(),
     }
   }
@@ -1643,7 +1664,7 @@ export default function ValorisationPage() {
               </div>
             )}
             <div className="mt-4 flex items-center gap-2">
-              <button onClick={() => downloadValoPdf(savedValoPdfPayload(selected as SavedValo & { lot_numbers?: string | null }), `valorisation-${selected.breed_name}.pdf`)} disabled={pdfBusy}
+              <button onClick={() => downloadValoPdf(savedValoPdfPayload(selected as SavedValo & { lot_numbers?: string | null; cut_weights?: Record<string, number> | null }), `valorisation-${selected.breed_name}.pdf`)} disabled={pdfBusy}
                 title="Télécharger la fiche de ce lot en PDF"
                 className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-pilote border border-pilote-200 bg-white hover:bg-pilote-50 transition-all disabled:opacity-50">
                 {pdfBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}PDF
