@@ -80,6 +80,8 @@ interface ReportData {
 interface ExtractedData extends ReportData {
   prodN: Map<string, number>
   prodN1: Map<string, number>
+  prodFamN: Map<string, string>
+  prodFamN1: Map<string, string>
 }
 interface Insights { resume: string; insights: string[]; recommendations: string[]; vigilance: string[] }
 interface FamRow { nom: string; caN: number; caN1: number | null; ecart: number }
@@ -772,28 +774,35 @@ async function extractVentesData(ventes_text: string): Promise<{ total: number; 
  *  IMPORTANT : on extrait N et N-1 séparément puis on calcule les écarts en code —
  *  l'IA ne fait AUCUNE comparaison ni aucun calcul.
  *  PERF : plafonne aux ~60 plus gros produits (max_tokens 2200) pour tenir sous les 60s Vercel. */
-async function extractProductAmounts(text: string): Promise<Map<string, number>> {
+async function extractProductAmounts(text: string): Promise<{ amounts: Map<string, number>; familles: Map<string, string> }> {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' })
   const r = await client.messages.create({
-    model: 'claude-haiku-4-5-20251001', max_tokens: 2200,
-    messages: [{ role: 'user', content: `Extrais du fichier de ventes CRISALID le CA TOTAL de CHAQUE produit sur la semaine.\n` +
-      `ATTENTION CRITIQUE : la valeur a extraire est le MONTANT TOTAL en euros des ventes du produit (colonne montant/total/CA), JAMAIS le prix unitaire, JAMAIS le prix au kilo, JAMAIS la quantite.\n` +
+    model: 'claude-haiku-4-5-20251001', max_tokens: 2600,
+    messages: [{ role: 'user', content: `Extrais du fichier de ventes CRISALID, pour CHAQUE produit de la semaine : sa FAMILLE (rayon) et son CA TOTAL.\n` +
+      `ATTENTION CRITIQUE : le montant a extraire est le MONTANT TOTAL en euros des ventes du produit (colonne montant/total/CA), JAMAIS le prix unitaire, JAMAIS le prix au kilo, JAMAIS la quantite.\n` +
+      `La FAMILLE est le rayon/la categorie sous laquelle le produit est regroupe dans le fichier (ex : BOUCHERIE, CHARCUTERIE, VOLAILLE, TRAITEUR, PLATS CUISINES...). Reprends le nom de famille exact du fichier.\n` +
       `Un produit courant fait typiquement des dizaines a des centaines d'euros de CA hebdomadaire.\n` +
       `Ignore les lignes de famille/sous-total/total general : uniquement les produits individuels.\n` +
       `Limite-toi aux 60 produits au plus gros CA (ignore les tout petits montants).\n` +
-      `Retourne UNIQUEMENT des lignes au format NOM|MONTANT (point decimal, une ligne par produit, aucun autre texte) :\n` +
-      `STEAK HACHE|412.35\nROTI DE PORC|187.20\n\n${text.slice(0, 9000)}` }],
+      `Retourne UNIQUEMENT des lignes au format NOM|FAMILLE|MONTANT (point decimal, une ligne par produit, aucun autre texte) :\n` +
+      `STEAK HACHE|BOUCHERIE|412.35\nROTI DE PORC|BOUCHERIE|187.20\nSAUCISSON SEC|CHARCUTERIE|96.40\n\n${text.slice(0, 9000)}` }],
   })
-  const out = new Map<string, number>()
+  const amounts = new Map<string, number>()
+  const familles = new Map<string, string>()
   const raw = r.content[0].type === 'text' ? r.content[0].text : ''
   for (const line of raw.split('\n')) {
     const parts = line.trim().split('|')
     if (parts.length < 2) continue
     const name = parts[0].trim().toUpperCase()
-    const amount = parseNum(parts[1])
-    if (name && name !== 'TOTAL' && amount > 0) out.set(name, (out.get(name) ?? 0) + amount)
+    // Format NOM|FAMILLE|MONTANT ; repli sur l'ancien NOM|MONTANT si 2 colonnes
+    const famille = parts.length >= 3 ? parts[1].trim().toUpperCase() : ''
+    const amount = parseNum(parts.length >= 3 ? parts[2] : parts[1])
+    if (name && name !== 'TOTAL' && amount > 0) {
+      amounts.set(name, (amounts.get(name) ?? 0) + amount)
+      if (famille && !familles.has(name)) familles.set(name, famille)
+    }
   }
-  return out
+  return { amounts, familles }
 }
 
 /** Calcule les tops/flops en code a partir des CA produits N et N-1 (zero IA, zero erreur de calcul) */
@@ -814,13 +823,15 @@ function computeTopFlop(prodN: Map<string, number>, prodN1: Map<string, number>)
 }
 
 async function extractData(texts: { fin_n: string; fin_n1: string; ventes_n: string; ventes_n1: string }): Promise<ExtractedData> {
-  const [financials, ventes_n, ventes_n1, prodN, prodN1] = await Promise.all([
+  const [financials, ventes_n, ventes_n1, prodRes, prodRes1] = await Promise.all([
     extractFinancials(texts.fin_n, texts.fin_n1),
     extractVentesData(texts.ventes_n),
     extractVentesData(texts.ventes_n1),
     extractProductAmounts(texts.ventes_n),
     extractProductAmounts(texts.ventes_n1),
   ])
+  const prodN = prodRes.amounts, prodN1 = prodRes1.amounts
+  const prodFamN = prodRes.familles, prodFamN1 = prodRes1.familles
   const topFlop = computeTopFlop(prodN, prodN1)
   // Semaine ISO recalculee en code depuis les dates de la periode
   const isoFixed = weekFromPeriod(String(financials.period_n || ''))
@@ -830,7 +841,7 @@ async function extractData(texts: { fin_n: string; fin_n1: string; ventes_n: str
     year: isoFixed?.year ?? toNum(financials.year),
     financier_n: cleanFin(financials.financier_n), financier_n1: cleanFin(financials.financier_n1),
     ventes_n, ventes_n1, tops: topFlop.tops, flops: topFlop.flops,
-    prodN, prodN1,
+    prodN, prodN1, prodFamN, prodFamN1,
   }
 }
 
@@ -844,6 +855,7 @@ async function archiveWeekData(
   fin: FinancierData,
   familles: Famille[],
   produits: Map<string, number>,
+  familleByProduct?: Map<string, string>,
 ) {
   const familiesDetail = familles.map((f: Famille) => ({ nom: f.nom, montant: f.total_montant }))
   await serviceSupabase.from('weekly_ca').delete()
@@ -862,6 +874,7 @@ async function archiveWeekData(
     .eq('client_id', clientId).eq('week_number', week).eq('year', year)
   const rows = [...produits.entries()].map(([product, amount]) => ({
     client_id: clientId, week_number: week, year, product, amount,
+    famille: familleByProduct?.get(product) ?? null,
   }))
   if (rows.length > 0) await serviceSupabase.from('weekly_sales_products').insert(rows)
 }
@@ -1137,8 +1150,8 @@ export async function POST(req: NextRequest) {
 
     if (clientId) {
       // Historisation : semaine N ET semaine N-1 (meme semaine, annee precedente).
-      await archiveWeekData(serviceSupabase, clientId, data.week_number, data.year, data.financier_n, data.ventes_n.familles, data.prodN)
-      await archiveWeekData(serviceSupabase, clientId, data.week_number, data.year - 1, data.financier_n1, data.ventes_n1.familles, data.prodN1)
+      await archiveWeekData(serviceSupabase, clientId, data.week_number, data.year, data.financier_n, data.ventes_n.familles, data.prodN, data.prodFamN)
+      await archiveWeekData(serviceSupabase, clientId, data.week_number, data.year - 1, data.financier_n1, data.ventes_n1.familles, data.prodN1, data.prodFamN1)
     }
 
     return NextResponse.json({ success: true, title, file_url: fileUrl })
