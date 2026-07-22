@@ -5,6 +5,14 @@ import { normalizeSupplierName, sameSupplierFamily } from '@/lib/supplier-memory
 
 export const dynamic = 'force-dynamic'
 
+// « Facture X - 6109622F… » → « X » : on ventile par société, pas par n° de facture.
+function supplierSociete(raw: string): string {
+  let s = String(raw || '').trim()
+  s = s.replace(/^factures?\s+/i, '')
+  s = s.split(/\s+[-–—]\s+/)[0]
+  return s.trim()
+}
+
 export async function GET(request: NextRequest) {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -43,7 +51,7 @@ export async function GET(request: NextRequest) {
   const splitList = splitRows || []
 
   const splitFor = (supplierName: string) => {
-    const q = normalizeSupplierName(supplierName)
+    const q = normalizeSupplierName(supplierSociete(supplierName))
     if (!q) return null
     let best: any = null
     for (const s of splitList) {
