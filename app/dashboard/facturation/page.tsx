@@ -63,6 +63,19 @@ function sameSupplierFam(a: string, b: string): boolean {
   const [short, long] = na.length <= nb.length ? [na, nb] : [nb, na]
   return long.startsWith(short) && !/[\p{L}\p{N}]/u.test(long.charAt(short.length))
 }
+// Rayon dominant de la ventilation → catégorie d'achat (viande / charcuterie / … / autre)
+const RAYON_TO_CATEGORY: Record<string, string> = { boucherie: 'viande', charcuterie: 'charcuterie', traiteur: 'autre', vente: 'autre' }
+function categoryFromSplit(sp: { boucherie: string; charcuterie: string; traiteur: string; vente: string }): string | null {
+  const entries: Array<[string, number]> = [
+    ['boucherie', parseFloat(sp.boucherie) || 0],
+    ['charcuterie', parseFloat(sp.charcuterie) || 0],
+    ['traiteur', parseFloat(sp.traiteur) || 0],
+    ['vente', parseFloat(sp.vente) || 0],
+  ]
+  const top = entries.sort((a, b) => b[1] - a[1])[0]
+  if (!top || top[1] <= 0) return null
+  return RAYON_TO_CATEGORY[top[0]] ?? null
+}
 function matchSplit(name: string, splits: RayonSplit[]): RayonSplit | null {
   const q = normSupplier(societeName(name))
   if (!q) return null
@@ -230,6 +243,7 @@ export default function FacturationPage() {
   // Répartition saisie sur la facture en cours (mémorisée par société)
   const [newSplit,       setNewSplit]       = useState<{ boucherie: string; charcuterie: string; traiteur: string; vente: string }>({ boucherie: '', charcuterie: '', traiteur: '', vente: '' })
   const [splitTouched,   setSplitTouched]   = useState(false)
+  const [categoryTouched, setCategoryTouched] = useState(false)
   const [newInvoice, setNewInvoice] = useState<any>(EMPTY_INVOICE)
   const [saving,    setSaving]    = useState(false)
   // Mémoire fournisseur (pré-remplissage auto catégorie + TVA à la saisie d'un achat)
@@ -324,8 +338,16 @@ export default function FacturationPage() {
     setMemoTouched(false)
     setNewSplit({ boucherie: '', charcuterie: '', traiteur: '', vente: '' })
     setSplitTouched(false)
+    setCategoryTouched(false)
     setShowAdd(true)
   }
+
+  // La catégorie d'achat suit le rayon dominant de la ventilation (sauf choix manuel)
+  useEffect(() => {
+    if (!showAdd || categoryTouched) return
+    const cat = categoryFromSplit(newSplit)
+    if (cat) setNewInvoice((p: any) => (p.category === cat ? p : { ...p, category: cat }))
+  }, [newSplit, showAdd, categoryTouched])
 
   // Pré-remplit la répartition depuis la mémoire de la société saisie (tant qu'on n'y a pas touché)
   useEffect(() => {
@@ -410,7 +432,7 @@ export default function FacturationPage() {
         }).catch(() => {})
         loadSplits()
       }
-      setShowAdd(false); setNewInvoice(EMPTY_INVOICE); setMemoTouched(false); setSplitTouched(false); load()
+      setShowAdd(false); setNewInvoice(EMPTY_INVOICE); setMemoTouched(false); setSplitTouched(false); setCategoryTouched(false); load()
     }
     setSaving(false)
   }
@@ -1132,7 +1154,7 @@ export default function FacturationPage() {
                 <label className="block text-xs font-semibold text-gray-600 mb-1">Catégorie</label>
                 <div className="grid grid-cols-3 gap-1.5">
                   {CATEGORIES.map(cat => (
-                    <button key={cat.key} onClick={() => { setMemoTouched(true); setNewInvoice((p: any) => ({ ...p, category: cat.key })) }}
+                    <button key={cat.key} onClick={() => { setMemoTouched(true); setCategoryTouched(true); setNewInvoice((p: any) => ({ ...p, category: cat.key })) }}
                       className={`py-1.5 px-2 rounded-lg text-xs font-semibold border-2 transition-all ${
                         newInvoice.category === cat.key ? 'border-pilote bg-pilote text-white' : 'border-gray-200 text-gray-600 hover:border-gray-300'
                       }`}>{cat.label}
