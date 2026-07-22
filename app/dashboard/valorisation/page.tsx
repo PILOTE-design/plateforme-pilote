@@ -6,7 +6,7 @@ import { Calculator, TrendingUp, Package, Info, AlertTriangle, CheckCircle, Save
 import { useToast } from '@/components/ui/toast'
 import { useConfirm } from '@/components/ui/confirm-dialog'
 
-// ─── Types ─────────────────────────
+// ─── Types ──────────────────────────────
 
 type CutCategory = 'premier' | 'deuxieme' | 'troisieme' | 'abat' | 'os'
 type AnimalType  = 'boeuf' | 'veau' | 'agneau' | 'porc' | 'volaille'
@@ -32,7 +32,7 @@ interface AnimalConfig {
 }
 interface WeekLabor { hours: number; cost: number; rate: number; decoupeHours: number; decoupeCost: number; week: number; year: number }
 
-// ─── Données Bœuf ─────────────────────
+// ─── Données Bœuf ──────────────────────
 
 const BOEUF_BREEDS: Breed[] = [
   { id: 'charolaise',       name: 'Charolaise',         carcassYield: 0.645, avgWeight: '750-950 kg',  origin: 'Bourgogne',        description: 'Race à viande n°1 en France. Masses musculaires très développées. Viande ferme, peu persillée, idéale pour pièces à griller et rôtir.' },
@@ -148,7 +148,7 @@ function collectLeafCuts(node: TreeNode): Cut[] {
   return node.cut ? [node.cut] : node.children.flatMap(collectLeafCuts)
 }
 
-// ─── Données Veau ──────────────────────
+// ─── Données Veau ───────────────────────
 
 const VEAU_BREEDS: Breed[] = [
   { id: 'veau_lait_limousin', name: 'Veau de lait Limousin',   carcassYield: 0.62, avgWeight: '160-200 kg', origin: 'Limousin',  description: 'Label Rouge. Élevé sous la mère. Chair rose pâle, très tendre et fine. Le standard haut de gamme.' },
@@ -219,7 +219,7 @@ const AGNEAU_CUTS: Cut[] = [
   { id: 'agneau_collet_avec_os',  name: 'Collet avec os',                 category: 'troisieme', yieldPct: 0, marketPrice: 9,  group: ['Viandes fabrication'] },
 ]
 
-// ─── Données Porc ────────────────────────
+// ─── Données Porc ─────────────────────────
 
 const PORC_BREEDS: Breed[] = [
   { id: 'large_white',       name: 'Large White',          carcassYield: 0.77, avgWeight: '100-120 kg', origin: 'Bretagne/National', description: 'Race dominante en France. Très bon rendement. Viande maigre et tendre, idéale pour jambons et filets.' },
@@ -296,7 +296,7 @@ const ANIMALS: Record<AnimalType, AnimalConfig> = {
 
 const ANIMAL_TYPES: AnimalType[] = ['boeuf', 'veau', 'agneau', 'porc', 'volaille']
 
-// ─── Catégories ───────────────────────
+// ─── Catégories ────────────────────────
 
 const CATEGORY_LABELS: Record<CutCategory, string> = {
   premier: '1er choix', deuxieme: '2e choix',
@@ -439,7 +439,7 @@ function loadDraft(): Record<string, any> {
   try { return JSON.parse(window.localStorage.getItem('valo_draft_v1') || '{}') || {} } catch { return {} }
 }
 
-// ─── Page ────────────────────
+// ─── Page ───────────────────────────
 
 export default function ValorisationPage() {
   const params = useSearchParams()
@@ -465,6 +465,8 @@ export default function ValorisationPage() {
   const [catsByAnimal,     setCatsByAnimal]     = useState<CatsByAnimal>(() => loadPref('valo_cats_v1', DEFAULT_CATS()))
   const [excludedByAnimal, setExcludedByAnimal] = useState<CutsByAnimal>(() => loadPref('valo_excluded_v1', DEFAULT_EXCLUDED()))
   const [cutPricesByAnimal, setCutPricesByAnimal] = useState<PricesByAnimal>(() => loadPref('valo_prices_v1', DEFAULT_PRICES()))
+  // Prix conseillé/kg saisi manuellement par pièce (surcharge le prix auto = réf × coefficient)
+  const [sellOverridesByAnimal, setSellOverridesByAnimal] = useState<PricesByAnimal>(() => loadPref('valo_sell_v1', DEFAULT_PRICES()))
   const [purchaseDate,  setPurchaseDate]  = useState(draft.purchaseDate ?? new Date().toISOString().split('T')[0])
   const [notes,         setNotes]         = useState(draft.notes ?? '')
   const [history,       setHistory]       = useState<SavedValo[]>([])
@@ -492,6 +494,12 @@ export default function ValorisationPage() {
   function setCutPrice(cutId: string, value: string) {
     setCutPricesByAnimal(prev => ({ ...prev, [animalType]: { ...(prev[animalType] ?? {}), [cutId]: value } }))
   }
+  // Prix conseillé/kg : surcharge manuelle si saisie, sinon le prix auto (réf × coefficient)
+  const sellOverrides = sellOverridesByAnimal[animalType] ?? {}
+  const sellOverrideOf = (cutId: string): number | null => { const v = parseFloat(sellOverrides[cutId] ?? ''); return isNaN(v) ? null : v }
+  function setSellOverride(cutId: string, value: string) {
+    setSellOverridesByAnimal(prev => ({ ...prev, [animalType]: { ...(prev[animalType] ?? {}), [cutId]: value } }))
+  }
 
   // Préférences par famille — persistées
   useEffect(() => {
@@ -505,32 +513,35 @@ export default function ValorisationPage() {
   const skipPriceSave  = useRef(true)
   useEffect(() => {
     try { window.localStorage.setItem('valo_prices_v1', JSON.stringify(cutPricesByAnimal)) } catch {}
+    try { window.localStorage.setItem('valo_sell_v1', JSON.stringify(sellOverridesByAnimal)) } catch {}
     if (skipPriceSave.current) { skipPriceSave.current = false; return }
     if (priceSaveTimer.current) clearTimeout(priceSaveTimer.current)
     priceSaveTimer.current = setTimeout(() => {
       fetch('/api/valorisation-prices', {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prices: cutPricesByAnimal }),
+        body: JSON.stringify({ prices: cutPricesByAnimal, sellOverrides: sellOverridesByAnimal }),
       }).catch(() => {})
     }, 700)
-  }, [cutPricesByAnimal])
+  }, [cutPricesByAnimal, sellOverridesByAnimal])
 
   // Au montage : charge les prix persistés en base (source de vérité), fusionnés au cache local
   useEffect(() => {
     let cancelled = false
     fetch('/api/valorisation-prices')
       .then(r => r.ok ? r.json() : null)
-      .then((payload: { prices?: Partial<PricesByAnimal> } | null) => {
-        if (cancelled || !payload?.prices) return
-        const dbPrices = payload.prices
-        skipPriceSave.current = true
-        setCutPricesByAnimal(prev => {
+      .then((payload: { prices?: Partial<PricesByAnimal>; sellOverrides?: Partial<PricesByAnimal> } | null) => {
+        if (cancelled || !payload) return
+        const mergeInto = (dbVal?: Partial<PricesByAnimal>) => (prev: PricesByAnimal) => {
+          if (!dbVal) return prev
           const merged: PricesByAnimal = { ...prev }
-          for (const a of Object.keys(dbPrices) as AnimalType[]) {
-            merged[a] = { ...(prev[a] ?? {}), ...(dbPrices[a] ?? {}) }
+          for (const a of Object.keys(dbVal) as AnimalType[]) {
+            merged[a] = { ...(prev[a] ?? {}), ...(dbVal[a] ?? {}) }
           }
           return merged
-        })
+        }
+        skipPriceSave.current = true
+        if (payload.prices) setCutPricesByAnimal(mergeInto(payload.prices))
+        if (payload.sellOverrides) setSellOverridesByAnimal(mergeInto(payload.sellOverrides))
       })
       .catch(() => {})
     return () => { cancelled = true }
@@ -629,11 +640,12 @@ export default function ValorisationPage() {
     const res: CutResult[] = cuts.map(cut => {
       const weight       = cutWeight(cut)
       const active       = isActive(cut)
-      const sellingPrice = active ? priceOf(cut) * coeff : 0
+      const override     = sellOverrideOf(cut.id)
+      const sellingPrice = active ? (override !== null ? override : priceOf(cut) * coeff) : 0
       return { cut, weight, sellingPrice, revenue: sellingPrice * weight, active }
     })
     return { results: res, coefficient: coeff, totalMarketRevenue1: mktRevenue }
-  }, [animalType, breedId, carcW, ppkg, overhead, labor, targetMargin, includedCats, excludedCuts, totalCost1, cuts, cutWeights, cutPrices])
+  }, [animalType, breedId, carcW, ppkg, overhead, labor, targetMargin, includedCats, excludedCuts, totalCost1, cuts, cutWeights, cutPrices, sellOverrides])
 
   const activeResults   = results.filter(r => r.active)
   const totalRevenue1   = activeResults.reduce((s, r) => s + r.revenue, 0)
@@ -684,8 +696,17 @@ export default function ValorisationPage() {
             <span className="text-xs text-gray-400">€</span>
           </div>
         </td>
-        <td className="px-4 py-2.5 text-right tabular-nums font-semibold">
-          {r.active ? <span className={priceColor}>{eur(r.sellingPrice)}{Math.abs(pctDiff) > 1 && <span className={`ml-1 text-xs font-normal ${priceColor}`}>({pctDiff > 0 ? '+' : ''}{pctDiff.toFixed(0)}%)</span>}</span> : '—'}
+        <td className="px-4 py-2.5 text-right">
+          <div className="flex items-center justify-end gap-1">
+            <input type="number" min="0" step="0.5"
+              value={sellOverrides[r.cut.id] ?? ''}
+              onChange={e => setSellOverride(r.cut.id, e.target.value)}
+              disabled={isExcluded}
+              placeholder={r.active ? String(Math.round(priceOf(r.cut) * coefficient * 100) / 100) : '—'}
+              className="w-16 border border-gray-200 rounded-md px-2 py-1 text-sm text-right tabular-nums font-semibold text-gray-900 focus:outline-none focus:ring-2 focus:ring-pilote-200 disabled:bg-gray-50 disabled:text-gray-300" />
+            <span className="text-xs text-gray-400">€</span>
+            {r.active && Math.abs(pctDiff) > 1 && <span className={`text-[10px] ${priceColor}`}>({pctDiff > 0 ? '+' : ''}{pctDiff.toFixed(0)}%)</span>}
+          </div>
         </td>
         <td className="px-4 py-2.5 text-right tabular-nums text-gray-700">{r.active ? eur(r.revenue) : '—'}</td>
         <td className="px-2 py-2.5 text-center w-10">
@@ -1553,8 +1574,17 @@ export default function ValorisationPage() {
                                         <span className="text-xs text-gray-400">€</span>
                                       </div>
                                     </td>
-                                    <td className="px-4 py-2.5 text-right tabular-nums font-semibold">
-                                      {r.active ? <span className={priceColor}>{eur(r.sellingPrice)}{Math.abs(pctDiff) > 1 && <span className={`ml-1 text-xs font-normal ${priceColor}`}>({pctDiff > 0 ? '+' : ''}{pctDiff.toFixed(0)}%)</span>}</span> : '—'}
+                                    <td className="px-4 py-2.5 text-right">
+                                      <div className="flex items-center justify-end gap-1">
+                                        <input type="number" min="0" step="0.5"
+                                          value={sellOverrides[r.cut.id] ?? ''}
+                                          onChange={e => setSellOverride(r.cut.id, e.target.value)}
+                                          disabled={isExcluded}
+                                          placeholder={r.active ? String(Math.round(priceOf(r.cut) * coefficient * 100) / 100) : '—'}
+                                          className="w-16 border border-gray-200 rounded-md px-2 py-1 text-sm text-right tabular-nums font-semibold text-gray-900 focus:outline-none focus:ring-2 focus:ring-pilote-200 disabled:bg-gray-50 disabled:text-gray-300" />
+                                        <span className="text-xs text-gray-400">€</span>
+                                        {r.active && Math.abs(pctDiff) > 1 && <span className={`text-[10px] ${priceColor}`}>({pctDiff > 0 ? '+' : ''}{pctDiff.toFixed(0)}%)</span>}
+                                      </div>
                                     </td>
                                     <td className="px-4 py-2.5 text-right tabular-nums text-gray-700">{r.active ? eur(r.revenue) : '—'}</td>
                                     <td className="px-2 py-2.5 text-center w-10">
