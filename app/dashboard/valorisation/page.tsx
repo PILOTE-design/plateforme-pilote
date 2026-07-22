@@ -466,6 +466,8 @@ export default function ValorisationPage() {
   const [cutWeights,    setCutWeights]    = useState<Record<string, string>>(draft.cutWeights ?? {})
   // Nœuds dépliés de l'arborescence de découpe (par chemin)
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set())
+  // N° de lot par grande partie (clé = nom du nœud de 1er niveau), saisi par le gérant
+  const [lotNumbers,    setLotNumbers]    = useState<Record<string, string>>(draft.lotNumbers ?? {})
 
   const config = ANIMALS[animalType]
   const breeds = config.breeds
@@ -495,10 +497,10 @@ export default function ValorisationPage() {
   useEffect(() => {
     try {
       window.localStorage.setItem('valo_draft_v1', JSON.stringify({
-        animalType, breedId, carcassWeight, quantity, purchasePerKg, overheadCost, laborCost, decoupeHours, targetMargin, purchaseDate, notes, cutWeights,
+        animalType, breedId, carcassWeight, quantity, purchasePerKg, overheadCost, laborCost, decoupeHours, targetMargin, purchaseDate, notes, cutWeights, lotNumbers,
       }))
     } catch {}
-  }, [animalType, breedId, carcassWeight, quantity, purchasePerKg, overheadCost, laborCost, decoupeHours, targetMargin, purchaseDate, notes, cutWeights])
+  }, [animalType, breedId, carcassWeight, quantity, purchasePerKg, overheadCost, laborCost, decoupeHours, targetMargin, purchaseDate, notes, cutWeights, lotNumbers])
 
   const includedCats = useMemo(() => new Set<CutCategory>(catsByAnimal[animalType] ?? CATEGORIES), [catsByAnimal, animalType])
   const excludedCuts = useMemo(() => new Set<string>(excludedByAnimal[animalType] ?? []), [excludedByAnimal, animalType])
@@ -516,6 +518,7 @@ export default function ValorisationPage() {
     setLaborCost(config.defaultLabor)
     setDecoupeHours('')
     setCutWeights({})
+    setLotNumbers({})
     setExpandedNodes(new Set())
     setShowBreedInfo(false)
   }, [animalType]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -669,13 +672,27 @@ export default function ValorisationPage() {
       out.push(
         <tr key={node.path} className="border-t border-gray-100 bg-gray-50/60 hover:bg-gray-100 cursor-pointer transition-colors" onClick={() => toggleNode(node.path)}>
           <td colSpan={6} className="px-4 py-2" style={{ paddingLeft: 12 + depth * 18 }}>
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-2">
               <span className="flex items-center gap-1.5 font-semibold text-xs uppercase tracking-wide text-gray-700">
                 <ChevronRight className={`w-3.5 h-3.5 text-gray-400 transition-transform ${open ? 'rotate-90' : ''}`} />
                 {node.name}
                 <span className="text-[10px] font-normal text-gray-400 normal-case">({leaves.length})</span>
               </span>
-              {w > 0 && <span className="text-xs text-gray-400 tabular-nums">{kgStr(w)} · {eur(rev)}</span>}
+              <div className="flex items-center gap-3">
+                {depth === 0 && (
+                  <div className="flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
+                    <span className="text-[10px] font-medium text-gray-400 uppercase tracking-wide">N° lot</span>
+                    <input
+                      type="text"
+                      value={lotNumbers[node.name] ?? ''}
+                      onChange={e => setLotNumbers(prev => ({ ...prev, [node.name]: e.target.value }))}
+                      placeholder="—"
+                      className="w-28 border border-gray-200 rounded-md px-2 py-1 text-xs text-gray-800 bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200"
+                    />
+                  </div>
+                )}
+                {w > 0 && <span className="text-xs text-gray-400 tabular-nums">{kgStr(w)} · {eur(rev)}</span>}
+              </div>
             </div>
           </td>
         </tr>
@@ -747,6 +764,7 @@ export default function ValorisationPage() {
           coefficient: Math.round(coefficient * 10000) / 10000,
           decoupe_hours: parseFloat(decoupeHours) || 0,
           cut_weights: activeResults.reduce((acc, r) => { acc[r.cut.id] = Math.round(r.weight * 100) / 100; return acc }, {} as Record<string, number>),
+          lot_numbers: Object.fromEntries(Object.entries(lotNumbers).filter(([, v]) => (v ?? '').trim() !== '')),
         }),
       })
       if (!res.ok) {
@@ -774,6 +792,7 @@ export default function ValorisationPage() {
     setOverheadCost('0')
     setDecoupeHours('')
     setCutWeights({})
+    setLotNumbers({})
     setExpandedNodes(new Set())
     setNotes('')
     setQuantity('1')
@@ -784,7 +803,7 @@ export default function ValorisationPage() {
 
   /** Recharge une valorisation sauvegardée dans le calculateur — poids par pièce inclus.
    *  Sauvegarder ensuite crée un NOUVEAU lot (l'original reste dans l'historique). */
-  function reopenValo(v: SavedValo & { cut_weights?: Record<string, number> | null; decoupe_hours?: number | null }) {
+  function reopenValo(v: SavedValo & { cut_weights?: Record<string, number> | null; decoupe_hours?: number | null; lot_numbers?: Record<string, string> | null }) {
     const at = (v.animal_type as AnimalType) || 'boeuf'
     if (at !== animalType) skipNextAnimalReset.current = true
     setAnimalType(at)
@@ -803,6 +822,7 @@ export default function ValorisationPage() {
       for (const [k, val] of Object.entries(v.cut_weights)) { const n = Number(val); if (n > 0) w[k] = String(n) }
     }
     setCutWeights(w)
+    setLotNumbers((v.lot_numbers && typeof v.lot_numbers === 'object') ? v.lot_numbers as Record<string, string> : {})
     setExpandedNodes(new Set())
     setSelected(null)
     setActiveTab('calc')
@@ -1520,7 +1540,7 @@ export default function ValorisationPage() {
                 <p className="text-sm text-gray-700 mt-0.5">{selected.notes}</p>
               </div>
             )}
-            <button onClick={() => reopenValo(selected as SavedValo & { cut_weights?: Record<string, number> | null; decoupe_hours?: number | null })}
+            <button onClick={() => reopenValo(selected as SavedValo & { cut_weights?: Record<string, number> | null; decoupe_hours?: number | null; lot_numbers?: Record<string, string> | null })}
               title="Recharge tous les paramètres et poids par pièce de ce lot dans le calculateur"
               className="mt-4 w-full flex items-center justify-center gap-2 bg-pilote hover:bg-pilote-hover text-white text-sm font-semibold rounded-xl py-2.5 shadow-card active:scale-[0.99] transition-all">
               <RotateCcw className="w-4 h-4" />Rouvrir dans le calculateur
