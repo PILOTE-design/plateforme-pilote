@@ -49,6 +49,13 @@ const RAYONS = [
 
 // Correspondance société → répartition mémorisée (exacte ou par famille de noms).
 // Réutilise normSupplier (défini plus bas, hoisté).
+// « Facture X - 6109622F… » → « X » : on mémorise par société, pas par n° de facture.
+function societeName(raw: string): string {
+  let s = String(raw || '').trim()
+  s = s.replace(/^factures?\s+/i, '')
+  s = s.split(/\s+[-–—]\s+/)[0]
+  return s.trim()
+}
 function sameSupplierFam(a: string, b: string): boolean {
   const na = normSupplier(a), nb = normSupplier(b)
   if (!na || !nb) return false
@@ -57,7 +64,7 @@ function sameSupplierFam(a: string, b: string): boolean {
   return long.startsWith(short) && !/[\p{L}\p{N}]/u.test(long.charAt(short.length))
 }
 function matchSplit(name: string, splits: RayonSplit[]): RayonSplit | null {
-  const q = normSupplier(name)
+  const q = normSupplier(societeName(name))
   if (!q) return null
   let best: RayonSplit | null = null
   for (const s of splits) {
