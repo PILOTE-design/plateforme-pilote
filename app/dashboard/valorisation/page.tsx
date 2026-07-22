@@ -2,11 +2,11 @@
 
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { Calculator, TrendingUp, Package, Info, AlertTriangle, CheckCircle, Save, Trash2, Clock, X, Loader2, Users, BarChart2, RotateCcw, ChevronRight } from 'lucide-react'
+import { Calculator, TrendingUp, Package, Info, AlertTriangle, CheckCircle, Save, Trash2, Clock, X, Loader2, Users, BarChart2, RotateCcw, ChevronRight, Download } from 'lucide-react'
 import { useToast } from '@/components/ui/toast'
 import { useConfirm } from '@/components/ui/confirm-dialog'
 
-// ─── Types ──────────────────────────────
+// ─── Types ────────────────────────────────
 
 type CutCategory = 'premier' | 'deuxieme' | 'troisieme' | 'abat' | 'os'
 type AnimalType  = 'boeuf' | 'veau' | 'agneau' | 'porc' | 'volaille'
@@ -32,7 +32,7 @@ interface AnimalConfig {
 }
 interface WeekLabor { hours: number; cost: number; rate: number; decoupeHours: number; decoupeCost: number; week: number; year: number }
 
-// ─── Données Bœuf ──────────────────────
+// ─── Données Bœuf ───────────────────────
 
 const BOEUF_BREEDS: Breed[] = [
   { id: 'charolaise',       name: 'Charolaise',         carcassYield: 0.645, avgWeight: '750-950 kg',  origin: 'Bourgogne',        description: 'Race à viande n°1 en France. Masses musculaires très développées. Viande ferme, peu persillée, idéale pour pièces à griller et rôtir.' },
@@ -148,7 +148,7 @@ function collectLeafCuts(node: TreeNode): Cut[] {
   return node.cut ? [node.cut] : node.children.flatMap(collectLeafCuts)
 }
 
-// ─── Données Veau ───────────────────────
+// ─── Données Veau ────────────────────────
 
 const VEAU_BREEDS: Breed[] = [
   { id: 'veau_lait_limousin', name: 'Veau de lait Limousin',   carcassYield: 0.62, avgWeight: '160-200 kg', origin: 'Limousin',  description: 'Label Rouge. Élevé sous la mère. Chair rose pâle, très tendre et fine. Le standard haut de gamme.' },
@@ -219,7 +219,7 @@ const AGNEAU_CUTS: Cut[] = [
   { id: 'agneau_collet_avec_os',  name: 'Collet avec os',                 category: 'troisieme', yieldPct: 0, marketPrice: 9,  group: ['Viandes fabrication'] },
 ]
 
-// ─── Données Porc ─────────────────────────
+// ─── Données Porc ──────────────────────────
 
 const PORC_BREEDS: Breed[] = [
   { id: 'large_white',       name: 'Large White',          carcassYield: 0.77, avgWeight: '100-120 kg', origin: 'Bretagne/National', description: 'Race dominante en France. Très bon rendement. Viande maigre et tendre, idéale pour jambons et filets.' },
@@ -296,7 +296,7 @@ const ANIMALS: Record<AnimalType, AnimalConfig> = {
 
 const ANIMAL_TYPES: AnimalType[] = ['boeuf', 'veau', 'agneau', 'porc', 'volaille']
 
-// ─── Catégories ────────────────────────
+// ─── Catégories ─────────────────────────
 
 const CATEGORY_LABELS: Record<CutCategory, string> = {
   premier: '1er choix', deuxieme: '2e choix',
@@ -439,7 +439,7 @@ function loadDraft(): Record<string, any> {
   try { return JSON.parse(window.localStorage.getItem('valo_draft_v1') || '{}') || {} } catch { return {} }
 }
 
-// ─── Page ───────────────────────────
+// ─── Page ────────────────────────────────
 
 export default function ValorisationPage() {
   const params = useSearchParams()
@@ -471,6 +471,7 @@ export default function ValorisationPage() {
   const [historyError,  setHistoryError]  = useState<string | null>(null)
   const [saving,        setSaving]        = useState(false)
   const [saved,         setSaved]         = useState(false)
+  const [pdfBusy,       setPdfBusy]       = useState(false)
   const [selected,      setSelected]      = useState<SavedValo | null>(null)
   // Poids saisis manuellement par le boucher, pièce par pièce (clé = id de la pièce)
   const [cutWeights,    setCutWeights]    = useState<Record<string, string>>(draft.cutWeights ?? {})
@@ -810,6 +811,66 @@ export default function ValorisationPage() {
     }
   }
 
+  // ── Export PDF (fiche de valorisation synthétique, 1 page) ──
+  async function downloadValoPdf(payload: Record<string, unknown>, filename: string) {
+    setPdfBusy(true)
+    try {
+      const res = await fetch('/api/valorisations/pdf', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      if (!res.ok) { toast({ variant: 'error', title: 'PDF indisponible', description: `Erreur ${res.status}` }); return }
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url; a.download = filename
+      document.body.appendChild(a); a.click(); a.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+    } catch {
+      toast({ variant: 'error', title: 'Erreur réseau', description: "Le PDF n'a pas pu être généré." })
+    } finally {
+      setPdfBusy(false)
+    }
+  }
+  function liveValoPdfPayload() {
+    return {
+      animalLabel: config.label,
+      breedName: breed.name,
+      purchaseDate,
+      lotNumber: lotNumber.trim() || null,
+      quantity: qty,
+      isHalf,
+      carcassWeight: Math.round(carcassW1 * 10) / 10,
+      purchasePerKg: ppkg,
+      sellableWeight: totalSellable1 * qty,
+      totalCost: Math.round(totalCostLot * 100) / 100,
+      totalRevenue: Math.round(totalRevenueLot * 100) / 100,
+      marginPct: actualMargin1,
+      coefficient,
+      notes: notes || null,
+      generatedAt: new Date().toISOString(),
+    }
+  }
+  function savedValoPdfPayload(v: SavedValo & { lot_numbers?: string | null }) {
+    const at = v.animal_type as AnimalType
+    return {
+      animalLabel: ANIMALS[at]?.label,
+      breedName: v.breed_name,
+      purchaseDate: v.purchase_date,
+      lotNumber: v.lot_numbers ?? null,
+      quantity: v.quantity ?? 1,
+      isHalf: at === 'boeuf' || at === 'veau' || at === 'porc',
+      carcassWeight: v.carcass_weight,
+      purchasePerKg: v.purchase_per_kg,
+      totalCost: v.total_cost,
+      totalRevenue: v.total_revenue,
+      marginPct: v.margin_rate,
+      coefficient: v.coefficient,
+      notes: v.notes ?? null,
+      generatedAt: new Date().toISOString(),
+    }
+  }
+
   /** Vide le brouillon et remet le formulaire à zéro */
   function resetDraft() {
     try { window.localStorage.removeItem('valo_draft_v1') } catch {}
@@ -943,14 +1004,21 @@ export default function ValorisationPage() {
               Réinitialiser
             </button>
             {totalRevenue1 > 0 && (
-              <button onClick={saveValo} disabled={saving || saved}
-                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white shadow-card transition-all ${
-                  saved ? 'bg-green-600' : 'bg-pilote hover:bg-pilote-hover'
-                }`}>
-                {saving ? <><Loader2 className="w-4 h-4 animate-spin" />Enregistrement...</>
-                  : saved ? <><CheckCircle className="w-4 h-4" />Sauvegardé !</>
-                  : <><Save className="w-4 h-4" />Sauvegarder le lot</>}
-              </button>
+              <>
+                <button onClick={() => downloadValoPdf(liveValoPdfPayload(), `valorisation-${breed.name}.pdf`)} disabled={pdfBusy}
+                  title="Télécharger la fiche de valorisation en PDF"
+                  className="flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-semibold text-pilote border border-pilote-200 bg-white hover:bg-pilote-50 transition-all disabled:opacity-50">
+                  {pdfBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}PDF
+                </button>
+                <button onClick={saveValo} disabled={saving || saved}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold text-white shadow-card transition-all ${
+                    saved ? 'bg-green-600' : 'bg-pilote hover:bg-pilote-hover'
+                  }`}>
+                  {saving ? <><Loader2 className="w-4 h-4 animate-spin" />Enregistrement...</>
+                    : saved ? <><CheckCircle className="w-4 h-4" />Sauvegardé !</>
+                    : <><Save className="w-4 h-4" />Sauvegarder le lot</>}
+                </button>
+              </>
             )}
           </div>
         )}
@@ -1574,11 +1642,18 @@ export default function ValorisationPage() {
                 <p className="text-sm text-gray-700 mt-0.5">{selected.notes}</p>
               </div>
             )}
-            <button onClick={() => reopenValo(selected as SavedValo & { cut_weights?: Record<string, number> | null; decoupe_hours?: number | null; lot_numbers?: string | null })}
-              title="Recharge tous les paramètres et poids par pièce de ce lot dans le calculateur"
-              className="mt-4 w-full flex items-center justify-center gap-2 bg-pilote hover:bg-pilote-hover text-white text-sm font-semibold rounded-xl py-2.5 shadow-card active:scale-[0.99] transition-all">
-              <RotateCcw className="w-4 h-4" />Rouvrir dans le calculateur
-            </button>
+            <div className="mt-4 flex items-center gap-2">
+              <button onClick={() => downloadValoPdf(savedValoPdfPayload(selected as SavedValo & { lot_numbers?: string | null }), `valorisation-${selected.breed_name}.pdf`)} disabled={pdfBusy}
+                title="Télécharger la fiche de ce lot en PDF"
+                className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-pilote border border-pilote-200 bg-white hover:bg-pilote-50 transition-all disabled:opacity-50">
+                {pdfBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}PDF
+              </button>
+              <button onClick={() => reopenValo(selected as SavedValo & { cut_weights?: Record<string, number> | null; decoupe_hours?: number | null; lot_numbers?: string | null })}
+                title="Recharge tous les paramètres et poids par pièce de ce lot dans le calculateur"
+                className="flex-1 flex items-center justify-center gap-2 bg-pilote hover:bg-pilote-hover text-white text-sm font-semibold rounded-xl py-2.5 shadow-card active:scale-[0.99] transition-all">
+                <RotateCcw className="w-4 h-4" />Rouvrir dans le calculateur
+              </button>
+            </div>
           </div>
         </div>
       )}
