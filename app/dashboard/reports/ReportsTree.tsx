@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { FileText, Download, ChevronRight, ChevronDown } from 'lucide-react'
+import { FileText, Download, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
 const MONTHS_FR = [
@@ -61,8 +61,11 @@ export function ReportsTree({ reports }: { reports: Report[] }) {
   if (reports.length === 0) {
     return (
       <div className="text-center py-16">
-        <FileText className="w-10 h-10 text-gray-300 mx-auto mb-3" />
-        <p className="text-gray-500">Aucun rapport encore</p>
+        <div className="w-12 h-12 rounded-2xl bg-gray-50 flex items-center justify-center mx-auto mb-3">
+          <FileText className="w-6 h-6 text-gray-300" />
+        </div>
+        <p className="text-sm font-medium text-gray-500">Aucun rapport pour l&apos;instant</p>
+        <p className="text-xs text-gray-400 mt-1">Votre premier rapport hebdomadaire apparaîtra ici.</p>
       </div>
     )
   }
@@ -79,21 +82,18 @@ export function ReportsTree({ reports }: { reports: Report[] }) {
             {/* Année */}
             <button
               onClick={() => toggleYear(year)}
-              className="w-full flex items-center gap-3 px-6 py-4 hover:bg-gray-50 transition-colors text-left"
+              className="w-full flex items-center gap-3 px-6 py-4 hover:bg-gray-50 transition-colors text-left group"
             >
-              {isYearOpen
-                ? <ChevronDown className="w-4 h-4 text-gray-400 flex-shrink-0" />
-                : <ChevronRight className="w-4 h-4 text-gray-400 flex-shrink-0" />
-              }
-              <span className="font-bold text-gray-900 text-base">{year}</span>
-              <span className="text-xs text-gray-400 ml-auto">
+              <ChevronRight className={`w-4 h-4 text-gray-400 flex-shrink-0 transition-transform duration-300 ${isYearOpen ? 'rotate-90' : ''}`} />
+              <span className="font-extrabold text-pilote-800 text-lg tracking-tight tabular">{year}</span>
+              <span className="ml-auto text-[11px] font-semibold text-gray-500 bg-gray-50 rounded-full px-2.5 py-0.5 tabular">
                 {totalReports} rapport{totalReports > 1 ? 's' : ''}
               </span>
             </button>
 
             {/* Mois */}
             {isYearOpen && (
-              <div className="border-l-2 border-gray-100 ml-7">
+              <div className="ml-[30px] border-l border-gray-100 pl-2">
                 {months.map(month => {
                   const key = `${year}-${month}`
                   const isMonthOpen = openMonths.has(key)
@@ -103,39 +103,38 @@ export function ReportsTree({ reports }: { reports: Report[] }) {
                     <div key={month}>
                       <button
                         onClick={() => toggleMonth(year, month)}
-                        className="w-full flex items-center gap-3 px-5 py-3 hover:bg-gray-50 transition-colors text-left"
+                        className="w-full flex items-center gap-2.5 px-4 py-2.5 rounded-lg hover:bg-gray-50 transition-colors text-left"
                       >
-                        {isMonthOpen
-                          ? <ChevronDown className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
-                          : <ChevronRight className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
-                        }
+                        <ChevronRight className={`w-3.5 h-3.5 text-gray-400 flex-shrink-0 transition-transform duration-300 ${isMonthOpen ? 'rotate-90' : ''}`} />
                         <span className="font-semibold text-gray-700 text-sm capitalize">
                           {MONTHS_FR[month]}
                         </span>
-                        <span className="text-xs text-gray-400 ml-auto">
-                          {monthReports.length} rapport{monthReports.length > 1 ? 's' : ''}
+                        <span className="ml-auto text-[11px] text-gray-400 tabular">
+                          {monthReports.length}
                         </span>
                       </button>
 
                       {/* Rapports du mois */}
                       {isMonthOpen && (
-                        <div className="border-l-2 border-gray-100 ml-5">
+                        <div className="ml-[26px] border-l border-gray-100 pl-2 pb-1 space-y-1">
                           {monthReports.map(report => (
                             <div
                               key={report.id}
-                              className="flex items-center justify-between px-6 py-3 hover:bg-gray-50 transition-colors"
+                              className="flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl border border-transparent hover:border-gray-100 hover:bg-gray-50 hover:shadow-card transition-all group"
                             >
-                              <div className="flex items-center gap-3">
-                                <FileText className="w-4 h-4 text-blue-500 flex-shrink-0" />
-                                <div>
-                                  <p className="text-sm font-medium text-gray-800">{report.title}</p>
-                                  <p className="text-xs text-gray-400">
+                              <div className="flex items-center gap-3 min-w-0">
+                                <div className="w-9 h-9 rounded-lg bg-pilote-50 flex items-center justify-center flex-shrink-0">
+                                  <FileText className="w-4 h-4 text-pilote" />
+                                </div>
+                                <div className="min-w-0">
+                                  <p className="text-sm font-semibold text-gray-900 truncate">{report.title}</p>
+                                  <p className="text-xs text-gray-400 tabular">
                                     {new Date(report.created_at).toLocaleDateString('fr-FR')}
                                   </p>
                                 </div>
                               </div>
-                              <a href={report.file_url} target="_blank" rel="noopener noreferrer">
-                                <Button variant="outline" size="sm" className="h-7 text-xs">
+                              <a href={report.file_url} target="_blank" rel="noopener noreferrer" className="flex-shrink-0">
+                                <Button variant="outline" size="sm" className="h-8 text-xs rounded-lg border-gray-200 text-pilote hover:border-pilote hover:bg-pilote-50 transition-colors">
                                   <Download className="w-3.5 h-3.5 mr-1.5" />Télécharger
                                 </Button>
                               </a>
