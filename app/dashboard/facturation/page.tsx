@@ -674,7 +674,7 @@ export default function FacturationPage() {
       {/* Header héro */}
       <div className="bg-white border-b border-gray-100 px-6 py-5 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="w-12 h-12 bg-gradient-to-br from-pilote to-pilote-hover rounded-2xl flex items-center justify-center flex-shrink-0 shadow-card">
+          <div className="w-12 h-12 bg-gradient-to-br from-pilote to-pilote-hover rounded-lg flex items-center justify-center flex-shrink-0 shadow-card">
             <Receipt className="w-6 h-6 text-white" />
           </div>
           <div>
@@ -683,17 +683,17 @@ export default function FacturationPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Button onClick={() => setShowCA(true)} variant="outline" className="h-9 text-sm px-3.5 rounded-xl border-pilote text-pilote hover:bg-pilote-50 transition-colors">
+          <Button onClick={() => setShowCA(true)} variant="outline" className="h-9 text-sm px-3.5 rounded-md border-pilote text-pilote hover:bg-pilote-50 transition-colors">
             <Euro className="w-3.5 h-3.5 mr-1.5" />Saisir le CA
           </Button>
-          <Button onClick={openAdd} className="bg-pilote hover:bg-pilote-hover text-white h-9 text-sm px-3.5 rounded-xl shadow-card active:scale-95 transition-all">
+          <Button onClick={openAdd} className="bg-pilote hover:bg-pilote-hover text-white h-9 text-sm px-3.5 rounded-md shadow-card active:scale-95 transition-all">
             <Plus className="w-3.5 h-3.5 mr-1.5" />Ajouter une facture
           </Button>
           <button onClick={openSplits} title="Répartir les achats par rayon, fournisseur par fournisseur"
-            className="h-9 text-sm px-3 rounded-xl border border-gray-100 text-gray-600 shadow-card hover:text-pilote transition-colors flex items-center gap-1.5">
+            className="h-9 text-sm px-3 rounded-md border border-gray-100 text-gray-600 shadow-card hover:text-pilote transition-colors flex items-center gap-1.5">
             <PieChart className="w-3.5 h-3.5" />Répartition
           </button>
-          <button onClick={() => setShowSettings(true)} className="p-2 rounded-xl hover:bg-gray-100 text-gray-400 hover:text-gray-700 transition-colors">
+          <button onClick={() => setShowSettings(true)} className="p-2 rounded-md hover:bg-gray-100 text-gray-400 hover:text-gray-700 transition-colors">
             <Settings className="w-4 h-4" />
           </button>
         </div>
@@ -701,8 +701,8 @@ export default function FacturationPage() {
 
       {/* Week nav */}
       <div className="bg-white border-b border-gray-100 px-6 py-2.5 flex items-center gap-2">
-        <div className="flex items-center gap-1 bg-gray-50 border border-gray-100 rounded-xl px-1 py-0.5">
-          <button onClick={prevWeek} className="p-1.5 rounded-lg hover:bg-white hover:shadow-sm transition-all"><ChevronLeft className="w-4 h-4 text-gray-500" /></button>
+        <div className="flex items-center gap-1 bg-gray-50 border border-gray-100 rounded-md px-1 py-0.5">
+          <button onClick={prevWeek} className="p-1.5 rounded-md hover:bg-white hover:shadow-sm transition-all"><ChevronLeft className="w-4 h-4 text-gray-500" /></button>
           <div className="flex items-center gap-2 px-2">
             <span className="font-bold text-gray-900 text-sm">Semaine {week}</span>
             <span className="text-gray-300 text-sm">·</span>
@@ -710,7 +710,7 @@ export default function FacturationPage() {
             {isCurrentWeek && <span className="text-[10px] bg-pilote text-white px-1.5 py-0.5 rounded-md font-semibold">En cours</span>}
             {isLastWeek && !isCurrentWeek && <span className="text-[10px] bg-amber-500 text-white px-1.5 py-0.5 rounded-md font-semibold">Semaine écoulée</span>}
           </div>
-          <button onClick={nextWeek} className="p-1.5 rounded-lg hover:bg-white hover:shadow-sm transition-all"><ChevronRight className="w-4 h-4 text-gray-500" /></button>
+          <button onClick={nextWeek} className="p-1.5 rounded-md hover:bg-white hover:shadow-sm transition-all"><ChevronRight className="w-4 h-4 text-gray-500" /></button>
         </div>
         {!isLastWeek && <button onClick={() => { setWeek(lastWeek.week); setYear(lastWeek.year) }} className="text-xs text-pilote font-medium hover:underline">← Semaine écoulée</button>}
         {!isCurrentWeek && <button onClick={() => { setWeek(cw); setYear(cy) }} className="text-xs text-gray-400 hover:text-gray-600 hover:underline transition-colors">Semaine en cours →</button>}
@@ -722,7 +722,7 @@ export default function FacturationPage() {
             if (!meta) return null
             const isSyncing = syncing === integ.provider
             return (
-              <div key={integ.provider} className="flex items-center gap-1.5 bg-green-50 border border-green-200 rounded-lg pl-2 pr-1 py-1">
+              <div key={integ.provider} className="flex items-center gap-1.5 bg-green-50 border border-green-200 rounded-md pl-2 pr-1 py-1">
                 <div className={`w-5 h-5 rounded ${meta.color} flex items-center justify-center text-white text-[8px] font-extrabold`}>{meta.logo}</div>
                 <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
                 {integ.last_sync_status === 'error' && <span className="text-[9px] text-red-500 font-semibold">erreur</span>}
@@ -738,7 +738,7 @@ export default function FacturationPage() {
             )
           })}
           <button onClick={() => setShowProviders(v => !v)}
-            className="flex items-center gap-1 text-xs font-semibold text-pilote border border-dashed border-gray-300 rounded-lg px-2.5 py-1.5 hover:border-pilote transition-colors">
+            className="flex items-center gap-1 text-xs font-semibold text-pilote border border-dashed border-gray-300 rounded-md px-2.5 py-1.5 hover:border-pilote transition-colors">
             <Link2 className="w-3 h-3" />{integrations.length === 0 ? 'Connecter un logiciel' : 'Ajouter'}
           </button>
         </div>
@@ -749,14 +749,14 @@ export default function FacturationPage() {
         <div className="bg-white border-b border-gray-100 px-6 py-4">
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             {PROVIDERS_META.filter(p => !integrations.find(i => i.provider === p.id)).map(prov => (
-              <div key={prov.id} className="rounded-xl border-2 border-dashed border-gray-200 hover:border-gray-300 bg-gray-50/30 p-4 transition-all">
+              <div key={prov.id} className="rounded-md border-2 border-dashed border-gray-200 hover:border-gray-300 bg-gray-50/30 p-4 transition-all">
                 <div className="flex items-center gap-2 mb-2">
-                  <div className={`w-8 h-8 rounded-lg ${prov.color} flex items-center justify-center text-white text-[10px] font-extrabold flex-shrink-0`}>{prov.logo}</div>
+                  <div className={`w-8 h-8 rounded-md ${prov.color} flex items-center justify-center text-white text-[10px] font-extrabold flex-shrink-0`}>{prov.logo}</div>
                   <span className="font-bold text-sm text-gray-900">{prov.name}</span>
                 </div>
                 <p className="text-[10px] text-gray-400 mb-3 leading-relaxed">{prov.description}</p>
                 <button onClick={() => { setConnectProvider(prov); setConnectToken(''); setConnectCompanyId(''); setConnectError(''); setShowConnect(true) }}
-                  className="w-full flex items-center justify-center gap-1.5 text-xs font-semibold bg-pilote text-white rounded-lg py-1.5 hover:bg-pilote-hover transition-colors">
+                  className="w-full flex items-center justify-center gap-1.5 text-xs font-semibold bg-pilote text-white rounded-md py-1.5 hover:bg-pilote-hover transition-colors">
                   <Link2 className="w-3 h-3" />Connecter
                 </button>
               </div>
@@ -785,9 +785,9 @@ export default function FacturationPage() {
                 sub: summary.taux_marge !== null ? `Taux : ${summary.taux_marge} %` : 'Saisir le CA pour calculer',
                 chip: summary.marge_brute >= 0 ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-500' },
             ].map(k => (
-              <div key={k.label} className="bg-white rounded-2xl border border-gray-100 shadow-card p-4 transition-all hover:shadow-card-hover hover:-translate-y-0.5">
+              <div key={k.label} className="bg-white rounded-lg border border-gray-100 shadow-card p-4 transition-all hover:shadow-card-hover hover:-translate-y-0.5">
                 <div className="flex items-center gap-2 mb-2.5">
-                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${k.chip}`}><k.icon className="w-4 h-4" /></div>
+                  <div className={`w-8 h-8 rounded-md flex items-center justify-center ${k.chip}`}><k.icon className="w-4 h-4" /></div>
                   <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">{k.label}</p>
                 </div>
                 <p className="text-xl font-extrabold leading-tight text-gray-900 tabular">{k.value}</p>
@@ -799,7 +799,7 @@ export default function FacturationPage() {
 
         {/* Résultat net */}
         {summary !== null && summary.ca_total > 0 && (
-          <div className="rounded-2xl bg-pilote text-white shadow-card-hover p-6 flex items-center justify-between gap-4">
+          <div className="rounded-lg bg-pilote text-white shadow-card-hover p-6 flex items-center justify-between gap-4">
             <div>
               <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-pilote-200">Résultat net estimé de la semaine</p>
               <p className={`text-4xl font-extrabold tracking-tight mt-1.5 tabular ${summary.resultat_net >= 0 ? 'text-green-300' : 'text-red-300'}`}>{fmtEuro(summary.resultat_net)}</p>
@@ -811,55 +811,15 @@ export default function FacturationPage() {
                 <span className="bg-white/10 rounded-md px-2 py-0.5 text-pilote-200">Salaires <strong className="text-white">{fmtEuro(summary.masse_salariale)}</strong></span>
               </div>
             </div>
-            <div className="w-14 h-14 rounded-2xl bg-white/10 flex items-center justify-center flex-shrink-0">
+            <div className="w-14 h-14 rounded-lg bg-white/10 flex items-center justify-center flex-shrink-0">
               {summary.resultat_net >= 0 ? <TrendingUp className="w-7 h-7 text-green-300" /> : <TrendingDown className="w-7 h-7 text-red-300" />}
-            </div>
-          </div>
-        )}
-
-        {/* Répartition des achats — barre de distribution + légende */}
-        {summary !== null && summary.achats_ht > 0 && (
-          <div className="bg-white rounded-2xl border border-gray-100 shadow-card p-5">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-gray-400">Répartition des achats</h3>
-              <span className="text-xs text-gray-400 tabular">{fmtEuro(summary.achats_ht)} HT</span>
-            </div>
-            <div className="h-2.5 rounded-full overflow-hidden flex bg-gray-100">
-              {CATEGORIES.map(cat => {
-                const amt = summary.achats_by_category[cat.key] as number | undefined
-                if (!amt || amt <= 0) return null
-                const pct = (amt / summary.achats_ht) * 100
-                return <div key={cat.key} style={{ width: `${pct}%`, backgroundColor: cat.dot }} title={`${cat.label} · ${fmtEuro(amt)} (${Math.round(pct)} %)`} className="transition-all hover:opacity-80" />
-              })}
-            </div>
-            <div className="flex flex-wrap gap-x-5 gap-y-2 mt-3.5">
-              {CATEGORIES.map(cat => {
-                const amt = summary.achats_by_category[cat.key] as number | undefined
-                if (!amt || amt <= 0) return null
-                const pct = Math.round((amt / summary.achats_ht) * 100)
-                return (
-                  <div key={cat.key} className="flex items-center gap-1.5 text-xs">
-                    <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: cat.dot }} />
-                    <span className="text-gray-600 font-medium">{cat.label}</span>
-                    <span className="font-bold text-gray-900 tabular">{fmtEuro(amt)}</span>
-                    <span className="text-gray-400">{pct} %</span>
-                  </div>
-                )
-              })}
-              {fixedWeekly > 0 && (
-                <div className="flex items-center gap-1.5 text-xs" title={`${fixedInvoices.length} charge(s) structurelle(s) couvrant cette semaine`}>
-                  <Repeat className="w-3 h-3 text-gray-400" />
-                  <span className="text-gray-600 font-medium">Charges structurelles</span>
-                  <span className="font-bold text-gray-900 tabular">≈ {fmtEuro(fixedWeekly)}/sem</span>
-                </div>
-              )}
             </div>
           </div>
         )}
 
         {/* Marge par rayon — achats fournisseur ventilés par rayon (répartition %) */}
         {summary?.marge_by_rayon && summary.ca_total > 0 && (
-          <div className="bg-white rounded-2xl border border-gray-100 shadow-card p-5">
+          <div className="bg-white rounded-lg border border-gray-100 shadow-card p-5">
             <div className="flex items-center justify-between mb-3.5">
               <h3 className="text-xs font-bold uppercase tracking-wider text-gray-400">Marge par rayon</h3>
               <button onClick={openSplits} className="text-xs font-medium text-pilote hover:underline">Régler la répartition</button>
@@ -869,7 +829,7 @@ export default function FacturationPage() {
                 const d = summary.marge_by_rayon![r.key]
                 if (!d) return null
                 return (
-                  <div key={r.key} className="rounded-2xl border border-gray-100 p-3">
+                  <div key={r.key} className="rounded-lg border border-gray-100 p-3">
                     <div className="flex items-center gap-1.5 mb-1.5">
                       <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: r.dot }} />
                       <span className="text-xs font-semibold text-gray-600">{r.label}</span>
@@ -898,33 +858,33 @@ export default function FacturationPage() {
 
         {/* Factures à vérifier — importées automatiquement, exclues des marges tant que non validées */}
         {pendingCount > 0 && (
-          <div className="bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3 flex items-center gap-2.5">
+          <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 flex items-center gap-2.5">
             <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0" />
             <p className="text-sm text-amber-800"><strong>{pendingCount} facture{pendingCount > 1 ? 's' : ''} à vérifier</strong> — importée{pendingCount > 1 ? 's' : ''} automatiquement, exclue{pendingCount > 1 ? 's' : ''} du calcul des marges tant que non validée{pendingCount > 1 ? 's' : ''}.</p>
-            <button onClick={validateAllPending} className="ml-auto text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-lg px-3 py-1.5 transition-colors flex-shrink-0">Tout valider</button>
+            <button onClick={validateAllPending} className="ml-auto text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-md px-3 py-1.5 transition-colors flex-shrink-0">Tout valider</button>
           </div>
         )}
 
         {/* ── Achats de la semaine (liste plate, catégorie en pastille) ── */}
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-card overflow-hidden">
+        <div className="bg-white rounded-lg border border-gray-100 shadow-card overflow-hidden">
           <div className="px-5 py-3.5 border-b border-gray-100 flex items-center justify-between">
             <h2 className="font-bold text-gray-900">Achats de la semaine {week}</h2>
             <span className="text-xs text-gray-400 tabular">{variableInvoices.length} facture{variableInvoices.length > 1 ? 's' : ''} · {fmtEuro(variableTotalHt)} HT</span>
           </div>
           {loading ? (
             <div className="p-6 animate-pulse space-y-3">
-              <div className="h-10 bg-gray-100 rounded-lg" />
-              <div className="h-10 bg-gray-100 rounded-lg" />
-              <div className="h-10 bg-gray-100 rounded-lg" />
+              <div className="h-10 bg-gray-100 rounded-md" />
+              <div className="h-10 bg-gray-100 rounded-md" />
+              <div className="h-10 bg-gray-100 rounded-md" />
             </div>
           ) : variableInvoices.length === 0 ? (
             <div className="py-14 flex flex-col items-center justify-center text-center bg-gradient-to-b from-pilote-50/30 to-white">
-              <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-pilote-50 to-pilote-100 ring-1 ring-pilote-200/60 flex items-center justify-center mb-4 shadow-sm">
+              <div className="w-14 h-14 rounded-lg bg-gradient-to-br from-pilote-50 to-pilote-100 ring-1 ring-pilote-200/60 flex items-center justify-center mb-4 shadow-sm">
                 <ShoppingCart className="w-6 h-6 text-pilote" />
               </div>
               <p className="text-sm font-bold text-gray-900">Aucun achat sur la semaine {week}</p>
               <p className="text-xs text-gray-400 mt-1 max-w-xs">Lancez un sync pour importer les factures, ou ajoutez-les à la main.</p>
-              <button onClick={openAdd} className="mt-4 inline-flex items-center gap-1.5 text-sm font-semibold text-white bg-pilote hover:bg-pilote-hover rounded-xl px-4 py-2 shadow-card active:scale-95 transition-all">
+              <button onClick={openAdd} className="mt-4 inline-flex items-center gap-1.5 text-sm font-semibold text-white bg-pilote hover:bg-pilote-hover rounded-md px-4 py-2 shadow-card active:scale-95 transition-all">
                 <Plus className="w-3.5 h-3.5" />Ajouter une facture
               </button>
             </div>
@@ -951,7 +911,7 @@ export default function FacturationPage() {
                     <tr key={inv.id} className="border-t border-gray-50 hover:bg-gray-50 group transition-colors">
                       <td className="px-4 py-2.5">
                         <div className="flex items-center gap-2.5">
-                          <div className="w-8 h-8 rounded-lg bg-pilote-50 text-pilote flex items-center justify-center text-[11px] font-extrabold flex-shrink-0">{initials(inv.supplier_name)}</div>
+                          <div className="w-8 h-8 rounded-md bg-pilote-50 text-pilote flex items-center justify-center text-[11px] font-extrabold flex-shrink-0">{initials(inv.supplier_name)}</div>
                           <div>
                             <div className="font-semibold text-sm text-gray-900">{inv.supplier_name}</div>
                             {inv.invoice_number && <div className="text-xs text-gray-400">{inv.invoice_number}</div>}
@@ -1016,10 +976,10 @@ export default function FacturationPage() {
         </div>
 
         {/* ── Charges structurelles couvrant la semaine ── */}
-        <div className="bg-white rounded-2xl border border-pilote-100 shadow-card overflow-hidden">
+        <div className="bg-white rounded-lg border border-pilote-100 shadow-card overflow-hidden">
           <div className="px-5 py-3.5 border-b border-pilote-100 bg-pilote-50/60 flex items-center justify-between">
             <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-white ring-1 ring-pilote-200/60 flex items-center justify-center flex-shrink-0"><Repeat className="w-4 h-4 text-pilote" /></div>
+              <div className="w-8 h-8 rounded-md bg-white ring-1 ring-pilote-200/60 flex items-center justify-center flex-shrink-0"><Repeat className="w-4 h-4 text-pilote" /></div>
               <div>
                 <h2 className="font-bold text-gray-900">Charges structurelles</h2>
                 <p className="text-[11px] text-gray-400">Toutes les charges fixes dont la période couvre la semaine {week} — la catégorie détermine le groupe de marge qui les supporte</p>
@@ -1033,10 +993,10 @@ export default function FacturationPage() {
             )}
           </div>
           {loading ? (
-            <div className="p-6 animate-pulse"><div className="h-10 bg-gray-100 rounded-lg" /></div>
+            <div className="p-6 animate-pulse"><div className="h-10 bg-gray-100 rounded-md" /></div>
           ) : fixedInvoices.length === 0 ? (
             <div className="py-10 flex flex-col items-center justify-center text-center">
-              <div className="w-12 h-12 rounded-2xl bg-gray-50 ring-1 ring-gray-200/70 flex items-center justify-center mb-3">
+              <div className="w-12 h-12 rounded-lg bg-gray-50 ring-1 ring-gray-200/70 flex items-center justify-center mb-3">
                 <Repeat className="w-5 h-5 text-gray-300" />
               </div>
               <p className="text-sm font-semibold text-gray-700">Aucune charge structurelle sur cette semaine</p>
@@ -1060,7 +1020,7 @@ export default function FacturationPage() {
                   <tr key={inv.id} className={`border-t border-gray-100 hover:bg-pilote-50/40 group transition-colors ${i % 2 === 0 ? '' : 'bg-gray-50/50'}`}>
                     <td className="px-4 py-2.5">
                       <div className="flex items-center gap-2.5">
-                        <div className="w-8 h-8 rounded-lg bg-gray-100 text-gray-500 flex items-center justify-center text-[11px] font-extrabold flex-shrink-0">{initials(inv.supplier_name)}</div>
+                        <div className="w-8 h-8 rounded-md bg-gray-100 text-gray-500 flex items-center justify-center text-[11px] font-extrabold flex-shrink-0">{initials(inv.supplier_name)}</div>
                         <div>
                           <div className="font-semibold text-sm text-gray-900">{inv.supplier_name}</div>
                           {inv.invoice_number && <div className="text-xs text-gray-400">{inv.invoice_number}</div>}
@@ -1089,7 +1049,7 @@ export default function FacturationPage() {
                       <select
                         value={inv.period_days || 30}
                         onChange={e => setFixedPeriod(inv, parseInt(e.target.value))}
-                        className="text-xs border border-pilote-200 bg-pilote-50 text-pilote font-semibold rounded-lg px-2 py-1 focus:outline-none focus:border-pilote cursor-pointer"
+                        className="text-xs border border-pilote-200 bg-pilote-50 text-pilote font-semibold rounded-md px-2 py-1 focus:outline-none focus:border-pilote cursor-pointer"
                         title="Période couverte par cette facture"
                       >
                         {PERIOD_OPTIONS.map(p => <option key={p.days} value={p.days}>{p.label}</option>)}
@@ -1129,13 +1089,13 @@ export default function FacturationPage() {
       {/* Modal : Connecter intégration */}
       {showConnect && connectProvider && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 backdrop-blur-sm" onClick={() => setShowConnect(false)}>
-          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl" onClick={e => e.stopPropagation()}>
+          <div className="bg-white rounded-lg p-6 w-full max-w-md shadow-2xl" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-5">
               <div className="flex items-center gap-3">
-                <div className={`w-10 h-10 rounded-xl ${connectProvider.color} flex items-center justify-center text-white text-xs font-extrabold`}>{connectProvider.logo}</div>
+                <div className={`w-10 h-10 rounded-md ${connectProvider.color} flex items-center justify-center text-white text-xs font-extrabold`}>{connectProvider.logo}</div>
                 <div><h2 className="text-base font-bold text-gray-900">Connecter {connectProvider.name}</h2><p className="text-xs text-gray-400">{connectProvider.description}</p></div>
               </div>
-              <button onClick={() => setShowConnect(false)} className="p-1.5 rounded-lg hover:bg-gray-100"><X className="w-4 h-4 text-gray-500" /></button>
+              <button onClick={() => setShowConnect(false)} className="p-1.5 rounded-md hover:bg-gray-100"><X className="w-4 h-4 text-gray-500" /></button>
             </div>
             <div className="space-y-4">
               <div>
@@ -1149,7 +1109,7 @@ export default function FacturationPage() {
                 </div>
               )}
               <p className="text-[10px] text-gray-400">Votre token est chiffré et stocké de manière sécurisée. <a href={connectProvider.helpUrl} target="_blank" rel="noreferrer" className="text-pilote underline">Comment trouver mon token ?</a></p>
-              {connectError && <div className="flex items-center gap-1.5 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2"><AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />{connectError}</div>}
+              {connectError && <div className="flex items-center gap-1.5 text-xs text-red-600 bg-red-50 border border-red-200 rounded-md px-3 py-2"><AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />{connectError}</div>}
               <div className="flex gap-3 pt-1">
                 <Button variant="outline" className="flex-1" onClick={() => setShowConnect(false)}>Annuler</Button>
                 <Button className="flex-1 bg-pilote hover:bg-pilote-hover text-white" onClick={connectIntegration} disabled={!connectToken || connecting || (connectProvider.needsCompanyId && !connectCompanyId)}>
@@ -1164,10 +1124,10 @@ export default function FacturationPage() {
       {/* Modal : Ajouter facture */}
       {showAdd && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 backdrop-blur-sm" onClick={() => setShowAdd(false)}>
-          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl" onClick={e => e.stopPropagation()}>
+          <div className="bg-white rounded-lg p-6 w-full max-w-md shadow-2xl" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-5">
               <h2 className="text-base font-bold text-gray-900">Nouvelle facture</h2>
-              <button onClick={() => setShowAdd(false)} className="p-1.5 rounded-lg hover:bg-gray-100"><X className="w-4 h-4 text-gray-500" /></button>
+              <button onClick={() => setShowAdd(false)} className="p-1.5 rounded-md hover:bg-gray-100"><X className="w-4 h-4 text-gray-500" /></button>
             </div>
             <div className="space-y-4">
               <div className="col-span-2">
@@ -1200,7 +1160,7 @@ export default function FacturationPage() {
                 <div className="grid grid-cols-3 gap-1.5">
                   {CATEGORIES.map(cat => (
                     <button key={cat.key} onClick={() => { setMemoTouched(true); setCategoryTouched(true); setNewInvoice((p: any) => ({ ...p, category: cat.key })) }}
-                      className={`py-1.5 px-2 rounded-lg text-xs font-semibold border-2 transition-all ${
+                      className={`py-1.5 px-2 rounded-md text-xs font-semibold border-2 transition-all ${
                         newInvoice.category === cat.key ? 'border-pilote bg-pilote text-white' : 'border-gray-200 text-gray-600 hover:border-gray-300'
                       }`}>{cat.label}
                     </button>
@@ -1224,7 +1184,7 @@ export default function FacturationPage() {
                   </select>
                 </div>
               </div>
-              {newInvoice.amount_ht && <div className="bg-gray-50 rounded-lg px-3 py-2 flex items-center justify-between"><span className="text-xs text-gray-500">Montant TTC calculé</span><span className="font-bold text-gray-900">{fmtEuro(ttcAmount)}</span></div>}
+              {newInvoice.amount_ht && <div className="bg-gray-50 rounded-md px-3 py-2 flex items-center justify-between"><span className="text-xs text-gray-500">Montant TTC calculé</span><span className="font-bold text-gray-900">{fmtEuro(ttcAmount)}</span></div>}
               <div>
                 <label className="block text-xs font-semibold text-gray-600 mb-1">Notes</label>
                 <Input value={newInvoice.notes} onChange={e => setNewInvoice((p: any) => ({ ...p, notes: e.target.value }))} placeholder="Livraison lundi matin..." />
@@ -1264,13 +1224,13 @@ export default function FacturationPage() {
       {/* Modal : Répartition des achats par rayon (par fournisseur) */}
       {showSplits && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 backdrop-blur-sm p-4" onClick={() => setShowSplits(false)}>
-          <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
+          <div className="bg-white rounded-lg w-full max-w-2xl shadow-2xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
             <div className="flex items-start justify-between p-5 pb-3 border-b border-gray-100">
               <div>
                 <h2 className="text-base font-bold text-gray-900">Répartition des achats par rayon</h2>
                 <p className="text-xs text-gray-500 mt-0.5 max-w-md">Pour chaque société, indiquez la part (%) de ses achats affectée à chaque rayon. Appliqué automatiquement à toutes ses factures.</p>
               </div>
-              <button onClick={() => setShowSplits(false)} className="p-1.5 rounded-lg hover:bg-gray-100"><X className="w-4 h-4 text-gray-500" /></button>
+              <button onClick={() => setShowSplits(false)} className="p-1.5 rounded-md hover:bg-gray-100"><X className="w-4 h-4 text-gray-500" /></button>
             </div>
             {/* Onglets : à répartir (sociétés sans ventilation) / toutes les répartitions déjà faites */}
             <div className="flex items-center gap-1.5 px-5 pt-3 pb-1">
@@ -1291,13 +1251,13 @@ export default function FacturationPage() {
                 if (list.length === 0) {
                   return splitsTab === 'todo' ? (
                     <div className="text-center py-12">
-                      <div className="w-11 h-11 rounded-2xl bg-pilote-50 flex items-center justify-center mx-auto mb-3"><Check className="w-5 h-5 text-pilote" /></div>
+                      <div className="w-11 h-11 rounded-lg bg-pilote-50 flex items-center justify-center mx-auto mb-3"><Check className="w-5 h-5 text-pilote" /></div>
                       <p className="text-sm font-semibold text-gray-700">Tout est réparti</p>
                       <p className="text-xs text-gray-400 mt-1">{splitSuppliers.length === 0 ? "Ajoutez des factures d'achat pour commencer." : 'Chaque société connue a sa ventilation.'}</p>
                     </div>
                   ) : (
                     <div className="text-center py-12">
-                      <div className="w-11 h-11 rounded-2xl bg-gray-50 flex items-center justify-center mx-auto mb-3"><PieChart className="w-5 h-5 text-gray-300" /></div>
+                      <div className="w-11 h-11 rounded-lg bg-gray-50 flex items-center justify-center mx-auto mb-3"><PieChart className="w-5 h-5 text-gray-300" /></div>
                       <p className="text-sm font-semibold text-gray-700">Aucune répartition enregistrée</p>
                       <p className="text-xs text-gray-400 mt-1">Renseignez une société dans « À répartir » pour la retrouver ici.</p>
                     </div>
@@ -1313,6 +1273,7 @@ export default function FacturationPage() {
                       <span className="w-16 text-center">Fruits &amp; légumes</span>
                       <span className="w-16 text-center">Divers</span>
                       <span className="w-16 text-center">Total</span>
+                      <span className="w-8 flex-shrink-0" />
                     </div>
                     <div className="space-y-1.5">
                       {list.map(([key, v]) => {
@@ -1323,7 +1284,7 @@ export default function FacturationPage() {
                         const clearRow = () =>
                           setSplitDraft(prev => ({ ...prev, [key]: { ...prev[key], boucherie: '', charcuterie: '', traiteur: '', fruits_et_legumes: '', divers: '' } }))
                         return (
-                          <div key={key} className="group flex flex-col md:flex-row md:items-center gap-2 p-2 rounded-xl hover:bg-gray-50">
+                          <div key={key} className="group flex flex-col md:flex-row md:items-center gap-2 p-2 rounded-md hover:bg-gray-50">
                             <span className="flex-1 text-sm font-medium text-gray-800 truncate" title={v.label}>{v.label}</span>
                             <div className="flex items-center gap-2">
                               {VENT_FIELDS.map(f => (
@@ -1332,12 +1293,14 @@ export default function FacturationPage() {
                               ))}
                               <span className={`w-16 text-center text-xs font-bold tabular ${totOk ? 'text-gray-400' : 'text-orange-500'}`}>{tot ? `${Math.round(tot)}%` : '—'}</span>
                             </div>
-                            {splitsTab === 'all' && (
-                              <button onClick={clearRow} title="Retirer cette répartition"
-                                className="self-end md:self-auto md:opacity-0 md:group-hover:opacity-100 transition-all p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50">
-                                <Trash2 className="w-4 h-4" />
-                              </button>
-                            )}
+                            <div className="w-8 flex-shrink-0 flex justify-center self-end md:self-auto">
+                              {splitsTab === 'all' && (
+                                <button onClick={clearRow} title="Retirer cette répartition"
+                                  className="md:opacity-0 md:group-hover:opacity-100 transition-all p-1.5 rounded-md text-gray-400 hover:text-red-500 hover:bg-red-50">
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              )}
+                            </div>
                           </div>
                         )
                       })}
@@ -1359,10 +1322,10 @@ export default function FacturationPage() {
 
       {showCA && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 backdrop-blur-sm" onClick={() => setShowCA(false)}>
-          <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
+          <div className="bg-white rounded-lg p-6 w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-5">
               <div><h2 className="text-base font-bold text-gray-900">CA de la semaine {week}</h2><p className="text-xs text-gray-400 mt-0.5">{fmtDate(mon)} – {fmtDate(sun)}</p></div>
-              <button onClick={() => setShowCA(false)} className="p-1.5 rounded-lg hover:bg-gray-100"><X className="w-4 h-4 text-gray-500" /></button>
+              <button onClick={() => setShowCA(false)} className="p-1.5 rounded-md hover:bg-gray-100"><X className="w-4 h-4 text-gray-500" /></button>
             </div>
             <div className="space-y-3">
               <div>
@@ -1390,10 +1353,10 @@ export default function FacturationPage() {
       {/* Modal : Paramètres */}
       {showSettings && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 backdrop-blur-sm" onClick={() => setShowSettings(false)}>
-          <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
+          <div className="bg-white rounded-lg p-6 w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-5">
               <h2 className="text-base font-bold text-gray-900">Paramètres entreprise</h2>
-              <button onClick={() => setShowSettings(false)} className="p-1.5 rounded-lg hover:bg-gray-100"><X className="w-4 h-4 text-gray-500" /></button>
+              <button onClick={() => setShowSettings(false)} className="p-1.5 rounded-md hover:bg-gray-100"><X className="w-4 h-4 text-gray-500" /></button>
             </div>
             <div className="space-y-4">
               <div>
