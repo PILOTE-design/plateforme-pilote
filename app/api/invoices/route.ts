@@ -74,7 +74,7 @@ export async function PATCH(request: NextRequest) {
   const body = await request.json().catch(() => ({}))
   const supplierName = String(body.supplier_name || '').trim()
   const category = String(body.category || '')
-  const VALID_CATEGORIES = ['viande', 'charcuterie', 'epicerie', 'emballage', 'frais_generaux', 'charge_structure', 'frais_divers', 'autre']
+  const VALID_CATEGORIES = ['boucherie', 'charcuterie', 'traiteur', 'frais_divers']
   if (!supplierName || !VALID_CATEGORIES.includes(category)) {
     return NextResponse.json({ error: 'supplier_name et category valides requis' }, { status: 400 })
   }
