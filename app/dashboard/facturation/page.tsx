@@ -242,6 +242,8 @@ export default function FacturationPage() {
   const [splitSuppliers, setSplitSuppliers] = useState<{ key: string; name: string }[]>([])
   const [splitDraft,     setSplitDraft]     = useState<Record<string, { label: string; boucherie: string; charcuterie: string; traiteur: string; fruits_et_legumes: string; divers: string }>>({})
   const [splitSaving,    setSplitSaving]    = useState(false)
+  // Onglet actif de la modale : « à répartir » (sociétés sans ventilation) ou « toutes »
+  const [splitsTab,      setSplitsTab]      = useState<'todo' | 'all'>('todo')
   // Répartition saisie sur la facture en cours (mémorisée par société)
   const [newSplit,       setNewSplit]       = useState<{ boucherie: string; charcuterie: string; traiteur: string; fruits_et_legumes: string; divers: string }>({ boucherie: '', charcuterie: '', traiteur: '', fruits_et_legumes: '', divers: '' })
   const [splitTouched,   setSplitTouched]   = useState(false)
@@ -366,13 +368,16 @@ export default function FacturationPage() {
       : { boucherie: '', charcuterie: '', traiteur: '', fruits_et_legumes: '', divers: '' })
   }, [newInvoice.supplier_name, splits, showAdd, splitTouched])
 
-  /** Ouvre la répartition par rayon : fusionne fournisseurs connus + règles enregistrées */
-  function openSplits() {
+  /** Construit le brouillon d'édition en fusionnant fournisseurs connus + règles enregistrées */
+  function buildSplitDraft(
+    suppliers: { key: string; name: string }[],
+    splitList: RayonSplit[],
+  ) {
     const draft: Record<string, { label: string; boucherie: string; charcuterie: string; traiteur: string; fruits_et_legumes: string; divers: string }> = {}
-    for (const s of splitSuppliers) {
+    for (const s of suppliers) {
       draft[s.key] = { label: s.name || s.key, boucherie: '', charcuterie: '', traiteur: '', fruits_et_legumes: '', divers: '' }
     }
-    for (const sp of splits) {
+    for (const sp of splitList) {
       draft[sp.supplier_key] = {
         label: sp.supplier_label || draft[sp.supplier_key]?.label || sp.supplier_key,
         boucherie:   sp.pct_boucherie   ? String(sp.pct_boucherie)   : '',
@@ -382,7 +387,13 @@ export default function FacturationPage() {
         divers:            sp.pct_divers            ? String(sp.pct_divers)            : '',
       }
     }
-    setSplitDraft(draft)
+    return draft
+  }
+
+  /** Ouvre la répartition par rayon sur l'onglet « à répartir » */
+  function openSplits() {
+    setSplitDraft(buildSplitDraft(splitSuppliers, splits))
+    setSplitsTab('todo')
     setShowSplits(true)
   }
 
@@ -404,8 +415,18 @@ export default function FacturationPage() {
       })
       if (!res.ok) { toast({ variant: 'error', title: 'Enregistrement impossible', description: `Erreur ${res.status}` }); return }
       toast({ variant: 'success', title: 'Répartition enregistrée' })
-      setShowSplits(false)
-      await loadSplits()
+      // On garde la modale ouverte et on rafraîchit : les sociétés tout juste réparties
+      // quittent « à répartir » et rejoignent « toutes mes répartitions ».
+      const fresh = await fetch('/api/supplier-splits', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).catch(() => null)
+      if (fresh) {
+        const nextSplits = Array.isArray(fresh.splits) ? fresh.splits : []
+        const nextSuppliers = Array.isArray(fresh.suppliers) ? fresh.suppliers : []
+        setSplits(nextSplits)
+        setSplitSuppliers(nextSuppliers)
+        setSplitDraft(buildSplitDraft(nextSuppliers, nextSplits))
+      } else {
+        await loadSplits()
+      }
       await load()
     } catch {
       toast({ variant: 'error', title: 'Erreur réseau', description: "La répartition n'a pas été enregistrée." })
@@ -635,6 +656,13 @@ export default function FacturationPage() {
     (a, b) => (b.invoice_date || '').localeCompare(a.invoice_date || '') || b.amount_ht - a.amount_ht,
   )
   const pendingCount = new Set([...invoices, ...fixedAll].filter(i => i.status === 'a_verifier').map(i => i.id)).size
+
+  // Répartition — partition des sociétés selon l'état ENREGISTRÉ (splits), pas le brouillon en cours,
+  // pour qu'une ligne ne saute pas d'onglet pendant la saisie (elle bascule à l'enregistrement).
+  const repartiKeys = new Set(splits.map(s => s.supplier_key))
+  const splitEntries = Object.entries(splitDraft).sort((a, b) => a[1].label.localeCompare(b[1].label, 'fr'))
+  const splitsTodo = splitEntries.filter(([key]) => !repartiKeys.has(key))
+  const splitsDone = splitEntries.filter(([key]) => repartiKeys.has(key))
   const variableTotalHt  = variableInvoices.reduce((s, i) => s + i.amount_ht, 0)
   const variableTotalTtc = variableInvoices.reduce((s, i) => s + i.amount_ttc, 0)
   const fixedTotalHt     = fixedInvoices.reduce((s, i) => s + i.amount_ht, 0)
@@ -1237,51 +1265,90 @@ export default function FacturationPage() {
       {showSplits && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 backdrop-blur-sm p-4" onClick={() => setShowSplits(false)}>
           <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
-            <div className="flex items-start justify-between p-5 border-b border-gray-100">
+            <div className="flex items-start justify-between p-5 pb-3 border-b border-gray-100">
               <div>
                 <h2 className="text-base font-bold text-gray-900">Répartition des achats par rayon</h2>
-                <p className="text-xs text-gray-500 mt-0.5 max-w-md">Pour chaque fournisseur, indiquez la part (%) de ses achats affectée à chaque rayon. Appliqué automatiquement à toutes ses factures.</p>
+                <p className="text-xs text-gray-500 mt-0.5 max-w-md">Pour chaque société, indiquez la part (%) de ses achats affectée à chaque rayon. Appliqué automatiquement à toutes ses factures.</p>
               </div>
               <button onClick={() => setShowSplits(false)} className="p-1.5 rounded-lg hover:bg-gray-100"><X className="w-4 h-4 text-gray-500" /></button>
             </div>
-            <div className="p-5 overflow-y-auto">
-              <div className="hidden md:flex items-center gap-2 px-2 pb-2 text-[10px] font-semibold leading-tight text-gray-400">
-                <span className="flex-1">Fournisseur</span>
-                <span className="w-16 text-center">Boucherie</span>
-                <span className="w-16 text-center">Charcuterie</span>
-                <span className="w-16 text-center">Traiteur</span>
-                <span className="w-16 text-center">Fruits &amp; légumes</span>
-                <span className="w-16 text-center">Divers</span>
-                <span className="w-16 text-center">Total</span>
-              </div>
-              {Object.keys(splitDraft).length === 0 ? (
-                <p className="text-sm text-gray-400 py-8 text-center">Aucun fournisseur connu pour l&apos;instant — ajoutez des factures d&apos;achat d&apos;abord.</p>
-              ) : (
-                <div className="space-y-1.5">
-                  {Object.entries(splitDraft).sort((a, b) => a[1].label.localeCompare(b[1].label, 'fr')).map(([key, v]) => {
-                    const tot = VENT_FIELDS.reduce((s, f) => s + (parseFloat((v as any)[f.key]) || 0), 0)
-                    const totOk = tot === 0 || Math.abs(tot - 100) < 0.5
-                    const upd = (field: string, val: string) =>
-                      setSplitDraft(prev => ({ ...prev, [key]: { ...prev[key], [field]: val } }))
-                    return (
-                      <div key={key} className="flex flex-col md:flex-row md:items-center gap-2 p-2 rounded-xl hover:bg-gray-50">
-                        <span className="flex-1 text-sm font-medium text-gray-800 truncate" title={v.label}>{v.label}</span>
-                        <div className="flex items-center gap-2">
-                          {VENT_FIELDS.map(f => (
-                            <input key={f.key} type="number" min="0" max="100" value={(v as any)[f.key]} onChange={e => upd(f.key, e.target.value)}
-                              placeholder="0" className="w-16 border border-gray-200 rounded-md px-1.5 py-1 text-sm text-right tabular focus:outline-none focus:ring-2 focus:ring-pilote-200" />
-                          ))}
-                          <span className={`w-16 text-center text-xs font-bold tabular ${totOk ? 'text-gray-400' : 'text-orange-500'}`}>{tot ? `${Math.round(tot)}%` : '—'}</span>
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-              <p className="text-[11px] text-gray-400 mt-3">Le total par fournisseur devrait faire 100 %. Ceux laissés à 0 restent « non répartis » et n&apos;entrent pas dans la marge par rayon.</p>
+            {/* Onglets : à répartir (sociétés sans ventilation) / toutes les répartitions déjà faites */}
+            <div className="flex items-center gap-1.5 px-5 pt-3 pb-1">
+              <button onClick={() => setSplitsTab('todo')}
+                className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold transition-all ${splitsTab === 'todo' ? 'bg-pilote text-white shadow-card' : 'text-gray-500 hover:bg-gray-100'}`}>
+                À répartir
+                <span className={`rounded-full px-1.5 text-[10px] tabular ${splitsTab === 'todo' ? 'bg-white/20 text-white' : 'bg-gray-200 text-gray-600'}`}>{splitsTodo.length}</span>
+              </button>
+              <button onClick={() => setSplitsTab('all')}
+                className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold transition-all ${splitsTab === 'all' ? 'bg-pilote text-white shadow-card' : 'text-gray-500 hover:bg-gray-100'}`}>
+                Toutes mes répartitions
+                <span className={`rounded-full px-1.5 text-[10px] tabular ${splitsTab === 'all' ? 'bg-white/20 text-white' : 'bg-gray-200 text-gray-600'}`}>{splitsDone.length}</span>
+              </button>
+            </div>
+            <div className="p-5 pt-2 overflow-y-auto">
+              {(() => {
+                const list = splitsTab === 'todo' ? splitsTodo : splitsDone
+                if (list.length === 0) {
+                  return splitsTab === 'todo' ? (
+                    <div className="text-center py-12">
+                      <div className="w-11 h-11 rounded-2xl bg-pilote-50 flex items-center justify-center mx-auto mb-3"><Check className="w-5 h-5 text-pilote" /></div>
+                      <p className="text-sm font-semibold text-gray-700">Tout est réparti</p>
+                      <p className="text-xs text-gray-400 mt-1">{splitSuppliers.length === 0 ? "Ajoutez des factures d'achat pour commencer." : 'Chaque société connue a sa ventilation.'}</p>
+                    </div>
+                  ) : (
+                    <div className="text-center py-12">
+                      <div className="w-11 h-11 rounded-2xl bg-gray-50 flex items-center justify-center mx-auto mb-3"><PieChart className="w-5 h-5 text-gray-300" /></div>
+                      <p className="text-sm font-semibold text-gray-700">Aucune répartition enregistrée</p>
+                      <p className="text-xs text-gray-400 mt-1">Renseignez une société dans « À répartir » pour la retrouver ici.</p>
+                    </div>
+                  )
+                }
+                return (
+                  <>
+                    <div className="hidden md:flex items-center gap-2 px-2 pb-2 text-[10px] font-semibold leading-tight text-gray-400">
+                      <span className="flex-1">Société</span>
+                      <span className="w-16 text-center">Boucherie</span>
+                      <span className="w-16 text-center">Charcuterie</span>
+                      <span className="w-16 text-center">Traiteur</span>
+                      <span className="w-16 text-center">Fruits &amp; légumes</span>
+                      <span className="w-16 text-center">Divers</span>
+                      <span className="w-16 text-center">Total</span>
+                    </div>
+                    <div className="space-y-1.5">
+                      {list.map(([key, v]) => {
+                        const tot = VENT_FIELDS.reduce((s, f) => s + (parseFloat((v as any)[f.key]) || 0), 0)
+                        const totOk = tot === 0 || Math.abs(tot - 100) < 0.5
+                        const upd = (field: string, val: string) =>
+                          setSplitDraft(prev => ({ ...prev, [key]: { ...prev[key], [field]: val } }))
+                        const clearRow = () =>
+                          setSplitDraft(prev => ({ ...prev, [key]: { ...prev[key], boucherie: '', charcuterie: '', traiteur: '', fruits_et_legumes: '', divers: '' } }))
+                        return (
+                          <div key={key} className="group flex flex-col md:flex-row md:items-center gap-2 p-2 rounded-xl hover:bg-gray-50">
+                            <span className="flex-1 text-sm font-medium text-gray-800 truncate" title={v.label}>{v.label}</span>
+                            <div className="flex items-center gap-2">
+                              {VENT_FIELDS.map(f => (
+                                <input key={f.key} type="number" min="0" max="100" value={(v as any)[f.key]} onChange={e => upd(f.key, e.target.value)}
+                                  placeholder="0" className="w-16 border border-gray-200 rounded-md px-1.5 py-1 text-sm text-right tabular focus:outline-none focus:ring-2 focus:ring-pilote-200" />
+                              ))}
+                              <span className={`w-16 text-center text-xs font-bold tabular ${totOk ? 'text-gray-400' : 'text-orange-500'}`}>{tot ? `${Math.round(tot)}%` : '—'}</span>
+                            </div>
+                            {splitsTab === 'all' && (
+                              <button onClick={clearRow} title="Retirer cette répartition"
+                                className="self-end md:self-auto md:opacity-0 md:group-hover:opacity-100 transition-all p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50">
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </>
+                )
+              })()}
+              <p className="text-[11px] text-gray-400 mt-3">Le total par société devrait faire 100 %. Une société laissée à 0 reste « non répartie » et n&apos;entre pas dans la marge par rayon. Retirer une répartition la renvoie dans « À répartir » après enregistrement.</p>
             </div>
             <div className="flex gap-2 p-5 border-t border-gray-100">
-              <Button variant="outline" className="flex-1" onClick={() => setShowSplits(false)}>Annuler</Button>
+              <Button variant="outline" className="flex-1" onClick={() => setShowSplits(false)}>Fermer</Button>
               <Button onClick={saveSplits} disabled={splitSaving} className="flex-1 bg-pilote hover:bg-pilote-hover text-white">
                 {splitSaving ? <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" />Enregistrement...</> : <><Save className="w-4 h-4 mr-1.5" />Enregistrer</>}
               </Button>
