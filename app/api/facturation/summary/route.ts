@@ -13,6 +13,17 @@ function supplierSociete(raw: string): string {
   return s.trim()
 }
 
+// Famille de vente (rapport) → rayon : permet de lire le CA par rayon depuis le rapport,
+// sans que l'utilisateur ait à saisir un détail. Correspondance souple sur le nom.
+function rayonOfFamily(nom: string): string | null {
+  const n = String(nom || '').toLowerCase()
+  if (n.includes('bouch')) return 'boucherie'
+  if (n.includes('charcut')) return 'charcuterie'
+  if (n.includes('traiteur')) return 'traiteur'
+  if (n.includes('fruit') || n.includes('legume') || n.includes('légume') || n.includes('primeur')) return 'fruits_et_legumes'
+  return null
+}
+
 export async function GET(request: NextRequest) {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -142,9 +153,15 @@ export async function GET(request: NextRequest) {
 
   // Redistribution du « divers » sur les 4 rayons, au prorata de leur part de CA
   // (à défaut de CA par rayon renseigné : répartition égale)
-  const caByRayon: Record<string, number> = {}
-  let caRayonSum = 0
-  for (const r of RAYONS) { const v = parseFloat((caData as any)?.[`ca_${r}`] || 0) || 0; caByRayon[r] = v; caRayonSum += v }
+  // CA par rayon — lu automatiquement depuis le rapport (families_detail).
+  // Repli sur les champs ca_* saisis uniquement si le rapport n'a pas encore de détail par famille.
+  const caByRayon: Record<string, number> = { boucherie: 0, charcuterie: 0, traiteur: 0, fruits_et_legumes: 0 }
+  const fams: any[] = Array.isArray((caData as any)?.families_detail) ? (caData as any).families_detail : []
+  for (const f of fams) { const rr = rayonOfFamily(f?.nom); if (rr) caByRayon[rr] += Number(f?.montant) || 0 }
+  let caRayonSum = RAYONS.reduce((s, r) => s + caByRayon[r], 0)
+  if (caRayonSum === 0) {
+    for (const r of RAYONS) { const v = parseFloat((caData as any)?.[`ca_${r}`] || 0) || 0; caByRayon[r] = v; caRayonSum += v }
+  }
   if (achats_divers > 0) {
     for (const r of RAYONS) {
       const share = caRayonSum > 0 ? caByRayon[r] / caRayonSum : 1 / RAYONS.length
@@ -153,7 +170,7 @@ export async function GET(request: NextRequest) {
   }
   const marge_by_rayon: Record<string, { ca: number; achats: number; marge: number; taux: number | null }> = {}
   for (const r of RAYONS) {
-    const caR = parseFloat((caData as any)?.[`ca_${r}`] || 0)
+    const caR = caByRayon[r] || 0
     const achR = achats_by_rayon[r] || 0
     marge_by_rayon[r] = {
       ca: round2(caR),
