@@ -346,7 +346,7 @@ export default async function DashboardPage() {
             { href: '/dashboard/marges',       icon: TrendingUp,   label: 'Marges' },
           ].map(l => (
             <Link key={l.href} href={l.href}
-              className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 bg-white border border-gray-200 rounded-lg px-3 h-9 hover:border-pilote hover:text-pilote hover:shadow-card transition-all">
+              className="flex items-center gap-1.5 text-xs font-semibold text-gray-600 bg-white border border-gray-100 rounded-xl px-3.5 h-9 shadow-card hover:text-pilote hover:-translate-y-px transition-all">
               <l.icon className="w-3.5 h-3.5" />{l.label}
             </Link>
           ))}
@@ -355,7 +355,7 @@ export default async function DashboardPage() {
 
       {/* ── Checklist de démarrage ── */}
       {showOnboarding && (
-        <div className="mb-6 bg-white rounded-xl border border-gray-200/80 shadow-card overflow-hidden">
+        <div className="mb-6 bg-white rounded-2xl border border-gray-100 shadow-card overflow-hidden">
           <div className="px-5 py-3.5 bg-pilote flex items-center justify-between">
             <div>
               <h2 className="text-sm font-bold text-white tracking-tight">Bien démarrer avec PILOTE</h2>
@@ -387,7 +387,7 @@ export default async function DashboardPage() {
 
       {/* ── Points d'attention ── */}
       {attention.length > 0 && (
-        <div className="mb-6 bg-white rounded-xl border border-red-100 shadow-card p-5">
+        <div className="mb-6 bg-white rounded-2xl border border-red-100 shadow-card p-5">
           <div className="flex items-center gap-2 mb-3">
             <AlertTriangle className="w-4 h-4 text-red-500" />
             <h2 className="text-sm font-bold text-gray-900 tracking-tight">Points d'attention</h2>
@@ -428,12 +428,12 @@ export default async function DashboardPage() {
             <Card className="hover:shadow-card-hover transition-shadow">
               <CardContent className="p-5">
                 <div className="flex items-center gap-2 mb-2.5">
-                  <div className="w-6 h-6 rounded-md bg-pilote-50 flex items-center justify-center flex-shrink-0">
+                  <div className="w-6 h-6 rounded-lg bg-pilote-50 flex items-center justify-center flex-shrink-0">
                     <Euro className="w-3.5 h-3.5 text-pilote" />
                   </div>
                   <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">CA · {weekLabel}</p>
                 </div>
-                <p className="text-2xl font-bold tracking-tight text-gray-900 tabular">{ca_total > 0 ? `${fmt(ca_total)} €` : '—'}</p>
+                <p className="text-2xl font-extrabold tracking-tight text-gray-900 tabular">{ca_total > 0 ? `${fmt(ca_total)} €` : '—'}</p>
                 {ca_total === 0 && <p className="text-xs text-gray-400 mt-1">Saisir le CA ou générer le rapport</p>}
               </CardContent>
             </Card>
@@ -441,12 +441,12 @@ export default async function DashboardPage() {
             <Card className="hover:shadow-card-hover transition-shadow">
               <CardContent className="p-5">
                 <div className="flex items-center gap-2 mb-2.5">
-                  <div className="w-6 h-6 rounded-md bg-pilote-50 flex items-center justify-center flex-shrink-0">
+                  <div className="w-6 h-6 rounded-lg bg-pilote-50 flex items-center justify-center flex-shrink-0">
                     <Receipt className="w-3.5 h-3.5 text-pilote" />
                   </div>
                   <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Achats HT · {weekLabel}</p>
                 </div>
-                <p className="text-2xl font-bold tracking-tight text-gray-900 tabular">{achatsTotal > 0 ? `${fmt(achatsTotal)} €` : '—'}</p>
+                <p className="text-2xl font-extrabold tracking-tight text-gray-900 tabular">{achatsTotal > 0 ? `${fmt(achatsTotal)} €` : '—'}</p>
                 {chargesFixesSem > 0 && (
                   <p className="text-xs text-gray-500 mt-1 flex items-center gap-1 tabular"><Repeat className="w-3 h-3 text-gray-400" />dont fixes ≈ {fmt(chargesFixesSem)} €/sem</p>
                 )}
@@ -456,12 +456,12 @@ export default async function DashboardPage() {
             <Card className="hover:shadow-card-hover transition-shadow">
               <CardContent className="p-5">
                 <div className="flex items-center gap-2 mb-2.5">
-                  <div className="w-6 h-6 rounded-md bg-pilote-50 flex items-center justify-center flex-shrink-0">
+                  <div className="w-6 h-6 rounded-lg bg-pilote-50 flex items-center justify-center flex-shrink-0">
                     <Users className="w-3.5 h-3.5 text-pilote" />
                   </div>
                   <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Masse salariale · {weekLabel}</p>
                 </div>
-                <p className="text-2xl font-bold tracking-tight text-gray-900 tabular">{payrollRef > 0 ? `${fmt(payrollRef)} €` : '—'}</p>
+                <p className="text-2xl font-extrabold tracking-tight text-gray-900 tabular">{payrollRef > 0 ? `${fmt(payrollRef)} €` : '—'}</p>
                 <p className="text-xs text-gray-400 mt-1 tabular">{payrollRef > 0 ? (ratioMS !== null ? `${ratioMS.toFixed(0)} % du CA · chargée (CCN 992)` : 'chargée (CCN 992)') : 'Remplir le planning'}</p>
               </CardContent>
             </Card>
@@ -474,7 +474,7 @@ export default async function DashboardPage() {
                   </div>
                   <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Marge brute · {weekLabel}</p>
                 </div>
-                <p className={`text-2xl font-bold tracking-tight tabular ${margeColor}`}>{taux_marge !== null ? `${taux_marge.toFixed(1)} %` : '—'}</p>
+                <p className={`text-2xl font-extrabold tracking-tight tabular ${margeColor}`}>{taux_marge !== null ? `${taux_marge.toFixed(1)} %` : '—'}</p>
                 {taux_marge !== null && <p className="text-xs text-gray-400 mt-1 tabular">{fmt(marge_brute)} € · CA − achats (fixes inclus)</p>}
               </CardContent>
             </Card>
@@ -482,18 +482,16 @@ export default async function DashboardPage() {
 
           {/* ── Résultat estimé ── */}
           {resultat !== null && (
-            <div className={`mb-8 rounded-xl border p-5 flex items-center justify-between gap-4 ${
-              resultat >= 0 ? 'bg-green-50/70 border-green-200' : 'bg-red-50/70 border-red-200'
-            }`}>
+            <div className="mb-8 rounded-2xl bg-pilote text-white shadow-card-hover p-6 flex items-center justify-between gap-4">
               <div>
-                <p className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Résultat estimé · semaine {refWeek}</p>
-                <p className={`text-3xl font-extrabold tracking-tight mt-1 tabular ${resultat >= 0 ? 'text-green-700' : 'text-red-700'}`}>{resultat >= 0 ? '+' : ''}{fmt(resultat)} €</p>
-                <p className="text-xs text-gray-500 mt-1.5 tabular">
+                <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-pilote-200">Résultat estimé · semaine {refWeek}</p>
+                <p className={`text-4xl font-extrabold tracking-tight mt-1.5 tabular ${resultat >= 0 ? 'text-green-300' : 'text-red-300'}`}>{resultat >= 0 ? '+' : ''}{fmt(resultat)} €</p>
+                <p className="text-xs text-pilote-200 mt-2 tabular">
                   CA {fmt(ca_total)} € − Achats {fmt(achatsTotal)} € (dont fixes {fmt(chargesFixesSem)} €) − Masse salariale chargée {fmt(payrollRef)} €
                 </p>
               </div>
-              <div className={`w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0 ${resultat >= 0 ? 'bg-green-100' : 'bg-red-100'}`}>
-                {resultat >= 0 ? <TrendingUp className="w-6 h-6 text-green-600" /> : <TrendingDown className="w-6 h-6 text-red-600" />}
+              <div className="w-14 h-14 rounded-2xl bg-white/10 flex items-center justify-center flex-shrink-0">
+                {resultat >= 0 ? <TrendingUp className="w-7 h-7 text-green-300" /> : <TrendingDown className="w-7 h-7 text-red-300" />}
               </div>
             </div>
           )}
@@ -521,11 +519,11 @@ export default async function DashboardPage() {
                         <span className="text-[10px] font-semibold text-gray-500 tabular">{fmt(t.ca / 1000 >= 1 ? Math.round(t.ca / 100) / 10 : t.ca)}{t.ca >= 1000 ? ' k€' : ' €'}</span>
                         <div className="w-full flex items-end" style={{ height: '80px' }}>
                           <div
-                            className={`w-full rounded-t-md transition-all ${isLast ? 'bg-pilote' : 'bg-pilote-100 hover:bg-pilote-200'}`}
+                            className={`w-full rounded-t-lg transition-all ${isLast ? 'bg-pilote-orange' : 'bg-pilote-100 hover:bg-pilote-200'}`}
                             style={{ height: `${Math.max(6, (t.ca / maxTrend) * 100)}%` }}
                           />
                         </div>
-                        <span className={`text-[10px] tabular ${isLast ? 'font-bold text-pilote' : 'text-gray-400'}`}>S{t.week}</span>
+                        <span className={`text-[10px] tabular ${isLast ? 'font-bold text-pilote-orange' : 'text-gray-400'}`}>S{t.week}</span>
                       </div>
                     )
                   })}
@@ -611,7 +609,7 @@ export default async function DashboardPage() {
               {reports.map((report) => (
                 <div
                   key={report.id}
-                  className="flex items-center justify-between p-4 rounded-lg border border-gray-100 hover:bg-gray-50 hover:border-gray-200 transition-colors"
+                  className="flex items-center justify-between p-4 rounded-xl border border-gray-100 hover:bg-gray-50 hover:shadow-card transition-all"
                 >
                   <div className="flex items-center gap-3">
                     <div className="w-9 h-9 rounded-lg bg-pilote-50 flex items-center justify-center flex-shrink-0">
