@@ -636,7 +636,7 @@ export default function FacturationPage() {
     <div className="min-h-screen bg-gray-50 flex flex-col">
 
       {/* Header héro */}
-      <div className="bg-white border-b border-gray-200 px-6 py-5 flex items-center justify-between">
+      <div className="bg-white border-b border-gray-100 px-6 py-5 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="w-12 h-12 bg-gradient-to-br from-pilote to-pilote-hover rounded-2xl flex items-center justify-center flex-shrink-0 shadow-card">
             <Receipt className="w-6 h-6 text-white" />
@@ -654,7 +654,7 @@ export default function FacturationPage() {
             <Plus className="w-3.5 h-3.5 mr-1.5" />Ajouter une facture
           </Button>
           <button onClick={openSplits} title="Répartir les achats par rayon, fournisseur par fournisseur"
-            className="h-9 text-sm px-3 rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors flex items-center gap-1.5">
+            className="h-9 text-sm px-3 rounded-xl border border-gray-100 text-gray-600 shadow-card hover:text-pilote transition-colors flex items-center gap-1.5">
             <PieChart className="w-3.5 h-3.5" />Répartition
           </button>
           <button onClick={() => setShowSettings(true)} className="p-2 rounded-xl hover:bg-gray-100 text-gray-400 hover:text-gray-700 transition-colors">
@@ -665,7 +665,7 @@ export default function FacturationPage() {
 
       {/* Week nav */}
       <div className="bg-white border-b border-gray-100 px-6 py-2.5 flex items-center gap-2">
-        <div className="flex items-center gap-1 bg-gray-50 border border-gray-200 rounded-xl px-1 py-0.5">
+        <div className="flex items-center gap-1 bg-gray-50 border border-gray-100 rounded-xl px-1 py-0.5">
           <button onClick={prevWeek} className="p-1.5 rounded-lg hover:bg-white hover:shadow-sm transition-all"><ChevronLeft className="w-4 h-4 text-gray-500" /></button>
           <div className="flex items-center gap-2 px-2">
             <span className="font-bold text-gray-900 text-sm">Semaine {week}</span>
@@ -749,7 +749,7 @@ export default function FacturationPage() {
                 sub: summary.taux_marge !== null ? `Taux : ${summary.taux_marge} %` : 'Saisir le CA pour calculer',
                 chip: summary.marge_brute >= 0 ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-500' },
             ].map(k => (
-              <div key={k.label} className="bg-white rounded-2xl border border-gray-100 shadow-card p-4 transition-all hover:shadow-md hover:-translate-y-0.5">
+              <div key={k.label} className="bg-white rounded-2xl border border-gray-100 shadow-card p-4 transition-all hover:shadow-card-hover hover:-translate-y-0.5">
                 <div className="flex items-center gap-2 mb-2.5">
                   <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${k.chip}`}><k.icon className="w-4 h-4" /></div>
                   <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">{k.label}</p>
@@ -763,22 +763,20 @@ export default function FacturationPage() {
 
         {/* Résultat net */}
         {summary !== null && summary.ca_total > 0 && (
-          <div className={`rounded-2xl border p-5 flex items-center justify-between shadow-card ${
-            summary.resultat_net >= 0 ? 'bg-gradient-to-r from-green-50 via-green-50/40 to-white border-green-200' : 'bg-gradient-to-r from-red-50 via-red-50/40 to-white border-red-200'
-          }`}>
+          <div className="rounded-2xl bg-pilote text-white shadow-card-hover p-6 flex items-center justify-between gap-4">
             <div>
-              <p className="text-[11px] font-bold uppercase tracking-wider text-gray-500">Résultat net estimé de la semaine</p>
-              <p className={`text-4xl font-extrabold tracking-tight mt-1 tabular ${summary.resultat_net >= 0 ? 'text-green-700' : 'text-red-700'}`}>{fmtEuro(summary.resultat_net)}</p>
+              <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-pilote-200">Résultat net estimé de la semaine</p>
+              <p className={`text-4xl font-extrabold tracking-tight mt-1.5 tabular ${summary.resultat_net >= 0 ? 'text-green-300' : 'text-red-300'}`}>{fmtEuro(summary.resultat_net)}</p>
               <div className="flex flex-wrap items-center gap-1.5 mt-2.5 text-[11px] tabular">
-                <span className="bg-white/80 border border-gray-200 rounded-md px-2 py-0.5 text-gray-600">CA <strong className="text-gray-900">{fmtEuro(summary.ca_total)}</strong></span>
-                <span className="text-gray-400">−</span>
-                <span className="bg-white/80 border border-gray-200 rounded-md px-2 py-0.5 text-gray-600">Achats <strong className="text-gray-900">{fmtEuro(summary.achats_ht)}</strong></span>
-                <span className="text-gray-400">−</span>
-                <span className="bg-white/80 border border-gray-200 rounded-md px-2 py-0.5 text-gray-600">Salaires <strong className="text-gray-900">{fmtEuro(summary.masse_salariale)}</strong></span>
+                <span className="bg-white/10 rounded-md px-2 py-0.5 text-pilote-200">CA <strong className="text-white">{fmtEuro(summary.ca_total)}</strong></span>
+                <span className="text-pilote-200">−</span>
+                <span className="bg-white/10 rounded-md px-2 py-0.5 text-pilote-200">Achats <strong className="text-white">{fmtEuro(summary.achats_ht)}</strong></span>
+                <span className="text-pilote-200">−</span>
+                <span className="bg-white/10 rounded-md px-2 py-0.5 text-pilote-200">Salaires <strong className="text-white">{fmtEuro(summary.masse_salariale)}</strong></span>
               </div>
             </div>
-            <div className={`w-14 h-14 rounded-2xl flex items-center justify-center flex-shrink-0 ${summary.resultat_net >= 0 ? 'bg-green-100' : 'bg-red-100'}`}>
-              {summary.resultat_net >= 0 ? <TrendingUp className="w-7 h-7 text-green-600" /> : <TrendingDown className="w-7 h-7 text-red-600" />}
+            <div className="w-14 h-14 rounded-2xl bg-white/10 flex items-center justify-center flex-shrink-0">
+              {summary.resultat_net >= 0 ? <TrendingUp className="w-7 h-7 text-green-300" /> : <TrendingDown className="w-7 h-7 text-red-300" />}
             </div>
           </div>
         )}
@@ -835,7 +833,7 @@ export default function FacturationPage() {
                 const d = summary.marge_by_rayon![r.key]
                 if (!d) return null
                 return (
-                  <div key={r.key} className="rounded-xl border border-gray-100 p-3">
+                  <div key={r.key} className="rounded-2xl border border-gray-100 p-3">
                     <div className="flex items-center gap-1.5 mb-1.5">
                       <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: r.dot }} />
                       <span className="text-xs font-semibold text-gray-600">{r.label}</span>
