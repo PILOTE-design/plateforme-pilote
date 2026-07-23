@@ -107,8 +107,10 @@ const CATEGORIES = [
   { key: 'charcuterie',    label: 'Charcuterie',    color: 'bg-orange-50 text-orange-700', dot: '#c2410c' },
   { key: 'epicerie',       label: 'Épicerie',       color: 'bg-amber-50 text-amber-700',   dot: '#b45309' },
   { key: 'emballage',      label: 'Emballage',      color: 'bg-sky-50 text-sky-700',       dot: '#0369a1' },
-  { key: 'frais_generaux', label: 'Frais généraux', color: 'bg-violet-50 text-violet-700', dot: '#6d28d9' },
-  { key: 'autre',          label: 'Autre',          color: 'bg-gray-100 text-gray-600',    dot: '#6b7280' },
+  { key: 'frais_generaux',   label: 'Frais généraux',     color: 'bg-violet-50 text-violet-700', dot: '#6d28d9' },
+  { key: 'charge_structure', label: 'Charge de structure', color: 'bg-indigo-50 text-indigo-700', dot: '#4338ca' },
+  { key: 'frais_divers',     label: 'Frais divers',        color: 'bg-teal-50 text-teal-700',     dot: '#0f766e' },
+  { key: 'autre',            label: 'Autre',              color: 'bg-gray-100 text-gray-600',    dot: '#6b7280' },
 ]
 
 const TVA_RATES = [0, 5.5, 10, 20]
