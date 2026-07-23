@@ -47,6 +47,9 @@ export async function GET(request: NextRequest) {
   } else {
     if (week) query = query.eq('week_number', parseInt(week))
     if (year) query = query.eq('year', parseInt(year))
+    // Les charges fixes/récurrentes sont gérées à part (table recurring_charges) : on ne renvoie
+    // ici que les achats VARIABLES de la semaine.
+    query = query.eq('is_fixed_charge', false)
   }
   query = query.order('invoice_date', { ascending: false })
 
