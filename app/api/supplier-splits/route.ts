@@ -16,7 +16,7 @@ function supplierSociete(raw: string): string {
 const societeKey = (raw: string) => normalizeSupplierName(supplierSociete(raw))
 
 // Rayon dominant → catégorie d'achat des factures de la société
-const RAYON_TO_CATEGORY: Record<string, string> = { boucherie: 'viande', charcuterie: 'charcuterie', traiteur: 'autre', vente: 'autre' }
+const RAYON_TO_CATEGORY: Record<string, string> = { boucherie: 'boucherie', charcuterie: 'charcuterie', traiteur: 'traiteur', vente: 'frais_divers' }
 function categoryFromPcts(p: { pct_boucherie: number; pct_charcuterie: number; pct_traiteur: number; pct_vente: number }): string | null {
   const entries: Array<[string, number]> = [
     ['boucherie', p.pct_boucherie], ['charcuterie', p.pct_charcuterie], ['traiteur', p.pct_traiteur], ['vente', p.pct_vente],

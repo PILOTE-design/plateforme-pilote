@@ -64,7 +64,7 @@ function sameSupplierFam(a: string, b: string): boolean {
   return long.startsWith(short) && !/[\p{L}\p{N}]/u.test(long.charAt(short.length))
 }
 // Rayon dominant de la ventilation → catégorie d'achat (viande / charcuterie / … / autre)
-const RAYON_TO_CATEGORY: Record<string, string> = { boucherie: 'viande', charcuterie: 'charcuterie', traiteur: 'autre', vente: 'autre' }
+const RAYON_TO_CATEGORY: Record<string, string> = { boucherie: 'boucherie', charcuterie: 'charcuterie', traiteur: 'traiteur', vente: 'frais_divers' }
 function categoryFromSplit(sp: { boucherie: string; charcuterie: string; traiteur: string; vente: string }): string | null {
   const entries: Array<[string, number]> = [
     ['boucherie', parseFloat(sp.boucherie) || 0],
@@ -103,14 +103,10 @@ type ProviderMeta = {
 // Palette catégories : teintes sourdes et cohérentes (fond -50, texte -700) + point de
 // couleur pour la barre de répartition — évite l'effet « arc-en-ciel » criard.
 const CATEGORIES = [
-  { key: 'viande',         label: 'Viande',         color: 'bg-red-50 text-red-700',       dot: '#b91c1c' },
-  { key: 'charcuterie',    label: 'Charcuterie',    color: 'bg-orange-50 text-orange-700', dot: '#c2410c' },
-  { key: 'epicerie',       label: 'Épicerie',       color: 'bg-amber-50 text-amber-700',   dot: '#b45309' },
-  { key: 'emballage',      label: 'Emballage',      color: 'bg-sky-50 text-sky-700',       dot: '#0369a1' },
-  { key: 'frais_generaux',   label: 'Frais généraux',     color: 'bg-violet-50 text-violet-700', dot: '#6d28d9' },
-  { key: 'charge_structure', label: 'Charge de structure', color: 'bg-indigo-50 text-indigo-700', dot: '#4338ca' },
-  { key: 'frais_divers',     label: 'Frais divers',        color: 'bg-teal-50 text-teal-700',     dot: '#0f766e' },
-  { key: 'autre',            label: 'Autre',              color: 'bg-gray-100 text-gray-600',    dot: '#6b7280' },
+  { key: 'boucherie',    label: 'Boucherie',    color: 'bg-red-50 text-red-700',       dot: '#b91c1c' },
+  { key: 'charcuterie',  label: 'Charcuterie',  color: 'bg-orange-50 text-orange-700', dot: '#c2410c' },
+  { key: 'traiteur',     label: 'Traiteur',     color: 'bg-blue-50 text-blue-700',     dot: '#1d4ed8' },
+  { key: 'frais_divers', label: 'Frais divers', color: 'bg-teal-50 text-teal-700',     dot: '#0f766e' },
 ]
 
 const TVA_RATES = [0, 5.5, 10, 20]
@@ -124,7 +120,7 @@ const PERIOD_OPTIONS = [
 
 const EMPTY_INVOICE = {
   supplier_name: '', invoice_number: '', invoice_date: '',
-  category: 'viande', amount_ht: '', tva_rate: '20', notes: ''
+  category: 'boucherie', amount_ht: '', tva_rate: '20', notes: ''
 }
 
 const PROVIDERS_META: ProviderMeta[] = [
