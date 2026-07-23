@@ -2,8 +2,19 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { resolveClientId } from '@/lib/resolve-client-id'
 import { normalizeSupplierName, sameSupplierFamily } from '@/lib/supplier-memory'
+import { weekRecurringCost } from '@/lib/recurring-charges'
 
 export const dynamic = 'force-dynamic'
+
+// Dates (lundi/dimanche) d'une semaine ISO — identiques au calcul de la page facturation.
+function getWeekDatesISO(week: number, year: number): [string, string] {
+  const jan4 = new Date(Date.UTC(year, 0, 4))
+  const dow = jan4.getUTCDay() || 7
+  const mon = new Date(jan4)
+  mon.setUTCDate(jan4.getUTCDate() - dow + 1 + (week - 1) * 7)
+  const sun = new Date(mon); sun.setUTCDate(mon.getUTCDate() + 6)
+  return [mon.toISOString().slice(0, 10), sun.toISOString().slice(0, 10)]
+}
 
 // « Facture X - 6109622F… » → « X » : on ventile par société, pas par n° de facture.
 function supplierSociete(raw: string): string {
@@ -41,15 +52,19 @@ export async function GET(request: NextRequest) {
   // 1. Achats HT de la semaine
   const { data: invoicesData } = await serviceSupabase
     .from('invoices')
-    .select('amount_ht, category, supplier_name')
+    .select('amount_ht, category, supplier_name, is_fixed_charge')
     .eq('client_id', clientId)
     .eq('week_number', week)
     .eq('year', year)
 
-  const achats_ht = (invoicesData || []).reduce((s: number, inv: any) => s + parseFloat(inv.amount_ht || 0), 0)
+  // Achats VARIABLES uniquement : les charges fixes/récurrentes sont désormais gérées à part
+  // (provision étalée au jour près), elles ne doivent plus peser en plein sur leur semaine de saisie.
+  const varInv = (invoicesData || []).filter((inv: any) => !inv.is_fixed_charge)
+
+  const achats_ht = varInv.reduce((s: number, inv: any) => s + parseFloat(inv.amount_ht || 0), 0)
 
   const achats_by_category: Record<string, number> = {}
-  for (const inv of invoicesData || []) {
+  for (const inv of varInv) {
     const cat = inv.category || 'autre'
     achats_by_category[cat] = (achats_by_category[cat] || 0) + parseFloat(inv.amount_ht || 0)
   }
@@ -76,7 +91,7 @@ export async function GET(request: NextRequest) {
   const achats_by_rayon: Record<string, number> = { boucherie: 0, charcuterie: 0, traiteur: 0, fruits_et_legumes: 0 }
   let achats_non_ventiles = 0
   let achats_divers = 0
-  for (const inv of invoicesData || []) {
+  for (const inv of varInv) {
     const amt = parseFloat(inv.amount_ht || 0)
     if (!amt) continue
     const sp = splitFor(inv.supplier_name)
@@ -141,10 +156,24 @@ export async function GET(request: NextRequest) {
     .eq('year', year)
     .maybeSingle()
 
+  // 2 bis. Charges fixes / récurrentes — provision étalée au jour près sur la semaine,
+  // le RÉEL (recurring_actuals) remplaçant la provision sur sa fenêtre (recalcul rétroactif).
+  const [monISO, sunISO] = getWeekDatesISO(week, year)
+  const { data: recCharges } = await serviceSupabase
+    .from('recurring_charges')
+    .select('id, label, category, amount_ht, tva_rate, periodicity, start_date, end_date, active')
+    .eq('client_id', clientId)
+  const { data: recActuals } = await serviceSupabase
+    .from('recurring_actuals')
+    .select('id, recurring_charge_id, period_start, period_end, amount_ht')
+    .eq('client_id', clientId)
+  const recur = weekRecurringCost((recCharges || []) as any, (recActuals || []) as any, monISO, sunISO)
+  const charges_fixes = recur.total
+
   const ca_total = parseFloat(caData?.ca_total || 0)
   const marge_brute = ca_total - achats_ht
   const taux_marge = ca_total > 0 ? (marge_brute / ca_total) * 100 : null
-  const resultat_net = marge_brute - masse_salariale
+  const resultat_net = marge_brute - masse_salariale - charges_fixes
   const ratio_ms = ca_total > 0 ? (masse_salariale / ca_total) * 100 : null
 
   // Marge par rayon = CA rayon (weekly_ca) − achats ventilés du rayon
@@ -188,6 +217,8 @@ export async function GET(request: NextRequest) {
     achats_divers: round2(achats_divers),
     marge_by_rayon,
     masse_salariale: Math.round(masse_salariale * 100) / 100,
+    charges_fixes: Math.round(charges_fixes * 100) / 100,
+    charges_fixes_lines: recur.lines,
     ca_total,
     ca_detail: caData || null,
     marge_brute: Math.round(marge_brute * 100) / 100,
