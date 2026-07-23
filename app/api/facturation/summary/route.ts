@@ -46,7 +46,7 @@ export async function GET(request: NextRequest) {
   // 1 bis. Ventilation des achats par rayon (répartition par fournisseur, cf. supplier_rayon_splits)
   const { data: splitRows } = await serviceSupabase
     .from('supplier_rayon_splits')
-    .select('supplier_key, pct_boucherie, pct_charcuterie, pct_traiteur, pct_vente')
+    .select('supplier_key, pct_boucherie, pct_charcuterie, pct_traiteur, pct_fruits_et_legumes, pct_divers')
     .eq('client_id', clientId)
   const splitList = splitRows || []
 
@@ -61,18 +61,21 @@ export async function GET(request: NextRequest) {
     return best
   }
 
-  const achats_by_rayon: Record<string, number> = { boucherie: 0, charcuterie: 0, traiteur: 0, vente: 0 }
+  // 4 rayons réels ; le « divers » est accumulé à part puis redistribué au prorata du CA
+  const achats_by_rayon: Record<string, number> = { boucherie: 0, charcuterie: 0, traiteur: 0, fruits_et_legumes: 0 }
   let achats_non_ventiles = 0
+  let achats_divers = 0
   for (const inv of invoicesData || []) {
     const amt = parseFloat(inv.amount_ht || 0)
     if (!amt) continue
     const sp = splitFor(inv.supplier_name)
-    const tot = sp ? (Number(sp.pct_boucherie) + Number(sp.pct_charcuterie) + Number(sp.pct_traiteur) + Number(sp.pct_vente)) : 0
+    const tot = sp ? (Number(sp.pct_boucherie) + Number(sp.pct_charcuterie) + Number(sp.pct_traiteur) + Number(sp.pct_fruits_et_legumes) + Number(sp.pct_divers)) : 0
     if (!sp || tot <= 0) { achats_non_ventiles += amt; continue }
-    achats_by_rayon.boucherie   += amt * (Number(sp.pct_boucherie)   / tot)
-    achats_by_rayon.charcuterie += amt * (Number(sp.pct_charcuterie) / tot)
-    achats_by_rayon.traiteur    += amt * (Number(sp.pct_traiteur)    / tot)
-    achats_by_rayon.vente       += amt * (Number(sp.pct_vente)       / tot)
+    achats_by_rayon.boucherie         += amt * (Number(sp.pct_boucherie)         / tot)
+    achats_by_rayon.charcuterie       += amt * (Number(sp.pct_charcuterie)       / tot)
+    achats_by_rayon.traiteur          += amt * (Number(sp.pct_traiteur)          / tot)
+    achats_by_rayon.fruits_et_legumes += amt * (Number(sp.pct_fruits_et_legumes) / tot)
+    achats_divers                     += amt * (Number(sp.pct_divers)            / tot)
   }
 
   // 2. Masse salariale depuis planning — UNIQUEMENT les employés de CE client.
@@ -135,7 +138,19 @@ export async function GET(request: NextRequest) {
 
   // Marge par rayon = CA rayon (weekly_ca) − achats ventilés du rayon
   const round2 = (n: number) => Math.round(n * 100) / 100
-  const RAYONS = ['boucherie', 'charcuterie', 'traiteur', 'vente'] as const
+  const RAYONS = ['boucherie', 'charcuterie', 'traiteur', 'fruits_et_legumes'] as const
+
+  // Redistribution du « divers » sur les 4 rayons, au prorata de leur part de CA
+  // (à défaut de CA par rayon renseigné : répartition égale)
+  const caByRayon: Record<string, number> = {}
+  let caRayonSum = 0
+  for (const r of RAYONS) { const v = parseFloat((caData as any)?.[`ca_${r}`] || 0) || 0; caByRayon[r] = v; caRayonSum += v }
+  if (achats_divers > 0) {
+    for (const r of RAYONS) {
+      const share = caRayonSum > 0 ? caByRayon[r] / caRayonSum : 1 / RAYONS.length
+      achats_by_rayon[r] += achats_divers * share
+    }
+  }
   const marge_by_rayon: Record<string, { ca: number; achats: number; marge: number; taux: number | null }> = {}
   for (const r of RAYONS) {
     const caR = parseFloat((caData as any)?.[`ca_${r}`] || 0)
@@ -153,6 +168,7 @@ export async function GET(request: NextRequest) {
     achats_by_category,
     achats_by_rayon: Object.fromEntries(Object.entries(achats_by_rayon).map(([k, v]) => [k, round2(v)])),
     achats_non_ventiles: round2(achats_non_ventiles),
+    achats_divers: round2(achats_divers),
     marge_by_rayon,
     masse_salariale: Math.round(masse_salariale * 100) / 100,
     ca_total,
