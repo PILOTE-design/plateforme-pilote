@@ -1245,14 +1245,14 @@ export default function FacturationPage() {
               <button onClick={() => setShowSplits(false)} className="p-1.5 rounded-lg hover:bg-gray-100"><X className="w-4 h-4 text-gray-500" /></button>
             </div>
             <div className="p-5 overflow-y-auto">
-              <div className="hidden md:flex items-center gap-2 px-2 pb-2 text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+              <div className="hidden md:flex items-center gap-2 px-2 pb-2 text-[10px] font-semibold leading-tight text-gray-400">
                 <span className="flex-1">Fournisseur</span>
-                <span className="w-12 text-center">Bouch.</span>
-                <span className="w-12 text-center">Charc.</span>
-                <span className="w-12 text-center">Trait.</span>
-                <span className="w-12 text-center">F&amp;L</span>
-                <span className="w-12 text-center">Divers</span>
-                <span className="w-12 text-center">Total</span>
+                <span className="w-16 text-center">Boucherie</span>
+                <span className="w-16 text-center">Charcuterie</span>
+                <span className="w-16 text-center">Traiteur</span>
+                <span className="w-16 text-center">Fruits &amp; légumes</span>
+                <span className="w-16 text-center">Divers</span>
+                <span className="w-16 text-center">Total</span>
               </div>
               {Object.keys(splitDraft).length === 0 ? (
                 <p className="text-sm text-gray-400 py-8 text-center">Aucun fournisseur connu pour l&apos;instant — ajoutez des factures d&apos;achat d&apos;abord.</p>
@@ -1269,9 +1269,9 @@ export default function FacturationPage() {
                         <div className="flex items-center gap-2">
                           {VENT_FIELDS.map(f => (
                             <input key={f.key} type="number" min="0" max="100" value={(v as any)[f.key]} onChange={e => upd(f.key, e.target.value)}
-                              placeholder="0" className="w-12 border border-gray-200 rounded-md px-1.5 py-1 text-sm text-right tabular focus:outline-none focus:ring-2 focus:ring-pilote-200" />
+                              placeholder="0" className="w-16 border border-gray-200 rounded-md px-1.5 py-1 text-sm text-right tabular focus:outline-none focus:ring-2 focus:ring-pilote-200" />
                           ))}
-                          <span className={`w-12 text-center text-xs font-bold tabular ${totOk ? 'text-gray-400' : 'text-orange-500'}`}>{tot ? `${Math.round(tot)}%` : '—'}</span>
+                          <span className={`w-16 text-center text-xs font-bold tabular ${totOk ? 'text-gray-400' : 'text-orange-500'}`}>{tot ? `${Math.round(tot)}%` : '—'}</span>
                         </div>
                       </div>
                     )
