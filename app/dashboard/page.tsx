@@ -469,7 +469,7 @@ export default async function DashboardPage() {
             <Card className="hover:shadow-card-hover transition-shadow">
               <CardContent className="p-5">
                 <div className="flex items-center gap-2 mb-2.5">
-                  <div className={`w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0 ${taux_marge !== null && taux_marge < 30 ? 'bg-red-50' : 'bg-green-50'}`}>
+                  <div className={`w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0 ${taux_marge !== null && taux_marge < 30 ? 'bg-red-50' : 'bg-green-50'}`}>
                     {taux_marge !== null && taux_marge < 30 ? <TrendingDown className="w-3.5 h-3.5 text-red-500" /> : <TrendingUp className="w-3.5 h-3.5 text-green-600" />}
                   </div>
                   <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Marge brute · {weekLabel}</p>
