@@ -23,7 +23,7 @@ type Invoice = {
   status?: string | null
 }
 
-type WeeklyCA = { ca_total: number; ca_boucherie: number; ca_charcuterie: number; ca_traiteur: number; ca_vente: number }
+type WeeklyCA = { ca_total: number; ca_boucherie: number; ca_charcuterie: number; ca_traiteur: number; ca_fruits_et_legumes: number; ca_vente: number }
 
 type RayonMargin = { ca: number; achats: number; marge: number; taux: number | null }
 type Summary = {
@@ -32,6 +32,7 @@ type Summary = {
   taux_marge: number | null; resultat_net: number; ratio_ms: number | null
   achats_by_rayon?: Record<string, number>
   achats_non_ventiles?: number
+  achats_divers?: number
   marge_by_rayon?: Record<string, RayonMargin>
 }
 
@@ -39,12 +40,20 @@ type Summary = {
 type SupplierMemo = { name: string; category: string; tva_rate: number | null }
 
 /** Répartition d'un fournisseur sur les rayons (en %) */
-type RayonSplit = { supplier_key: string; supplier_label: string | null; pct_boucherie: number; pct_charcuterie: number; pct_traiteur: number; pct_vente: number }
+type RayonSplit = { supplier_key: string; supplier_label: string | null; pct_boucherie: number; pct_charcuterie: number; pct_traiteur: number; pct_fruits_et_legumes: number; pct_divers: number }
 const RAYONS = [
-  { key: 'boucherie',   label: 'Boucherie',   dot: '#1E3A5F' },
-  { key: 'charcuterie', label: 'Charcuterie', dot: '#FF8C00' },
-  { key: 'traiteur',    label: 'Traiteur',    dot: '#2a4f7c' },
-  { key: 'vente',       label: 'Vente',       dot: '#c5d2e2' },
+  { key: 'boucherie',         label: 'Boucherie',        dot: '#1E3A5F' },
+  { key: 'charcuterie',       label: 'Charcuterie',      dot: '#FF8C00' },
+  { key: 'traiteur',          label: 'Traiteur',         dot: '#2a4f7c' },
+  { key: 'fruits_et_legumes', label: 'Fruits & légumes', dot: '#16a34a' },
+] as const
+// Champs de ventilation saisis : les 4 rayons + « divers » (redistribué au prorata du CA côté serveur)
+const VENT_FIELDS = [
+  { key: 'boucherie',         label: 'Boucherie',        dot: '#1E3A5F' },
+  { key: 'charcuterie',       label: 'Charcuterie',      dot: '#FF8C00' },
+  { key: 'traiteur',          label: 'Traiteur',         dot: '#2a4f7c' },
+  { key: 'fruits_et_legumes', label: 'Fruits & légumes', dot: '#16a34a' },
+  { key: 'divers',            label: 'Divers',           dot: '#9ca3af' },
 ] as const
 
 // Correspondance société → répartition mémorisée (exacte ou par famille de noms).
@@ -64,15 +73,10 @@ function sameSupplierFam(a: string, b: string): boolean {
   return long.startsWith(short) && !/[\p{L}\p{N}]/u.test(long.charAt(short.length))
 }
 // Rayon dominant de la ventilation → catégorie d'achat (viande / charcuterie / … / autre)
-const RAYON_TO_CATEGORY: Record<string, string> = { boucherie: 'boucherie', charcuterie: 'charcuterie', traiteur: 'traiteur', vente: 'frais_divers' }
-function categoryFromSplit(sp: { boucherie: string; charcuterie: string; traiteur: string; vente: string }): string | null {
-  const entries: Array<[string, number]> = [
-    ['boucherie', parseFloat(sp.boucherie) || 0],
-    ['charcuterie', parseFloat(sp.charcuterie) || 0],
-    ['traiteur', parseFloat(sp.traiteur) || 0],
-    ['vente', parseFloat(sp.vente) || 0],
-  ]
-  const top = entries.sort((a, b) => b[1] - a[1])[0]
+const RAYON_TO_CATEGORY: Record<string, string> = { boucherie: 'boucherie', charcuterie: 'charcuterie', traiteur: 'traiteur', fruits_et_legumes: 'frais_divers', divers: 'frais_divers' }
+function categoryFromSplit(sp: Record<string, string>): string | null {
+  const entries = VENT_FIELDS.map(f => [f.key, parseFloat((sp as any)[f.key]) || 0] as [string, number])
+  const top = entries.slice().sort((a, b) => b[1] - a[1])[0]
   if (!top || top[1] <= 0) return null
   return RAYON_TO_CATEGORY[top[0]] ?? null
 }
@@ -236,10 +240,10 @@ export default function FacturationPage() {
   const [showSplits,     setShowSplits]     = useState(false)
   const [splits,         setSplits]         = useState<RayonSplit[]>([])
   const [splitSuppliers, setSplitSuppliers] = useState<{ key: string; name: string }[]>([])
-  const [splitDraft,     setSplitDraft]     = useState<Record<string, { label: string; boucherie: string; charcuterie: string; traiteur: string; vente: string }>>({})
+  const [splitDraft,     setSplitDraft]     = useState<Record<string, { label: string; boucherie: string; charcuterie: string; traiteur: string; fruits_et_legumes: string; divers: string }>>({})
   const [splitSaving,    setSplitSaving]    = useState(false)
   // Répartition saisie sur la facture en cours (mémorisée par société)
-  const [newSplit,       setNewSplit]       = useState<{ boucherie: string; charcuterie: string; traiteur: string; vente: string }>({ boucherie: '', charcuterie: '', traiteur: '', vente: '' })
+  const [newSplit,       setNewSplit]       = useState<{ boucherie: string; charcuterie: string; traiteur: string; fruits_et_legumes: string; divers: string }>({ boucherie: '', charcuterie: '', traiteur: '', fruits_et_legumes: '', divers: '' })
   const [splitTouched,   setSplitTouched]   = useState(false)
   const [categoryTouched, setCategoryTouched] = useState(false)
   const [newInvoice, setNewInvoice] = useState<any>(EMPTY_INVOICE)
@@ -248,7 +252,7 @@ export default function FacturationPage() {
   const [suppliersMemo, setSuppliersMemo] = useState<SupplierMemo[]>([])
   // Le boucher a choisi catégorie ou TVA à la main → la mémoire ne l'écrase plus
   const [memoTouched, setMemoTouched] = useState(false)
-  const [caForm,    setCaForm]    = useState({ ca_total: '', ca_boucherie: '', ca_charcuterie: '', ca_traiteur: '', ca_vente: '' })
+  const [caForm,    setCaForm]    = useState({ ca_total: '', ca_boucherie: '', ca_charcuterie: '', ca_traiteur: '', ca_fruits_et_legumes: '' })
   const [settForm,  setSettForm]  = useState({ company_name: '', siret: '' })
 
   const [integrations,     setIntegrations]     = useState<BillingIntegration[]>([])
@@ -288,8 +292,8 @@ export default function FacturationPage() {
     setSummary(sumRes)
     const s = settRes || {}
     setSettForm({ company_name: s.company_name || '', siret: s.siret || '' })
-    if (caRes && !caRes.error) setCaForm({ ca_total: String(caRes.ca_total || ''), ca_boucherie: String(caRes.ca_boucherie || ''), ca_charcuterie: String(caRes.ca_charcuterie || ''), ca_traiteur: String(caRes.ca_traiteur || ''), ca_vente: String(caRes.ca_vente || '') })
-    else setCaForm({ ca_total: '', ca_boucherie: '', ca_charcuterie: '', ca_traiteur: '', ca_vente: '' })
+    if (caRes && !caRes.error) setCaForm({ ca_total: String(caRes.ca_total || ''), ca_boucherie: String(caRes.ca_boucherie || ''), ca_charcuterie: String(caRes.ca_charcuterie || ''), ca_traiteur: String(caRes.ca_traiteur || ''), ca_fruits_et_legumes: String(caRes.ca_fruits_et_legumes || '') })
+    else setCaForm({ ca_total: '', ca_boucherie: '', ca_charcuterie: '', ca_traiteur: '', ca_fruits_et_legumes: '' })
     setLoading(false)
   }, [week, year])
 
@@ -334,7 +338,7 @@ export default function FacturationPage() {
   function openAdd() {
     setNewInvoice(EMPTY_INVOICE)
     setMemoTouched(false)
-    setNewSplit({ boucherie: '', charcuterie: '', traiteur: '', vente: '' })
+    setNewSplit({ boucherie: '', charcuterie: '', traiteur: '', fruits_et_legumes: '', divers: '' })
     setSplitTouched(false)
     setCategoryTouched(false)
     setShowAdd(true)
@@ -356,16 +360,17 @@ export default function FacturationPage() {
           boucherie:   m.pct_boucherie   ? String(m.pct_boucherie)   : '',
           charcuterie: m.pct_charcuterie ? String(m.pct_charcuterie) : '',
           traiteur:    m.pct_traiteur    ? String(m.pct_traiteur)    : '',
-          vente:       m.pct_vente       ? String(m.pct_vente)       : '',
+          fruits_et_legumes: m.pct_fruits_et_legumes ? String(m.pct_fruits_et_legumes) : '',
+          divers:            m.pct_divers            ? String(m.pct_divers)            : '',
         }
-      : { boucherie: '', charcuterie: '', traiteur: '', vente: '' })
+      : { boucherie: '', charcuterie: '', traiteur: '', fruits_et_legumes: '', divers: '' })
   }, [newInvoice.supplier_name, splits, showAdd, splitTouched])
 
   /** Ouvre la répartition par rayon : fusionne fournisseurs connus + règles enregistrées */
   function openSplits() {
-    const draft: Record<string, { label: string; boucherie: string; charcuterie: string; traiteur: string; vente: string }> = {}
+    const draft: Record<string, { label: string; boucherie: string; charcuterie: string; traiteur: string; fruits_et_legumes: string; divers: string }> = {}
     for (const s of splitSuppliers) {
-      draft[s.key] = { label: s.name || s.key, boucherie: '', charcuterie: '', traiteur: '', vente: '' }
+      draft[s.key] = { label: s.name || s.key, boucherie: '', charcuterie: '', traiteur: '', fruits_et_legumes: '', divers: '' }
     }
     for (const sp of splits) {
       draft[sp.supplier_key] = {
@@ -373,7 +378,8 @@ export default function FacturationPage() {
         boucherie:   sp.pct_boucherie   ? String(sp.pct_boucherie)   : '',
         charcuterie: sp.pct_charcuterie ? String(sp.pct_charcuterie) : '',
         traiteur:    sp.pct_traiteur    ? String(sp.pct_traiteur)    : '',
-        vente:       sp.pct_vente       ? String(sp.pct_vente)       : '',
+        fruits_et_legumes: sp.pct_fruits_et_legumes ? String(sp.pct_fruits_et_legumes) : '',
+        divers:            sp.pct_divers            ? String(sp.pct_divers)            : '',
       }
     }
     setSplitDraft(draft)
@@ -389,7 +395,8 @@ export default function FacturationPage() {
         pct_boucherie:   parseFloat(v.boucherie)   || 0,
         pct_charcuterie: parseFloat(v.charcuterie) || 0,
         pct_traiteur:    parseFloat(v.traiteur)    || 0,
-        pct_vente:       parseFloat(v.vente)       || 0,
+        pct_fruits_et_legumes: parseFloat(v.fruits_et_legumes) || 0,
+        pct_divers:            parseFloat(v.divers)            || 0,
       }))
       const res = await fetch('/api/supplier-splits', {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
@@ -421,9 +428,10 @@ export default function FacturationPage() {
         pct_boucherie:   parseFloat(newSplit.boucherie)   || 0,
         pct_charcuterie: parseFloat(newSplit.charcuterie) || 0,
         pct_traiteur:    parseFloat(newSplit.traiteur)    || 0,
-        pct_vente:       parseFloat(newSplit.vente)       || 0,
+        pct_fruits_et_legumes: parseFloat(newSplit.fruits_et_legumes) || 0,
+        pct_divers:            parseFloat(newSplit.divers)            || 0,
       }
-      if (pcts.pct_boucherie || pcts.pct_charcuterie || pcts.pct_traiteur || pcts.pct_vente) {
+      if (pcts.pct_boucherie || pcts.pct_charcuterie || pcts.pct_traiteur || pcts.pct_fruits_et_legumes || pcts.pct_divers) {
         await fetch('/api/supplier-splits', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ split: { supplier_key: newInvoice.supplier_name, supplier_label: newInvoice.supplier_name, ...pcts } }),
@@ -542,7 +550,7 @@ export default function FacturationPage() {
       ca_boucherie:   parseFloat(caForm.ca_boucherie)   || 0,
       ca_charcuterie: parseFloat(caForm.ca_charcuterie) || 0,
       ca_traiteur:    parseFloat(caForm.ca_traiteur)    || 0,
-      ca_vente:       parseFloat(caForm.ca_vente)       || 0,
+      ca_fruits_et_legumes: parseFloat(caForm.ca_fruits_et_legumes) || 0,
     }
     if (!caForm.ca_total.trim() || isNaN(total) || total <= 0) {
       toast({ variant: 'error', title: 'CA total invalide', description: 'Saisissez un chiffre d\'affaires total strictement positif.' })
@@ -552,7 +560,7 @@ export default function FacturationPage() {
       toast({ variant: 'error', title: 'Montant négatif', description: 'Le détail par rayon ne peut pas contenir de valeur négative.' })
       return
     }
-    const sumRayons = rayons.ca_boucherie + rayons.ca_charcuterie + rayons.ca_traiteur + rayons.ca_vente
+    const sumRayons = rayons.ca_boucherie + rayons.ca_charcuterie + rayons.ca_traiteur + rayons.ca_fruits_et_legumes
     if (sumRayons > total + 0.01) {
       toast({ variant: 'error', title: 'Détail incohérent', description: `La somme des rayons (${fmtEuro(sumRayons)}) dépasse le CA total (${fmtEuro(total)}).` })
       return
@@ -845,8 +853,14 @@ export default function FacturationPage() {
                 )
               })}
             </div>
+            {(summary.achats_divers ?? 0) > 0 && (
+              <p className="text-[11px] text-gray-400 mt-3 flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-gray-300 flex-shrink-0" />
+                {fmtEuro(summary.achats_divers!)} de « divers » redistribués sur les rayons au prorata de leur part de CA.
+              </p>
+            )}
             {(summary.achats_non_ventiles ?? 0) > 0 && (
-              <p className="text-[11px] text-gray-400 mt-3">
+              <p className="text-[11px] text-gray-400 mt-2">
                 {fmtEuro(summary.achats_non_ventiles!)} d&apos;achats non répartis — fournisseurs sans répartition définie.
                 <button onClick={openSplits} className="ml-1 text-pilote hover:underline">Compléter</button>
               </p>
@@ -904,7 +918,7 @@ export default function FacturationPage() {
                   const cat = catInfo(inv.category)
                   const isViande = cat.key === 'boucherie'
                   const sp = matchSplit(inv.supplier_name, splits)
-                  const ventil = sp ? RAYONS.map(r => ({ label: r.label, dot: r.dot, pct: Number((sp as any)[`pct_${r.key}`]) || 0 })).filter(p => p.pct > 0) : []
+                  const ventil = sp ? VENT_FIELDS.map(r => ({ label: r.label, dot: r.dot, pct: Number((sp as any)[`pct_${r.key}`]) || 0 })).filter(p => p.pct > 0) : []
                   return (
                     <tr key={inv.id} className="border-t border-gray-50 hover:bg-gray-50 group transition-colors">
                       <td className="px-4 py-2.5">
@@ -1190,10 +1204,10 @@ export default function FacturationPage() {
               <div className="border-t border-gray-100 pt-3">
                 <label className="block text-xs font-semibold text-gray-600 mb-0.5">Répartition par rayon (%)</label>
                 <p className="text-[11px] text-gray-400 mb-2">Mémorisée pour <span className="font-semibold text-gray-600">{newInvoice.supplier_name || 'cette société'}</span> — ré-appliquée automatiquement à ses prochaines factures.</p>
-                <div className="grid grid-cols-4 gap-2">
-                  {RAYONS.map(r => (
+                <div className="grid grid-cols-3 gap-2">
+                  {VENT_FIELDS.map(r => (
                     <div key={r.key}>
-                      <span className="block text-[10px] text-gray-400 mb-0.5">{r.label}</span>
+                      <span className="flex items-center gap-1 text-[10px] text-gray-400 mb-0.5"><span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: r.dot }} />{r.label}</span>
                       <Input type="number" min="0" max="100" value={(newSplit as any)[r.key]}
                         onChange={e => { setSplitTouched(true); setNewSplit((p) => ({ ...p, [r.key]: e.target.value })) }}
                         placeholder="0" />
@@ -1201,10 +1215,10 @@ export default function FacturationPage() {
                   ))}
                 </div>
                 {(() => {
-                  const t = (parseFloat(newSplit.boucherie) || 0) + (parseFloat(newSplit.charcuterie) || 0) + (parseFloat(newSplit.traiteur) || 0) + (parseFloat(newSplit.vente) || 0)
+                  const t = VENT_FIELDS.reduce((s, f) => s + (parseFloat((newSplit as any)[f.key]) || 0), 0)
                   if (!t) return null
                   const ok = Math.abs(t - 100) < 0.5
-                  return <p className={`text-[11px] mt-1.5 ${ok ? 'text-gray-400' : 'text-orange-500'}`}>Total {Math.round(t)} %{ok ? '' : ' — devrait faire 100 %'}</p>
+                  return <p className={`text-[11px] mt-1.5 ${ok ? 'text-gray-400' : 'text-orange-500'}`}>Total {Math.round(t)} %{ok ? '' : ' — devrait faire 100 %'} · le « divers » sera réparti au prorata du CA</p>
                 })()}
               </div>
               <div className="flex gap-3 pt-1">
@@ -1233,10 +1247,11 @@ export default function FacturationPage() {
             <div className="p-5 overflow-y-auto">
               <div className="hidden md:flex items-center gap-2 px-2 pb-2 text-[10px] font-semibold uppercase tracking-wide text-gray-400">
                 <span className="flex-1">Fournisseur</span>
-                <span className="w-14 text-center">Bouch.</span>
-                <span className="w-14 text-center">Charc.</span>
-                <span className="w-14 text-center">Trait.</span>
-                <span className="w-14 text-center">Vente</span>
+                <span className="w-12 text-center">Bouch.</span>
+                <span className="w-12 text-center">Charc.</span>
+                <span className="w-12 text-center">Trait.</span>
+                <span className="w-12 text-center">F&amp;L</span>
+                <span className="w-12 text-center">Divers</span>
                 <span className="w-12 text-center">Total</span>
               </div>
               {Object.keys(splitDraft).length === 0 ? (
@@ -1244,17 +1259,17 @@ export default function FacturationPage() {
               ) : (
                 <div className="space-y-1.5">
                   {Object.entries(splitDraft).sort((a, b) => a[1].label.localeCompare(b[1].label, 'fr')).map(([key, v]) => {
-                    const tot = (parseFloat(v.boucherie) || 0) + (parseFloat(v.charcuterie) || 0) + (parseFloat(v.traiteur) || 0) + (parseFloat(v.vente) || 0)
+                    const tot = VENT_FIELDS.reduce((s, f) => s + (parseFloat((v as any)[f.key]) || 0), 0)
                     const totOk = tot === 0 || Math.abs(tot - 100) < 0.5
-                    const upd = (field: 'boucherie' | 'charcuterie' | 'traiteur' | 'vente', val: string) =>
+                    const upd = (field: string, val: string) =>
                       setSplitDraft(prev => ({ ...prev, [key]: { ...prev[key], [field]: val } }))
                     return (
                       <div key={key} className="flex flex-col md:flex-row md:items-center gap-2 p-2 rounded-xl hover:bg-gray-50">
                         <span className="flex-1 text-sm font-medium text-gray-800 truncate" title={v.label}>{v.label}</span>
                         <div className="flex items-center gap-2">
-                          {(['boucherie', 'charcuterie', 'traiteur', 'vente'] as const).map(f => (
-                            <input key={f} type="number" min="0" max="100" value={v[f]} onChange={e => upd(f, e.target.value)}
-                              placeholder="0" className="w-14 border border-gray-200 rounded-md px-2 py-1 text-sm text-right tabular focus:outline-none focus:ring-2 focus:ring-pilote-200" />
+                          {VENT_FIELDS.map(f => (
+                            <input key={f.key} type="number" min="0" max="100" value={(v as any)[f.key]} onChange={e => upd(f.key, e.target.value)}
+                              placeholder="0" className="w-12 border border-gray-200 rounded-md px-1.5 py-1 text-sm text-right tabular focus:outline-none focus:ring-2 focus:ring-pilote-200" />
                           ))}
                           <span className={`w-12 text-center text-xs font-bold tabular ${totOk ? 'text-gray-400' : 'text-orange-500'}`}>{tot ? `${Math.round(tot)}%` : '—'}</span>
                         </div>
@@ -1288,7 +1303,7 @@ export default function FacturationPage() {
                 <Input type="number" step="0.01" min="0" value={caForm.ca_total} onChange={e => setCaForm(p => ({ ...p, ca_total: e.target.value }))} placeholder="0.00" className="text-lg font-bold" autoFocus />
               </div>
               <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider pt-1">Détail par rayon (optionnel)</p>
-              {[{ key: 'ca_boucherie', label: 'Boucherie' }, { key: 'ca_charcuterie', label: 'Charcuterie' }, { key: 'ca_traiteur', label: 'Traiteur' }, { key: 'ca_vente', label: 'Vente / Épicerie' }].map(({ key, label }) => (
+              {[{ key: 'ca_boucherie', label: 'Boucherie' }, { key: 'ca_charcuterie', label: 'Charcuterie' }, { key: 'ca_traiteur', label: 'Traiteur' }, { key: 'ca_fruits_et_legumes', label: 'Fruits & légumes' }].map(({ key, label }) => (
                 <div key={key} className="flex items-center gap-2">
                   <label className="text-xs text-gray-500 w-28 flex-shrink-0">{label}</label>
                   <Input type="number" step="0.01" min="0" value={(caForm as any)[key]} onChange={e => setCaForm(p => ({ ...p, [key]: e.target.value }))} placeholder="0.00" />
