@@ -11,10 +11,10 @@ import {
   TrendingUp, TrendingDown, ShoppingCart, Users, Euro,
   Save, X, Settings, Check, Loader2, AlertCircle,
   Link2, Link2Off, RefreshCw, ArrowUpRight, Repeat, PieChart,
-  Pencil, CalendarClock, Scale
+  Pencil, CalendarClock
 } from 'lucide-react'
 import {
-  costForWindow, weekRecurringCost, provisionForWindow, enumeratePeriods,
+  costForWindow, weekRecurringCost,
   type RecurringCharge, type RecurringActual, type Periodicity,
 } from '@/lib/recurring-charges'
 
@@ -231,16 +231,12 @@ export default function FacturationPage() {
   const [week, setWeek] = useState(lastWeek.week)
   const [year, setYear] = useState(lastWeek.year)
   const [invoices,  setInvoices]  = useState<Invoice[]>([])
-  // Charges récurrentes (définition/provision) + réels (réconciliation)
+  // Charges récurrentes (définition/provision étalée au jour près)
   const [recurringCharges, setRecurringCharges] = useState<RecurringCharge[]>([])
   const [recurringActuals, setRecurringActuals] = useState<RecurringActual[]>([])
   const [showRecurring, setShowRecurring] = useState(false)          // modale édition d'une charge
   const [recForm, setRecForm] = useState<typeof EMPTY_RECURRING>(EMPTY_RECURRING)
   const [recSaving, setRecSaving] = useState(false)
-  const [showReconcile, setShowReconcile] = useState(false)          // modale réconciliation
-  const [reconChargeId, setReconChargeId] = useState<string>('')
-  const [reconYear, setReconYear] = useState<number>(year)
-  const [actualDraft, setActualDraft] = useState<Record<string, string>>({})  // key période → montant réel saisi
   const [summary,   setSummary]   = useState<Summary | null>(null)
   const [loading,   setLoading]   = useState(false)
   const [showAdd,   setShowAdd]   = useState(false)
@@ -607,27 +603,10 @@ export default function FacturationPage() {
   }
 
   async function deleteRecurring(c: RecurringCharge) {
-    const ok = await confirmAction({ title: 'Supprimer cette charge ?', description: `« ${c.label} » et ses réels de réconciliation seront supprimés.`, confirmLabel: 'Supprimer', variant: 'danger' })
+    const ok = await confirmAction({ title: 'Supprimer cette charge ?', description: `« ${c.label} » sera définitivement supprimée.`, confirmLabel: 'Supprimer', variant: 'danger' })
     if (!ok) return
     setRecurringCharges(prev => prev.filter(x => x.id !== c.id))
     await fetch(`/api/recurring-charges?id=${c.id}`, { method: 'DELETE' })
-    await load()
-  }
-
-  /** Enregistre un réel pour une période (remplace la provision sur sa fenêtre) */
-  async function saveActual(chargeId: string, period_start: string, period_end: string, amount: number) {
-    const res = await fetch('/api/recurring-actuals', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ recurring_charge_id: chargeId, period_start, period_end, amount_ht: amount }),
-    })
-    if (!res.ok) { toast({ variant: 'error', title: 'Réel non enregistré', description: `Erreur ${res.status}` }); return }
-    toast({ variant: 'success', title: 'Réel enregistré' })
-    await loadRecurring()
-    await load()
-  }
-  async function deleteActual(id: string) {
-    setRecurringActuals(prev => prev.filter(a => a.id !== id))
-    await fetch(`/api/recurring-actuals?id=${id}`, { method: 'DELETE' })
     await load()
   }
 
@@ -729,11 +708,9 @@ export default function FacturationPage() {
   const variableTotalHt  = variableInvoices.reduce((s, i) => s + i.amount_ht, 0)
   const variableTotalTtc = variableInvoices.reduce((s, i) => s + i.amount_ttc, 0)
 
-  // ── Charges récurrentes : provision de CETTE semaine, au jour près (le réel remplace la provision) ──
+  // ── Charges récurrentes : provision de CETTE semaine, au jour près ──
   const recurWeek = weekRecurringCost(recurringCharges, recurringActuals, monISO, sunISO)
   const recurringWeekly = recurWeek.total
-  const chargeHasActualThisWeek: Record<string, boolean> = {}
-  for (const l of recurWeek.lines) chargeHasActualThisWeek[l.id] = l.hasActual
   const activeRecurring = [...recurringCharges].sort((a, b) => a.label.localeCompare(b.label, 'fr'))
 
   return (
@@ -1051,7 +1028,7 @@ export default function FacturationPage() {
               <div className="w-8 h-8 rounded-md bg-white ring-1 ring-pilote-200/60 flex items-center justify-center flex-shrink-0"><Repeat className="w-4 h-4 text-pilote" /></div>
               <div className="min-w-0">
                 <h2 className="font-bold text-gray-900">Charges fixes &amp; récurrentes</h2>
-                <p className="text-[11px] text-gray-400">Loyer, énergie, assurance, crédit… étalées au jour près sur chaque semaine. Le réel remplace la provision sur sa période.</p>
+                <p className="text-[11px] text-gray-400">Loyer, énergie, assurance, crédit… étalées au jour près sur chaque semaine, automatiquement.</p>
               </div>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
@@ -1059,11 +1036,6 @@ export default function FacturationPage() {
                 <p className="text-sm font-bold text-pilote tabular">≈ {fmtEuro(recurringWeekly)}/sem</p>
                 <p className="text-[10px] text-gray-400">semaine {week}</p>
               </div>
-              <button onClick={() => { setReconYear(year); setReconChargeId(activeRecurring[0]?.id || ''); setActualDraft({}); setShowReconcile(true) }}
-                disabled={activeRecurring.length === 0}
-                className="inline-flex items-center gap-1.5 rounded-md border border-pilote-200 text-pilote bg-white hover:bg-pilote-50 px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-40">
-                <Scale className="w-3.5 h-3.5" />Réconcilier
-              </button>
               <button onClick={openNewRecurring}
                 className="inline-flex items-center gap-1.5 rounded-md bg-pilote hover:bg-pilote-hover text-white px-3 py-1.5 text-xs font-semibold shadow-card active:scale-[0.98] transition-all">
                 <Plus className="w-3.5 h-3.5" />Ajouter
@@ -1097,7 +1069,6 @@ export default function FacturationPage() {
               <tbody>
                 {activeRecurring.map((c, i) => {
                   const wk = costForWindow(c, recurringActuals, monISO, sunISO)
-                  const hasAct = chargeHasActualThisWeek[c.id]
                   const ended = !!c.end_date && c.end_date < monISO
                   const notStarted = c.start_date > sunISO
                   return (
@@ -1124,17 +1095,13 @@ export default function FacturationPage() {
                       </td>
                       <td className="px-4 py-2.5 text-right">
                         {wk > 0 ? (
-                          <>
-                            <span className="font-bold text-sm text-pilote tabular">≈ {fmtEuro(wk)}</span>
-                            {hasAct && <span className="ml-1 text-[9px] font-bold text-green-700 bg-green-100 px-1.5 py-0.5 rounded-full align-middle">réel</span>}
-                          </>
+                          <span className="font-bold text-sm text-pilote tabular">≈ {fmtEuro(wk)}</span>
                         ) : (
                           <span className="text-xs text-gray-300">{notStarted ? 'à venir' : ended ? 'terminée' : '—'}</span>
                         )}
                       </td>
                       <td className="px-4 py-2.5 text-center">
                         <div className="flex items-center justify-center gap-1 md:opacity-0 md:group-hover:opacity-100 transition-all">
-                          <button onClick={() => { setReconYear(year); setReconChargeId(c.id); setActualDraft({}); setShowReconcile(true) }} className="p-1.5 rounded hover:bg-pilote-50 text-gray-300 hover:text-pilote transition-colors" title="Réconcilier (saisir le réel par période)"><Scale className="w-3.5 h-3.5" /></button>
                           <button onClick={() => openEditRecurring(c)} className="p-1.5 rounded hover:bg-gray-100 text-gray-300 hover:text-gray-600 transition-colors" title="Modifier"><Pencil className="w-3.5 h-3.5" /></button>
                           <button onClick={() => deleteRecurring(c)} className="p-1.5 rounded hover:bg-red-50 text-gray-300 hover:text-red-400 transition-colors" title="Supprimer"><Trash2 className="w-3.5 h-3.5" /></button>
                         </div>
@@ -1215,87 +1182,6 @@ export default function FacturationPage() {
               <Button onClick={saveRecurring} disabled={recSaving} className="flex-1 bg-pilote hover:bg-pilote-hover text-white">
                 {recSaving ? <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" />Enregistrement...</> : <><Save className="w-4 h-4 mr-1.5" />Enregistrer</>}
               </Button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modal : Réconciliation provisionné vs réel */}
-      {showReconcile && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 backdrop-blur-sm p-4" onClick={() => setShowReconcile(false)}>
-          <div className="bg-white rounded-lg w-full max-w-2xl shadow-2xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
-            <div className="flex items-start justify-between p-5 border-b border-gray-100">
-              <div>
-                <h2 className="text-base font-bold text-gray-900">Réconciliation — provisionné vs réel</h2>
-                <p className="text-xs text-gray-500 mt-0.5 max-w-md">Saisissez le montant réel facturé pour une période. Il remplace la provision sur sa fenêtre — le résultat net des semaines concernées est recalculé.</p>
-              </div>
-              <button onClick={() => setShowReconcile(false)} className="p-1.5 rounded-md hover:bg-gray-100"><X className="w-4 h-4 text-gray-500" /></button>
-            </div>
-            <div className="flex items-center gap-2 px-5 pt-3">
-              <select value={reconChargeId} onChange={e => { setReconChargeId(e.target.value); setActualDraft({}) }} className="flex-1 border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200">
-                {activeRecurring.map(c => <option key={c.id} value={c.id}>{c.label} · {periodicityLabel(c.periodicity)}</option>)}
-              </select>
-              <div className="flex items-center gap-1 flex-shrink-0">
-                <button onClick={() => setReconYear(y => y - 1)} className="p-1.5 rounded-md hover:bg-gray-100"><ChevronLeft className="w-4 h-4 text-gray-500" /></button>
-                <span className="text-sm font-bold text-gray-900 tabular w-12 text-center">{reconYear}</span>
-                <button onClick={() => setReconYear(y => y + 1)} className="p-1.5 rounded-md hover:bg-gray-100"><ChevronRight className="w-4 h-4 text-gray-500" /></button>
-              </div>
-            </div>
-            <div className="p-5 pt-3 overflow-y-auto">
-              {(() => {
-                const c = recurringCharges.find(x => x.id === reconChargeId)
-                if (!c) return <p className="text-sm text-gray-400 py-8 text-center">Sélectionnez une charge.</p>
-                const periods = enumeratePeriods(c, `${reconYear}-01-01`, `${reconYear}-12-31`)
-                if (periods.length === 0) return <p className="text-sm text-gray-400 py-8 text-center">Aucune période active en {reconYear}.</p>
-                return (
-                  <>
-                    <div className="hidden md:flex items-center gap-2 px-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400">
-                      <span className="w-28">Période</span>
-                      <span className="flex-1 text-right">Provisionné</span>
-                      <span className="flex-1 text-right">Réel</span>
-                      <span className="flex-1 text-right">Écart</span>
-                      <span className="w-24" />
-                    </div>
-                    <div className="space-y-1.5">
-                      {periods.map(occ => {
-                        const sISO = occ.start.toISOString().slice(0, 10)
-                        const eISO = occ.end.toISOString().slice(0, 10)
-                        const prov = provisionForWindow(c, sISO, eISO)
-                        const act = recurringActuals.find(a => a.recurring_charge_id === c.id && a.period_start <= eISO && a.period_end >= sISO)
-                        const draft = actualDraft[occ.key] ?? ''
-                        const ecart = act ? Number(act.amount_ht) - prov : 0
-                        return (
-                          <div key={occ.key} className="flex flex-col md:flex-row md:items-center gap-2 p-2 rounded-md hover:bg-gray-50">
-                            <span className="w-28 text-sm font-semibold text-gray-800">{occ.label}</span>
-                            <span className="flex-1 text-right text-sm text-gray-600 tabular">{fmtEuro(prov)}</span>
-                            {act ? (
-                              <>
-                                <span className="flex-1 text-right text-sm font-semibold text-gray-900 tabular">{fmtEuro(Number(act.amount_ht))}</span>
-                                <span className={`flex-1 text-right text-sm font-bold tabular ${ecart > 0 ? 'text-red-500' : ecart < 0 ? 'text-green-600' : 'text-gray-400'}`}>{ecart > 0 ? '+' : ''}{fmtEuro(ecart)}</span>
-                                <span className="w-24 flex justify-end"><button onClick={() => deleteActual(act.id)} className="text-xs font-medium text-gray-400 hover:text-red-500">Retirer</button></span>
-                              </>
-                            ) : (
-                              <>
-                                <div className="flex-1 flex justify-end">
-                                  <input type="number" step="0.01" min="0" value={draft} onChange={e => setActualDraft(p => ({ ...p, [occ.key]: e.target.value }))} placeholder="réel €" className="w-24 border border-gray-300 rounded-md px-2 py-1 text-sm text-right tabular focus:outline-none focus:ring-2 focus:ring-pilote-200" />
-                                </div>
-                                <span className="flex-1 text-right text-xs text-gray-300">—</span>
-                                <span className="w-24 flex justify-end">
-                                  <button disabled={!draft} onClick={() => { saveActual(c.id, sISO, eISO, parseFloat(draft) || 0); setActualDraft(p => { const n = { ...p }; delete n[occ.key]; return n }) }} className="text-xs font-semibold text-pilote hover:underline disabled:opacity-40">Enregistrer</button>
-                                </span>
-                              </>
-                            )}
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </>
-                )
-              })()}
-              <p className="text-[11px] text-gray-400 mt-3">Écart = réel − provisionné. Un écart positif (rouge) = la charge réelle a dépassé la provision ; les semaines de la période sont recalculées avec le réel.</p>
-            </div>
-            <div className="flex gap-2 p-5 border-t border-gray-100">
-              <Button variant="outline" className="flex-1" onClick={() => setShowReconcile(false)}>Fermer</Button>
             </div>
           </div>
         </div>
