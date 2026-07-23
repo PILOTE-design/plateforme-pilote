@@ -16,15 +16,22 @@ function supplierSociete(raw: string): string {
 const societeKey = (raw: string) => normalizeSupplierName(supplierSociete(raw))
 
 // Rayon dominant → catégorie d'achat des factures de la société
-const RAYON_TO_CATEGORY: Record<string, string> = { boucherie: 'boucherie', charcuterie: 'charcuterie', traiteur: 'traiteur', vente: 'frais_divers' }
-function categoryFromPcts(p: { pct_boucherie: number; pct_charcuterie: number; pct_traiteur: number; pct_vente: number }): string | null {
+const RAYON_TO_CATEGORY: Record<string, string> = {
+  boucherie: 'boucherie', charcuterie: 'charcuterie', traiteur: 'traiteur',
+  fruits_et_legumes: 'frais_divers', divers: 'frais_divers',
+}
+type Pcts = { pct_boucherie: number; pct_charcuterie: number; pct_traiteur: number; pct_fruits_et_legumes: number; pct_divers: number }
+function categoryFromPcts(p: Pcts): string | null {
   const entries: Array<[string, number]> = [
-    ['boucherie', p.pct_boucherie], ['charcuterie', p.pct_charcuterie], ['traiteur', p.pct_traiteur], ['vente', p.pct_vente],
+    ['boucherie', p.pct_boucherie], ['charcuterie', p.pct_charcuterie], ['traiteur', p.pct_traiteur],
+    ['fruits_et_legumes', p.pct_fruits_et_legumes], ['divers', p.pct_divers],
   ]
   const top = entries.sort((a, b) => b[1] - a[1])[0]
   if (!top || top[1] <= 0) return null
   return RAYON_TO_CATEGORY[top[0]] ?? null
 }
+const anyPct = (p: Pcts) => p.pct_boucherie || p.pct_charcuterie || p.pct_traiteur || p.pct_fruits_et_legumes || p.pct_divers
+
 // Recatégorise toutes les factures d'une société (par clé société) vers `category`
 async function retagInvoices(svc: ReturnType<typeof createServiceClient>, clientId: string, rows: Array<{ key: string; category: string }>) {
   if (rows.length === 0) return
@@ -42,8 +49,9 @@ async function retagInvoices(svc: ReturnType<typeof createServiceClient>, client
   }
 }
 
-// Répartition (%) des achats par rayon, fournisseur par fournisseur.
-// GET → { splits: [...], suppliers: [{ key, name }] }  (fournisseurs connus depuis les factures)
+// Répartition (%) des achats par rayon (boucherie / charcuterie / traiteur / fruits & légumes / divers),
+// fournisseur par fournisseur. Le « divers » est redistribué au prorata du CA côté résumé.
+// GET → { splits: [...], suppliers: [{ key, name }] }
 // PUT → { splits: [...] }  remplace l'intégralité des règles du client
 
 export async function GET() {
@@ -57,7 +65,7 @@ export async function GET() {
 
   const { data: splitRows } = await svc
     .from('supplier_rayon_splits')
-    .select('supplier_key, supplier_label, pct_boucherie, pct_charcuterie, pct_traiteur, pct_vente')
+    .select('supplier_key, supplier_label, pct_boucherie, pct_charcuterie, pct_traiteur, pct_fruits_et_legumes, pct_divers')
     .eq('client_id', clientId)
 
   const { data: invRows } = await svc
@@ -84,7 +92,8 @@ export async function GET() {
       pct_boucherie: Number(s.pct_boucherie) || 0,
       pct_charcuterie: Number(s.pct_charcuterie) || 0,
       pct_traiteur: Number(s.pct_traiteur) || 0,
-      pct_vente: Number(s.pct_vente) || 0,
+      pct_fruits_et_legumes: Number(s.pct_fruits_et_legumes) || 0,
+      pct_divers: Number(s.pct_divers) || 0,
     })),
     suppliers,
   })
@@ -113,12 +122,13 @@ export async function PUT(req: NextRequest) {
       pct_boucherie: clamp(r.pct_boucherie),
       pct_charcuterie: clamp(r.pct_charcuterie),
       pct_traiteur: clamp(r.pct_traiteur),
-      pct_vente: clamp(r.pct_vente),
+      pct_fruits_et_legumes: clamp(r.pct_fruits_et_legumes),
+      pct_divers: clamp(r.pct_divers),
       updated_at: new Date().toISOString(),
     }))
     .filter((r: any) => {
       if (!r.supplier_key || seen.has(r.supplier_key)) return false
-      if (!(r.pct_boucherie || r.pct_charcuterie || r.pct_traiteur || r.pct_vente)) return false
+      if (!anyPct(r)) return false
       seen.add(r.supplier_key)
       return true
     })
@@ -157,15 +167,16 @@ export async function POST(req: NextRequest) {
   if (!key) return NextResponse.json({ error: 'Société manquante' }, { status: 400 })
 
   const clamp = (n: any) => { const v = parseFloat(String(n)); return isNaN(v) ? 0 : Math.min(100, Math.max(0, v)) }
-  const pcts = {
+  const pcts: Pcts = {
     pct_boucherie: clamp(s.pct_boucherie),
     pct_charcuterie: clamp(s.pct_charcuterie),
     pct_traiteur: clamp(s.pct_traiteur),
-    pct_vente: clamp(s.pct_vente),
+    pct_fruits_et_legumes: clamp(s.pct_fruits_et_legumes),
+    pct_divers: clamp(s.pct_divers),
   }
 
   // Tout à zéro → on retire la règle de cette société
-  if (!(pcts.pct_boucherie || pcts.pct_charcuterie || pcts.pct_traiteur || pcts.pct_vente)) {
+  if (!anyPct(pcts)) {
     const { error } = await svc.from('supplier_rayon_splits').delete().eq('client_id', clientId).eq('supplier_key', key)
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ ok: true, removed: true })
