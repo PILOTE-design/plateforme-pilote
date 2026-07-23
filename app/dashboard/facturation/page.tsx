@@ -893,7 +893,7 @@ export default function FacturationPage() {
               <thead>
                 <tr className="bg-gray-50 text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
                   <th className="px-4 py-2.5 text-left">Fournisseur</th>
-                  <th className="px-4 py-2.5 text-left">Catégorie</th>
+                  <th className="px-4 py-2.5 text-left">Ventilation</th>
                   <th className="px-4 py-2.5 text-left">Date</th>
                   <th className="px-4 py-2.5 text-right">HT</th>
                   <th className="px-4 py-2.5 text-right">TVA</th>
@@ -904,7 +904,9 @@ export default function FacturationPage() {
               <tbody>
                 {sortedVariable.map(inv => {
                   const cat = catInfo(inv.category)
-                  const isViande = cat.key === 'viande'
+                  const isViande = cat.key === 'boucherie'
+                  const sp = matchSplit(inv.supplier_name, splits)
+                  const ventil = sp ? RAYONS.map(r => ({ label: r.label, dot: r.dot, pct: Number((sp as any)[`pct_${r.key}`]) || 0 })).filter(p => p.pct > 0) : []
                   return (
                     <tr key={inv.id} className="border-t border-gray-50 hover:bg-gray-50 group transition-colors">
                       <td className="px-4 py-2.5">
@@ -923,14 +925,19 @@ export default function FacturationPage() {
                         </div>
                       </td>
                       <td className="px-4 py-2.5">
-                        <select
-                          value={inv.category}
-                          onChange={e => updateCategory(inv, e.target.value)}
-                          className={`text-xs font-semibold rounded-full pl-2.5 pr-1.5 py-0.5 border-0 cursor-pointer focus:outline-none focus:ring-2 focus:ring-pilote-200 ${cat.color}`}
-                          title="Modifier la catégorie — possibilité d'appliquer à tout le fournisseur"
-                        >
-                          {CATEGORIES.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
-                        </select>
+                        {ventil.length === 0 ? (
+                          <button onClick={openSplits} title="Définir la répartition par rayon de cette société"
+                            className="text-xs text-gray-400 hover:text-pilote hover:underline">Non réparti</button>
+                        ) : (
+                          <div className="flex flex-wrap items-center gap-1">
+                            {ventil.map(p => (
+                              <span key={p.label} className="inline-flex items-center gap-1 text-[11px] font-semibold text-gray-700 bg-gray-50 rounded-full px-2 py-0.5">
+                                <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: p.dot }} />
+                                {p.label} {Math.round(p.pct)} %
+                              </span>
+                            ))}
+                          </div>
+                        )}
                       </td>
                       <td className="px-4 py-2.5 text-sm text-gray-600">{new Date(inv.invoice_date).toLocaleDateString('fr-FR')}</td>
                       <td className={`px-4 py-2.5 text-right font-semibold text-sm ${inv.amount_ht < 0 ? 'text-green-600' : 'text-gray-900'}`}>{fmtEuro(inv.amount_ht)}</td>
