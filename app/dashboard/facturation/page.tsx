@@ -10,8 +10,13 @@ import {
   Receipt, ChevronLeft, ChevronRight, Plus, Trash2,
   TrendingUp, TrendingDown, ShoppingCart, Users, Euro,
   Save, X, Settings, Check, Loader2, AlertCircle,
-  Link2, Link2Off, RefreshCw, ArrowUpRight, Repeat, Undo2, PieChart
+  Link2, Link2Off, RefreshCw, ArrowUpRight, Repeat, PieChart,
+  Pencil, CalendarClock, Scale
 } from 'lucide-react'
+import {
+  costForWindow, weekRecurringCost, provisionForWindow, enumeratePeriods,
+  type RecurringCharge, type RecurringActual, type Periodicity,
+} from '@/lib/recurring-charges'
 
 // ─── Types ──────────────────────────────
 
@@ -28,6 +33,7 @@ type WeeklyCA = { ca_total: number; ca_boucherie: number; ca_charcuterie: number
 type RayonMargin = { ca: number; achats: number; marge: number; taux: number | null }
 type Summary = {
   achats_ht: number; achats_by_category: Record<string, number>; masse_salariale: number
+  charges_fixes?: number; charges_fixes_lines?: { id: string; label: string; category: string; cost: number; hasActual: boolean }[]
   ca_total: number; ca_detail: WeeklyCA | null; marge_brute: number
   taux_marge: number | null; resultat_net: number; ratio_ms: number | null
   achats_by_rayon?: Record<string, number>
@@ -115,12 +121,21 @@ const CATEGORIES = [
 
 const TVA_RATES = [0, 5.5, 10, 20]
 
-const PERIOD_OPTIONS = [
-  { days: 30,  label: 'Mensuel'     },
-  { days: 91,  label: 'Trimestriel' },
-  { days: 182, label: 'Semestriel'  },
-  { days: 365, label: 'Annuel'      },
+// Périodicités des charges récurrentes (montant saisi = montant PAR période)
+const PERIODICITY_OPTIONS: { key: Periodicity; label: string; short: string }[] = [
+  { key: 'weekly',    label: 'Hebdomadaire', short: '/sem'  },
+  { key: 'monthly',   label: 'Mensuel',      short: '/mois' },
+  { key: 'quarterly', label: 'Trimestriel',  short: '/trim' },
+  { key: 'semester',  label: 'Semestriel',   short: '/sem.' },
+  { key: 'annual',    label: 'Annuel',       short: '/an'   },
 ]
+const periodicityLabel = (p: string) => PERIODICITY_OPTIONS.find(o => o.key === p)?.label || p
+const periodicityShort = (p: string) => PERIODICITY_OPTIONS.find(o => o.key === p)?.short || ''
+
+const EMPTY_RECURRING = {
+  id: '', label: '', category: 'frais_divers', amount_ht: '', tva_rate: '20',
+  periodicity: 'monthly' as Periodicity, start_date: '', end_date: '', active: true,
+}
 
 const EMPTY_INVOICE = {
   supplier_name: '', invoice_number: '', invoice_date: '',
@@ -160,20 +175,6 @@ function catInfo(key: string) { return CATEGORIES.find(c => c.key === key) ?? CA
 /** Initiales du fournisseur pour la pastille d'avatar (2 lettres max) */
 function initials(name: string) {
   return name.trim().split(/\s+/).slice(0, 2).map(w => w[0] || '').join('').toUpperCase() || '·'
-}
-
-function weeklyShare(amountHt: number, days?: number | null) {
-  return Math.round((amountHt * 7 / (days || 30)) * 100) / 100
-}
-
-/** Une charge structurelle couvre la semaine si sa période (date → date + period_days) chevauche la semaine */
-function coversWeek(inv: Invoice, monISO: string, sunISO: string): boolean {
-  if (!inv.invoice_date) return false
-  const start = inv.invoice_date
-  const end = new Date(inv.invoice_date)
-  end.setUTCDate(end.getUTCDate() + (inv.period_days || 30))
-  const endISO = end.toISOString().slice(0, 10)
-  return start <= sunISO && endISO > monISO
 }
 
 /** Normalise un nom fournisseur pour comparaison : casse, espaces superflus */
@@ -230,7 +231,16 @@ export default function FacturationPage() {
   const [week, setWeek] = useState(lastWeek.week)
   const [year, setYear] = useState(lastWeek.year)
   const [invoices,  setInvoices]  = useState<Invoice[]>([])
-  const [fixedAll,  setFixedAll]  = useState<Invoice[]>([])
+  // Charges récurrentes (définition/provision) + réels (réconciliation)
+  const [recurringCharges, setRecurringCharges] = useState<RecurringCharge[]>([])
+  const [recurringActuals, setRecurringActuals] = useState<RecurringActual[]>([])
+  const [showRecurring, setShowRecurring] = useState(false)          // modale édition d'une charge
+  const [recForm, setRecForm] = useState<typeof EMPTY_RECURRING>(EMPTY_RECURRING)
+  const [recSaving, setRecSaving] = useState(false)
+  const [showReconcile, setShowReconcile] = useState(false)          // modale réconciliation
+  const [reconChargeId, setReconChargeId] = useState<string>('')
+  const [reconYear, setReconYear] = useState<number>(year)
+  const [actualDraft, setActualDraft] = useState<Record<string, string>>({})  // key période → montant réel saisi
   const [summary,   setSummary]   = useState<Summary | null>(null)
   const [loading,   setLoading]   = useState(false)
   const [showAdd,   setShowAdd]   = useState(false)
@@ -281,16 +291,17 @@ export default function FacturationPage() {
     const reqId = ++reqIdRef.current
     setLoading(true)
     const noStore: RequestInit = { cache: 'no-store' }
-    const [invRes, fixedRes, sumRes, caRes, settRes] = await Promise.all([
+    const [invRes, recRes, sumRes, caRes, settRes] = await Promise.all([
       fetch(`/api/invoices?week=${week}&year=${year}`, noStore).then(r => r.json()).catch(() => []),
-      fetch(`/api/invoices?fixed=all`, noStore).then(r => r.json()).catch(() => []),
+      fetch(`/api/recurring-charges`, noStore).then(r => r.json()).catch(() => ({ charges: [], actuals: [] })),
       fetch(`/api/facturation/summary?week=${week}&year=${year}`, noStore).then(r => r.json()).catch(() => null),
       fetch(`/api/weekly-ca?week=${week}&year=${year}`, noStore).then(r => r.json()).catch(() => null),
       fetch('/api/billing-settings', noStore).then(r => r.json()).catch(() => ({})),
     ])
     if (reqId !== reqIdRef.current) return // une navigation plus récente a eu lieu — on jette cette réponse
     setInvoices(Array.isArray(invRes) ? invRes : [])
-    setFixedAll(Array.isArray(fixedRes) ? fixedRes : [])
+    setRecurringCharges(Array.isArray(recRes?.charges) ? recRes.charges : [])
+    setRecurringActuals(Array.isArray(recRes?.actuals) ? recRes.actuals : [])
     setSummary(sumRes)
     const s = settRes || {}
     setSettForm({ company_name: s.company_name || '', siret: s.siret || '' })
@@ -474,7 +485,6 @@ export default function FacturationPage() {
     if (!ok) return
     await fetch(`/api/invoices/${id}`, { method: 'DELETE' })
     setInvoices(prev => prev.filter(i => i.id !== id))
-    setFixedAll(prev => prev.filter(i => i.id !== id))
     toast({ variant: 'success', title: 'Facture supprimée' })
     load()
   }
@@ -487,7 +497,6 @@ export default function FacturationPage() {
   async function updateCategory(inv: Invoice, category: string) {
     if (category === inv.category) return
     setInvoices(prev => prev.map(i => i.id === inv.id ? { ...i, category } : i))
-    setFixedAll(prev => prev.map(i => i.id === inv.id ? { ...i, category } : i))
     const res = await fetch(`/api/invoices/${inv.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ category }) })
     if (!res.ok) {
       toast({ variant: 'error', title: 'Erreur', description: 'La catégorie n\'a pas pu être modifiée.' })
@@ -526,7 +535,6 @@ export default function FacturationPage() {
   /** Valide une facture « à vérifier » — seules les validées entrent dans le calcul des marges */
   async function validateInvoice(inv: Invoice) {
     setInvoices(prev => prev.map(i => i.id === inv.id ? { ...i, status: 'validee' } : i))
-    setFixedAll(prev => prev.map(i => i.id === inv.id ? { ...i, status: 'validee' } : i))
     const res = await fetch(`/api/invoices/${inv.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'validee' }) })
     if (res.ok) toast({ variant: 'success', title: 'Facture validée' })
     else { toast({ variant: 'error', title: 'Erreur', description: 'La validation a échoué.' }); load() }
@@ -534,35 +542,93 @@ export default function FacturationPage() {
 
   /** Valide d'un coup toutes les factures « à vérifier » */
   async function validateAllPending() {
-    const pending = [...new Map([...invoices, ...fixedAll].filter(i => i.status === 'a_verifier').map(i => [i.id, i])).values()]
+    const pending = [...new Map(invoices.filter(i => i.status === 'a_verifier').map(i => [i.id, i])).values()]
     if (pending.length === 0) return
     setInvoices(prev => prev.map(i => i.status === 'a_verifier' ? { ...i, status: 'validee' } : i))
-    setFixedAll(prev => prev.map(i => i.status === 'a_verifier' ? { ...i, status: 'validee' } : i))
     await Promise.all(pending.map(i => fetch(`/api/invoices/${i.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'validee' }) })))
     toast({ variant: 'success', title: `${pending.length} facture${pending.length > 1 ? 's' : ''} validée${pending.length > 1 ? 's' : ''}` })
     load()
   }
 
-  /** Bascule manuelle charge fixe <-> achat variable */
-  async function toggleFixed(inv: Invoice) {
-    const makeFixed = !inv.is_fixed_charge
-    const period = inv.period_days || 30
-    const apiPatch = makeFixed
-      ? { is_fixed_charge: true, period_days: period, prorata_ht: weeklyShare(inv.amount_ht, period) }
-      : { is_fixed_charge: false, period_days: null, prorata_ht: null }
-    setInvoices(prev => prev.map(i => i.id === inv.id ? { ...i, ...apiPatch } : i))
-    setFixedAll(prev => makeFixed
-      ? [...prev.filter(i => i.id !== inv.id), { ...inv, ...apiPatch }]
-      : prev.filter(i => i.id !== inv.id))
-    await fetch(`/api/invoices/${inv.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(apiPatch) })
+  /** Recharge uniquement les charges récurrentes + réels (sans recharger toute la semaine) */
+  async function loadRecurring() {
+    const data = await fetch('/api/recurring-charges', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).catch(() => null)
+    if (!data) return
+    setRecurringCharges(Array.isArray(data.charges) ? data.charges : [])
+    setRecurringActuals(Array.isArray(data.actuals) ? data.actuals : [])
   }
 
-  /** Change la période d'une charge fixe et recalcule le prorata hebdo */
-  async function setFixedPeriod(inv: Invoice, days: number) {
-    const apiPatch = { period_days: days, prorata_ht: weeklyShare(inv.amount_ht, days) }
-    setInvoices(prev => prev.map(i => i.id === inv.id ? { ...i, ...apiPatch } : i))
-    setFixedAll(prev => prev.map(i => i.id === inv.id ? { ...i, ...apiPatch } : i))
-    await fetch(`/api/invoices/${inv.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(apiPatch) })
+  function openNewRecurring() {
+    setRecForm({ ...EMPTY_RECURRING, start_date: monISO })
+    setShowRecurring(true)
+  }
+  function openEditRecurring(c: RecurringCharge) {
+    setRecForm({
+      id: c.id, label: c.label, category: c.category,
+      amount_ht: String(c.amount_ht ?? ''), tva_rate: String(c.tva_rate ?? '20'),
+      periodicity: c.periodicity, start_date: c.start_date, end_date: c.end_date || '', active: c.active,
+    })
+    setShowRecurring(true)
+  }
+
+  /** Crée ou met à jour une charge récurrente */
+  async function saveRecurring() {
+    const label = recForm.label.trim()
+    if (!label) { toast({ variant: 'error', title: 'Libellé requis' }); return }
+    if (!recForm.start_date) { toast({ variant: 'error', title: 'Date de début requise' }); return }
+    setRecSaving(true)
+    try {
+      const payload = {
+        id: recForm.id || undefined,
+        label,
+        category: recForm.category,
+        amount_ht: parseFloat(recForm.amount_ht) || 0,
+        tva_rate: parseFloat(recForm.tva_rate) || 0,
+        periodicity: recForm.periodicity,
+        start_date: recForm.start_date,
+        end_date: recForm.end_date || null,
+        active: recForm.active,
+      }
+      const res = await fetch('/api/recurring-charges', {
+        method: recForm.id ? 'PATCH' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      if (!res.ok) { toast({ variant: 'error', title: 'Enregistrement impossible', description: `Erreur ${res.status}` }); return }
+      toast({ variant: 'success', title: recForm.id ? 'Charge mise à jour' : 'Charge ajoutée' })
+      setShowRecurring(false)
+      await loadRecurring()
+      await load()
+    } catch {
+      toast({ variant: 'error', title: 'Erreur réseau' })
+    } finally {
+      setRecSaving(false)
+    }
+  }
+
+  async function deleteRecurring(c: RecurringCharge) {
+    const ok = await confirmAction({ title: 'Supprimer cette charge ?', description: `« ${c.label} » et ses réels de réconciliation seront supprimés.`, confirmLabel: 'Supprimer', variant: 'danger' })
+    if (!ok) return
+    setRecurringCharges(prev => prev.filter(x => x.id !== c.id))
+    await fetch(`/api/recurring-charges?id=${c.id}`, { method: 'DELETE' })
+    await load()
+  }
+
+  /** Enregistre un réel pour une période (remplace la provision sur sa fenêtre) */
+  async function saveActual(chargeId: string, period_start: string, period_end: string, amount: number) {
+    const res = await fetch('/api/recurring-actuals', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recurring_charge_id: chargeId, period_start, period_end, amount_ht: amount }),
+    })
+    if (!res.ok) { toast({ variant: 'error', title: 'Réel non enregistré', description: `Erreur ${res.status}` }); return }
+    toast({ variant: 'success', title: 'Réel enregistré' })
+    await loadRecurring()
+    await load()
+  }
+  async function deleteActual(id: string) {
+    setRecurringActuals(prev => prev.filter(a => a.id !== id))
+    await fetch(`/api/recurring-actuals?id=${id}`, { method: 'DELETE' })
+    await load()
   }
 
   async function saveCA() {
@@ -645,17 +711,14 @@ export default function FacturationPage() {
   const supplierMatch = memoTouched ? null : matchSupplier(newInvoice.supplier_name || '', suppliersMemo)
   const matchHasTva = supplierMatch !== null && supplierMatch.tva_rate !== null && TVA_RATES.includes(supplierMatch.tva_rate)
 
-  // ── Achats variables de la semaine + charges structurelles couvrant la semaine ──
+  // ── Achats variables de la semaine ──
   const variableInvoices = invoices.filter(i => !i.is_fixed_charge)
-  const fixedInvoices    = fixedAll
-    .filter(i => coversWeek(i, monISO, sunISO))
-    .sort((a, b) => (Number(b.prorata_ht) || 0) - (Number(a.prorata_ht) || 0))
   // Liste plate triée par date (puis montant) — le groupement par catégorie était peu fiable,
   // la catégorie reste visible en pastille sur chaque ligne
   const sortedVariable   = [...variableInvoices].sort(
     (a, b) => (b.invoice_date || '').localeCompare(a.invoice_date || '') || b.amount_ht - a.amount_ht,
   )
-  const pendingCount = new Set([...invoices, ...fixedAll].filter(i => i.status === 'a_verifier').map(i => i.id)).size
+  const pendingCount = new Set(invoices.filter(i => i.status === 'a_verifier').map(i => i.id)).size
 
   // Répartition — partition des sociétés selon l'état ENREGISTRÉ (splits), pas le brouillon en cours,
   // pour qu'une ligne ne saute pas d'onglet pendant la saisie (elle bascule à l'enregistrement).
@@ -665,8 +728,13 @@ export default function FacturationPage() {
   const splitsDone = splitEntries.filter(([key]) => repartiKeys.has(key))
   const variableTotalHt  = variableInvoices.reduce((s, i) => s + i.amount_ht, 0)
   const variableTotalTtc = variableInvoices.reduce((s, i) => s + i.amount_ttc, 0)
-  const fixedTotalHt     = fixedInvoices.reduce((s, i) => s + i.amount_ht, 0)
-  const fixedWeekly      = fixedInvoices.reduce((s, i) => s + (Number(i.prorata_ht) || 0), 0)
+
+  // ── Charges récurrentes : provision de CETTE semaine, au jour près (le réel remplace la provision) ──
+  const recurWeek = weekRecurringCost(recurringCharges, recurringActuals, monISO, sunISO)
+  const recurringWeekly = recurWeek.total
+  const chargeHasActualThisWeek: Record<string, boolean> = {}
+  for (const l of recurWeek.lines) chargeHasActualThisWeek[l.id] = l.hasActual
+  const activeRecurring = [...recurringCharges].sort((a, b) => a.label.localeCompare(b.label, 'fr'))
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
@@ -774,8 +842,8 @@ export default function FacturationPage() {
               { icon: Euro,         label: 'CA semaine',      value: summary.ca_total > 0 ? fmtEuro(summary.ca_total) : '—',
                 sub: summary.ca_total === 0 ? 'Cliquer sur « Saisir le CA »' : `${fmtDate(mon)} – ${fmtDate(sun)}`,
                 chip: 'bg-pilote-50 text-pilote' },
-              { icon: ShoppingCart, label: 'Achats HT',       value: fmtEuro(variableTotalHt + fixedWeekly),
-                sub: `${variableInvoices.length} facture${variableInvoices.length > 1 ? 's' : ''} + fixes ≈ ${fmtEuro(fixedWeekly)}/sem`,
+              { icon: ShoppingCart, label: 'Achats HT',       value: fmtEuro(variableTotalHt + recurringWeekly),
+                sub: `${variableInvoices.length} facture${variableInvoices.length > 1 ? 's' : ''} + charges ≈ ${fmtEuro(recurringWeekly)}/sem`,
                 chip: 'bg-pilote-50 text-pilote' },
               { icon: Users,        label: 'Masse salariale', value: fmtEuro(summary.masse_salariale),
                 sub: summary.ratio_ms !== null ? `${summary.ratio_ms} % du CA` : 'Depuis le planning',
@@ -809,6 +877,10 @@ export default function FacturationPage() {
                 <span className="bg-white/10 rounded-md px-2 py-0.5 text-pilote-200">Achats <strong className="text-white">{fmtEuro(summary.achats_ht)}</strong></span>
                 <span className="text-pilote-200">−</span>
                 <span className="bg-white/10 rounded-md px-2 py-0.5 text-pilote-200">Salaires <strong className="text-white">{fmtEuro(summary.masse_salariale)}</strong></span>
+                {(summary.charges_fixes ?? 0) > 0 && <>
+                  <span className="text-pilote-200">−</span>
+                  <span className="bg-white/10 rounded-md px-2 py-0.5 text-pilote-200">Charges fixes <strong className="text-white">{fmtEuro(summary.charges_fixes || 0)}</strong></span>
+                </>}
               </div>
             </div>
             <div className="w-14 h-14 rounded-lg bg-white/10 flex items-center justify-center flex-shrink-0">
@@ -945,9 +1017,6 @@ export default function FacturationPage() {
                       <td className="px-4 py-2.5 text-right text-sm text-gray-600">{fmtEuro(inv.amount_ttc)}</td>
                       <td className="px-4 py-2.5 text-center">
                         <div className="flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
-                          <button onClick={() => toggleFixed(inv)} className="p-1.5 rounded hover:bg-pilote-50 text-gray-300 hover:text-pilote transition-colors" title="Marquer comme charge structurelle (prorata hebdo)">
-                            <Repeat className="w-3.5 h-3.5" />
-                          </button>
                           {isViande && (
                             <button onClick={() => openValorisation(inv)} className="p-1.5 rounded hover:bg-pilote-50 text-gray-300 hover:text-pilote transition-colors" title="Valoriser cet animal">
                               <ArrowUpRight className="w-3.5 h-3.5" />
@@ -975,109 +1044,109 @@ export default function FacturationPage() {
           )}
         </div>
 
-        {/* ── Charges structurelles couvrant la semaine ── */}
+        {/* ── Charges fixes & récurrentes (provision au jour près) ── */}
         <div className="bg-white rounded-lg border border-pilote-100 shadow-card overflow-hidden">
-          <div className="px-5 py-3.5 border-b border-pilote-100 bg-pilote-50/60 flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
+          <div className="px-5 py-3.5 border-b border-pilote-100 bg-pilote-50/60 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 min-w-0">
               <div className="w-8 h-8 rounded-md bg-white ring-1 ring-pilote-200/60 flex items-center justify-center flex-shrink-0"><Repeat className="w-4 h-4 text-pilote" /></div>
-              <div>
-                <h2 className="font-bold text-gray-900">Charges structurelles</h2>
-                <p className="text-[11px] text-gray-400">Toutes les charges fixes dont la période couvre la semaine {week} — la catégorie détermine le groupe de marge qui les supporte</p>
+              <div className="min-w-0">
+                <h2 className="font-bold text-gray-900">Charges fixes &amp; récurrentes</h2>
+                <p className="text-[11px] text-gray-400">Loyer, énergie, assurance, crédit… étalées au jour près sur chaque semaine. Le réel remplace la provision sur sa période.</p>
               </div>
             </div>
-            {fixedInvoices.length > 0 && (
-              <div className="text-right">
-                <p className="text-sm font-bold text-pilote tabular">≈ {fmtEuro(fixedWeekly)}/sem</p>
-                <p className="text-[10px] text-gray-400">{fixedInvoices.length} charge{fixedInvoices.length > 1 ? 's' : ''} · {fmtEuro(fixedTotalHt)} HT facturé</p>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <div className="text-right mr-1 hidden sm:block">
+                <p className="text-sm font-bold text-pilote tabular">≈ {fmtEuro(recurringWeekly)}/sem</p>
+                <p className="text-[10px] text-gray-400">semaine {week}</p>
               </div>
-            )}
+              <button onClick={() => { setReconYear(year); setReconChargeId(activeRecurring[0]?.id || ''); setActualDraft({}); setShowReconcile(true) }}
+                disabled={activeRecurring.length === 0}
+                className="inline-flex items-center gap-1.5 rounded-md border border-pilote-200 text-pilote bg-white hover:bg-pilote-50 px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-40">
+                <Scale className="w-3.5 h-3.5" />Réconcilier
+              </button>
+              <button onClick={openNewRecurring}
+                className="inline-flex items-center gap-1.5 rounded-md bg-pilote hover:bg-pilote-hover text-white px-3 py-1.5 text-xs font-semibold shadow-card active:scale-[0.98] transition-all">
+                <Plus className="w-3.5 h-3.5" />Ajouter
+              </button>
+            </div>
           </div>
           {loading ? (
             <div className="p-6 animate-pulse"><div className="h-10 bg-gray-100 rounded-md" /></div>
-          ) : fixedInvoices.length === 0 ? (
+          ) : activeRecurring.length === 0 ? (
             <div className="py-10 flex flex-col items-center justify-center text-center">
               <div className="w-12 h-12 rounded-lg bg-gray-50 ring-1 ring-gray-200/70 flex items-center justify-center mb-3">
                 <Repeat className="w-5 h-5 text-gray-300" />
               </div>
-              <p className="text-sm font-semibold text-gray-700">Aucune charge structurelle sur cette semaine</p>
-              <p className="text-xs text-gray-400 mt-1 max-w-sm">Survolez une facture ci-dessus et cliquez sur l&apos;icône de récurrence pour la marquer comme charge fixe (loyer, EDF, assurance...)</p>
+              <p className="text-sm font-semibold text-gray-700">Aucune charge récurrente</p>
+              <p className="text-xs text-gray-400 mt-1 max-w-sm">Ajoutez vos charges fixes (loyer, énergie, assurance, crédit, abonnements). Elles pèseront automatiquement, au jour près, sur chaque semaine.</p>
+              <button onClick={openNewRecurring} className="mt-4 inline-flex items-center gap-1.5 rounded-md bg-pilote hover:bg-pilote-hover text-white px-3.5 py-2 text-xs font-semibold shadow-card active:scale-[0.98] transition-all"><Plus className="w-3.5 h-3.5" />Ajouter une charge</button>
             </div>
           ) : (
             <table className="w-full tabular">
               <thead>
                 <tr className="bg-gray-50 text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
-                  <th className="px-4 py-2.5 text-left">Fournisseur</th>
+                  <th className="px-4 py-2.5 text-left">Charge</th>
                   <th className="px-4 py-2.5 text-left">Catégorie</th>
-                  <th className="px-4 py-2.5 text-left">Facturée le</th>
-                  <th className="px-4 py-2.5 text-right">Montant HT</th>
-                  <th className="px-4 py-2.5 text-center">Période</th>
-                  <th className="px-4 py-2.5 text-right">Part hebdo</th>
-                  <th className="px-4 py-2.5 text-center w-20"></th>
+                  <th className="px-4 py-2.5 text-right">Montant</th>
+                  <th className="px-4 py-2.5 text-center">Périodicité</th>
+                  <th className="px-4 py-2.5 text-left">Période active</th>
+                  <th className="px-4 py-2.5 text-right">Provision hebdo</th>
+                  <th className="px-4 py-2.5 text-center w-24"></th>
                 </tr>
               </thead>
               <tbody>
-                {fixedInvoices.map((inv, i) => (
-                  <tr key={inv.id} className={`border-t border-gray-100 hover:bg-pilote-50/40 group transition-colors ${i % 2 === 0 ? '' : 'bg-gray-50/50'}`}>
-                    <td className="px-4 py-2.5">
-                      <div className="flex items-center gap-2.5">
-                        <div className="w-8 h-8 rounded-md bg-gray-100 text-gray-500 flex items-center justify-center text-[11px] font-extrabold flex-shrink-0">{initials(inv.supplier_name)}</div>
-                        <div>
-                          <div className="font-semibold text-sm text-gray-900">{inv.supplier_name}</div>
-                          {inv.invoice_number && <div className="text-xs text-gray-400">{inv.invoice_number}</div>}
-                          {inv.status === 'a_verifier' && (
-                            <button onClick={() => validateInvoice(inv)} title="Importée automatiquement — cliquer pour valider (elle comptera dans les marges)"
-                              className="mt-0.5 inline-flex items-center gap-1 text-[9px] font-bold text-amber-700 bg-amber-100 hover:bg-amber-200 px-1.5 py-0.5 rounded-full transition-colors">
-                              à vérifier · valider
-                            </button>
-                          )}
+                {activeRecurring.map((c, i) => {
+                  const wk = costForWindow(c, recurringActuals, monISO, sunISO)
+                  const hasAct = chargeHasActualThisWeek[c.id]
+                  const ended = !!c.end_date && c.end_date < monISO
+                  const notStarted = c.start_date > sunISO
+                  return (
+                    <tr key={c.id} className={`border-t border-gray-100 hover:bg-pilote-50/40 group transition-colors ${i % 2 === 0 ? '' : 'bg-gray-50/50'} ${c.active ? '' : 'opacity-60'}`}>
+                      <td className="px-4 py-2.5">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-8 h-8 rounded-md bg-gray-100 text-gray-500 flex items-center justify-center flex-shrink-0"><CalendarClock className="w-4 h-4" /></div>
+                          <div>
+                            <div className="font-semibold text-sm text-gray-900">{c.label}</div>
+                            {!c.active && <div className="text-[10px] font-semibold text-gray-400">clôturée</div>}
+                          </div>
                         </div>
-                      </div>
-                    </td>
-                    <td className="px-4 py-2.5">
-                      <select
-                        value={inv.category}
-                        onChange={e => updateCategory(inv, e.target.value)}
-                        className={`text-xs font-semibold rounded-full pl-2.5 pr-1.5 py-0.5 border-0 cursor-pointer focus:outline-none focus:ring-2 focus:ring-pilote-200 ${catInfo(inv.category).color}`}
-                        title="Catégorie de la charge — détermine le groupe de marge qui la supporte"
-                      >
-                        {CATEGORIES.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
-                      </select>
-                    </td>
-                    <td className="px-4 py-2.5 text-sm text-gray-600">{new Date(inv.invoice_date).toLocaleDateString('fr-FR')}</td>
-                    <td className="px-4 py-2.5 text-right font-semibold text-sm text-gray-900">{fmtEuro(inv.amount_ht)}</td>
-                    <td className="px-4 py-2.5 text-center">
-                      <select
-                        value={inv.period_days || 30}
-                        onChange={e => setFixedPeriod(inv, parseInt(e.target.value))}
-                        className="text-xs border border-pilote-200 bg-pilote-50 text-pilote font-semibold rounded-md px-2 py-1 focus:outline-none focus:border-pilote cursor-pointer"
-                        title="Période couverte par cette facture"
-                      >
-                        {PERIOD_OPTIONS.map(p => <option key={p.days} value={p.days}>{p.label}</option>)}
-                      </select>
-                    </td>
-                    <td className="px-4 py-2.5 text-right">
-                      <span className="font-bold text-sm text-pilote tabular">≈ {fmtEuro(Number(inv.prorata_ht) || weeklyShare(inv.amount_ht, inv.period_days))}</span>
-                      <span className="text-[10px] text-gray-400">/sem</span>
-                    </td>
-                    <td className="px-4 py-2.5 text-center">
-                      <div className="flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
-                        <button onClick={() => toggleFixed(inv)} className="p-1.5 rounded hover:bg-gray-100 text-gray-300 hover:text-gray-600 transition-colors" title="Retirer des charges structurelles (rebascule en achat variable)">
-                          <Undo2 className="w-3.5 h-3.5" />
-                        </button>
-                        <button onClick={() => deleteInvoice(inv.id)} className="p-1.5 rounded hover:bg-red-50 text-gray-300 hover:text-red-400 transition-colors" title="Supprimer">
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <span className={`text-xs font-semibold rounded-full px-2.5 py-0.5 ${catInfo(c.category).color}`}>{catInfo(c.category).label}</span>
+                      </td>
+                      <td className="px-4 py-2.5 text-right">
+                        <span className="font-semibold text-sm text-gray-900">{fmtEuro(c.amount_ht)}</span>
+                        <span className="text-[10px] text-gray-400"> {periodicityShort(c.periodicity)}</span>
+                      </td>
+                      <td className="px-4 py-2.5 text-center text-xs text-gray-600">{periodicityLabel(c.periodicity)}</td>
+                      <td className="px-4 py-2.5 text-xs text-gray-500 whitespace-nowrap">
+                        {new Date(c.start_date).toLocaleDateString('fr-FR')} → {c.end_date ? new Date(c.end_date).toLocaleDateString('fr-FR') : '…'}
+                      </td>
+                      <td className="px-4 py-2.5 text-right">
+                        {wk > 0 ? (
+                          <>
+                            <span className="font-bold text-sm text-pilote tabular">≈ {fmtEuro(wk)}</span>
+                            {hasAct && <span className="ml-1 text-[9px] font-bold text-green-700 bg-green-100 px-1.5 py-0.5 rounded-full align-middle">réel</span>}
+                          </>
+                        ) : (
+                          <span className="text-xs text-gray-300">{notStarted ? 'à venir' : ended ? 'terminée' : '—'}</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5 text-center">
+                        <div className="flex items-center justify-center gap-1 md:opacity-0 md:group-hover:opacity-100 transition-all">
+                          <button onClick={() => { setReconYear(year); setReconChargeId(c.id); setActualDraft({}); setShowReconcile(true) }} className="p-1.5 rounded hover:bg-pilote-50 text-gray-300 hover:text-pilote transition-colors" title="Réconcilier (saisir le réel par période)"><Scale className="w-3.5 h-3.5" /></button>
+                          <button onClick={() => openEditRecurring(c)} className="p-1.5 rounded hover:bg-gray-100 text-gray-300 hover:text-gray-600 transition-colors" title="Modifier"><Pencil className="w-3.5 h-3.5" /></button>
+                          <button onClick={() => deleteRecurring(c)} className="p-1.5 rounded hover:bg-red-50 text-gray-300 hover:text-red-400 transition-colors" title="Supprimer"><Trash2 className="w-3.5 h-3.5" /></button>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
               <tfoot>
                 <tr className="bg-pilote text-white">
-                  <td colSpan={3} className="px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-white/60">Total charges structurelles</td>
-                  <td className="px-4 py-2.5 text-right font-bold">{fmtEuro(fixedTotalHt)}</td>
-                  <td className="px-4 py-2.5"></td>
-                  <td className="px-4 py-2.5 text-right font-bold text-yellow-300">≈ {fmtEuro(fixedWeekly)}/sem</td>
+                  <td colSpan={5} className="px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-white/60">Provision de la semaine {week}</td>
+                  <td className="px-4 py-2.5 text-right font-bold text-yellow-300">≈ {fmtEuro(recurringWeekly)}/sem</td>
                   <td></td>
                 </tr>
               </tfoot>
@@ -1085,6 +1154,152 @@ export default function FacturationPage() {
           )}
         </div>
       </div>
+
+      {/* Modal : Charge récurrente (création / édition) */}
+      {showRecurring && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 backdrop-blur-sm p-4" onClick={() => setShowRecurring(false)}>
+          <div className="bg-white rounded-lg w-full max-w-md shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-5 border-b border-gray-100">
+              <h2 className="text-base font-bold text-gray-900">{recForm.id ? 'Modifier la charge' : 'Nouvelle charge récurrente'}</h2>
+              <button onClick={() => setShowRecurring(false)} className="p-1.5 rounded-md hover:bg-gray-100"><X className="w-4 h-4 text-gray-500" /></button>
+            </div>
+            <div className="p-5 space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">Libellé</label>
+                <Input value={recForm.label} onChange={e => setRecForm(p => ({ ...p, label: e.target.value }))} placeholder="Loyer, EDF, assurance…" autoFocus />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Montant HT (€)</label>
+                  <Input type="number" step="0.01" min="0" value={recForm.amount_ht} onChange={e => setRecForm(p => ({ ...p, amount_ht: e.target.value }))} placeholder="0.00" />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Périodicité</label>
+                  <select value={recForm.periodicity} onChange={e => setRecForm(p => ({ ...p, periodicity: e.target.value as Periodicity }))} className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200">
+                    {PERIODICITY_OPTIONS.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Catégorie</label>
+                  <select value={recForm.category} onChange={e => setRecForm(p => ({ ...p, category: e.target.value }))} className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200">
+                    {CATEGORIES.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">TVA (%)</label>
+                  <select value={recForm.tva_rate} onChange={e => setRecForm(p => ({ ...p, tva_rate: e.target.value }))} className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200">
+                    {TVA_RATES.map(t => <option key={t} value={String(t)}>{t} %</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Début</label>
+                  <Input type="date" value={recForm.start_date} onChange={e => setRecForm(p => ({ ...p, start_date: e.target.value }))} />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Fin <span className="text-gray-400 font-normal">(optionnel)</span></label>
+                  <Input type="date" value={recForm.end_date} onChange={e => setRecForm(p => ({ ...p, end_date: e.target.value }))} />
+                </div>
+              </div>
+              <label className="flex items-center gap-2 text-sm text-gray-700">
+                <input type="checkbox" checked={recForm.active} onChange={e => setRecForm(p => ({ ...p, active: e.target.checked }))} className="rounded border-gray-300 text-pilote focus:ring-pilote-200" />
+                Charge active (décochez pour la geler sans la supprimer)
+              </label>
+              <p className="text-[11px] text-gray-400">Le montant saisi est celui d&apos;UNE période ({periodicityLabel(recForm.periodicity).toLowerCase()}). Il est réparti au jour près sur les semaines couvertes.</p>
+            </div>
+            <div className="flex gap-2 p-5 border-t border-gray-100">
+              <Button variant="outline" className="flex-1" onClick={() => setShowRecurring(false)}>Annuler</Button>
+              <Button onClick={saveRecurring} disabled={recSaving} className="flex-1 bg-pilote hover:bg-pilote-hover text-white">
+                {recSaving ? <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" />Enregistrement...</> : <><Save className="w-4 h-4 mr-1.5" />Enregistrer</>}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal : Réconciliation provisionné vs réel */}
+      {showReconcile && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 backdrop-blur-sm p-4" onClick={() => setShowReconcile(false)}>
+          <div className="bg-white rounded-lg w-full max-w-2xl shadow-2xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-start justify-between p-5 border-b border-gray-100">
+              <div>
+                <h2 className="text-base font-bold text-gray-900">Réconciliation — provisionné vs réel</h2>
+                <p className="text-xs text-gray-500 mt-0.5 max-w-md">Saisissez le montant réel facturé pour une période. Il remplace la provision sur sa fenêtre — le résultat net des semaines concernées est recalculé.</p>
+              </div>
+              <button onClick={() => setShowReconcile(false)} className="p-1.5 rounded-md hover:bg-gray-100"><X className="w-4 h-4 text-gray-500" /></button>
+            </div>
+            <div className="flex items-center gap-2 px-5 pt-3">
+              <select value={reconChargeId} onChange={e => { setReconChargeId(e.target.value); setActualDraft({}) }} className="flex-1 border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200">
+                {activeRecurring.map(c => <option key={c.id} value={c.id}>{c.label} · {periodicityLabel(c.periodicity)}</option>)}
+              </select>
+              <div className="flex items-center gap-1 flex-shrink-0">
+                <button onClick={() => setReconYear(y => y - 1)} className="p-1.5 rounded-md hover:bg-gray-100"><ChevronLeft className="w-4 h-4 text-gray-500" /></button>
+                <span className="text-sm font-bold text-gray-900 tabular w-12 text-center">{reconYear}</span>
+                <button onClick={() => setReconYear(y => y + 1)} className="p-1.5 rounded-md hover:bg-gray-100"><ChevronRight className="w-4 h-4 text-gray-500" /></button>
+              </div>
+            </div>
+            <div className="p-5 pt-3 overflow-y-auto">
+              {(() => {
+                const c = recurringCharges.find(x => x.id === reconChargeId)
+                if (!c) return <p className="text-sm text-gray-400 py-8 text-center">Sélectionnez une charge.</p>
+                const periods = enumeratePeriods(c, `${reconYear}-01-01`, `${reconYear}-12-31`)
+                if (periods.length === 0) return <p className="text-sm text-gray-400 py-8 text-center">Aucune période active en {reconYear}.</p>
+                return (
+                  <>
+                    <div className="hidden md:flex items-center gap-2 px-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                      <span className="w-28">Période</span>
+                      <span className="flex-1 text-right">Provisionné</span>
+                      <span className="flex-1 text-right">Réel</span>
+                      <span className="flex-1 text-right">Écart</span>
+                      <span className="w-24" />
+                    </div>
+                    <div className="space-y-1.5">
+                      {periods.map(occ => {
+                        const sISO = occ.start.toISOString().slice(0, 10)
+                        const eISO = occ.end.toISOString().slice(0, 10)
+                        const prov = provisionForWindow(c, sISO, eISO)
+                        const act = recurringActuals.find(a => a.recurring_charge_id === c.id && a.period_start <= eISO && a.period_end >= sISO)
+                        const draft = actualDraft[occ.key] ?? ''
+                        const ecart = act ? Number(act.amount_ht) - prov : 0
+                        return (
+                          <div key={occ.key} className="flex flex-col md:flex-row md:items-center gap-2 p-2 rounded-md hover:bg-gray-50">
+                            <span className="w-28 text-sm font-semibold text-gray-800">{occ.label}</span>
+                            <span className="flex-1 text-right text-sm text-gray-600 tabular">{fmtEuro(prov)}</span>
+                            {act ? (
+                              <>
+                                <span className="flex-1 text-right text-sm font-semibold text-gray-900 tabular">{fmtEuro(Number(act.amount_ht))}</span>
+                                <span className={`flex-1 text-right text-sm font-bold tabular ${ecart > 0 ? 'text-red-500' : ecart < 0 ? 'text-green-600' : 'text-gray-400'}`}>{ecart > 0 ? '+' : ''}{fmtEuro(ecart)}</span>
+                                <span className="w-24 flex justify-end"><button onClick={() => deleteActual(act.id)} className="text-xs font-medium text-gray-400 hover:text-red-500">Retirer</button></span>
+                              </>
+                            ) : (
+                              <>
+                                <div className="flex-1 flex justify-end">
+                                  <input type="number" step="0.01" min="0" value={draft} onChange={e => setActualDraft(p => ({ ...p, [occ.key]: e.target.value }))} placeholder="réel €" className="w-24 border border-gray-300 rounded-md px-2 py-1 text-sm text-right tabular focus:outline-none focus:ring-2 focus:ring-pilote-200" />
+                                </div>
+                                <span className="flex-1 text-right text-xs text-gray-300">—</span>
+                                <span className="w-24 flex justify-end">
+                                  <button disabled={!draft} onClick={() => { saveActual(c.id, sISO, eISO, parseFloat(draft) || 0); setActualDraft(p => { const n = { ...p }; delete n[occ.key]; return n }) }} className="text-xs font-semibold text-pilote hover:underline disabled:opacity-40">Enregistrer</button>
+                                </span>
+                              </>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </>
+                )
+              })()}
+              <p className="text-[11px] text-gray-400 mt-3">Écart = réel − provisionné. Un écart positif (rouge) = la charge réelle a dépassé la provision ; les semaines de la période sont recalculées avec le réel.</p>
+            </div>
+            <div className="flex gap-2 p-5 border-t border-gray-100">
+              <Button variant="outline" className="flex-1" onClick={() => setShowReconcile(false)}>Fermer</Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal : Connecter intégration */}
       {showConnect && connectProvider && (
