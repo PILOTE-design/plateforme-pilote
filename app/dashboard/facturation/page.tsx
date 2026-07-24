@@ -71,6 +71,18 @@ function societeName(raw: string): string {
   s = s.split(/\s+[-–—]\s+/)[0]
   return s.trim()
 }
+
+// Nom LISIBLE d'une facture importée : « Facture SAVEURS D'ANTOINE - 7K0010781 (label généré) »
+// → « SAVEURS D'ANTOINE ». Affichage uniquement — le nom brut reste la clé de rapprochement.
+function displaySupplier(raw: string): string {
+  let s = String(raw || '').trim()
+  s = s.replace(/\s*\(label généré\)\s*$/i, '')
+  s = s.replace(/^factures?\s*/i, '')
+  s = s.replace(/^[-–—\s]+/, '')
+  const first = s.split(/\s+[-–—]\s+/)[0].trim()
+  if (first) s = first
+  return s || String(raw || '').trim()
+}
 function sameSupplierFam(a: string, b: string): boolean {
   const na = normSupplier(a), nb = normSupplier(b)
   if (!na || !nb) return false
@@ -123,11 +135,11 @@ const TVA_RATES = [0, 5.5, 10, 20]
 
 // Périodicités des charges récurrentes (montant saisi = montant PAR période)
 const PERIODICITY_OPTIONS: { key: Periodicity; label: string; short: string }[] = [
-  { key: 'weekly',    label: 'Hebdomadaire', short: '/sem'  },
-  { key: 'monthly',   label: 'Mensuel',      short: '/mois' },
-  { key: 'quarterly', label: 'Trimestriel',  short: '/trim' },
-  { key: 'semester',  label: 'Semestriel',   short: '/sem.' },
-  { key: 'annual',    label: 'Annuel',       short: '/an'   },
+  { key: 'weekly',    label: 'Hebdomadaire', short: '/semaine'   },
+  { key: 'monthly',   label: 'Mensuel',      short: '/mois'      },
+  { key: 'quarterly', label: 'Trimestriel',  short: '/trimestre' },
+  { key: 'semester',  label: 'Semestriel',   short: '/semestre'  },
+  { key: 'annual',    label: 'Annuel',       short: '/an'        },
 ]
 const periodicityLabel = (p: string) => PERIODICITY_OPTIONS.find(o => o.key === p)?.label || p
 const periodicityShort = (p: string) => PERIODICITY_OPTIONS.find(o => o.key === p)?.short || ''
@@ -260,7 +272,7 @@ export default function FacturationPage() {
   const [suppliersMemo, setSuppliersMemo] = useState<SupplierMemo[]>([])
   // Le boucher a choisi catégorie ou TVA à la main → la mémoire ne l'écrase plus
   const [memoTouched, setMemoTouched] = useState(false)
-  const [caForm,    setCaForm]    = useState({ ca_total: '', ca_boucherie: '', ca_charcuterie: '', ca_traiteur: '', ca_fruits_et_legumes: '' })
+  const [caForm,    setCaForm]    = useState({ ca_total: '' })
   const [settForm,  setSettForm]  = useState({ company_name: '', siret: '' })
 
   const [integrations,     setIntegrations]     = useState<BillingIntegration[]>([])
@@ -301,8 +313,8 @@ export default function FacturationPage() {
     setSummary(sumRes)
     const s = settRes || {}
     setSettForm({ company_name: s.company_name || '', siret: s.siret || '' })
-    if (caRes && !caRes.error) setCaForm({ ca_total: String(caRes.ca_total || ''), ca_boucherie: String(caRes.ca_boucherie || ''), ca_charcuterie: String(caRes.ca_charcuterie || ''), ca_traiteur: String(caRes.ca_traiteur || ''), ca_fruits_et_legumes: String(caRes.ca_fruits_et_legumes || '') })
-    else setCaForm({ ca_total: '', ca_boucherie: '', ca_charcuterie: '', ca_traiteur: '', ca_fruits_et_legumes: '' })
+    if (caRes && !caRes.error) setCaForm({ ca_total: String(caRes.ca_total || '') })
+    else setCaForm({ ca_total: '' })
     setLoading(false)
   }, [week, year])
 
@@ -532,8 +544,8 @@ export default function FacturationPage() {
   async function validateInvoice(inv: Invoice) {
     setInvoices(prev => prev.map(i => i.id === inv.id ? { ...i, status: 'validee' } : i))
     const res = await fetch(`/api/invoices/${inv.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'validee' }) })
-    if (res.ok) toast({ variant: 'success', title: 'Facture validée' })
-    else { toast({ variant: 'error', title: 'Erreur', description: 'La validation a échoué.' }); load() }
+    if (res.ok) toast({ variant: 'success', title: 'Facture confirmée' })
+    else { toast({ variant: 'error', title: 'Erreur', description: 'La confirmation a échoué.' }); load() }
   }
 
   /** Valide d'un coup toutes les factures « à vérifier » */
@@ -542,7 +554,7 @@ export default function FacturationPage() {
     if (pending.length === 0) return
     setInvoices(prev => prev.map(i => i.status === 'a_verifier' ? { ...i, status: 'validee' } : i))
     await Promise.all(pending.map(i => fetch(`/api/invoices/${i.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'validee' }) })))
-    toast({ variant: 'success', title: `${pending.length} facture${pending.length > 1 ? 's' : ''} validée${pending.length > 1 ? 's' : ''}` })
+    toast({ variant: 'success', title: `${pending.length} facture${pending.length > 1 ? 's' : ''} confirmée${pending.length > 1 ? 's' : ''}` })
     load()
   }
 
@@ -611,28 +623,15 @@ export default function FacturationPage() {
   }
 
   async function saveCA() {
-    const total  = parseFloat(caForm.ca_total)
-    const rayons = {
-      ca_boucherie:   parseFloat(caForm.ca_boucherie)   || 0,
-      ca_charcuterie: parseFloat(caForm.ca_charcuterie) || 0,
-      ca_traiteur:    parseFloat(caForm.ca_traiteur)    || 0,
-      ca_fruits_et_legumes: parseFloat(caForm.ca_fruits_et_legumes) || 0,
-    }
+    const total = parseFloat(caForm.ca_total)
     if (!caForm.ca_total.trim() || isNaN(total) || total <= 0) {
-      toast({ variant: 'error', title: 'CA total invalide', description: 'Saisissez un chiffre d\'affaires total strictement positif.' })
-      return
-    }
-    if (Object.values(rayons).some(v => v < 0)) {
-      toast({ variant: 'error', title: 'Montant négatif', description: 'Le détail par rayon ne peut pas contenir de valeur négative.' })
-      return
-    }
-    const sumRayons = rayons.ca_boucherie + rayons.ca_charcuterie + rayons.ca_traiteur + rayons.ca_fruits_et_legumes
-    if (sumRayons > total + 0.01) {
-      toast({ variant: 'error', title: 'Détail incohérent', description: `La somme des rayons (${fmtEuro(sumRayons)}) dépasse le CA total (${fmtEuro(total)}).` })
+      toast({ variant: 'error', title: 'CA invalide', description: 'Saisissez un chiffre d\'affaires supérieur à zéro.' })
       return
     }
     setSaving(true)
-    const body = { week_number: week, year, ca_total: total, ...rayons }
+    // Seul le total est saisi à la main : le détail par rayon est lu automatiquement
+    // depuis le rapport de la semaine (families_detail) côté serveur.
+    const body = { week_number: week, year, ca_total: total }
     const res = await fetch('/api/weekly-ca', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
     if (res.ok) { setShowCA(false); toast({ variant: 'success', title: 'CA enregistré' }); load() }
     else toast({ variant: 'error', title: 'Erreur', description: 'Le CA n\'a pas pu être enregistré.' })
@@ -698,7 +697,6 @@ export default function FacturationPage() {
     (a, b) => (b.invoice_date || '').localeCompare(a.invoice_date || '') || b.amount_ht - a.amount_ht,
   )
   const pendingCount = new Set(invoices.filter(i => i.status === 'a_verifier').map(i => i.id)).size
-
   // Répartition — partition des sociétés selon l'état ENREGISTRÉ (splits), pas le brouillon en cours,
   // pour qu'une ligne ne saute pas d'onglet pendant la saisie (elle bascule à l'enregistrement).
   const repartiKeys = new Set(splits.map(s => s.supplier_key))
@@ -724,7 +722,7 @@ export default function FacturationPage() {
           </div>
           <div>
             <h1 className="text-2xl font-extrabold tracking-tight text-gray-900">Facturation &amp; Achats</h1>
-            <p className="text-sm text-gray-500">Achats de la semaine · Charges structurelles · CA &amp; marge</p>
+            <p className="text-sm text-gray-500">Achats · Charges fixes · CA &amp; marge de la semaine</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -774,7 +772,7 @@ export default function FacturationPage() {
                 <button onClick={() => syncNow(integ.provider)} disabled={isSyncing}
                   className="flex items-center gap-1 text-[11px] font-semibold text-green-800 hover:text-green-900 px-1.5 py-0.5 rounded hover:bg-green-100 transition-colors disabled:opacity-50"
                   title={`Synchroniser la semaine ${week}`}>
-                  <RefreshCw className={`w-3 h-3 ${isSyncing ? 'animate-spin' : ''}`} />{isSyncing ? '...' : `Sync S${week}`}
+                  <RefreshCw className={`w-3 h-3 ${isSyncing ? 'animate-spin' : ''}`} />{isSyncing ? '...' : `Importer S${week}`}
                 </button>
                 <button onClick={() => disconnectIntegration(integ.provider)} className="p-1 rounded hover:bg-red-50 text-gray-300 hover:text-red-400 transition-colors" title="Déconnecter">
                   <Link2Off className="w-3 h-3" />
@@ -820,7 +818,7 @@ export default function FacturationPage() {
                 sub: summary.ca_total === 0 ? 'Cliquer sur « Saisir le CA »' : `${fmtDate(mon)} – ${fmtDate(sun)}`,
                 chip: 'bg-pilote-50 text-pilote' },
               { icon: ShoppingCart, label: 'Achats HT',       value: fmtEuro(variableTotalHt + recurringWeekly),
-                sub: `${variableInvoices.length} facture${variableInvoices.length > 1 ? 's' : ''} + charges ≈ ${fmtEuro(recurringWeekly)}/sem`,
+                sub: `${variableInvoices.length} facture${variableInvoices.length > 1 ? 's' : ''} + charges fixes ≈ ${fmtEuro(recurringWeekly)}`,
                 chip: 'bg-pilote-50 text-pilote' },
               { icon: Users,        label: 'Masse salariale', value: fmtEuro(summary.masse_salariale),
                 sub: summary.ratio_ms !== null ? `${summary.ratio_ms} % du CA` : 'Depuis le planning',
@@ -893,24 +891,24 @@ export default function FacturationPage() {
             {(summary.achats_divers ?? 0) > 0 && (
               <p className="text-[11px] text-gray-400 mt-3 flex items-center gap-1.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-gray-300 flex-shrink-0" />
-                {fmtEuro(summary.achats_divers!)} de « divers » redistribués sur les rayons au prorata de leur part de CA.
+                {fmtEuro(summary.achats_divers!)} de « Divers » répartis automatiquement sur les rayons, selon le poids de chacun dans le CA.
               </p>
             )}
             {(summary.achats_non_ventiles ?? 0) > 0 && (
               <p className="text-[11px] text-gray-400 mt-2">
-                {fmtEuro(summary.achats_non_ventiles!)} d&apos;achats non répartis — fournisseurs sans répartition définie.
-                <button onClick={openSplits} className="ml-1 text-pilote hover:underline">Compléter</button>
+                {fmtEuro(summary.achats_non_ventiles!)} d&apos;achats pas encore répartis — ils n&apos;apparaissent dans aucun rayon.
+                <button onClick={openSplits} className="ml-1 text-pilote hover:underline">Répartir</button>
               </p>
             )}
           </div>
         )}
 
-        {/* Factures à vérifier — importées automatiquement, exclues des marges tant que non validées */}
+        {/* Factures importées à confirmer — hors des chiffres tant que non confirmées */}
         {pendingCount > 0 && (
           <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 flex items-center gap-2.5">
             <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0" />
-            <p className="text-sm text-amber-800"><strong>{pendingCount} facture{pendingCount > 1 ? 's' : ''} à vérifier</strong> — importée{pendingCount > 1 ? 's' : ''} automatiquement, exclue{pendingCount > 1 ? 's' : ''} du calcul des marges tant que non validée{pendingCount > 1 ? 's' : ''}.</p>
-            <button onClick={validateAllPending} className="ml-auto text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-md px-3 py-1.5 transition-colors flex-shrink-0">Tout valider</button>
+            <p className="text-sm text-amber-800"><strong>{pendingCount} facture{pendingCount > 1 ? 's' : ''} importée{pendingCount > 1 ? 's' : ''} à confirmer</strong> — jetez un œil au montant : elle{pendingCount > 1 ? 's' : ''} comptera{pendingCount > 1 ? 'ont' : ''} dans vos chiffres une fois confirmée{pendingCount > 1 ? 's' : ''}.</p>
+            <button onClick={validateAllPending} className="ml-auto text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-md px-3 py-1.5 transition-colors flex-shrink-0">Tout confirmer</button>
           </div>
         )}
 
@@ -932,7 +930,7 @@ export default function FacturationPage() {
                 <ShoppingCart className="w-6 h-6 text-pilote" />
               </div>
               <p className="text-sm font-bold text-gray-900">Aucun achat sur la semaine {week}</p>
-              <p className="text-xs text-gray-400 mt-1 max-w-xs">Lancez un sync pour importer les factures, ou ajoutez-les à la main.</p>
+              <p className="text-xs text-gray-400 mt-1 max-w-xs">Connectez votre logiciel de facturation pour les importer, ou ajoutez-les à la main.</p>
               <button onClick={openAdd} className="mt-4 inline-flex items-center gap-1.5 text-sm font-semibold text-white bg-pilote hover:bg-pilote-hover rounded-md px-4 py-2 shadow-card active:scale-95 transition-all">
                 <Plus className="w-3.5 h-3.5" />Ajouter une facture
               </button>
@@ -942,7 +940,7 @@ export default function FacturationPage() {
               <thead>
                 <tr className="bg-gray-50 text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
                   <th className="px-4 py-2.5 text-left">Fournisseur</th>
-                  <th className="px-4 py-2.5 text-left">Ventilation</th>
+                  <th className="px-4 py-2.5 text-left">Répartition</th>
                   <th className="px-4 py-2.5 text-left">Date</th>
                   <th className="px-4 py-2.5 text-right">HT</th>
                   <th className="px-4 py-2.5 text-right">TVA</th>
@@ -960,14 +958,14 @@ export default function FacturationPage() {
                     <tr key={inv.id} className="border-t border-gray-50 hover:bg-gray-50 group transition-colors">
                       <td className="px-4 py-2.5">
                         <div className="flex items-center gap-2.5">
-                          <div className="w-8 h-8 rounded-md bg-pilote-50 text-pilote flex items-center justify-center text-[11px] font-extrabold flex-shrink-0">{initials(inv.supplier_name)}</div>
+                          <div className="w-8 h-8 rounded-md bg-pilote-50 text-pilote flex items-center justify-center text-[11px] font-extrabold flex-shrink-0">{initials(displaySupplier(inv.supplier_name))}</div>
                           <div>
-                            <div className="font-semibold text-sm text-gray-900">{inv.supplier_name}</div>
+                            <div className="font-semibold text-sm text-gray-900" title={inv.supplier_name}>{displaySupplier(inv.supplier_name)}</div>
                             {inv.invoice_number && <div className="text-xs text-gray-400">{inv.invoice_number}</div>}
                             {inv.status === 'a_verifier' && (
-                              <button onClick={() => validateInvoice(inv)} title="Importée automatiquement — cliquer pour valider (elle comptera dans les marges)"
+                              <button onClick={() => validateInvoice(inv)} title="Importée automatiquement — vérifiez le montant puis cliquez pour confirmer"
                                 className="mt-0.5 inline-flex items-center gap-1 text-[9px] font-bold text-amber-700 bg-amber-100 hover:bg-amber-200 px-1.5 py-0.5 rounded-full transition-colors">
-                                à vérifier · valider
+                                <Check className="w-2.5 h-2.5" />Confirmer
                               </button>
                             )}
                           </div>
@@ -976,7 +974,7 @@ export default function FacturationPage() {
                       <td className="px-4 py-2.5">
                         {ventil.length === 0 ? (
                           <button onClick={openSplits} title="Définir la répartition par rayon de cette société"
-                            className="text-xs text-gray-400 hover:text-pilote hover:underline">Non réparti</button>
+                            className="text-xs text-gray-400 hover:text-pilote hover:underline">À répartir</button>
                         ) : (
                           <div className="flex flex-wrap items-center gap-1">
                             {ventil.map(p => (
@@ -988,9 +986,9 @@ export default function FacturationPage() {
                           </div>
                         )}
                       </td>
-                      <td className="px-4 py-2.5 text-sm text-gray-600">{new Date(inv.invoice_date).toLocaleDateString('fr-FR')}</td>
-                      <td className={`px-4 py-2.5 text-right font-semibold text-sm ${inv.amount_ht < 0 ? 'text-green-600' : 'text-gray-900'}`}>{fmtEuro(inv.amount_ht)}</td>
-                      <td className="px-4 py-2.5 text-right text-xs text-gray-400">{inv.tva_rate} %</td>
+                      <td className="px-4 py-2.5 text-sm text-gray-600 whitespace-nowrap">{new Date(inv.invoice_date).toLocaleDateString('fr-FR')}</td>
+                      <td className={`px-4 py-2.5 text-right font-semibold text-sm whitespace-nowrap ${inv.amount_ht < 0 ? 'text-green-600' : 'text-gray-900'}`}>{fmtEuro(inv.amount_ht)}</td>
+                      <td className="px-4 py-2.5 text-right text-xs text-gray-400 whitespace-nowrap">{inv.tva_rate} %</td>
                       <td className="px-4 py-2.5 text-right text-sm text-gray-600">{fmtEuro(inv.amount_ttc)}</td>
                       <td className="px-4 py-2.5 text-center">
                         <div className="flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
@@ -1010,7 +1008,7 @@ export default function FacturationPage() {
               </tbody>
               <tfoot>
                 <tr className="bg-pilote text-white">
-                  <td colSpan={3} className="px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-white/60">Total achats variables</td>
+                  <td colSpan={3} className="px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-white/60">Total achats de la semaine</td>
                   <td className="px-4 py-2.5 text-right font-bold">{fmtEuro(variableTotalHt)}</td>
                   <td className="px-4 py-2.5"></td>
                   <td className="px-4 py-2.5 text-right font-bold text-orange-300">{fmtEuro(variableTotalTtc)}</td>
@@ -1027,8 +1025,8 @@ export default function FacturationPage() {
             <div className="flex items-center gap-2.5 min-w-0">
               <div className="w-8 h-8 rounded-md bg-white ring-1 ring-pilote-200/60 flex items-center justify-center flex-shrink-0"><Repeat className="w-4 h-4 text-pilote" /></div>
               <div className="min-w-0">
-                <h2 className="font-bold text-gray-900">Charges fixes &amp; récurrentes</h2>
-                <p className="text-[11px] text-gray-400">Loyer, énergie, assurance, crédit… étalées au jour près sur chaque semaine, automatiquement.</p>
+                <h2 className="font-bold text-gray-900">Charges fixes</h2>
+                <p className="text-[11px] text-gray-400">Loyer, énergie, assurance, crédit… déclarées une fois, comptées automatiquement sur chaque semaine.</p>
               </div>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
@@ -1049,8 +1047,8 @@ export default function FacturationPage() {
               <div className="w-12 h-12 rounded-lg bg-gray-50 ring-1 ring-gray-200/70 flex items-center justify-center mb-3">
                 <Repeat className="w-5 h-5 text-gray-300" />
               </div>
-              <p className="text-sm font-semibold text-gray-700">Aucune charge récurrente</p>
-              <p className="text-xs text-gray-400 mt-1 max-w-sm">Ajoutez vos charges fixes (loyer, énergie, assurance, crédit, abonnements). Elles pèseront automatiquement, au jour près, sur chaque semaine.</p>
+              <p className="text-sm font-semibold text-gray-700">Aucune charge fixe déclarée</p>
+              <p className="text-xs text-gray-400 mt-1 max-w-sm">Ajoutez vos charges fixes (loyer, énergie, assurance, crédit, abonnements) : elles seront comptées automatiquement sur chaque semaine.</p>
               <button onClick={openNewRecurring} className="mt-4 inline-flex items-center gap-1.5 rounded-md bg-pilote hover:bg-pilote-hover text-white px-3.5 py-2 text-xs font-semibold shadow-card active:scale-[0.98] transition-all"><Plus className="w-3.5 h-3.5" />Ajouter une charge</button>
             </div>
           ) : (
@@ -1060,9 +1058,8 @@ export default function FacturationPage() {
                   <th className="px-4 py-2.5 text-left">Charge</th>
                   <th className="px-4 py-2.5 text-left">Catégorie</th>
                   <th className="px-4 py-2.5 text-right">Montant</th>
-                  <th className="px-4 py-2.5 text-center">Périodicité</th>
-                  <th className="px-4 py-2.5 text-left">Période active</th>
-                  <th className="px-4 py-2.5 text-right">Provision hebdo</th>
+                  <th className="px-4 py-2.5 text-left">Depuis</th>
+                  <th className="px-4 py-2.5 text-right">Coût par semaine</th>
                   <th className="px-4 py-2.5 text-center w-24"></th>
                 </tr>
               </thead>
@@ -1078,20 +1075,19 @@ export default function FacturationPage() {
                           <div className="w-8 h-8 rounded-md bg-gray-100 text-gray-500 flex items-center justify-center flex-shrink-0"><CalendarClock className="w-4 h-4" /></div>
                           <div>
                             <div className="font-semibold text-sm text-gray-900">{c.label}</div>
-                            {!c.active && <div className="text-[10px] font-semibold text-gray-400">clôturée</div>}
+                            {!c.active && <div className="text-[10px] font-semibold text-gray-400">en pause</div>}
                           </div>
                         </div>
                       </td>
                       <td className="px-4 py-2.5">
                         <span className={`text-xs font-semibold rounded-full px-2.5 py-0.5 ${catInfo(c.category).color}`}>{catInfo(c.category).label}</span>
                       </td>
-                      <td className="px-4 py-2.5 text-right">
+                      <td className="px-4 py-2.5 text-right whitespace-nowrap">
                         <span className="font-semibold text-sm text-gray-900">{fmtEuro(c.amount_ht)}</span>
                         <span className="text-[10px] text-gray-400"> {periodicityShort(c.periodicity)}</span>
                       </td>
-                      <td className="px-4 py-2.5 text-center text-xs text-gray-600">{periodicityLabel(c.periodicity)}</td>
                       <td className="px-4 py-2.5 text-xs text-gray-500 whitespace-nowrap">
-                        {new Date(c.start_date).toLocaleDateString('fr-FR')} → {c.end_date ? new Date(c.end_date).toLocaleDateString('fr-FR') : '…'}
+                        {new Date(c.start_date).toLocaleDateString('fr-FR')}{c.end_date ? ` → ${new Date(c.end_date).toLocaleDateString('fr-FR')}` : ''}
                       </td>
                       <td className="px-4 py-2.5 text-right">
                         {wk > 0 ? (
@@ -1112,8 +1108,8 @@ export default function FacturationPage() {
               </tbody>
               <tfoot>
                 <tr className="bg-pilote text-white">
-                  <td colSpan={5} className="px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-white/60">Provision de la semaine {week}</td>
-                  <td className="px-4 py-2.5 text-right font-bold text-yellow-300">≈ {fmtEuro(recurringWeekly)}/sem</td>
+                  <td colSpan={4} className="px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-white/60">Coût pour la semaine {week}</td>
+                  <td className="px-4 py-2.5 text-right font-bold text-yellow-300">≈ {fmtEuro(recurringWeekly)}</td>
                   <td></td>
                 </tr>
               </tfoot>
@@ -1127,7 +1123,7 @@ export default function FacturationPage() {
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 backdrop-blur-sm p-4" onClick={() => setShowRecurring(false)}>
           <div className="bg-white rounded-lg w-full max-w-md shadow-2xl" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between p-5 border-b border-gray-100">
-              <h2 className="text-base font-bold text-gray-900">{recForm.id ? 'Modifier la charge' : 'Nouvelle charge récurrente'}</h2>
+              <h2 className="text-base font-bold text-gray-900">{recForm.id ? 'Modifier la charge' : 'Nouvelle charge fixe'}</h2>
               <button onClick={() => setShowRecurring(false)} className="p-1.5 rounded-md hover:bg-gray-100"><X className="w-4 h-4 text-gray-500" /></button>
             </div>
             <div className="p-5 space-y-3">
@@ -1173,9 +1169,9 @@ export default function FacturationPage() {
               </div>
               <label className="flex items-center gap-2 text-sm text-gray-700">
                 <input type="checkbox" checked={recForm.active} onChange={e => setRecForm(p => ({ ...p, active: e.target.checked }))} className="rounded border-gray-300 text-pilote focus:ring-pilote-200" />
-                Charge active (décochez pour la geler sans la supprimer)
+                Charge active (décochez pour la mettre en pause sans la supprimer)
               </label>
-              <p className="text-[11px] text-gray-400">Le montant saisi est celui d&apos;UNE période ({periodicityLabel(recForm.periodicity).toLowerCase()}). Il est réparti au jour près sur les semaines couvertes.</p>
+              <p className="text-[11px] text-gray-400">Vous saisissez le montant {periodicityLabel(recForm.periodicity).toLowerCase()} : PILOTE le compte ensuite automatiquement sur chaque semaine, au prorata exact des jours.</p>
             </div>
             <div className="flex gap-2 p-5 border-t border-gray-100">
               <Button variant="outline" className="flex-1" onClick={() => setShowRecurring(false)}>Annuler</Button>
@@ -1307,7 +1303,7 @@ export default function FacturationPage() {
                   const t = VENT_FIELDS.reduce((s, f) => s + (parseFloat((newSplit as any)[f.key]) || 0), 0)
                   if (!t) return null
                   const ok = Math.abs(t - 100) < 0.5
-                  return <p className={`text-[11px] mt-1.5 ${ok ? 'text-gray-400' : 'text-orange-500'}`}>Total {Math.round(t)} %{ok ? '' : ' — devrait faire 100 %'} · le « divers » sera réparti au prorata du CA</p>
+                  return <p className={`text-[11px] mt-1.5 ${ok ? 'text-gray-400' : 'text-orange-500'}`}>Total {Math.round(t)} %{ok ? '' : ' — devrait faire 100 %'} · la part « Divers » se répartit toute seule sur les rayons</p>
                 })()}
               </div>
               <div className="flex gap-3 pt-1">
@@ -1354,7 +1350,7 @@ export default function FacturationPage() {
                     <div className="text-center py-12">
                       <div className="w-11 h-11 rounded-lg bg-pilote-50 flex items-center justify-center mx-auto mb-3"><Check className="w-5 h-5 text-pilote" /></div>
                       <p className="text-sm font-semibold text-gray-700">Tout est réparti</p>
-                      <p className="text-xs text-gray-400 mt-1">{splitSuppliers.length === 0 ? "Ajoutez des factures d'achat pour commencer." : 'Chaque société connue a sa ventilation.'}</p>
+                      <p className="text-xs text-gray-400 mt-1">{splitSuppliers.length === 0 ? "Ajoutez des factures d'achat pour commencer." : 'Chaque société connue a sa répartition.'}</p>
                     </div>
                   ) : (
                     <div className="text-center py-12">
@@ -1430,16 +1426,10 @@ export default function FacturationPage() {
             </div>
             <div className="space-y-3">
               <div>
-                <label className="block text-xs font-semibold text-gray-700 mb-1">CA Total (€)</label>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">Chiffre d&apos;affaires de la semaine (€)</label>
                 <Input type="number" step="0.01" min="0" value={caForm.ca_total} onChange={e => setCaForm(p => ({ ...p, ca_total: e.target.value }))} placeholder="0.00" className="text-lg font-bold" autoFocus />
               </div>
-              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider pt-1">Détail par rayon (optionnel)</p>
-              {[{ key: 'ca_boucherie', label: 'Boucherie' }, { key: 'ca_charcuterie', label: 'Charcuterie' }, { key: 'ca_traiteur', label: 'Traiteur' }, { key: 'ca_fruits_et_legumes', label: 'Fruits & légumes' }].map(({ key, label }) => (
-                <div key={key} className="flex items-center gap-2">
-                  <label className="text-xs text-gray-500 w-28 flex-shrink-0">{label}</label>
-                  <Input type="number" step="0.01" min="0" value={(caForm as any)[key]} onChange={e => setCaForm(p => ({ ...p, [key]: e.target.value }))} placeholder="0.00" />
-                </div>
-              ))}
+              <p className="text-[11px] text-gray-400">Le détail par rayon (boucherie, charcuterie, traiteur…) est repris automatiquement de votre rapport de la semaine — rien d&apos;autre à saisir.</p>
               <div className="flex gap-3 pt-2">
                 <Button variant="outline" className="flex-1" onClick={() => setShowCA(false)}>Annuler</Button>
                 <Button className="flex-1 bg-pilote hover:bg-pilote-hover text-white" onClick={saveCA} disabled={saving}>
