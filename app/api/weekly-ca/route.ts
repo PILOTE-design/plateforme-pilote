@@ -39,16 +39,20 @@ export async function POST(request: NextRequest) {
   if (!clientId) return NextResponse.json({ error: 'Client introuvable' }, { status: 404 })
 
   const body = await request.json()
-  const { week_number, year, ca_total = 0, ca_boucherie = 0, ca_charcuterie = 0, ca_traiteur = 0, ca_fruits_et_legumes = 0, ca_vente = 0 } = body
+  const { week_number, year, ca_total = 0 } = body
 
   if (!week_number || !year) return NextResponse.json({ error: 'week_number et year requis' }, { status: 400 })
 
+  // Seuls les champs PRÉSENTS dans la requête sont écrits : la modale ne saisit plus que le
+  // total, et les détails par rayon éventuellement stockés (repli du rapport) sont préservés.
+  const row: Record<string, any> = { client_id: clientId, week_number, year, ca_total, updated_at: new Date().toISOString() }
+  for (const k of ['ca_boucherie', 'ca_charcuterie', 'ca_traiteur', 'ca_fruits_et_legumes', 'ca_vente']) {
+    if (body[k] !== undefined) row[k] = body[k]
+  }
+
   const { data, error } = await serviceSupabase
     .from('weekly_ca')
-    .upsert(
-      { client_id: clientId, week_number, year, ca_total, ca_boucherie, ca_charcuterie, ca_traiteur, ca_fruits_et_legumes, ca_vente, updated_at: new Date().toISOString() },
-      { onConflict: 'client_id,week_number,year' }
-    )
+    .upsert(row, { onConflict: 'client_id,week_number,year' })
     .select()
     .single()
 
