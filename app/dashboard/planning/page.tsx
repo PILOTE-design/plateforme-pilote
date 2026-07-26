@@ -26,14 +26,32 @@ type ScheduleDetail = {
 }
 type ScheduleDetails = Partial<Record<JourDB, ScheduleDetail>>
 
-const CATEGORIES = [
-  { key: 'boucherie',     short: 'Boucherie',     abbr: 'Bouch.', color: 'bg-red-100 text-red-700',        ring: 'ring-red-300'      },
-  { key: 'charcuterie',   short: 'Charcuterie',   abbr: 'Charc.', color: 'bg-orange-100 text-orange-700',  ring: 'ring-orange-300'  },
-  { key: 'traiteur',      short: 'Traiteur',      abbr: 'Trait.', color: 'bg-emerald-100 text-emerald-700', ring: 'ring-emerald-300' },
-  { key: 'vente',         short: 'Vente',         abbr: 'Vente',  color: 'bg-sky-100 text-sky-700',        ring: 'ring-sky-300'     },
-  { key: 'administratif', short: 'Administratif', abbr: 'Admin.', color: 'bg-slate-100 text-slate-700',    ring: 'ring-slate-300'   },
-  { key: 'livraison',     short: 'Livraison',     abbr: 'Livr.',  color: 'bg-indigo-100 text-indigo-700',  ring: 'ring-indigo-300'  },
-] as const
+type PosteDef = { key: string; short: string; abbr: string; color: string }
+
+const CATEGORIES: PosteDef[] = [
+  { key: 'boucherie',     short: 'Boucherie',     abbr: 'Bouch.', color: 'bg-red-100 text-red-700'        },
+  { key: 'charcuterie',   short: 'Charcuterie',   abbr: 'Charc.', color: 'bg-orange-100 text-orange-700'  },
+  { key: 'traiteur',      short: 'Traiteur',      abbr: 'Trait.', color: 'bg-emerald-100 text-emerald-700' },
+  { key: 'vente',         short: 'Vente',         abbr: 'Vente',  color: 'bg-sky-100 text-sky-700'        },
+  { key: 'administratif', short: 'Administratif', abbr: 'Admin.', color: 'bg-slate-100 text-slate-700'    },
+  { key: 'livraison',     short: 'Livraison',     abbr: 'Livr.',  color: 'bg-indigo-100 text-indigo-700'  },
+]
+
+// Couleurs des postes PERSONNALISÉS du client (classes littérales : Tailwind ne
+// compile que ce qu'il voit dans le source). Attribution cyclique par index.
+const CUSTOM_POSTE_COLORS = [
+  'bg-teal-100 text-teal-700',
+  'bg-pink-100 text-pink-700',
+  'bg-violet-100 text-violet-700',
+  'bg-cyan-100 text-cyan-700',
+  'bg-lime-100 text-lime-700',
+  'bg-fuchsia-100 text-fuchsia-700',
+]
+
+/** Abréviation d'un libellé de poste personnalisé pour les badges compacts */
+function abbrOf(label: string): string {
+  return label.length > 7 ? label.slice(0, 6) + '.' : label
+}
 
 const TYPE_CONFIG: Record<DayType, {
   label: string; bg: string; text: string; dot: string; defaultHours: number; pdfColor: string; display: string
@@ -394,6 +412,60 @@ export default function PlanningPage() {
   const [monthlyData,    setMonthlyData]    = useState<MonthlyStat[] | null>(null)
   const [loadingMonthly, setLoadingMonthly] = useState(false)
   const [sendingMail,    setSendingMail]    = useState(false)
+  // Postes personnalisés du client (ex. « Prestation ») — s'ajoutent aux 6 intégrés,
+  // utilisables sur chaque créneau et comme famille de marge en facturation.
+  const [customPostes,   setCustomPostes]   = useState<{ key: string; label: string }[]>([])
+  const [showPostes,     setShowPostes]     = useState(false)
+  const [newPosteLabel,  setNewPosteLabel]  = useState('')
+  const [savingPostes,   setSavingPostes]   = useState(false)
+
+  const allPostes: PosteDef[] = [
+    ...CATEGORIES,
+    ...customPostes.map((p, i) => ({ key: p.key, short: p.label, abbr: abbrOf(p.label), color: CUSTOM_POSTE_COLORS[i % CUSTOM_POSTE_COLORS.length] })),
+  ]
+
+  useEffect(() => {
+    fetch('/api/postes', { cache: 'no-store' })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (Array.isArray(d?.custom)) setCustomPostes(d.custom) })
+      .catch(() => {})
+  }, [])
+
+  /** Remplace la liste des postes personnalisés (le serveur slugifie et valide) */
+  async function saveCustomPostes(next: { label: string }[]) {
+    setSavingPostes(true)
+    const res = await fetch('/api/postes', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ custom_postes: next }),
+    }).catch(() => null)
+    const data = res ? await res.json().catch(() => ({} as any)) : ({} as any)
+    setSavingPostes(false)
+    if (res?.ok && Array.isArray(data.custom)) {
+      setCustomPostes(data.custom)
+      return true
+    }
+    toast({ variant: 'error', title: 'Postes non enregistrés', description: data?.error || 'Réessayez.' })
+    return false
+  }
+
+  async function addCustomPoste() {
+    const label = newPosteLabel.trim()
+    if (label.length < 2) return
+    const ok = await saveCustomPostes([...customPostes, { label }])
+    if (ok) { setNewPosteLabel(''); toast({ variant: 'success', title: `Poste « ${label} » ajouté`, description: 'Disponible sur les créneaux du planning et comme famille de marge en facturation.' }) }
+  }
+
+  async function removeCustomPoste(key: string) {
+    const p = customPostes.find(x => x.key === key)
+    const ok = await confirmAction({
+      title: `Retirer le poste « ${p?.label ?? key} » ?`,
+      description: 'Il ne sera plus proposé sur les créneaux. Les heures déjà pointées dessus restent comptées (et reconnues en facturation si une famille de marge lui ressemble).',
+      confirmLabel: 'Retirer',
+      variant: 'danger',
+    })
+    if (!ok) return
+    await saveCustomPostes(customPostes.filter(x => x.key !== key))
+  }
 
   const { week: cw, year: cy } = getISOWeek(new Date())
   const isCurrentWeek = week === cw && year === cy
@@ -740,7 +812,9 @@ export default function PlanningPage() {
       const bg    = fName ? '#d97706' : i >= 5 ? '#94a3b8' : '#1E3A5F'
       return `<th style="background:${bg};color:white;padding:7px 5px;font-size:10px;text-align:center;">${fmtD(d)}${fName ? `<br><span style="font-size:8px;opacity:.9;">✦ ${fName}</span>` : ''}</th>`
     }).join('')
+    const CUSTOM_HEX = ['#0d9488', '#be185d', '#6d28d9', '#0e7490', '#4d7c0f', '#a21caf'] // pendants hex des couleurs Tailwind des postes personnalisés
     const catHex: Record<string, string> = { boucherie: '#b91c1c', charcuterie: '#c2410c', traiteur: '#047857', vente: '#0369a1', administratif: '#475569', livraison: '#4f46e5' }
+    customPostes.forEach((p, i) => { catHex[p.key] = CUSTOM_HEX[i % CUSTOM_HEX.length] })
     const empRows = employees.map((emp, i) => {
       const pal    = EMP_PALETTES[i % EMP_PALETTES.length]
       const entry  = getEntryState(emp.id)
@@ -751,16 +825,16 @@ export default function PlanningPage() {
         const h      = entry[j] || 0
         const fName  = weekHolidays[idx]
         const sd: ScheduleDetail = ((entry.schedule_details as ScheduleDetails | undefined) || {})[j] || {}
-        const catM   = CATEGORIES.find(c => c.key === sd.categorie_matin)
-        const catA   = CATEGORIES.find(c => c.key === sd.categorie_apmidi)
-        const catG   = (!catM && !catA) ? CATEGORIES.find(c => c.key === sd.categorie) : undefined
+        const catM   = allPostes.find(c => c.key === sd.categorie_matin)
+        const catA   = allPostes.find(c => c.key === sd.categorie_apmidi)
+        const catG   = (!catM && !catA) ? allPostes.find(c => c.key === sd.categorie) : undefined
         const bg     = fName ? '#fef3c7' : type === 'travail' ? pal.lightHex : TYPE_CONFIG[type].pdfColor
         let label = ''
         if (type === 'travail') {
           const lines: string[] = []
           if (catG) lines.push(`<div style=\"font-size:7.5px;font-weight:700;color:${catHex[catG.key] || '#334155'};text-transform:uppercase;letter-spacing:.3px;\">${catG.short}</div>`)
-          if (sd.matin_debut || catM) lines.push(`<div style=\"font-size:8px;color:#475569;\">M ${sd.matin_debut ? `${sd.matin_debut}–${sd.matin_fin || '?'}` : ''}${catM ? ` <span style=\"font-weight:700;color:${catHex[catM.key]};\">${catM.abbr}</span>` : ''}</div>`)
-          if (sd.apmidi_debut || catA) lines.push(`<div style=\"font-size:8px;color:#475569;\">AM ${sd.apmidi_debut ? `${sd.apmidi_debut}–${sd.apmidi_fin || '?'}` : ''}${catA ? ` <span style=\"font-weight:700;color:${catHex[catA.key]};\">${catA.abbr}</span>` : ''}</div>`)
+          if (sd.matin_debut || catM) lines.push(`<div style=\"font-size:8px;color:#475569;\">M ${sd.matin_debut ? `${sd.matin_debut}–${sd.matin_fin || '?'}` : ''}${catM ? ` <span style=\"font-weight:700;color:${catHex[catM.key] || '#334155'};\">${catM.abbr}</span>` : ''}</div>`)
+          if (sd.apmidi_debut || catA) lines.push(`<div style=\"font-size:8px;color:#475569;\">AM ${sd.apmidi_debut ? `${sd.apmidi_debut}–${sd.apmidi_fin || '?'}` : ''}${catA ? ` <span style=\"font-weight:700;color:${catHex[catA.key] || '#334155'};\">${catA.abbr}</span>` : ''}</div>`)
           lines.push(h > 0 ? `<strong style=\"font-size:11px;\">${fmtH(h)}</strong>` : '—')
           label = lines.join('')
         } else if (type === 'conges') {
@@ -875,11 +949,16 @@ export default function PlanningPage() {
       {/* ── Legend ── */}
       <div className="bg-white border-b border-gray-100 px-6 py-2 flex items-center gap-5 flex-wrap">
         <span className="text-xs font-medium text-gray-400">Postes :</span>
-        {CATEGORIES.map(c => (
+        {allPostes.map(c => (
           <div key={c.key} className="flex items-center gap-1.5">
             <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${c.color}`}>{c.short}</span>
           </div>
         ))}
+        <button onClick={() => setShowPostes(true)}
+          className="flex items-center gap-1 text-[11px] font-medium text-pilote hover:underline"
+          title="Ajouter ou retirer vos propres postes (ex. Prestation) — proposés sur chaque créneau et utilisables comme famille de marge en facturation">
+          <Plus className="w-3 h-3" />Gérer mes postes
+        </button>
         <span className="text-xs font-medium text-gray-400 ml-3">Types :</span>
         {([
           { label: 'Congé payé',   dot: 'bg-sky-400'    },
@@ -1074,9 +1153,9 @@ export default function PlanningPage() {
                       const hours    = entry[jour] || 0
                       const fName    = weekHolidays[idx]
                       const sd: ScheduleDetail = ((entry.schedule_details as ScheduleDetails | undefined) || {})[jour] || {}
-                      const catM     = CATEGORIES.find(c => c.key === sd.categorie_matin)
-                      const catA     = CATEGORIES.find(c => c.key === sd.categorie_apmidi)
-                      const catSel   = (!catM && !catA) ? CATEGORIES.find(c => c.key === sd.categorie) : undefined
+                      const catM     = allPostes.find(c => c.key === sd.categorie_matin)
+                      const catA     = allPostes.find(c => c.key === sd.categorie_apmidi)
+                      const catSel   = (!catM && !catA) ? allPostes.find(c => c.key === sd.categorie) : undefined
                       const maxDay   = emp.is_gerant ? 24 : emp.is_minor ? 8 : 10
                       const overDay  = type === 'travail' && hours > maxDay
 
@@ -1345,7 +1424,7 @@ export default function PlanningPage() {
                     <div className="flex items-start gap-3">
                       <span className="text-xs text-gray-400 w-20 shrink-0 pt-1">Poste matin</span>
                       <div className="flex flex-wrap gap-1.5">
-                        {CATEGORIES.map(cat => {
+                        {allPostes.map(cat => {
                           const isSel = (mSd.categorie_matin || mSd.categorie) === cat.key
                           return (
                             <button key={cat.key}
@@ -1365,7 +1444,7 @@ export default function PlanningPage() {
                     <div className="flex items-start gap-3">
                       <span className="text-xs text-gray-400 w-20 shrink-0 pt-1">Poste a.-midi</span>
                       <div className="flex flex-wrap gap-1.5">
-                        {CATEGORIES.map(cat => {
+                        {allPostes.map(cat => {
                           const isSel = (mSd.categorie_apmidi || mSd.categorie) === cat.key
                           return (
                             <button key={cat.key}
@@ -1638,6 +1717,59 @@ export default function PlanningPage() {
                   {adding ? 'Ajout...' : 'Ajouter'}
                 </Button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal gestion des postes personnalisés ── */}
+      {showPostes && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 backdrop-blur-sm" onClick={() => setShowPostes(false)}>
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-start justify-between mb-1">
+              <h2 className="text-base font-bold text-gray-900">Mes postes de travail</h2>
+              <button onClick={() => setShowPostes(false)} className="p-1 rounded hover:bg-gray-100 text-gray-400"><X className="w-4 h-4" /></button>
+            </div>
+            <p className="text-sm text-gray-500 mb-4">
+              Ajoutez vos propres postes (ex. « Prestation »). Ils sont proposés sur chaque créneau du
+              planning et peuvent servir de famille de marge en facturation — l'écriture proche suffit
+              (« boucher » est reconnu comme « Boucherie »).
+            </p>
+
+            <div className="mb-4">
+              <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Postes intégrés</span>
+              <div className="flex flex-wrap gap-1.5 mt-1.5">
+                {CATEGORIES.map(c => (
+                  <span key={c.key} className={`text-[11px] px-2 py-1 rounded-lg font-semibold ${c.color}`}>{c.short}</span>
+                ))}
+              </div>
+            </div>
+
+            <div className="mb-4">
+              <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Mes postes ({customPostes.length}/12)</span>
+              {customPostes.length === 0 ? (
+                <p className="text-xs text-gray-400 mt-1.5">Aucun poste personnalisé pour l'instant.</p>
+              ) : (
+                <div className="flex flex-wrap gap-1.5 mt-1.5">
+                  {customPostes.map((p, i) => (
+                    <span key={p.key} className={`flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg font-semibold ${CUSTOM_POSTE_COLORS[i % CUSTOM_POSTE_COLORS.length]}`}>
+                      {p.label}
+                      <button onClick={() => removeCustomPoste(p.key)} disabled={savingPostes} className="opacity-60 hover:opacity-100" title="Retirer ce poste">
+                        <X className="w-3 h-3" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-2">
+              <Input value={newPosteLabel} onChange={e => setNewPosteLabel(e.target.value)} placeholder="Ex. Prestation, Fromage, Marché..."
+                maxLength={30} autoFocus onKeyDown={e => e.key === 'Enter' && addCustomPoste()} />
+              <Button onClick={addCustomPoste} disabled={newPosteLabel.trim().length < 2 || savingPostes || customPostes.length >= 12}
+                className="bg-pilote hover:bg-pilote-hover text-white shrink-0">
+                {savingPostes ? '...' : <><Plus className="w-3.5 h-3.5 mr-1" />Ajouter</>}
+              </Button>
             </div>
           </div>
         </div>
