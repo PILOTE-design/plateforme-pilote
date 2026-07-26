@@ -174,7 +174,7 @@ export default async function MargesPage() {
               {famSansAchats.length > 0 && (
                 <div className="bg-pilote-50 border border-pilote-200 rounded-xl px-4 py-2.5 flex items-center gap-2 text-sm text-pilote-800">
                   <Info className="w-4 h-4 flex-shrink-0" />
-                  <span><strong>{famSansAchats.map(f => f.label).join(', ')}</strong> : aucun achat ventilé sur {famSansAchats.length > 1 ? 'ces familles' : 'cette famille'} — leur marge est donc ourévaluée.</span>
+                  <span><strong>{famSansAchats.map(f => f.label).join(', ')}</strong> : aucun achat ventilé sur {famSansAchats.length > 1 ? 'ces familles' : 'cette famille'} — leur marge est donc surévaluée.</span>
                   <Link href="/dashboard/facturation" className="ml-auto text-xs font-bold underline whitespace-nowrap">Ventiler →</Link>
                 </div>
               )}
