@@ -169,26 +169,25 @@ export function computeLegalAlerts(entries: PayrollEntry[], employees: PayrollEm
   return alerts
 }
 
-// ─── Répartition des heures par poste (rayon) ────────────────────────────
+// ─── Répartition des heures par poste ────────────────────────────────────────
 //
 // Le planning stocke le poste de chaque journée dans planning_entries.schedule_details :
 //   { lundi: { categorie?, categorie_matin?, categorie_apmidi?,
 //              matin_debut?, matin_fin?, apmidi_debut?, apmidi_fin?, ... }, ... }
-// Postes possibles côté planning : boucherie, charcuterie, traiteur, vente,
-// administratif, livraison. Seuls les trois métiers (boucherie/charcuterie/traiteur)
-// s'affectent à une famille de marge ; le reste (vente au comptoir, administratif,
-// livraison, journée sans poste) est « autres » — transverse à la boutique.
+// Les clés de poste sont les 6 intégrées (boucherie, charcuterie, traiteur, vente,
+// administratif, livraison) PLUS les postes personnalisés du client (lib/postes).
+// Ce module renvoie les heures BRUTES par clé de poste ; le rattachement aux
+// familles de marge (avec reconnaissance floue) se fait dans le résumé facturation.
 
-export const MARGIN_RAYONS = ['boucherie', 'charcuterie', 'traiteur'] as const
-export type MarginRayon = typeof MARGIN_RAYONS[number]
-export type RayonWeights = Record<MarginRayon, number> & { autres: number }
+/** Clé réservée aux heures travaillées sans poste renseigné */
+export const NO_POSTE = ''
 
-/** "08:30" → minutes depuis minuit ; NaN si absent/invalide */
+/** "8h30", "8h" ou "08:30" → minutes ; durée d'un créneau (0 si invalide/absent) */
 function slotMinutes(a?: string, b?: string): number {
   const parse = (s?: string): number => {
-    const m = /^(\d{1,2}):(\d{2})$/.exec(String(s ?? '').trim())
+    const m = /^(\d{1,2})(?:[h:](\d{0,2}))?$/.exec(String(s ?? '').trim())
     if (!m) return NaN
-    return parseInt(m[1]) * 60 + parseInt(m[2])
+    return parseInt(m[1]) * 60 + (m[2] ? parseInt(m[2]) : 0)
   }
   const start = parse(a), end = parse(b)
   if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return 0
@@ -196,24 +195,25 @@ function slotMinutes(a?: string, b?: string): number {
 }
 
 /**
- * Fractions des heures TRAVAILLÉES de la semaine par poste, d'après le planning.
+ * Heures TRAVAILLÉES de la semaine, ventilées par clé de poste (planning).
  * Par jour travaillé :
  *   - poste « journée entière » (categorie) → toutes les heures du jour ;
  *   - postes par créneau (categorie_matin / categorie_apmidi) → pondérés par la
- *     durée réelle des créneaux quand les horaires sont saisis, sinon 50/50 si
- *     les deux créneaux ont un poste, sinon tout au seul créneau renseigné.
- * Une semaine sans aucune heure travaillée (CP, maladie…) → 100 % « autres ».
+ *     durée réelle des créneaux quand les horaires sont saisis (formats "8h30"
+ *     et "08:30" acceptés), sinon 50/50 si les deux créneaux ont un poste,
+ *     sinon tout au seul créneau renseigné.
+ * Les heures sans poste sont sous la clé NO_POSTE ('').
  */
-export function entryRayonWeights(entry: PayrollEntry): RayonWeights {
-  const acc: RayonWeights = { boucherie: 0, charcuterie: 0, traiteur: 0, autres: 0 }
+export function entryPosteHours(entry: PayrollEntry): { hours: Record<string, number>; worked: number } {
+  const hoursByPoste: Record<string, number> = {}
   const sdAll = (entry.schedule_details ?? {}) as Record<string, {
     categorie?: string; categorie_matin?: string; categorie_apmidi?: string
     matin_debut?: string; matin_fin?: string; apmidi_debut?: string; apmidi_fin?: string
   }>
   const add = (cat: string | undefined, hours: number) => {
     if (hours <= 0) return
-    if (cat === 'boucherie' || cat === 'charcuterie' || cat === 'traiteur') acc[cat] += hours
-    else acc.autres += hours
+    const key = String(cat ?? '').trim() || NO_POSTE
+    hoursByPoste[key] = (hoursByPoste[key] || 0) + hours
   }
   let worked = 0
   for (const j of JOURS) {
@@ -231,14 +231,8 @@ export function entryRayonWeights(entry: PayrollEntry): RayonWeights {
     if (durM + durA > 0) wM = durM / (durM + durA)
     else if (catM && catA) wM = 0.5
     else wM = catM ? 1 : 0
-    add(catM || undefined, h * wM)
-    add(catA || undefined, h * (1 - wM))
+    add(catM, h * wM)
+    add(catA, h * (1 - wM))
   }
-  if (worked <= 0) return { boucherie: 0, charcuterie: 0, traiteur: 0, autres: 1 }
-  return {
-    boucherie: acc.boucherie / worked,
-    charcuterie: acc.charcuterie / worked,
-    traiteur: acc.traiteur / worked,
-    autres: acc.autres / worked,
-  }
+  return { hours: hoursByPoste, worked }
 }

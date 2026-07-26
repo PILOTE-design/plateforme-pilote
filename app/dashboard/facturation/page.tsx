@@ -18,8 +18,9 @@ import {
   costForWindow, weekRecurringCost, provisionForWindow, enumeratePeriods,
   type RecurringCharge, type RecurringActual, type Periodicity,
 } from '@/lib/recurring-charges'
+import { labelsMatch, DEFAULT_MARGIN_FAMILIES, type Poste } from '@/lib/postes'
 
-// ─── Types ──────────────────────
+// ─── Types ──────────────────
 
 type Invoice = {
   id: string; supplier_name: string; invoice_number?: string; invoice_date: string
@@ -35,8 +36,10 @@ type WeeklyCA = {
   families_detail?: { nom: string; montant: number }[] | null
 }
 
-type RayonMargin = {
-  ca: number; achats: number; salaires?: number
+/** Marge d'une famille choisie par le client (clé de poste du planning) */
+type FamilleMargin = {
+  key: string; label: string
+  ca: number; achats: number; achats_ventiles?: boolean; salaires?: number
   marge: number; taux: number | null
   marge_totale?: number; taux_totale?: number | null
 }
@@ -53,7 +56,7 @@ type Summary = {
   achats_by_rayon?: Record<string, number>
   achats_non_ventiles?: number
   achats_divers?: number
-  marge_by_rayon?: Record<string, RayonMargin>
+  familles?: FamilleMargin[]
 }
 
 /** Mémoire fournisseur : dernière catégorie et dernier taux de TVA utilisés */
@@ -84,9 +87,28 @@ const VENT_FIELDS = [
 const MATIERE_BENCH: Record<string, [number, number]> = {
   boucherie: [35, 45], charcuterie: [40, 55], traiteur: [50, 65], fruits_et_legumes: [20, 35],
 }
-function matiereColor(rayon: string, taux: number | null): string {
+// Identité visuelle des familles classiques — une famille personnalisée dont le
+// libellé ressemble à un métier classique (« boucher » ≈ « boucherie ») hérite de
+// sa couleur et de son repère ; sinon point gris ardoise, pas de repère.
+const CLASSIC_FAMILLES = [
+  { key: 'boucherie',         label: 'Boucherie',         dot: '#b91c1c' },
+  { key: 'charcuterie',       label: 'Charcuterie',       dot: '#c2410c' },
+  { key: 'traiteur',          label: 'Traiteur',          dot: '#047857' },
+  { key: 'fruits_et_legumes', label: 'Fruits et légumes', dot: '#0284c7' },
+  { key: 'vente',             label: 'Vente',             dot: '#0369a1' },
+] as const
+function classicFor(key: string, label: string) {
+  return CLASSIC_FAMILLES.find(c => c.key === key || labelsMatch(c.label, label)) ?? null
+}
+function familleDot(key: string, label: string): string {
+  return classicFor(key, label)?.dot ?? '#475569'
+}
+function familleBench(key: string, label: string): [number, number] | null {
+  const c = classicFor(key, label)
+  return c ? MATIERE_BENCH[c.key] ?? null : null
+}
+function matiereColorFor(bench: [number, number] | null, taux: number | null): string {
   if (taux === null) return 'text-gray-400'
-  const bench = MATIERE_BENCH[rayon]
   if (!bench) return taux >= 40 ? 'text-green-600' : taux >= 30 ? 'text-orange-500' : 'text-red-500'
   if (taux >= bench[0]) return 'text-green-600'
   if (taux >= bench[0] - 5) return 'text-orange-500'
@@ -139,7 +161,7 @@ type ProviderMeta = {
   helpUrl: string; description: string
 }
 
-// ─── Constantes ──────────────────
+// ─── Constantes ────────────────
 
 // Palette catégories : teintes sourdes (fond -50, texte -700), ALIGNÉE sur le code
 // couleur des rayons et de la page Marges — boucherie rouge, charcuterie orange,
@@ -181,7 +203,7 @@ const PROVIDERS_META: ProviderMeta[] = [
   { id: 'ebp',       name: 'EBP',       logo: 'EBP', color: 'bg-orange-500', tokenLabel: 'Token API EBP en ligne', tokenPlaceholder: 'Token depuis EBP → Paramètres → API', needsCompanyId: true, companyIdLabel: 'Identifiant dossier EBP', helpUrl: 'https://developer.ebp.com', description: 'EBP en ligne — import factures fournisseurs automatique' },
 ]
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────────────────────────
+// ─── Helpers ────────────────────────────────────────────────────────────────────────────────────────────
 
 function getISOWeek(date: Date) {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
@@ -253,7 +275,7 @@ function getLastWeek() {
   return getISOWeek(ref)
 }
 
-// ─── Composant principal ────────────────────────────────
+// ─── Composant principal ────────────────────────────────────────
 
 export default function FacturationPage() {
   const router = useRouter()
@@ -294,6 +316,11 @@ export default function FacturationPage() {
   const [saving,    setSaving]    = useState(false)
   // Tri de la liste d'achats : par catégorie (sous-totaux par poste) ou à plat par date
   const [invoiceView, setInvoiceView] = useState<'categorie' | 'date'>('categorie')
+  // Choix des 3 familles de marge (postes du planning, personnalisés compris)
+  const [showFamilles,  setShowFamilles]  = useState(false)
+  const [postesList,    setPostesList]    = useState<Poste[]>([])
+  const [familleDraft,  setFamilleDraft]  = useState<string[]>([...DEFAULT_MARGIN_FAMILIES])
+  const [famSaving,     setFamSaving]     = useState(false)
   // Mémoire fournisseur (pré-remplissage auto catégorie + TVA à la saisie d'un achat)
   const [suppliersMemo, setSuppliersMemo] = useState<SupplierMemo[]>([])
   // Le boucher a choisi catégorie ou TVA à la main → la mémoire ne l'écrase plus
@@ -758,6 +785,38 @@ export default function FacturationPage() {
     }
   }
 
+  /** Ouvre le choix des 3 familles — la liste des postes vient du planning (intégrés + personnalisés) */
+  async function openFamilles() {
+    setFamilleDraft(summary?.familles?.length === 3 ? summary.familles.map(f => f.key) : [...DEFAULT_MARGIN_FAMILIES])
+    setShowFamilles(true)
+    const data = await fetch('/api/postes', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).catch(() => null)
+    if (data) {
+      setPostesList([...(Array.isArray(data.builtin) ? data.builtin : []), ...(Array.isArray(data.custom) ? data.custom : [])])
+      if (Array.isArray(data.margin_families) && data.margin_families.length === 3) setFamilleDraft(data.margin_families.map(String))
+    }
+  }
+
+  async function saveFamilles() {
+    if (new Set(familleDraft).size !== 3) {
+      toast({ variant: 'error', title: 'Trois familles distinctes requises' })
+      return
+    }
+    setFamSaving(true)
+    const res = await fetch('/api/postes', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ margin_families: familleDraft }),
+    }).catch(() => null)
+    const data = res ? await res.json().catch(() => ({} as any)) : ({} as any)
+    setFamSaving(false)
+    if (res?.ok) {
+      setShowFamilles(false)
+      toast({ variant: 'success', title: 'Familles de marge enregistrées' })
+      load()
+    } else {
+      toast({ variant: 'error', title: 'Enregistrement impossible', description: data?.error || 'Réessayez.' })
+    }
+  }
+
   function openValorisation(inv: Invoice) {
     const qs = new URLSearchParams({
       date:      inv.invoice_date,
@@ -1034,7 +1093,10 @@ export default function FacturationPage() {
                 <h3 className="text-xs font-bold uppercase tracking-wider text-gray-400">Marge par famille</h3>
                 <p className="text-[11px] text-gray-400 mt-0.5">CA − achats ventilés − salaires des heures pointées sur le poste dans le planning · hors charges fixes (voir résultat net)</p>
               </div>
-              <button onClick={openSplits} className="text-xs font-medium text-pilote hover:underline flex-shrink-0">Régler la répartition des achats</button>
+              <div className="flex items-center gap-3 flex-shrink-0">
+                <button onClick={openFamilles} className="text-xs font-medium text-pilote hover:underline">Choisir mes familles</button>
+                <button onClick={openSplits} className="text-xs font-medium text-pilote hover:underline">Régler la répartition des achats</button>
+              </div>
             </div>
 
             {summary.ca_total === 0 ? (
@@ -1061,40 +1123,45 @@ export default function FacturationPage() {
                     </div>
                   </div>
 
-                  {/* Les 3 familles métier — salaires = heures pointées sur le poste, rien d'autre */}
-                  {RAYONS.filter(r => r.key !== 'fruits_et_legumes').map(r => {
-                    const d = summary.marge_by_rayon?.[r.key]
-                    const caPart = d && summary.ca_total > 0 && d.ca > 0 ? (d.ca / summary.ca_total) * 100 : null
+                  {/* Les 3 familles CHOISIES PAR LE CLIENT (postes du planning, personnalisés compris) —
+                      salaires = heures pointées sur le poste (reconnaissance floue), rien d'autre */}
+                  {(summary.familles ?? []).map(f => {
+                    const dot = familleDot(f.key, f.label)
+                    const bench = familleBench(f.key, f.label)
+                    const caPart = summary.ca_total > 0 && f.ca > 0 ? (f.ca / summary.ca_total) * 100 : null
                     return (
-                      <div key={r.key} className="rounded-lg border border-gray-100 p-4 flex flex-col">
+                      <div key={f.key} className="rounded-lg border border-gray-100 p-4 flex flex-col">
                         <div className="flex items-center justify-between mb-2">
                           <span className="flex items-center gap-1.5 min-w-0">
-                            <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: r.dot }} />
-                            <span className="text-xs font-bold text-gray-700 truncate">{r.label}</span>
+                            <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: dot }} />
+                            <span className="text-xs font-bold text-gray-700 truncate">{f.label}</span>
                           </span>
                           {caPart !== null && <span className="text-[10px] font-semibold text-gray-400 tabular flex-shrink-0">{Math.round(caPart)} % du CA</span>}
                         </div>
-                        {!d || d.ca <= 0 ? (
+                        {f.ca <= 0 ? (
                           <p className="text-xs text-gray-400 py-2 leading-relaxed">
-                            CA de la famille inconnu — détail absent du rapport et non saisi.
+                            CA de la famille inconnu — aucune famille de vente du rapport ne ressemble à « {f.label} », et rien n&apos;est saisi.
                             <button onClick={() => setShowCA(true)} className="ml-1 text-pilote font-medium hover:underline">Saisir le détail</button>
                           </p>
                         ) : (
                           <>
                             <div className="space-y-1 text-[11px] tabular">
-                              <div className="flex justify-between gap-2"><span className="text-gray-400">CA</span><span className="font-semibold text-gray-700">{fmtEuro(d.ca)}</span></div>
-                              <div className="flex justify-between gap-2"><span className="text-gray-400">Achats</span><span className="font-semibold text-gray-700">− {fmtEuro(d.achats)}</span></div>
-                              <div className="flex justify-between gap-2"><span className="text-gray-400">Salaires pointés</span><span className="font-semibold text-gray-700">− {fmtEuro(d.salaires ?? 0)}</span></div>
+                              <div className="flex justify-between gap-2"><span className="text-gray-400">CA</span><span className="font-semibold text-gray-700">{fmtEuro(f.ca)}</span></div>
+                              <div className="flex justify-between gap-2"><span className="text-gray-400">Achats</span><span className="font-semibold text-gray-700">− {fmtEuro(f.achats)}</span></div>
+                              <div className="flex justify-between gap-2"><span className="text-gray-400">Salaires pointés</span><span className="font-semibold text-gray-700">− {fmtEuro(f.salaires ?? 0)}</span></div>
                             </div>
                             <div className="mt-2.5 pt-2.5 border-t border-gray-100">
-                              <p className={`text-xl font-extrabold tracking-tight tabular ${(d.marge_totale ?? 0) >= 0 ? 'text-gray-900' : 'text-red-600'}`}>
-                                {d.taux_totale !== null && d.taux_totale !== undefined ? `${d.taux_totale.toFixed(1)} %` : '—'}
+                              <p className={`text-xl font-extrabold tracking-tight tabular ${(f.marge_totale ?? 0) >= 0 ? 'text-gray-900' : 'text-red-600'}`}>
+                                {f.taux_totale !== null && f.taux_totale !== undefined ? `${f.taux_totale.toFixed(1)} %` : '—'}
                               </p>
-                              <p className="text-xs text-gray-500 tabular">{fmtEuro(d.marge_totale ?? 0)} de marge</p>
-                              {d.taux !== null && (
-                                <p className={`text-[11px] font-semibold tabular mt-1 ${matiereColor(r.key, d.taux)}`}>
-                                  matière {d.taux.toFixed(1)} % <span className="text-gray-300 font-normal">(repère {MATIERE_BENCH[r.key][0]}–{MATIERE_BENCH[r.key][1]} %)</span>
+                              <p className="text-xs text-gray-500 tabular">{fmtEuro(f.marge_totale ?? 0)} de marge</p>
+                              {f.taux !== null && (
+                                <p className={`text-[11px] font-semibold tabular mt-1 ${matiereColorFor(bench, f.taux)}`}>
+                                  matière {f.taux.toFixed(1)} %{bench && <span className="text-gray-300 font-normal"> (repère {bench[0]}–{bench[1]} %)</span>}
                                 </p>
+                              )}
+                              {f.achats_ventiles === false && (
+                                <p className="text-[11px] text-gray-400 mt-1">aucun achat ventilable sur ce poste</p>
                               )}
                             </div>
                           </>
@@ -1111,7 +1178,7 @@ export default function FacturationPage() {
                     {(summary.salaires_affectes ?? 0) > 0
                       ? <>{fmtEuro(summary.salaires_affectes!)} de salaires suivent les postes du planning · {fmtEuro(summary.salaires_non_affectes!)} sans poste (vente, administratif, non renseigné) comptés dans le taux global uniquement.</>
                       : <>Aucune heure pointée sur un poste — les taux par famille n&apos;incluent aucun salaire pour l&apos;instant ({fmtEuro(summary.salaires_non_affectes!)} comptés dans le global).</>}
-                    {' '}Renseignez le poste (Boucherie, Charcuterie, Traiteur) sur les journées du <Link href="/dashboard/planning" className="text-pilote font-medium hover:underline">planning</Link>.
+                    {' '}Renseignez le poste ({(summary.familles ?? []).map(f => f.label).join(', ') || 'Boucherie, Charcuterie, Traiteur'}) sur les journées du <Link href="/dashboard/planning" className="text-pilote font-medium hover:underline">planning</Link>.
                   </p>
                 )}
 
@@ -1726,6 +1793,41 @@ export default function FacturationPage() {
               <Button onClick={saveSplits} disabled={splitSaving} className="flex-1 bg-pilote hover:bg-pilote-hover text-white">
                 {splitSaving ? <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" />Enregistrement...</> : <><Save className="w-4 h-4 mr-1.5" />Enregistrer</>}
               </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal : Choix des 3 familles de marge (liste = postes du planning) */}
+      {showFamilles && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 backdrop-blur-sm p-4" onClick={() => setShowFamilles(false)}>
+          <div className="bg-white rounded-lg p-6 w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-1.5">
+              <h2 className="text-base font-bold text-gray-900">Mes 3 familles de marge</h2>
+              <button onClick={() => setShowFamilles(false)} className="p-1.5 rounded-md hover:bg-gray-100"><X className="w-4 h-4 text-gray-500" /></button>
+            </div>
+            <p className="text-xs text-gray-500 mb-4">La liste vient des postes du planning. Les heures pointées sur un poste, le CA et les achats qui lui ressemblent (« boucher » ≈ « boucherie ») alimentent automatiquement sa marge.</p>
+            <div className="space-y-3">
+              {[0, 1, 2].map(i => (
+                <div key={i}>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Famille {i + 1}</label>
+                  <select value={familleDraft[i] ?? ''} onChange={e => setFamilleDraft(prev => { const n = [...prev]; n[i] = e.target.value; return n })}
+                    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200">
+                    {postesList.length === 0 && <option value={familleDraft[i] ?? ''}>{familleDraft[i] ?? ''}</option>}
+                    {postesList.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
+                  </select>
+                </div>
+              ))}
+              {new Set(familleDraft).size !== 3 && (
+                <p className="text-[11px] text-amber-600">Choisissez trois familles différentes.</p>
+              )}
+              <p className="text-[11px] text-gray-400">Il manque un poste (ex. « Prestation ») ? Ajoutez-le depuis le <Link href="/dashboard/planning" className="text-pilote hover:underline">planning</Link>, bouton « Postes » — il apparaîtra ici.</p>
+              <div className="flex gap-3 pt-1">
+                <Button variant="outline" className="flex-1" onClick={() => setShowFamilles(false)}>Annuler</Button>
+                <Button className="flex-1 bg-pilote hover:bg-pilote-hover text-white" onClick={saveFamilles} disabled={famSaving || new Set(familleDraft).size !== 3}>
+                  {famSaving ? <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" />Enregistrement...</> : <><Save className="w-4 h-4 mr-1.5" />Enregistrer</>}
+                </Button>
+              </div>
             </div>
           </div>
         </div>
