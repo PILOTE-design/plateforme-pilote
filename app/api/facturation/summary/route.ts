@@ -3,6 +3,7 @@ import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { resolveClientId } from '@/lib/resolve-client-id'
 import { normalizeSupplierName, sameSupplierFamily } from '@/lib/supplier-memory'
 import { weekRecurringCost } from '@/lib/recurring-charges'
+import { computeWeekPayroll, PAYROLL_EMPLOYEE_COLUMNS, PAYROLL_ENTRY_COLUMNS, type PayrollEmployee, type PayrollEntry } from '@/lib/payroll'
 
 export const dynamic = 'force-dynamic'
 
@@ -52,14 +53,20 @@ export async function GET(request: NextRequest) {
   // 1. Achats HT de la semaine
   const { data: invoicesData } = await serviceSupabase
     .from('invoices')
-    .select('amount_ht, category, supplier_name, is_fixed_charge')
+    .select('amount_ht, category, supplier_name, is_fixed_charge, status')
     .eq('client_id', clientId)
     .eq('week_number', week)
     .eq('year', year)
 
   // Achats VARIABLES uniquement : les charges fixes/récurrentes sont désormais gérées à part
   // (provision étalée au jour près), elles ne doivent plus peser en plein sur leur semaine de saisie.
-  const varInv = (invoicesData || []).filter((inv: any) => !inv.is_fixed_charge)
+  // Les factures importées « à vérifier » sont EXCLUES des calculs tant qu'elles ne sont pas
+  // validées — même règle que la page Marges (filtre en JS : un status null passe).
+  const allVariable = (invoicesData || []).filter((inv: any) => !inv.is_fixed_charge)
+  const varInv = allVariable.filter((inv: any) => inv.status !== 'a_verifier')
+  const achats_a_verifier = allVariable
+    .filter((inv: any) => inv.status === 'a_verifier')
+    .reduce((s: number, inv: any) => s + parseFloat(inv.amount_ht || 0), 0)
 
   const achats_ht = varInv.reduce((s: number, inv: any) => s + parseFloat(inv.amount_ht || 0), 0)
 
@@ -104,47 +111,28 @@ export async function GET(request: NextRequest) {
     achats_divers                     += amt * (Number(sp.pct_divers)            / tot)
   }
 
-  // 2. Masse salariale depuis planning — UNIQUEMENT les employés de CE client.
-  // Cloisonnement critique : sans ce filtre, la requête additionnait les
-  // plannings de TOUS les clients de la plateforme pour la même semaine.
+  // 2. Masse salariale CHARGÉE depuis le planning — moteur partagé lib/payroll (CCN 992 :
+  // HS sur heures travaillées, CP à contrat/5, majorations dimanche/férié, cas gérant,
+  // charges patronales). UNIQUEMENT les employés de CE client (cloisonnement critique).
   let masse_salariale = 0
   const { data: employees } = await serviceSupabase
     .from('employees')
-    .select('id, hourly_rate, contract_type, contract_hours')
+    .select(PAYROLL_EMPLOYEE_COLUMNS)
     .eq('client_id', clientId)
 
   if (employees && employees.length > 0) {
     const { data: planningData } = await serviceSupabase
       .from('planning_entries')
-      .select('lundi, mardi, mercredi, jeudi, vendredi, samedi, dimanche, lundi_type, mardi_type, mercredi_type, jeudi_type, vendredi_type, samedi_type, dimanche_type, employee_id')
+      .select(PAYROLL_ENTRY_COLUMNS)
       .in('employee_id', employees.map((e: any) => e.id))
       .eq('week_number', week)
       .eq('year', year)
 
-    const empMap: Record<string, any> = {}
-    for (const emp of employees) empMap[emp.id] = emp
-
-    const CONTRACT_HOURS: Record<string, number> = { CDI_35: 35, CDI_39: 39, CDD_35: 35, CDD_39: 39 }
-    const JOURS = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
-
-    for (const entry of planningData || []) {
-      const emp = empMap[entry.employee_id]
-      if (!emp) continue
-      const ch = CONTRACT_HOURS[emp.contract_type] ?? emp.contract_hours ?? 35
-      const rate = parseFloat(emp.hourly_rate || 0)
-
-      const totalH = JOURS.reduce((s: number, j: string) => {
-        const t = entry[`${j}_type`] || 'travail'
-        return s + (t === 'travail' ? parseFloat(entry[j] || 0) : t === 'conges' ? 7 : 0)
-      }, 0)
-
-      const t2 = ch + 8
-      let cost = 0
-      if (totalH <= ch) cost = totalH * rate
-      else if (totalH <= t2) cost = ch * rate + (totalH - ch) * rate * 1.25
-      else cost = ch * rate + (t2 - ch) * rate * 1.25 + (totalH - t2) * rate * 1.5
-      masse_salariale += cost
-    }
+    masse_salariale = computeWeekPayroll(
+      (planningData || []) as unknown as PayrollEntry[],
+      employees as unknown as PayrollEmployee[],
+      week, year,
+    )
   }
 
   // 3. CA depuis weekly_ca
@@ -173,15 +161,19 @@ export async function GET(request: NextRequest) {
   const ca_total = parseFloat(caData?.ca_total || 0)
   const marge_brute = ca_total - achats_ht
   const taux_marge = ca_total > 0 ? (marge_brute / ca_total) * 100 : null
+  // Marge après salaires = la « marge brute d'exploitation » demandée par les gérants :
+  // CA − achats matière − coût employés (chargé). Les charges fixes restent globales
+  // (résultat net) — elles ne s'affectent pas à un rayon.
+  const marge_apres_salaires = ca_total - achats_ht - masse_salariale
+  const taux_apres_salaires = ca_total > 0 ? (marge_apres_salaires / ca_total) * 100 : null
   const resultat_net = marge_brute - masse_salariale - charges_fixes
   const ratio_ms = ca_total > 0 ? (masse_salariale / ca_total) * 100 : null
 
-  // Marge par rayon = CA rayon (weekly_ca) − achats ventilés du rayon
+  // Marge par rayon = CA rayon (weekly_ca) − achats ventilés − salaires au prorata du CA
   const round2 = (n: number) => Math.round(n * 100) / 100
+  const round1 = (n: number) => Math.round(n * 10) / 10
   const RAYONS = ['boucherie', 'charcuterie', 'traiteur', 'fruits_et_legumes'] as const
 
-  // Redistribution du « divers » sur les 4 rayons, au prorata de leur part de CA
-  // (à défaut de CA par rayon renseigné : répartition égale)
   // CA par rayon — lu automatiquement depuis le rapport (families_detail).
   // Repli sur les champs ca_* saisis uniquement si le rapport n'a pas encore de détail par famille.
   const caByRayon: Record<string, number> = { boucherie: 0, charcuterie: 0, traiteur: 0, fruits_et_legumes: 0 }
@@ -191,39 +183,57 @@ export async function GET(request: NextRequest) {
   if (caRayonSum === 0) {
     for (const r of RAYONS) { const v = parseFloat((caData as any)?.[`ca_${r}`] || 0) || 0; caByRayon[r] = v; caRayonSum += v }
   }
+  // Redistribution du « divers » sur les 4 rayons, au prorata de leur part de CA
+  // (à défaut de CA par rayon renseigné : répartition égale)
   if (achats_divers > 0) {
     for (const r of RAYONS) {
       const share = caRayonSum > 0 ? caByRayon[r] / caRayonSum : 1 / RAYONS.length
       achats_by_rayon[r] += achats_divers * share
     }
   }
-  const marge_by_rayon: Record<string, { ca: number; achats: number; marge: number; taux: number | null }> = {}
+  // Salaires répartis au prorata de la part de CA de chaque rayon (seule clé de
+  // répartition disponible sans pointage par rayon — affichée comme telle dans l'UI).
+  // Base = CA total : la part de CA non rattachée à un rayon (épicerie…) garde sa part
+  // de salaires, qui n'est donc affectée à aucun des 4 rayons.
+  const salaryBase = ca_total > 0 ? ca_total : caRayonSum
+  const marge_by_rayon: Record<string, {
+    ca: number; achats: number; salaires: number
+    marge: number; taux: number | null
+    marge_totale: number; taux_totale: number | null
+  }> = {}
   for (const r of RAYONS) {
     const caR = caByRayon[r] || 0
     const achR = achats_by_rayon[r] || 0
+    const salR = salaryBase > 0 ? masse_salariale * (caR / salaryBase) : 0
     marge_by_rayon[r] = {
       ca: round2(caR),
       achats: round2(achR),
+      salaires: round2(salR),
       marge: round2(caR - achR),
-      taux: caR > 0 ? Math.round(((caR - achR) / caR) * 1000) / 10 : null,
+      taux: caR > 0 ? round1(((caR - achR) / caR) * 100) : null,
+      marge_totale: round2(caR - achR - salR),
+      taux_totale: caR > 0 ? round1(((caR - achR - salR) / caR) * 100) : null,
     }
   }
 
   return NextResponse.json({
-    achats_ht: Math.round(achats_ht * 100) / 100,
+    achats_ht: round2(achats_ht),
+    achats_a_verifier: round2(achats_a_verifier),
     achats_by_category,
     achats_by_rayon: Object.fromEntries(Object.entries(achats_by_rayon).map(([k, v]) => [k, round2(v)])),
     achats_non_ventiles: round2(achats_non_ventiles),
     achats_divers: round2(achats_divers),
     marge_by_rayon,
-    masse_salariale: Math.round(masse_salariale * 100) / 100,
-    charges_fixes: Math.round(charges_fixes * 100) / 100,
+    masse_salariale: round2(masse_salariale),
+    charges_fixes: round2(charges_fixes),
     charges_fixes_lines: recur.lines,
     ca_total,
     ca_detail: caData || null,
-    marge_brute: Math.round(marge_brute * 100) / 100,
-    taux_marge: taux_marge !== null ? Math.round(taux_marge * 10) / 10 : null,
-    resultat_net: Math.round(resultat_net * 100) / 100,
-    ratio_ms: ratio_ms !== null ? Math.round(ratio_ms * 10) / 10 : null,
+    marge_brute: round2(marge_brute),
+    taux_marge: taux_marge !== null ? round1(taux_marge) : null,
+    marge_apres_salaires: round2(marge_apres_salaires),
+    taux_apres_salaires: taux_apres_salaires !== null ? round1(taux_apres_salaires) : null,
+    resultat_net: round2(resultat_net),
+    ratio_ms: ratio_ms !== null ? round1(ratio_ms) : null,
   })
 }
