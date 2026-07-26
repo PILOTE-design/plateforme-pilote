@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input'
 import { useToast } from '@/components/ui/toast'
 import { useConfirm } from '@/components/ui/confirm-dialog'
 import {
-  Receipt, ChevronLeft, ChevronRight, ChevronDown, Plus, Trash2,
+  Receipt, ChevronLeft, ChevronRight, Plus, Trash2,
   TrendingUp, TrendingDown, ShoppingCart, Users, Euro,
   Save, X, Settings, Check, Loader2, AlertCircle,
   Link2, Link2Off, RefreshCw, ArrowUpRight, Repeat, PieChart,
@@ -161,7 +161,7 @@ type ProviderMeta = {
   helpUrl: string; description: string
 }
 
-// ─── Constantes ────────────────
+// ─── Constantes ──────────────
 
 // Palette catégories : teintes sourdes (fond -50, texte -700), ALIGNÉE sur le code
 // couleur des rayons et de la page Marges — boucherie rouge, charcuterie orange,
@@ -555,49 +555,6 @@ export default function FacturationPage() {
     load()
   }
 
-  /**
-   * Change la catégorie d'un achat — puis propose d'en faire une règle de tri :
-   * appliquer la catégorie à TOUTES les factures du fournisseur (toutes semaines),
-   * reprise ensuite par tous les imports (syncs logiciels + email).
-   */
-  async function updateCategory(inv: Invoice, category: string) {
-    if (category === inv.category) return
-    setInvoices(prev => prev.map(i => i.id === inv.id ? { ...i, category } : i))
-    const res = await fetch(`/api/invoices/${inv.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ category }) })
-    if (!res.ok) {
-      toast({ variant: 'error', title: 'Erreur', description: 'La catégorie n\'a pas pu être modifiée.' })
-      load()
-      return
-    }
-    const catLabel = catInfo(category).label
-    const applyAll = await confirmAction({
-      title: `Toujours classer ${inv.supplier_name} en « ${catLabel} » ?`,
-      description: 'La catégorie sera appliquée à toutes les factures de ce fournisseur — variantes du nom comprises (« SAS », « SARL »...) — toutes semaines confondues, puis reprise par les prochains imports. Sinon, seule cette facture change.',
-      confirmLabel: 'Oui, toutes les semaines',
-      cancelLabel: 'Juste celle-ci',
-      variant: 'default',
-    })
-    if (applyAll) {
-      const bulk = await fetch('/api/invoices', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ supplier_name: inv.supplier_name, category }) })
-      const d = await bulk.json().catch(() => ({} as any))
-      if (bulk.ok) {
-        const n = typeof d.updated === 'number' ? d.updated : 0
-        toast({
-          variant: 'success',
-          title: `${inv.supplier_name} → ${catLabel}`,
-          description: n > 0
-            ? `Règle enregistrée — ${n} autre${n > 1 ? 's' : ''} facture${n > 1 ? 's' : ''} reclassée${n > 1 ? 's' : ''}.`
-            : 'Règle enregistrée — les prochains imports suivront.',
-        })
-      } else {
-        toast({ variant: 'error', title: 'Erreur', description: 'La règle n\'a pas pu être appliquée aux autres factures.' })
-      }
-    } else {
-      toast({ variant: 'success', title: 'Catégorie mise à jour' })
-    }
-    load()
-  }
-
   /** Valide une facture « à vérifier » — seules les validées entrent dans le calcul des marges */
   async function validateInvoice(inv: Invoice) {
     setInvoices(prev => prev.map(i => i.id === inv.id ? { ...i, status: 'validee' } : i))
@@ -883,16 +840,6 @@ export default function FacturationPage() {
               )}
             </div>
           </div>
-        </td>
-        <td className="px-4 py-2.5">
-          <span className="relative inline-flex items-center">
-            <select value={cat.key} onChange={e => updateCategory(inv, e.target.value)}
-              title="Changer la catégorie — PILOTE proposera d'en faire une règle pour ce fournisseur"
-              className={`appearance-none cursor-pointer text-[11px] font-semibold rounded-full pl-2.5 pr-5 py-1 border-0 focus:outline-none focus:ring-2 focus:ring-pilote-200 transition-colors ${cat.color}`}>
-              {CATEGORIES.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
-            </select>
-            <ChevronDown className="w-3 h-3 absolute right-1.5 pointer-events-none opacity-40" />
-          </span>
         </td>
         <td className="px-4 py-2.5">
           {ventil.length === 0 ? (
@@ -1248,11 +1195,10 @@ export default function FacturationPage() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full tabular min-w-[820px]">
+              <table className="w-full tabular min-w-[720px]">
                 <thead>
                   <tr className="bg-gray-50 text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
                     <th className="px-4 py-2.5 text-left">Fournisseur</th>
-                    <th className="px-4 py-2.5 text-left">Catégorie</th>
                     <th className="px-4 py-2.5 text-left">Ventilation</th>
                     <th className="px-4 py-2.5 text-left">Date</th>
                     <th className="px-4 py-2.5 text-right">HT</th>
@@ -1267,7 +1213,7 @@ export default function FacturationPage() {
                     : invoiceGroups.map(g => (
                         <Fragment key={g.cat.key}>
                           <tr className="border-t border-gray-100 bg-gray-50/80">
-                            <td colSpan={4} className="px-4 py-2">
+                            <td colSpan={3} className="px-4 py-2">
                               <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-gray-500">
                                 <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: g.cat.dot }} />
                                 {g.cat.label}
@@ -1285,7 +1231,7 @@ export default function FacturationPage() {
                 </tbody>
                 <tfoot>
                   <tr className="bg-pilote text-white">
-                    <td colSpan={4} className="px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-white/60">
+                    <td colSpan={3} className="px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-white/60">
                       Total achats variables
                       {pendingHt > 0 && <span className="normal-case tracking-normal font-semibold text-white/50"> · dont {fmtEuro(pendingHt)} à vérifier</span>}
                     </td>
