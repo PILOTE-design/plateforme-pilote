@@ -558,7 +558,7 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
         <Footer page={4} week={data.week_number} year={data.year} />
       </Page>
 
-      {/* PAGE 4 - EVOLUTION PAR FAMILLE (tableau trié, sans graphique) */}
+      {/* PAGE 5 - EVOLUTION PAR FAMILLE (tableau trié, sans graphique) */}
       <Page size="A4" style={S.page}>
         <SecHeader num="04" title={`ÉVOLUTION PAR FAMILLE - ${data.year} vs ${data.year - 1}`} />
         <Text style={{ paddingHorizontal: 36, fontSize: 8.5, color: C.textLight, marginBottom: 12 }}>
@@ -603,7 +603,7 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
         <Footer page={5} week={data.week_number} year={data.year} />
       </Page>
 
-      {/* PAGE 5 - TOP / FLOP */}
+      {/* PAGE 6 - TOP / FLOP */}
       <Page size="A4" style={S.page}>
         <SecHeader num="05" title="CE QUI PROGRESSE - CE QUI DÉCROCHE" />
         <Text style={{ paddingHorizontal: 36, fontSize: 8.5, color: C.textLight, marginBottom: 12 }}>
@@ -671,7 +671,7 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
         <Footer page={6} week={data.week_number} year={data.year} />
       </Page>
 
-      {/* PAGE 6 - ANALYSE IA */}
+      {/* PAGE 7 - ANALYSE IA */}
       <Page size="A4" style={S.page}>
         <SecHeader num="06" title="ANALYSE INTELLIGENTE - INSIGHTS CLÉS" />
         <Text style={{ paddingHorizontal: 36, fontSize: 8.5, color: C.textLight, marginBottom: 14 }}>Analyse générée par intelligence artificielle - Semaine {data.week_number} {data.year}</Text>
@@ -705,7 +705,7 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
         <Footer page={7} week={data.week_number} year={data.year} />
       </Page>
 
-      {/* PAGE 7 - SYNTHESE DE LA SEMAINE */}
+      {/* PAGE 8 - SYNTHESE DE LA SEMAINE */}
       <Page size="A4" style={S.page}>
         <SecHeader num="08" title="SYNTHÈSE DE LA SEMAINE" />
         <View style={[S.statusBanner, { backgroundColor: status.color }]}>
