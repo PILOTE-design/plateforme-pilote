@@ -3,7 +3,11 @@ import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { resolveClientId } from '@/lib/resolve-client-id'
 import { normalizeSupplierName, sameSupplierFamily } from '@/lib/supplier-memory'
 import { weekRecurringCost } from '@/lib/recurring-charges'
-import { computeWeekPayroll, PAYROLL_EMPLOYEE_COLUMNS, PAYROLL_ENTRY_COLUMNS, type PayrollEmployee, type PayrollEntry } from '@/lib/payroll'
+import {
+  entryCost, entryRayonWeights, weekHolidayFlags,
+  PAYROLL_EMPLOYEE_COLUMNS, PAYROLL_ENTRY_COLUMNS,
+  type PayrollEmployee, type PayrollEntry,
+} from '@/lib/payroll'
 
 export const dynamic = 'force-dynamic'
 
@@ -114,7 +118,16 @@ export async function GET(request: NextRequest) {
   // 2. Masse salariale CHARGÉE depuis le planning — moteur partagé lib/payroll (CCN 992 :
   // HS sur heures travaillées, CP à contrat/5, majorations dimanche/férié, cas gérant,
   // charges patronales). UNIQUEMENT les employés de CE client (cloisonnement critique).
+  //
+  // Affectation par famille : le coût de chaque employé est réparti d'après les POSTES
+  // du planning (schedule_details — journée entière ou créneaux matin/après-midi).
+  // Ex. : 20 h pointées « boucherie » sur 40 h travaillées → la moitié du coût chargé
+  // de l'employé pèse sur la marge boucherie. Les heures sans poste métier (vente,
+  // administratif, livraison, non renseigné) restent transverses : elles comptent dans
+  // le taux GLOBAL mais ne sont imputées à aucune des trois familles.
   let masse_salariale = 0
+  const salaires_by_rayon: Record<string, number> = { boucherie: 0, charcuterie: 0, traiteur: 0 }
+  let salaires_non_affectes = 0
   const { data: employees } = await serviceSupabase
     .from('employees')
     .select(PAYROLL_EMPLOYEE_COLUMNS)
@@ -123,16 +136,24 @@ export async function GET(request: NextRequest) {
   if (employees && employees.length > 0) {
     const { data: planningData } = await serviceSupabase
       .from('planning_entries')
-      .select(PAYROLL_ENTRY_COLUMNS)
+      .select(`${PAYROLL_ENTRY_COLUMNS},schedule_details`)
       .in('employee_id', employees.map((e: any) => e.id))
       .eq('week_number', week)
       .eq('year', year)
 
-    masse_salariale = computeWeekPayroll(
-      (planningData || []) as unknown as PayrollEntry[],
-      employees as unknown as PayrollEmployee[],
-      week, year,
-    )
+    const empMap = new Map((employees as unknown as PayrollEmployee[]).map(e => [e.id, e]))
+    const holidayFlags = weekHolidayFlags(week, year)
+    for (const entry of (planningData || []) as unknown as PayrollEntry[]) {
+      const emp = empMap.get(entry.employee_id)
+      if (!emp) continue
+      const cost = entryCost(entry, emp, holidayFlags)
+      masse_salariale += cost
+      const w = entryRayonWeights(entry)
+      salaires_by_rayon.boucherie   += cost * w.boucherie
+      salaires_by_rayon.charcuterie += cost * w.charcuterie
+      salaires_by_rayon.traiteur    += cost * w.traiteur
+      salaires_non_affectes         += cost * w.autres
+    }
   }
 
   // 3. CA depuis weekly_ca
@@ -169,7 +190,7 @@ export async function GET(request: NextRequest) {
   const resultat_net = marge_brute - masse_salariale - charges_fixes
   const ratio_ms = ca_total > 0 ? (masse_salariale / ca_total) * 100 : null
 
-  // Marge par rayon = CA rayon (weekly_ca) − achats ventilés − salaires au prorata du CA
+  // Marge par rayon = CA rayon (weekly_ca) − achats ventilés − salaires pointés au planning
   const round2 = (n: number) => Math.round(n * 100) / 100
   const round1 = (n: number) => Math.round(n * 10) / 10
   const RAYONS = ['boucherie', 'charcuterie', 'traiteur', 'fruits_et_legumes'] as const
@@ -191,11 +212,10 @@ export async function GET(request: NextRequest) {
       achats_by_rayon[r] += achats_divers * share
     }
   }
-  // Salaires répartis au prorata de la part de CA de chaque rayon (seule clé de
-  // répartition disponible sans pointage par rayon — affichée comme telle dans l'UI).
-  // Base = CA total : la part de CA non rattachée à un rayon (épicerie…) garde sa part
-  // de salaires, qui n'est donc affectée à aucun des 4 rayons.
-  const salaryBase = ca_total > 0 ? ca_total : caRayonSum
+  // Salaires par famille = UNIQUEMENT le coût des heures pointées sur le poste dans le
+  // planning (taux EXACT demandé par les gérants). Aucun prorata : les salaires sans
+  // poste restent hors familles — ils pèsent sur le taux global et le résultat net.
+  // fruits_et_legumes n'a pas de poste au planning → jamais de salaires directs.
   const marge_by_rayon: Record<string, {
     ca: number; achats: number; salaires: number
     marge: number; taux: number | null
@@ -204,7 +224,7 @@ export async function GET(request: NextRequest) {
   for (const r of RAYONS) {
     const caR = caByRayon[r] || 0
     const achR = achats_by_rayon[r] || 0
-    const salR = salaryBase > 0 ? masse_salariale * (caR / salaryBase) : 0
+    const salR = salaires_by_rayon[r] || 0
     marge_by_rayon[r] = {
       ca: round2(caR),
       achats: round2(achR),
@@ -215,6 +235,7 @@ export async function GET(request: NextRequest) {
       taux_totale: caR > 0 ? round1(((caR - achR - salR) / caR) * 100) : null,
     }
   }
+  const salaires_affectes_total = salaires_by_rayon.boucherie + salaires_by_rayon.charcuterie + salaires_by_rayon.traiteur
 
   return NextResponse.json({
     achats_ht: round2(achats_ht),
@@ -225,6 +246,8 @@ export async function GET(request: NextRequest) {
     achats_divers: round2(achats_divers),
     marge_by_rayon,
     masse_salariale: round2(masse_salariale),
+    salaires_affectes: round2(salaires_affectes_total),
+    salaires_non_affectes: round2(salaires_non_affectes),
     charges_fixes: round2(charges_fixes),
     charges_fixes_lines: recur.lines,
     ca_total,
