@@ -12,7 +12,9 @@
 // Avant ce module, trois implémentations divergeaient : le planning (complète),
 // le tableau de bord (sans le cas gérant) et le résumé facturation (CP comptés
 // 7 h dans la base des HS, aucune majoration, aucune charge patronale — la masse
-// salariale y était sous-estimée d'environ 45 %). NE PAS re-dupliquer ce calcul.
+// salariale y était sous-estimée d'environ 45 %). Le planning importe désormais
+// `entryHours` / `entryBrutCost` / `chargeMultiplier` d'ici : plus aucune copie
+// n'existe dans l'application. NE PAS re-dupliquer ce calcul.
 
 export type PayrollEmployee = {
   id: string
@@ -62,17 +64,29 @@ function getEaster(year: number): Date {
   return new Date(Date.UTC(year, month - 1, day))
 }
 
-/** Jours fériés français d'une année (dates ISO yyyy-mm-dd) */
-export function frenchHolidays(year: number): Set<string> {
+/** Jours fériés français d'une année : date ISO yyyy-mm-dd → nom affichable */
+export function frenchHolidayNames(year: number): Map<string, string> {
   const easter = getEaster(year)
   const add = (d: Date, n: number) => { const r = new Date(d); r.setUTCDate(d.getUTCDate() + n); return r }
   const f = (d: Date) => d.toISOString().slice(0, 10)
-  return new Set([
-    f(new Date(Date.UTC(year, 0, 1))), f(add(easter, 1)), f(new Date(Date.UTC(year, 4, 1))),
-    f(new Date(Date.UTC(year, 4, 8))), f(add(easter, 39)), f(add(easter, 50)),
-    f(new Date(Date.UTC(year, 6, 14))), f(new Date(Date.UTC(year, 7, 15))), f(new Date(Date.UTC(year, 10, 1))),
-    f(new Date(Date.UTC(year, 10, 11))), f(new Date(Date.UTC(year, 11, 25))),
+  return new Map([
+    [f(new Date(Date.UTC(year, 0, 1))),   "Jour de l'An"],
+    [f(add(easter, 1)),                    'Lundi de Pâques'],
+    [f(new Date(Date.UTC(year, 4, 1))),   'Fête du Travail'],
+    [f(new Date(Date.UTC(year, 4, 8))),   'Victoire 1945'],
+    [f(add(easter, 39)),                   'Ascension'],
+    [f(add(easter, 50)),                   'Lundi de Pentecôte'],
+    [f(new Date(Date.UTC(year, 6, 14))),  'Fête Nationale'],
+    [f(new Date(Date.UTC(year, 7, 15))),  'Assomption'],
+    [f(new Date(Date.UTC(year, 10, 1))),  'Toussaint'],
+    [f(new Date(Date.UTC(year, 10, 11))), 'Armistice'],
+    [f(new Date(Date.UTC(year, 11, 25))), 'Noël'],
   ])
+}
+
+/** Jours fériés français d'une année (dates ISO yyyy-mm-dd) */
+export function frenchHolidays(year: number): Set<string> {
+  return new Set(Array.from(frenchHolidayNames(year).keys()))
 }
 
 /** Drapeaux « jour férié » des 7 jours d'une semaine ISO.
@@ -92,10 +106,12 @@ export function weekHolidayFlags(week: number, year: number): boolean[] {
 
 const num = (v: unknown): number => { const n = parseFloat(String(v ?? '')); return Number.isFinite(n) ? n : 0 }
 
-/** Coût CHARGÉ d'une ligne de planning pour un employé (CCN 992) */
-export function entryCost(entry: PayrollEntry, emp: PayrollEmployee, holidayFlags: boolean[]): number {
-  const ch = num(emp.contract_hours) || 35
-  const rate = num(emp.hourly_rate)
+/** Décomposition horaire d'une ligne de planning — base commune du coût ET de l'affichage.
+ *  `holidayFlags` est facultatif : sans lui, sundayH/holidayH restent à 0 (utile quand on
+ *  ne veut que les heures payées, par exemple pour un total affiché à l'écran). */
+export type EntryHours = { workedH: number; cpH: number; totalH: number; sundayH: number; holidayH: number }
+export function entryHours(entry: PayrollEntry, contractH: number = 35, holidayFlags: boolean[] = []): EntryHours {
+  const ch = num(contractH) || 35
   let workedH = 0, cpDays = 0, sundayH = 0, holidayH = 0
   JOURS.forEach((j, idx) => {
     const t = String(entry[`${j}_type`] ?? 'travail') || 'travail'
@@ -107,22 +123,35 @@ export function entryCost(entry: PayrollEntry, emp: PayrollEmployee, holidayFlag
     } else if (t === 'conges') cpDays++
   })
   const cpH = cpDays * ch / 5
-  let brut: number
-  if (emp.is_gerant) {
-    // Gérant/propriétaire : non salarié — taux normal sur toutes les heures, aucune majoration
-    brut = (workedH + cpH) * rate
-  } else {
-    const t2 = ch + 8
-    let workCost: number
-    if (workedH <= ch) workCost = workedH * rate
-    else if (workedH <= t2) workCost = ch * rate + (workedH - ch) * rate * 1.25
-    else workCost = ch * rate + (t2 - ch) * rate * 1.25 + (workedH - t2) * rate * 1.5
-    brut = workCost + cpH * rate + sundayH * rate * 0.20 + holidayH * rate * 1.00
-  }
-  const chargesPct = emp.charges_patronales === null || emp.charges_patronales === undefined
+  return { workedH, cpH, totalH: workedH + cpH, sundayH, holidayH }
+}
+
+/** Multiplicateur de charges patronales de l'employé (défaut 45 %) */
+export function chargeMultiplier(emp: PayrollEmployee): number {
+  const pct = emp.charges_patronales === null || emp.charges_patronales === undefined
     ? 45
     : num(emp.charges_patronales)
-  return brut * (1 + chargesPct / 100)
+  return 1 + pct / 100
+}
+
+/** Coût BRUT d'une ligne de planning (avant charges patronales) — CCN 992 */
+export function entryBrutCost(entry: PayrollEntry, emp: PayrollEmployee, holidayFlags: boolean[]): number {
+  const ch = num(emp.contract_hours) || 35
+  const rate = num(emp.hourly_rate)
+  const { workedH, cpH, sundayH, holidayH } = entryHours(entry, ch, holidayFlags)
+  // Gérant/propriétaire : non salarié — taux normal sur toutes les heures, aucune majoration
+  if (emp.is_gerant) return (workedH + cpH) * rate
+  const t2 = ch + 8
+  let workCost: number
+  if (workedH <= ch) workCost = workedH * rate
+  else if (workedH <= t2) workCost = ch * rate + (workedH - ch) * rate * 1.25
+  else workCost = ch * rate + (t2 - ch) * rate * 1.25 + (workedH - t2) * rate * 1.5
+  return workCost + cpH * rate + sundayH * rate * 0.20 + holidayH * rate * 1.00
+}
+
+/** Coût CHARGÉ d'une ligne de planning pour un employé (CCN 992) */
+export function entryCost(entry: PayrollEntry, emp: PayrollEmployee, holidayFlags: boolean[]): number {
+  return entryBrutCost(entry, emp, holidayFlags) * chargeMultiplier(emp)
 }
 
 /** Masse salariale CHARGÉE d'une semaine (somme des employés plannifiés) */
