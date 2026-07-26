@@ -1,19 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { resolveClientId } from '@/lib/resolve-client-id'
-import { normalizeSupplierName } from '@/lib/supplier-memory'
+import { normalizeSupplierName, supplierSociete, societeKey } from '@/lib/supplier-memory'
 
 export const dynamic = 'force-dynamic'
-
-// Extrait le nom de SOCIÉTÉ d'un libellé fournisseur : « Facture X - 6109622F… » → « X ».
-// Permet de regrouper toutes les factures d'une même société sous une seule règle.
-function supplierSociete(raw: string): string {
-  let s = String(raw || '').trim()
-  s = s.replace(/^factures?\s+/i, '')       // préfixe « Facture »/« Factures »
-  s = s.split(/\s+[-–—]\s+/)[0]             // avant le 1er « - » (n° de facture)
-  return s.trim()
-}
-const societeKey = (raw: string) => normalizeSupplierName(supplierSociete(raw))
 
 // Rayon dominant → catégorie d'achat des factures de la société
 const RAYON_TO_CATEGORY: Record<string, string> = {

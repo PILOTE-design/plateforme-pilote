@@ -8,7 +8,7 @@
 // Le CA est donc une ENTRÉE du calcul, jamais une lecture cachée : c'est la seule
 // façon d'obtenir les mêmes chiffres à l'écran et dans le PDF.
 
-import { normalizeSupplierName, sameSupplierFamily } from '@/lib/supplier-memory'
+import { normalizeSupplierName, sameSupplierFamily, supplierSociete } from '@/lib/supplier-memory'
 import { weekRecurringCost } from '@/lib/recurring-charges'
 import {
   entryCost, entryPosteHours, weekHolidayFlags, getWeekDates,
@@ -63,14 +63,6 @@ export type WeekEconomics = {
   taux_apres_salaires: number | null
   resultat_net: number
   ratio_ms: number | null
-}
-
-// « Facture X - 6109622F… » → « X » : on ventile par société, pas par n° de facture.
-function supplierSociete(raw: string): string {
-  let s = String(raw || '').trim()
-  s = s.replace(/^factures?\s+/i, '')
-  s = s.split(/\s+[-–—]\s+/)[0]
-  return s.trim()
 }
 
 // Famille de vente (rapport) → rayon de VENTILATION des achats. Correspondance

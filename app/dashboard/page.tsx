@@ -8,6 +8,7 @@ import {
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { FileText, TrendingUp, TrendingDown, Users, Receipt, Euro, AlertTriangle, CalendarDays, Calculator, ArrowRight, Repeat, CheckCircle2, Circle } from 'lucide-react'
 import { formatDate } from '@/lib/utils'
+import { societeKey, sameSupplierFamily } from '@/lib/supplier-memory'
 import Link from 'next/link'
 import { DonutChart } from './DashboardChart'
 
@@ -71,7 +72,7 @@ export default async function DashboardPage() {
   let anyPlanning = false
   let employeeCount = 0
   let aVerifierCount = 0
-  let famillesNonMappees = 0
+  let fournisseursNonVentiles = 0
 
   if (clientId) {
     // ── CA de la semaine écoulée (fallback : dernier CA connu) ──
@@ -103,28 +104,26 @@ export default async function DashboardPage() {
       else achatsVariables += parseFloat(String(inv.amount_ht || 0))
     }
 
-    // ── Fiabilité des marges : factures importées « à vérifier » + familles non catégorisées ──
-    const [{ count: avCount }, { data: mapRows }, { data: famWeeks }] = await Promise.all([
+    // ── Fiabilité des marges : factures importées « à vérifier » + fournisseurs non ventilés ──
+    // Un fournisseur sans règle de ventilation pèse sur la marge globale mais sur aucune
+    // famille : c'est LE réglage qui manque, et le seul (plus de « catégorisation » à part).
+    const [{ count: avCount }, { data: splitRows }, { data: supRows }] = await Promise.all([
       serviceSupabase.from('invoices').select('id', { count: 'exact', head: true })
         .eq('client_id', clientId).eq('status', 'a_verifier'),
-      serviceSupabase.from('margin_mappings').select('source_type, source_name').eq('client_id', clientId),
-      serviceSupabase.from('weekly_ca').select('families_detail').eq('client_id', clientId)
-        .eq('year', currentYear).order('week_number', { ascending: false }).limit(4),
+      serviceSupabase.from('supplier_rayon_splits').select('supplier_key').eq('client_id', clientId),
+      serviceSupabase.from('invoices').select('supplier_name')
+        .eq('client_id', clientId).eq('year', currentYear).eq('is_fixed_charge', false),
     ])
     aVerifierCount = avCount || 0
-    const mappings = mapRows || []
-    if (mappings.length > 0) {
-      const mapped = new Set(mappings.filter(m => m.source_type === 'famille').map(m => String(m.source_name).toUpperCase()))
-      const detected = new Set<string>()
-      for (const w of famWeeks || []) {
-        if (!Array.isArray(w.families_detail)) continue
-        for (const f of w.families_detail as FamilyRow[]) {
-          const nom = String(f.nom || '').trim()
-          if (nom && !mapped.has(nom.toUpperCase())) detected.add(nom.toUpperCase())
-        }
-      }
-      famillesNonMappees = detected.size
+    const splitKeys = (splitRows || []).map(s => String(s.supplier_key))
+    const manquants = new Set<string>()
+    for (const inv of supRows || []) {
+      const k = societeKey(inv.supplier_name)
+      if (!k) continue
+      if (splitKeys.some(sk => sk === k || sameSupplierFamily(sk, k))) continue
+      manquants.add(k)
     }
+    fournisseursNonVentiles = manquants.size
 
     // ── Intégration comptable connectée ? (checklist de démarrage) ──
     const { data: integ } = await serviceSupabase
@@ -219,7 +218,7 @@ export default async function DashboardPage() {
     ...cddAlerts.map(t => ({ color: 'bg-amber-500', text: t })),
     ...(ratioMS !== null && ratioMS > 40 ? [{ color: 'bg-amber-500', text: `Masse salariale à ${ratioMS.toFixed(0)} % du CA (cible < 35 %)` }] : []),
     ...(aVerifierCount > 0 ? [{ color: 'bg-amber-500', text: `${aVerifierCount} facture${aVerifierCount > 1 ? 's' : ''} importée${aVerifierCount > 1 ? 's' : ''} « à vérifier » — exclue${aVerifierCount > 1 ? 's' : ''} des marges tant que non validée${aVerifierCount > 1 ? 's' : ''}`, href: '/dashboard/facturation', cta: 'Valider' }] : []),
-    ...(famillesNonMappees > 0 ? [{ color: 'bg-pilote', text: `${famillesNonMappees} famille${famillesNonMappees > 1 ? 's' : ''} de vente non catégorisée${famillesNonMappees > 1 ? 's' : ''} — les marges par groupe utilisent un classement automatique en attendant`, href: '/dashboard/marges?config=1', cta: 'Catégoriser' }] : []),
+    ...(fournisseursNonVentiles > 0 ? [{ color: 'bg-pilote', text: `${fournisseursNonVentiles} fournisseur${fournisseursNonVentiles > 1 ? 's' : ''} sans ventilation — leurs achats pèsent sur la marge globale, sur aucune famille`, href: '/dashboard/facturation', cta: 'Ventiler' }] : []),
   ]
 
   // ── Checklist de démarrage (onboarding nouveau client) ──
