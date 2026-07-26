@@ -1,12 +1,17 @@
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { resolveClientId } from '@/lib/resolve-client-id'
+import {
+  computeWeekPayroll, computeLegalAlerts, getWeekDates,
+  PAYROLL_EMPLOYEE_COLUMNS, PAYROLL_ENTRY_COLUMNS,
+  type PayrollEmployee, type PayrollEntry,
+} from '@/lib/payroll'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { FileText, TrendingUp, TrendingDown, Users, Receipt, Euro, AlertTriangle, CalendarDays, Calculator, ArrowRight, Repeat, CheckCircle2, Circle } from 'lucide-react'
 import { formatDate } from '@/lib/utils'
 import Link from 'next/link'
 import { DonutChart } from './DashboardChart'
 
-// ─── Helpers dates ────────────────────────────────────────────────
+// ─── Helpers dates ──────────────────────────────────
 
 function getISOWeek(date: Date): { week: number; year: number } {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
@@ -19,13 +24,8 @@ function getISOWeek(date: Date): { week: number; year: number } {
   }
 }
 
-function getWeekDates(week: number, year: number): Date[] {
-  const jan4 = new Date(Date.UTC(year, 0, 4))
-  const dow = jan4.getUTCDay() || 7
-  const mon = new Date(jan4)
-  mon.setUTCDate(jan4.getUTCDate() - dow + 1 + (week - 1) * 7)
-  return Array.from({ length: 7 }, (_, i) => { const d = new Date(mon); d.setUTCDate(mon.getUTCDate() + i); return d })
-}
+// getWeekDates, jours fériés, masse salariale et alertes légales viennent de
+// lib/payroll — moteur UNIQUE partagé avec le résumé facturation (ne pas re-dupliquer).
 
 function weekPeriodLabel(week: number, year: number): string {
   const d = getWeekDates(week, year)
@@ -33,101 +33,9 @@ function weekPeriodLabel(week: number, year: number): string {
   return `${f(d[0])} – ${f(d[6])}`
 }
 
-function getEaster(year: number): Date {
-  const a = year % 19, b = Math.floor(year / 100), c = year % 100
-  const d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25)
-  const g = Math.floor((b - f + 1) / 3)
-  const h = (19 * a + b - d - g + 15) % 30
-  const i = Math.floor(c / 4), k = c % 4
-  const l = (32 + 2 * e + 2 * i - h - k) % 7
-  const m = Math.floor((a + 11 * h + 22 * l) / 451)
-  const month = Math.floor((h + l - 7 * m + 114) / 31)
-  const day = ((h + l - 7 * m + 114) % 31) + 1
-  return new Date(Date.UTC(year, month - 1, day))
-}
-
-function frenchHolidays(year: number): Set<string> {
-  const easter = getEaster(year)
-  const add = (d: Date, n: number) => { const r = new Date(d); r.setUTCDate(d.getUTCDate() + n); return r }
-  const fmtD = (d: Date) => d.toISOString().slice(0, 10)
-  return new Set([
-    fmtD(new Date(Date.UTC(year, 0, 1))), fmtD(add(easter, 1)), fmtD(new Date(Date.UTC(year, 4, 1))),
-    fmtD(new Date(Date.UTC(year, 4, 8))), fmtD(add(easter, 39)), fmtD(add(easter, 50)),
-    fmtD(new Date(Date.UTC(year, 6, 14))), fmtD(new Date(Date.UTC(year, 7, 15))), fmtD(new Date(Date.UTC(year, 10, 1))),
-    fmtD(new Date(Date.UTC(year, 10, 11))), fmtD(new Date(Date.UTC(year, 11, 25))),
-  ])
-}
-
 const fmt  = (n: number) => n.toLocaleString('fr-FR', { maximumFractionDigits: 0 })
-const JOURS = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
 
-type EmpRow = {
-  id: string; name: string; hourly_rate: string; contract_type: string; contract_hours: number
-  charges_patronales: string | null; is_minor: boolean | null; contract_end_date: string | null
-}
-type PlanRow = Record<string, string> & { employee_id: string }
-
-/** Masse salariale CHARGÉE d'une semaine — même moteur que la page planning :
- *  HS calculées sur les heures travaillées (CP exclus), CP payés à ch/5,
- *  majorations CCN dimanche +20 % / férié +100 %, charges patronales par employé. */
-function computeWeekPayroll(entries: PlanRow[], emps: EmpRow[], week: number, year: number): number {
-  const empMap = new Map(emps.map(e => [e.id, e]))
-  const dates = getWeekDates(week, year)
-  const hol = frenchHolidays(year)
-  const holidayFlags = dates.map(d => hol.has(d.toISOString().slice(0, 10)))
-  let total = 0
-  for (const entry of entries) {
-    const emp = empMap.get(entry.employee_id)
-    if (!emp) continue
-    const ch = emp.contract_hours || 35
-    const rate = parseFloat(emp.hourly_rate || '0')
-    let workedH = 0, cpDays = 0, sundayH = 0, holidayH = 0
-    JOURS.forEach((j, idx) => {
-      const t = entry[`${j}_type`] || 'travail'
-      const h = parseFloat(entry[j] || '0')
-      if (t === 'travail' && h > 0) {
-        workedH += h
-        if (holidayFlags[idx]) holidayH += h
-        else if (idx === 6) sundayH += h
-      } else if (t === 'conges') cpDays++
-    })
-    const cpH = cpDays * ch / 5
-    const t2 = ch + 8
-    let brut = 0
-    if (workedH <= ch) brut = workedH * rate
-    else if (workedH <= t2) brut = ch * rate + (workedH - ch) * rate * 1.25
-    else brut = ch * rate + (t2 - ch) * rate * 1.25 + (workedH - t2) * rate * 1.5
-    brut += cpH * rate + sundayH * rate * 0.20 + holidayH * rate * 1.00
-    const chargesPct = parseFloat(String(emp.charges_patronales ?? '45'))
-    total += brut * (1 + chargesPct / 100)
-  }
-  return total
-}
-
-/** Alertes légales de la semaine (mêmes seuils que la page planning) */
-function computeLegalAlerts(entries: PlanRow[], emps: EmpRow[]): string[] {
-  const empMap = new Map(emps.map(e => [e.id, e]))
-  const alerts: string[] = []
-  for (const entry of entries) {
-    const emp = empMap.get(entry.employee_id)
-    if (!emp) continue
-    const maxDay = emp.is_minor ? 8 : 10
-    const maxWeek = emp.is_minor ? 35 : 48
-    let workedH = 0, workedDays = 0, overDay = false
-    for (const j of JOURS) {
-      const t = entry[`${j}_type`] || 'travail'
-      const h = parseFloat(entry[j] || '0')
-      if (t === 'travail' && h > 0) {
-        workedH += h; workedDays++
-        if (h > maxDay) overDay = true
-      }
-    }
-    if (overDay) alerts.push(`${emp.name} : journée > ${maxDay}h${emp.is_minor ? ' (mineur)' : ''}`)
-    if (workedH > maxWeek) alerts.push(`${emp.name} : ${workedH.toFixed(1)}h travaillées — max légal ${maxWeek}h`)
-    if (workedDays === 7) alerts.push(`${emp.name} : 7 jours travaillés — repos hebdomadaire obligatoire`)
-  }
-  return alerts
-}
+type EmpRow = PayrollEmployee & { contract_end_date: string | null }
 
 export default async function DashboardPage() {
   const supabase = createClient()
@@ -226,24 +134,22 @@ export default async function DashboardPage() {
     // ── Employés + plannings (semaine de référence pour la masse salariale, semaine courante pour les alertes) ──
     const { data: emps } = await serviceSupabase
       .from('employees')
-      .select('id, name, hourly_rate, contract_type, contract_hours, charges_patronales, is_minor, contract_end_date')
+      .select(`${PAYROLL_EMPLOYEE_COLUMNS}, contract_end_date`)
       .eq('client_id', clientId)
-    const employees = (emps || []) as EmpRow[]
+    const employees = (emps || []) as unknown as EmpRow[]
     employeeCount = employees.length
 
     if (employees.length > 0) {
       const empIds = employees.map(e => e.id)
-      const cols = 'employee_id,lundi,mardi,mercredi,jeudi,vendredi,samedi,dimanche,' +
-        'lundi_type,mardi_type,mercredi_type,jeudi_type,vendredi_type,samedi_type,dimanche_type'
 
       const [{ data: refPlanning }, { data: curPlanning }, { data: anyPlan }] = await Promise.all([
-        serviceSupabase.from('planning_entries').select(cols).in('employee_id', empIds).eq('week_number', refWeek).eq('year', refYear),
-        serviceSupabase.from('planning_entries').select(cols).in('employee_id', empIds).eq('week_number', currentWeek).eq('year', currentYear),
+        serviceSupabase.from('planning_entries').select(PAYROLL_ENTRY_COLUMNS).in('employee_id', empIds).eq('week_number', refWeek).eq('year', refYear),
+        serviceSupabase.from('planning_entries').select(PAYROLL_ENTRY_COLUMNS).in('employee_id', empIds).eq('week_number', currentWeek).eq('year', currentYear),
         serviceSupabase.from('planning_entries').select('id').in('employee_id', empIds).limit(1),
       ])
 
-      payrollRef  = computeWeekPayroll((refPlanning || []) as PlanRow[], employees, refWeek, refYear)
-      legalAlerts = computeLegalAlerts((curPlanning || []) as PlanRow[], employees)
+      payrollRef  = computeWeekPayroll((refPlanning || []) as unknown as PayrollEntry[], employees, refWeek, refYear)
+      legalAlerts = computeLegalAlerts((curPlanning || []) as unknown as PayrollEntry[], employees)
       anyPlanning = (anyPlan || []).length > 0
 
       // Fins de CDD dans les 45 jours
@@ -251,7 +157,7 @@ export default async function DashboardPage() {
         if (!emp.contract_end_date) continue
         const days = Math.ceil((new Date(emp.contract_end_date).getTime() - Date.now()) / 86400000)
         if (days >= 0 && days <= 45) {
-          cddAlerts.push(`${emp.name} : fin de CDD le ${new Date(emp.contract_end_date).toLocaleDateString('fr-FR')} (${days} j)`)
+          cddAlerts.push(`${emp.name || 'Employé'} : fin de CDD le ${new Date(emp.contract_end_date).toLocaleDateString('fr-FR')} (${days} j)`)
         }
       }
     }
