@@ -12,7 +12,7 @@ import { societeKey, sameSupplierFamily } from '@/lib/supplier-memory'
 import Link from 'next/link'
 import { DonutChart } from './DashboardChart'
 
-// ─── Helpers dates ────────────────────────────────
+// ─── Helpers dates ──────────────────────────────────
 
 function getISOWeek(date: Date): { week: number; year: number } {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
