@@ -6,7 +6,7 @@ import { formatDate } from '@/lib/utils'
 import Link from 'next/link'
 import { DonutChart } from './DashboardChart'
 
-// ─── Helpers dates ──────────────────────────────────────────────────────────────────
+// ─── Helpers dates ────────────────────────────────────────────────
 
 function getISOWeek(date: Date): { week: number; year: number } {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
@@ -256,11 +256,15 @@ export default async function DashboardPage() {
       }
     }
 
-    // ── Tendance CA — 8 dernières semaines saisies ──
+    // ── Tendance CA — 8 dernières semaines de l'année en cours UNIQUEMENT ──
+    // On ne mélange jamais les semaines de N-1 dans ce graphique : les barres
+    // ne sont étiquetées que par numéro de semaine (S12), donc une semaine de
+    // l'année précédente y serait indiscernable et fausserait la lecture.
     const { data: trendRows } = await serviceSupabase
       .from('weekly_ca').select('week_number, year, ca_total')
       .eq('client_id', clientId)
-      .order('year', { ascending: false }).order('week_number', { ascending: false })
+      .eq('year', refYear)
+      .order('week_number', { ascending: false })
       .limit(8)
     caTrend = (trendRows || [])
       .map(r => ({ week: r.week_number as number, year: r.year as number, ca: parseFloat(String(r.ca_total || 0)) }))
@@ -502,7 +506,7 @@ export default async function DashboardPage() {
               <CardHeader className="flex flex-row items-center justify-between">
                 <div>
                   <CardTitle className="text-base">Tendance du CA</CardTitle>
-                  <CardDescription>{caTrend.length} dernières semaines saisies</CardDescription>
+                  <CardDescription>{caTrend.length} dernières semaines saisies · {refYear}</CardDescription>
                 </div>
                 {trendEvol !== null && (
                   <span className={`text-sm font-bold px-2.5 py-1 rounded-full tabular ${
@@ -591,7 +595,7 @@ export default async function DashboardPage() {
         <CardHeader className="flex flex-row items-center justify-between">
           <div>
             <CardTitle>Derniers rapports</CardTitle>
-            <CardDescription>Rapport complet publié chaque semaine · flash automatique le lundi matin</CardDescription>
+            <CardDescription>Rapport complet publié chaque semaine</CardDescription>
           </div>
           <Link href="/dashboard/reports" className="text-sm text-pilote font-semibold hover:underline flex items-center gap-1 flex-shrink-0">
             Voir tout <ArrowRight className="w-3.5 h-3.5" />
