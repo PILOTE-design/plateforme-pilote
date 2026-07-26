@@ -28,6 +28,21 @@ export function normalizeSupplierName(name: string): string {
  * en s'arrêtant sur une limite de mot. « DAVID MASTER » couvre « DAVID MASTER SAS »
  * mais pas « DAVID MASTERCLASS » (pas de limite de mot après le préfixe).
  */
+// « Facture X - 6109622F… » → « X » : on raisonne par SOCIÉTÉ, jamais par n° de facture.
+// Source unique : ventilation fournisseur, moteur hebdomadaire et tableau de bord
+// doivent regrouper les factures exactement de la même façon.
+export function supplierSociete(raw: string): string {
+  let s = String(raw || '').trim()
+  s = s.replace(/^factures?\s+/i, '')       // préfixe « Facture »/« Factures »
+  s = s.split(/\s+[-–—]\s+/)[0]             // avant le 1er « - » (n° de facture)
+  return s.trim()
+}
+
+/** Clé normalisée de la société d'un libellé fournisseur */
+export function societeKey(raw: string): string {
+  return normalizeSupplierName(supplierSociete(raw))
+}
+
 export function sameSupplierFamily(a: string, b: string): boolean {
   const na = normalizeSupplierName(a)
   const nb = normalizeSupplierName(b)

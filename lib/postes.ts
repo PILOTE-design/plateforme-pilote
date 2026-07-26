@@ -106,3 +106,20 @@ export function familleMatchesText(familleKey: string, familleLabel: string, tex
   if (stems) { const n = normText(t); if (stems.some(st => n.includes(st))) return true }
   return false
 }
+
+// ── Repères de marge matière par famille (boucherie artisanale, source : repères de branche) ──
+// Taux de marge matière = (CA − achats) / CA. Un seul tableau pour tout PILOTE :
+// page Marges, rapport PDF hebdomadaire, commentaires automatiques.
+export const MATIERE_BENCH: Record<string, [number, number]> = {
+  boucherie: [35, 45], charcuterie: [40, 55], traiteur: [50, 65], fruits_et_legumes: [20, 35], vente: [20, 35],
+}
+
+/** Repère d'une famille — reconnaissance souple sur le libellé (« boucher » ≈ boucherie) */
+export function benchOf(key: string, label: string): [number, number] | null {
+  const n = (label || key).toLowerCase()
+  if (MATIERE_BENCH[key]) return MATIERE_BENCH[key]
+  if (n.includes('bouch')) return MATIERE_BENCH.boucherie
+  if (n.includes('charcut')) return MATIERE_BENCH.charcuterie
+  if (n.includes('traiteur')) return MATIERE_BENCH.traiteur
+  return null
+}
