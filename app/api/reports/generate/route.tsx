@@ -14,6 +14,7 @@ import {
   Document, Page, Text, View, Image, StyleSheet, renderToBuffer, Font,
 } from '@react-pdf/renderer'
 import { Resend } from 'resend'
+import { computeWeekEconomics, type WeekEconomics } from '@/lib/week-economics'
 
 export const maxDuration = 60
 
@@ -97,6 +98,10 @@ interface ComputedReport {
   caVar: number
   status: WeekStatus
   execSummary: string
+  /** Économie de la semaine (achats, salaires, charges) — null si aucun client rattaché */
+  economics: WeekEconomics | null
+  /** Lecture métier de la marge : alertes puis recommandation prioritaire */
+  margeRead: { alerts: string[]; action: string | null }
 }
 
 // ─── Formatters ────────────────────────────────────────────────────────────
@@ -252,7 +257,7 @@ const SecHeader = ({ num, title }: { num: string; title: string }) => (
 const Footer = ({ page, week, year }: { page: number; week: number; year: number }) => (
   <View style={S.footer} fixed>
     <Text style={S.footerText}>PILOTE - Rapport S{week}/{year} - Document confidentiel</Text>
-    <Text style={S.footerText}>Page {page} / 7</Text>
+    <Text style={S.footerText}>Page {page} / 8</Text>
   </View>
 )
 
@@ -273,7 +278,10 @@ const ShareBar = ({ pct }: { pct: number }) => (
 // ─── PDF Document ──────────────────────────────────────────────────────────────
 
 const PiloteReport = ({ r }: { r: ComputedReport }) => {
-  const { data, clientName, insights, pieBuffer, tops, flops, famRows, caVar, status, execSummary } = r
+  const { data, clientName, insights, pieBuffer, tops, flops, famRows, caVar, status, execSummary, economics, margeRead } = r
+  // eco non nul = il y a de quoi parler d'argent (au moins des achats, des salaires
+  // ou des charges) ; sinon la page 3 affiche le mode d'emploi plutot que des zeros
+  const eco = hasEconomics(economics) ? economics : null
   const { financier_n: fn, financier_n1: fn1, ventes_n: vn, ventes_n1: vn1 } = data
   const generatedOn = new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' })
 
@@ -332,7 +340,7 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
           <View>
             <Text style={S.coverMeta}>Généré le {generatedOn}</Text>
             <Text style={S.coverMeta}>Période comparée (N-1) : {data.period_n1}</Text>
-            <Text style={S.coverMeta}>7 pages - Analyse IA - Graphique - Synthèse de semaine</Text>
+            <Text style={S.coverMeta}>8 pages - Marge &amp; coûts - Analyse IA - Graphique - Synthèse</Text>
           </View>
         </View>
       </Page>
@@ -391,9 +399,133 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
         <Footer page={2} week={data.week_number} year={data.year} />
       </Page>
 
-      {/* PAGE 3 - REPARTITION CA */}
+      {/* PAGE 3 - MARGE & COUTS (memes chiffres que l'onglet Facturation) */}
       <Page size="A4" style={S.page}>
-        <SecHeader num="02" title="RÉPARTITION DU CA PAR FAMILLE" />
+        <SecHeader num="02" title="MARGE &amp; COÛTS DE LA SEMAINE" />
+        {eco ? (
+          <>
+            <View style={S.kpiRow}>
+              <KpiBox
+                label="MARGE BRUTE"
+                value={eur0(eco.marge_brute)}
+                sub={eco.taux_marge !== null ? `${eco.taux_marge.toFixed(1)} % du CA - repère > 40 %` : 'CA non renseigné'}
+                bg={eco.taux_marge === null ? C.blue : eco.taux_marge >= 40 ? C.green : eco.taux_marge >= 30 ? C.amber : C.red}
+              />
+              <KpiBox
+                label="MASSE SALARIALE"
+                value={eur0(eco.masse_salariale)}
+                sub={eco.ratio_ms !== null ? `${eco.ratio_ms.toFixed(1)} % du CA - repère < 30 %` : 'chargée (CCN 992)'}
+                bg={eco.ratio_ms === null ? C.blue : eco.ratio_ms < 30 ? C.green : eco.ratio_ms <= 40 ? C.amber : C.red}
+              />
+              <KpiBox
+                label="RÉSULTAT NET ESTIMÉ"
+                value={eur0(eco.resultat_net)}
+                sub={`après ${eur0(eco.charges_fixes)} de charges fixes`}
+                bg={eco.resultat_net >= 0 ? C.green : C.red}
+              />
+            </View>
+
+            <Text style={{ paddingHorizontal: 36, fontSize: 8.5, color: C.textLight, marginBottom: 14 }}>
+              CA {eur0(eco.ca_total)} - achats {eur0(eco.achats_ht)} - salaires {eur0(eco.masse_salariale)} - charges fixes {eur0(eco.charges_fixes)} = {eur0(eco.resultat_net)}
+            </Text>
+
+            <Text style={{ paddingHorizontal: 36, fontSize: 9.5, fontWeight: 700, color: C.navy, marginBottom: 10 }}>
+              Marge par famille
+            </Text>
+            <View style={S.tableWrap}>
+              <View style={S.tHead}>
+                <Text style={[S.tHeadCell, { flex: 2.4 }]}>FAMILLE</Text>
+                <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>CA (€)</Text>
+                <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>ACHATS (€)</Text>
+                <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>SALAIRES (€)</Text>
+                <Text style={[S.tHeadCell, { flex: 2, textAlign: 'right' }]}>MARGE (€)</Text>
+                <Text style={[S.tHeadCell, { flex: 1.4, textAlign: 'right' }]}>TX MAT.</Text>
+                <Text style={[S.tHeadCell, { flex: 1.4, textAlign: 'right' }]}>TX NET</Text>
+              </View>
+              {eco.familles.map((f, i) => {
+                const b = benchOf(f.key, f.label)
+                const tauxOk = f.taux === null ? null : b ? f.taux >= b[0] : f.taux >= 40
+                return (
+                  <View key={f.key} style={i % 2 === 0 ? S.tRow : S.tRowAlt}>
+                    <Text style={[S.tCellB, { flex: 2.4 }]}>{trunc(f.label, 20)}</Text>
+                    <Text style={[S.tCellR, { flex: 2 }]}>{f.ca > 0 ? eur0(f.ca) : '-'}</Text>
+                    <Text style={[S.tCellR, { flex: 2 }]}>{f.achats > 0 ? eur0(f.achats) : '-'}</Text>
+                    <Text style={[S.tCellR, { flex: 2 }]}>{f.salaires > 0 ? eur0(f.salaires) : '-'}</Text>
+                    <Text style={[S.tCellRB, { flex: 2 }]}>{f.ca > 0 ? eur0(f.marge_totale) : '-'}</Text>
+                    <Text style={[tauxOk === null ? S.tCellR : tauxOk ? S.tCellGreen : S.tCellRed, { flex: 1.4 }]}>
+                      {f.taux !== null ? `${f.taux.toFixed(1)}%` : '-'}
+                    </Text>
+                    <Text style={[S.tCellRB, { flex: 1.4 }]}>{f.taux_totale !== null ? `${f.taux_totale.toFixed(1)}%` : '-'}</Text>
+                  </View>
+                )
+              })}
+              <View style={S.tTotal}>
+                <Text style={[S.tTotalCellL, { flex: 2.4 }]}>GLOBAL BOUTIQUE</Text>
+                <Text style={[S.tTotalCell, { flex: 2 }]}>{eur0(eco.ca_total)}</Text>
+                <Text style={[S.tTotalCell, { flex: 2 }]}>{eur0(eco.achats_ht)}</Text>
+                <Text style={[S.tTotalCell, { flex: 2 }]}>{eur0(eco.masse_salariale)}</Text>
+                <Text style={[S.tTotalCell, { flex: 2 }]}>{eur0(eco.marge_apres_salaires)}</Text>
+                <Text style={[S.tTotalCell, { flex: 1.4 }]}>{eco.taux_marge !== null ? `${eco.taux_marge.toFixed(1)}%` : '-'}</Text>
+                <Text style={[S.tTotalCell, { flex: 1.4 }]}>{eco.taux_apres_salaires !== null ? `${eco.taux_apres_salaires.toFixed(1)}%` : '-'}</Text>
+              </View>
+            </View>
+            <Text style={[S.chartCaption, { textAlign: 'left', marginTop: 6, lineHeight: 1.45 }]}>
+              TX MAT. = marge matière (CA - achats). TX NET = après les salaires pointés sur le poste dans le planning.
+              Repères du métier : boucherie 35-45 %, charcuterie 40-55 %, traiteur 50-65 %.
+            </Text>
+
+            {margeRead.alerts.length > 0 && (
+              <View style={S.vigilanceBox}>
+                <Text style={S.vigilanceTitle}>LECTURE DE LA SEMAINE</Text>
+                {margeRead.alerts.map((a, i) => (
+                  <Text key={i} style={S.vigilanceText}>- {a}</Text>
+                ))}
+              </View>
+            )}
+            {margeRead.action && (
+              <View style={S.actionBox}>
+                <Text style={S.actionLabel}>À FAIRE EN PRIORITÉ</Text>
+                <Text style={S.actionText}>{margeRead.action}</Text>
+              </View>
+            )}
+          </>
+        ) : (
+          <>
+            <View style={S.execBox}>
+              <Text style={S.execLabel}>PAGE EN ATTENTE DE VOS DONNÉES</Text>
+              <Text style={S.execText}>
+                Cette page calcule votre marge réelle : chiffre d&apos;affaires moins achats, moins le coût
+                des heures pointées au planning, moins vos charges fixes. Elle reste vide tant que ces
+                éléments ne sont pas renseignés pour la semaine {data.week_number}.
+              </Text>
+            </View>
+            <View style={S.insightBlock}>
+              {[
+                'Saisissez ou synchronisez vos factures d\'achat de la semaine dans Facturation.',
+                'Renseignez le planning de vos employés, en précisant le poste de chaque journée : c\'est ce qui permet d\'affecter le bon salaire au bon rayon.',
+                'Déclarez vos charges fixes (loyer, énergie, assurance, crédit) une seule fois : elles seront ensuite étalées automatiquement sur chaque semaine.',
+              ].map((t, i) => (
+                <View key={i} style={S.insightRow}>
+                  <View style={S.insightBullet}><Text style={S.bulletNum}>{i + 1}</Text></View>
+                  <Text style={S.insightText}>{t}</Text>
+                </View>
+              ))}
+            </View>
+            <View style={S.actionBox}>
+              <Text style={S.actionLabel}>CE QUE VOUS OBTIENDREZ</Text>
+              <Text style={S.actionText}>
+                Le taux de marge exact de chaque rayon, salaires compris, et le résultat net de la semaine
+                - les mêmes chiffres que ceux affichés dans votre espace Facturation.
+              </Text>
+            </View>
+          </>
+        )}
+        <Footer page={3} week={data.week_number} year={data.year} />
+      </Page>
+
+      {/* PAGE 4 - REPARTITION CA */}
+      <Page size="A4" style={S.page}>
+        <SecHeader num="03" title="RÉPARTITION DU CA PAR FAMILLE" />
         <View style={S.chartWrap}>
           <Image src={{ data: pieBuffer, format: 'png' }} style={{ width: 490, height: 275 }} />
         </View>
@@ -423,12 +555,12 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
             )
           })}
         </View>
-        <Footer page={3} week={data.week_number} year={data.year} />
+        <Footer page={4} week={data.week_number} year={data.year} />
       </Page>
 
       {/* PAGE 4 - EVOLUTION PAR FAMILLE (tableau trié, sans graphique) */}
       <Page size="A4" style={S.page}>
-        <SecHeader num="03" title={`ÉVOLUTION PAR FAMILLE - ${data.year} vs ${data.year - 1}`} />
+        <SecHeader num="04" title={`ÉVOLUTION PAR FAMILLE - ${data.year} vs ${data.year - 1}`} />
         <Text style={{ paddingHorizontal: 36, fontSize: 8.5, color: C.textLight, marginBottom: 12 }}>
           Familles triées du meilleur écart au moins bon - comparaison avec la même semaine {data.year - 1}
         </Text>
@@ -468,12 +600,12 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
             Lecture : la barre indique le poids de l'écart de chaque famille par rapport au plus gros écart de la semaine (vert = progression, rouge = recul). Les familles en tête expliquent l'essentiel de la variation du CA.
           </Text>
         </View>
-        <Footer page={4} week={data.week_number} year={data.year} />
+        <Footer page={5} week={data.week_number} year={data.year} />
       </Page>
 
       {/* PAGE 5 - TOP / FLOP */}
       <Page size="A4" style={S.page}>
-        <SecHeader num="04" title="CE QUI PROGRESSE - CE QUI DÉCROCHE" />
+        <SecHeader num="05" title="CE QUI PROGRESSE - CE QUI DÉCROCHE" />
         <Text style={{ paddingHorizontal: 36, fontSize: 8.5, color: C.textLight, marginBottom: 12 }}>
           Plus fortes progressions et plus fortes baisses de CA produit vs la même semaine {data.year - 1} (écarts calculés sur le CA total de chaque produit)
         </Text>
@@ -536,12 +668,12 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
             Lecture : CA N = total des ventes du produit sur la semaine ; l'écart compare ce total à la même semaine de {data.year - 1}. Les produits en tête de progression sont à mettre en avant en vitrine ; les baisses marquées méritent une vérification (approvisionnement, prix, présence en rayon).
           </Text>
         </View>
-        <Footer page={5} week={data.week_number} year={data.year} />
+        <Footer page={6} week={data.week_number} year={data.year} />
       </Page>
 
       {/* PAGE 6 - ANALYSE IA */}
       <Page size="A4" style={S.page}>
-        <SecHeader num="05" title="ANALYSE INTELLIGENTE - INSIGHTS CLÉS" />
+        <SecHeader num="06" title="ANALYSE INTELLIGENTE - INSIGHTS CLÉS" />
         <Text style={{ paddingHorizontal: 36, fontSize: 8.5, color: C.textLight, marginBottom: 14 }}>Analyse générée par intelligence artificielle - Semaine {data.week_number} {data.year}</Text>
         <View style={S.insightBlock}>
           {insights.insights.map((txt, i) => (
@@ -560,7 +692,7 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
           </View>
         )}
         <View style={{ marginTop: 10 }}>
-          <SecHeader num="06" title="RECOMMANDATIONS POUR LA SEMAINE PROCHAINE" />
+          <SecHeader num="07" title="RECOMMANDATIONS POUR LA SEMAINE PROCHAINE" />
           <View style={S.insightBlock}>
             {insights.recommendations.map((txt, i) => (
               <View key={i} style={S.insightRow}>
@@ -570,12 +702,12 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
             ))}
           </View>
         </View>
-        <Footer page={6} week={data.week_number} year={data.year} />
+        <Footer page={7} week={data.week_number} year={data.year} />
       </Page>
 
       {/* PAGE 7 - SYNTHESE DE LA SEMAINE */}
       <Page size="A4" style={S.page}>
-        <SecHeader num="07" title="SYNTHÈSE DE LA SEMAINE" />
+        <SecHeader num="08" title="SYNTHÈSE DE LA SEMAINE" />
         <View style={[S.statusBanner, { backgroundColor: status.color }]}>
           <Text style={S.statusLabel}>{status.label}</Text>
           <Text style={S.statusDesc}>{status.desc}</Text>
@@ -629,7 +761,7 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
         <Text style={{ paddingHorizontal: 36, marginTop: 18, fontSize: 8, color: C.textLight }}>
           Rapport généré automatiquement par PILOTE le {generatedOn}. Données issues de vos exports de caisse (S{data.week_number} {data.year} et S{data.week_number} {data.year - 1}).
         </Text>
-        <Footer page={7} week={data.week_number} year={data.year} />
+        <Footer page={8} week={data.week_number} year={data.year} />
       </Page>
 
     </Document>
@@ -906,7 +1038,83 @@ function buildStatus(caVar: number): WeekStatus {
   if (v > 10)  return { label: 'SEMAINE EN FORTE PROGRESSION', color: '#2E7D32', light: '#E6F4EA', desc: 'Le CA progresse nettement par rapport à la même semaine l\'an dernier. Capitalisez sur cette dynamique : notez ce qui a changé (météo, événements, offres) pour pouvoir le reproduire.' }
   if (v > 0)   return { label: 'SEMAINE EN PROGRESSION', color: '#43A047', light: '#E6F4EA', desc: 'Le CA est en hausse par rapport à la même semaine l\'an dernier. La trajectoire est bonne : surveillez les familles en retrait pour transformer cette progression en tendance.' }
   if (v > -5)  return { label: 'SEMAINE STABLE - À SURVEILLER', color: '#D97706', light: '#FEF3C7', desc: 'Le CA est en léger retrait par rapport à la même semaine l\'an dernier. Rien d\'alarmant, mais identifiez les familles et produits qui décrochent pour réagir vite.' }
-  return { label: 'SEMAINE EN RECUL', color: '#C62828', light: '#FCE8E6', desc: 'Le CA recule sensiblement par rapport à la même semaine l\'an dernier. Vérifiez la comparabilité des semaines (jours fériés, fermetures) puis concentrez-vous sur les recommandations page 6.' }
+  return { label: 'SEMAINE EN RECUL', color: '#C62828', light: '#FCE8E6', desc: 'Le CA recule sensiblement par rapport à la même semaine l\'an dernier. Vérifiez la comparabilité des semaines (jours fériés, fermetures) puis concentrez-vous sur les recommandations page 7.' }
+}
+
+// Repères sectoriels de marge MATIÈRE (boucherie artisanale) — mêmes fourchettes
+// que la page Facturation, pour que l'écran et le PDF racontent la même histoire.
+const MATIERE_BENCH: Record<string, [number, number]> = {
+  boucherie: [35, 45], charcuterie: [40, 55], traiteur: [50, 65], fruits_et_legumes: [20, 35], vente: [20, 35],
+}
+/** Repère d'une famille — reconnaissance souple sur le libellé (« boucher » ≈ boucherie) */
+function benchOf(key: string, label: string): [number, number] | null {
+  const n = (label || key).toLowerCase()
+  if (MATIERE_BENCH[key]) return MATIERE_BENCH[key]
+  if (n.includes('bouch')) return MATIERE_BENCH.boucherie
+  if (n.includes('charcut')) return MATIERE_BENCH.charcuterie
+  if (n.includes('traiteur')) return MATIERE_BENCH.traiteur
+  return null
+}
+
+/** Le rapport a-t-il de quoi parler d'argent ? (sinon la page affiche un mode d'emploi) */
+function hasEconomics(e: WeekEconomics | null): e is WeekEconomics {
+  return !!e && (e.achats_ht > 0 || e.masse_salariale > 0 || e.charges_fixes > 0)
+}
+
+/**
+ * Lecture métier de la marge — règles déterministes, pas d'appel IA : le gérant doit
+ * pouvoir régénérer son rapport et retrouver exactement le même commentaire.
+ * Seuils CCN/secteur : marge brute > 40 % vert, < 30 % rouge ; masse salariale
+ * < 30 % vert, > 40 % rouge. Ton : on confirme et on enrichit, on ne fait pas la leçon.
+ */
+function buildMargeRead(e: WeekEconomics | null, week: number): { alerts: string[]; action: string | null } {
+  if (!hasEconomics(e)) return { alerts: [], action: null }
+  const alerts: string[] = []
+  let action: string | null = null
+
+  const tm = e.taux_marge
+  const ms = e.ratio_ms
+
+  // Anomalie avant tout : un ratio délirant = données partielles, pas un problème de gestion
+  if (ms !== null && ms > 50) {
+    alerts.push(`Masse salariale à ${ms.toFixed(0)} % du CA : ce niveau traduit presque toujours une semaine incomplète (factures non saisies ou CA partiel) plutôt qu'un vrai sureffectif. Vérifiez la saisie de la semaine ${week} avant d'en tirer une conclusion.`)
+  } else if (ms !== null && ms > 40) {
+    alerts.push(`Masse salariale à ${ms.toFixed(0)} % du CA, au-dessus du seuil de vigilance de 40 %. Si cela se répète une deuxième semaine, c'est le signe d'un sureffectif ou d'une sous-activité.`)
+  }
+
+  if (tm !== null && tm < 30) {
+    alerts.push(`Marge brute à ${tm.toFixed(1)} %, sous le plancher sectoriel de 30 %. Regardez d'abord vos prix d'achat de la semaine, puis la valorisation carcasse.`)
+  } else if (tm !== null && tm >= 40 && (ms === null || ms <= 40)) {
+    alerts.push(`Marge brute à ${tm.toFixed(1)} % et masse salariale maîtrisée : la structure de coûts de la semaine est saine.`)
+  }
+
+  // Famille sous son repère métier — on nomme la première concernée, chiffres à l'appui
+  for (const f of e.familles) {
+    const b = benchOf(f.key, f.label)
+    if (b && f.taux !== null && f.ca > 0 && f.taux < b[0]) {
+      alerts.push(`${f.label} ressort à ${f.taux.toFixed(1)} % de marge matière, contre ${b[0]}-${b[1]} % attendu sur ce rayon, soit ${(b[0] - f.taux).toFixed(1)} points d'écart.`)
+      break
+    }
+  }
+
+  // Qualité de données : ce qui empêche le calcul d'être juste passe avant le conseil
+  if (e.achats_a_verifier > 0) {
+    action = `Validez les ${eur0(e.achats_a_verifier)} de factures « à vérifier » dans Facturation : elles ne comptent pas encore dans ces marges.`
+  } else if (e.achats_non_ventiles > 0 && e.achats_ht > 0 && e.achats_non_ventiles / e.achats_ht > 0.2) {
+    action = `${eur0(e.achats_non_ventiles)} d'achats ne sont rattachés à aucun rayon. Renseignez la répartition de ces fournisseurs pour fiabiliser la marge par famille.`
+  } else if (e.salaires_affectes === 0 && e.masse_salariale > 0) {
+    action = `Aucune heure n'est pointée sur un poste dans le planning : les marges par famille n'incluent donc aucun salaire. Renseignez le poste sur les journées pour obtenir le taux exact par rayon.`
+  } else if (e.salaires_non_affectes > e.salaires_affectes && e.masse_salariale > 0) {
+    action = `La majorité des salaires (${eur0(e.salaires_non_affectes)}) n'est rattachée à aucune famille. Précisez les postes du planning pour affiner les taux par rayon.`
+  } else {
+    const best = [...e.familles].filter(f => f.ca > 0 && f.taux !== null).sort((a, b) => (b.taux! - a.taux!))[0]
+    if (best) action = `${best.label} est votre rayon le plus rentable cette semaine (${best.taux!.toFixed(1)} % de marge matière). C'est celui à mettre en avant en vitrine la semaine prochaine.`
+  }
+
+  // Pas de sanitize() ici : ces phrases sont écrites en dur, pas générées par l'IA.
+  // Le filtre anti-IA supprime tout ce qui dépasse le Latin-1 — donc le « € » (U+20AC)
+  // — et remplace les guillemets français par des guillemets droits.
+  return { alerts: alerts.slice(0, 3), action }
 }
 
 /** Résumé exécutif calculé (independant de l'IA — toujours disponible) */
@@ -1086,12 +1294,30 @@ export async function POST(req: NextRequest) {
       if (client) { clientEmail = client.email; clientName = client.name }
     }
 
+    // Économie de la semaine — MÊME moteur que l'onglet Facturation (lib/week-economics).
+    // Le CA lui est passé tel qu'archiveWeekData l'écrira quelques lignes plus bas dans
+    // weekly_ca (ca_net + familles), pour que le PDF et l'écran affichent le même total.
+    // Non bloquant : un rapport doit sortir même si cette partie échoue.
+    let economics: WeekEconomics | null = null
+    if (clientId) {
+      try {
+        economics = await computeWeekEconomics(serviceSupabase, clientId, data.week_number, data.year, {
+          ca_total: data.financier_n.ca_net,
+          familles: data.ventes_n.familles.map(f => ({ nom: f.nom, montant: f.total_montant })),
+        })
+      } catch (ecoErr) {
+        console.error('Economie hebdo indisponible pour le rapport:', ecoErr)
+      }
+    }
+
     const report: ComputedReport = {
       data, clientName, insights: insightsResult,
       pieBuffer,
       tops: data.tops, flops: data.flops, famRows, caVar,
       status: buildStatus(caVar),
       execSummary: buildExecSummary(data, famRows, caVar),
+      economics,
+      margeRead: buildMargeRead(economics, data.week_number),
     }
     const pdfBuffer = await generatePDF(report)
 
@@ -1131,7 +1357,7 @@ export async function POST(req: NextRequest) {
   </div>
   <div style="padding:32px 40px;border:1px solid #e4eaf1;border-top:none;border-radius:0 0 12px 12px">
     <p style="color:#111827;font-size:15px;font-weight:700;margin:0 0 6px">${title}</p>
-    <p style="color:#6b7280;font-size:13px;line-height:1.6;margin:0 0 24px">7 pages · Analyse IA · Graphique de répartition · Top &amp; Flop produits · Synthèse de la semaine</p>
+    <p style="color:#6b7280;font-size:13px;line-height:1.6;margin:0 0 24px">8 pages · Marge &amp; coûts réels · Analyse IA · Graphique de répartition · Top &amp; Flop produits · Synthèse de la semaine</p>
     <div style="background:#f2f5f9;border-left:3px solid #1E3A5F;border-radius:6px;padding:14px 16px;margin-bottom:28px">
       <div style="font-size:10px;font-weight:700;letter-spacing:1.5px;color:#1E3A5F;text-transform:uppercase;margin-bottom:4px">Période analysée</div>
       <div style="color:#374151;font-size:13px">${data.period_n} — comparée à ${data.period_n1}</div>
