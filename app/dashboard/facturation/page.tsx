@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef, Fragment } from 'react'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useToast } from '@/components/ui/toast'
@@ -41,6 +42,8 @@ type RayonMargin = {
 }
 type Summary = {
   achats_ht: number; achats_by_category: Record<string, number>; masse_salariale: number
+  salaires_affectes?: number
+  salaires_non_affectes?: number
   achats_a_verifier?: number
   charges_fixes?: number; charges_fixes_lines?: { id: string; label: string; category: string; cost: number; hasActual: boolean }[]
   ca_total: number; ca_detail: WeeklyCA | null; marge_brute: number
@@ -250,7 +253,7 @@ function getLastWeek() {
   return getISOWeek(ref)
 }
 
-// ─── Composant principal ────────────────────────────────────────
+// ─── Composant principal ────────────────────────────────
 
 export default function FacturationPage() {
   const router = useRouter()
@@ -1020,15 +1023,16 @@ export default function FacturationPage() {
           </div>
         )}
 
-        {/* ── Marge par famille — CA − achats ventilés − salaires (prorata CA), hors charges fixes ──
-            Le chiffre que le gérant vient chercher : ce que chaque métier lui laisse
-            réellement une fois la matière ET le personnel payés, + le taux global. */}
+        {/* ── Marge par famille — CA − achats ventilés − salaires POINTÉS AU PLANNING, hors charges fixes ──
+            Le chiffre exact que le gérant vient chercher : les heures pointées « boucherie »
+            au planning pèsent sur la marge boucherie, rien d'autre. Les salaires sans poste
+            (vente, administratif, non renseigné) restent dans le taux global uniquement. */}
         {summary !== null && (summary.ca_total > 0 || variableInvoices.length > 0) && (
           <div className="bg-white rounded-lg border border-gray-100 shadow-card p-5">
             <div className="flex flex-wrap items-start justify-between gap-2 mb-4">
               <div>
                 <h3 className="text-xs font-bold uppercase tracking-wider text-gray-400">Marge par famille</h3>
-                <p className="text-[11px] text-gray-400 mt-0.5">CA − achats ventilés − salaires répartis au prorata du CA de chaque famille · hors charges fixes (voir résultat net)</p>
+                <p className="text-[11px] text-gray-400 mt-0.5">CA − achats ventilés − salaires des heures pointées sur le poste dans le planning · hors charges fixes (voir résultat net)</p>
               </div>
               <button onClick={openSplits} className="text-xs font-medium text-pilote hover:underline flex-shrink-0">Régler la répartition des achats</button>
             </div>
@@ -1057,7 +1061,7 @@ export default function FacturationPage() {
                     </div>
                   </div>
 
-                  {/* Les 3 familles métier */}
+                  {/* Les 3 familles métier — salaires = heures pointées sur le poste, rien d'autre */}
                   {RAYONS.filter(r => r.key !== 'fruits_et_legumes').map(r => {
                     const d = summary.marge_by_rayon?.[r.key]
                     const caPart = d && summary.ca_total > 0 && d.ca > 0 ? (d.ca / summary.ca_total) * 100 : null
@@ -1080,7 +1084,7 @@ export default function FacturationPage() {
                             <div className="space-y-1 text-[11px] tabular">
                               <div className="flex justify-between gap-2"><span className="text-gray-400">CA</span><span className="font-semibold text-gray-700">{fmtEuro(d.ca)}</span></div>
                               <div className="flex justify-between gap-2"><span className="text-gray-400">Achats</span><span className="font-semibold text-gray-700">− {fmtEuro(d.achats)}</span></div>
-                              <div className="flex justify-between gap-2"><span className="text-gray-400">Salaires</span><span className="font-semibold text-gray-700">− {fmtEuro(d.salaires ?? 0)}</span></div>
+                              <div className="flex justify-between gap-2"><span className="text-gray-400">Salaires pointés</span><span className="font-semibold text-gray-700">− {fmtEuro(d.salaires ?? 0)}</span></div>
                             </div>
                             <div className="mt-2.5 pt-2.5 border-t border-gray-100">
                               <p className={`text-xl font-extrabold tracking-tight tabular ${(d.marge_totale ?? 0) >= 0 ? 'text-gray-900' : 'text-red-600'}`}>
@@ -1100,20 +1104,16 @@ export default function FacturationPage() {
                   })}
                 </div>
 
-                {/* Fruits & légumes — affiché seulement s'il pèse quelque chose */}
-                {(() => {
-                  const fl = summary.marge_by_rayon?.fruits_et_legumes
-                  if (!fl || (fl.ca <= 0 && fl.achats <= 0)) return null
-                  return (
-                    <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-gray-100 bg-gray-50/50 px-3.5 py-2.5 text-[11px] tabular">
-                      <span className="flex items-center gap-1.5 font-bold text-gray-700"><span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: '#0284c7' }} />Fruits &amp; légumes</span>
-                      <span className="text-gray-500">CA <strong className="text-gray-700">{fl.ca > 0 ? fmtEuro(fl.ca) : '—'}</strong></span>
-                      <span className="text-gray-500">Achats <strong className="text-gray-700">{fmtEuro(fl.achats)}</strong></span>
-                      <span className="text-gray-500">Salaires <strong className="text-gray-700">{fmtEuro(fl.salaires ?? 0)}</strong></span>
-                      <span className="text-gray-500">Marge <strong className={(fl.marge_totale ?? 0) >= 0 ? 'text-gray-900' : 'text-red-600'}>{fl.ca > 0 ? `${fmtEuro(fl.marge_totale ?? 0)}${fl.taux_totale !== null && fl.taux_totale !== undefined ? ` · ${fl.taux_totale.toFixed(1)} %` : ''}` : '—'}</strong></span>
-                    </div>
-                  )
-                })()}
+                {/* Salaires sans poste : hors familles (transverses), comptés dans le global.
+                    On guide le gérant vers le pointage des postes pour des taux exacts. */}
+                {(summary.salaires_non_affectes ?? 0) > 0 && (
+                  <p className={`text-[11px] mt-3 ${(summary.salaires_affectes ?? 0) > 0 ? 'text-gray-400' : 'text-amber-600'}`}>
+                    {(summary.salaires_affectes ?? 0) > 0
+                      ? <>{fmtEuro(summary.salaires_affectes!)} de salaires suivent les postes du planning · {fmtEuro(summary.salaires_non_affectes!)} sans poste (vente, administratif, non renseigné) comptés dans le taux global uniquement.</>
+                      : <>Aucune heure pointée sur un poste — les taux par famille n&apos;incluent aucun salaire pour l&apos;instant ({fmtEuro(summary.salaires_non_affectes!)} comptés dans le global).</>}
+                    {' '}Renseignez le poste (Boucherie, Charcuterie, Traiteur) sur les journées du <Link href="/dashboard/planning" className="text-pilote font-medium hover:underline">planning</Link>.
+                  </p>
+                )}
 
                 {(summary.achats_a_verifier ?? 0) > 0 && (
                   <p className="text-[11px] text-amber-600 mt-3">

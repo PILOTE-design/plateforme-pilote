@@ -38,7 +38,7 @@ export const PAYROLL_ENTRY_COLUMNS =
 
 export const JOURS = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche'] as const
 
-// ─── Dates ────────────────────────────────────────────────────────────────────
+// ─── Dates ────────────────────────────────────────────────────────────────
 
 /** Les 7 dates (UTC) d'une semaine ISO, du lundi au dimanche */
 export function getWeekDates(week: number, year: number): Date[] {
@@ -167,4 +167,78 @@ export function computeLegalAlerts(entries: PayrollEntry[], employees: PayrollEm
     if (workedDays === 7) alerts.push(`${name} : 7 jours travaillés — repos hebdomadaire obligatoire`)
   }
   return alerts
+}
+
+// ─── Répartition des heures par poste (rayon) ────────────────────────────
+//
+// Le planning stocke le poste de chaque journée dans planning_entries.schedule_details :
+//   { lundi: { categorie?, categorie_matin?, categorie_apmidi?,
+//              matin_debut?, matin_fin?, apmidi_debut?, apmidi_fin?, ... }, ... }
+// Postes possibles côté planning : boucherie, charcuterie, traiteur, vente,
+// administratif, livraison. Seuls les trois métiers (boucherie/charcuterie/traiteur)
+// s'affectent à une famille de marge ; le reste (vente au comptoir, administratif,
+// livraison, journée sans poste) est « autres » — transverse à la boutique.
+
+export const MARGIN_RAYONS = ['boucherie', 'charcuterie', 'traiteur'] as const
+export type MarginRayon = typeof MARGIN_RAYONS[number]
+export type RayonWeights = Record<MarginRayon, number> & { autres: number }
+
+/** "08:30" → minutes depuis minuit ; NaN si absent/invalide */
+function slotMinutes(a?: string, b?: string): number {
+  const parse = (s?: string): number => {
+    const m = /^(\d{1,2}):(\d{2})$/.exec(String(s ?? '').trim())
+    if (!m) return NaN
+    return parseInt(m[1]) * 60 + parseInt(m[2])
+  }
+  const start = parse(a), end = parse(b)
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return 0
+  return end - start
+}
+
+/**
+ * Fractions des heures TRAVAILLÉES de la semaine par poste, d'après le planning.
+ * Par jour travaillé :
+ *   - poste « journée entière » (categorie) → toutes les heures du jour ;
+ *   - postes par créneau (categorie_matin / categorie_apmidi) → pondérés par la
+ *     durée réelle des créneaux quand les horaires sont saisis, sinon 50/50 si
+ *     les deux créneaux ont un poste, sinon tout au seul créneau renseigné.
+ * Une semaine sans aucune heure travaillée (CP, maladie…) → 100 % « autres ».
+ */
+export function entryRayonWeights(entry: PayrollEntry): RayonWeights {
+  const acc: RayonWeights = { boucherie: 0, charcuterie: 0, traiteur: 0, autres: 0 }
+  const sdAll = (entry.schedule_details ?? {}) as Record<string, {
+    categorie?: string; categorie_matin?: string; categorie_apmidi?: string
+    matin_debut?: string; matin_fin?: string; apmidi_debut?: string; apmidi_fin?: string
+  }>
+  const add = (cat: string | undefined, hours: number) => {
+    if (hours <= 0) return
+    if (cat === 'boucherie' || cat === 'charcuterie' || cat === 'traiteur') acc[cat] += hours
+    else acc.autres += hours
+  }
+  let worked = 0
+  for (const j of JOURS) {
+    const t = String(entry[`${j}_type`] ?? 'travail') || 'travail'
+    const h = num(entry[j])
+    if (t !== 'travail' || h <= 0) continue
+    worked += h
+    const sd = sdAll[j] || {}
+    const catM = sd.categorie_matin || ''
+    const catA = sd.categorie_apmidi || ''
+    if (!catM && !catA) { add(sd.categorie, h); continue }
+    const durM = slotMinutes(sd.matin_debut, sd.matin_fin)
+    const durA = slotMinutes(sd.apmidi_debut, sd.apmidi_fin)
+    let wM: number
+    if (durM + durA > 0) wM = durM / (durM + durA)
+    else if (catM && catA) wM = 0.5
+    else wM = catM ? 1 : 0
+    add(catM || undefined, h * wM)
+    add(catA || undefined, h * (1 - wM))
+  }
+  if (worked <= 0) return { boucherie: 0, charcuterie: 0, traiteur: 0, autres: 1 }
+  return {
+    boucherie: acc.boucherie / worked,
+    charcuterie: acc.charcuterie / worked,
+    traiteur: acc.traiteur / worked,
+    autres: acc.autres / worked,
+  }
 }
