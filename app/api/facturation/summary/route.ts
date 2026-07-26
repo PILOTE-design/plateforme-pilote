@@ -4,10 +4,11 @@ import { resolveClientId } from '@/lib/resolve-client-id'
 import { normalizeSupplierName, sameSupplierFamily } from '@/lib/supplier-memory'
 import { weekRecurringCost } from '@/lib/recurring-charges'
 import {
-  entryCost, entryRayonWeights, weekHolidayFlags,
+  entryCost, entryPosteHours, weekHolidayFlags,
   PAYROLL_EMPLOYEE_COLUMNS, PAYROLL_ENTRY_COLUMNS,
   type PayrollEmployee, type PayrollEntry,
 } from '@/lib/payroll'
+import { parseCustomPostes, parseMarginFamilies, posteLabel, familleMatchesText } from '@/lib/postes'
 
 export const dynamic = 'force-dynamic'
 
@@ -29,8 +30,9 @@ function supplierSociete(raw: string): string {
   return s.trim()
 }
 
-// Famille de vente (rapport) → rayon : permet de lire le CA par rayon depuis le rapport,
-// sans que l'utilisateur ait à saisir un détail. Correspondance souple sur le nom.
+// Famille de vente (rapport) → rayon de VENTILATION des achats. Correspondance
+// souple sur le nom — sert au CA des 4 rayons classiques (redistribution du
+// « divers » + repli des familles de marge classiques).
 function rayonOfFamily(nom: string): string | null {
   const n = String(nom || '').toLowerCase()
   if (n.includes('bouch')) return 'boucherie'
@@ -39,6 +41,14 @@ function rayonOfFamily(nom: string): string | null {
   if (n.includes('fruit') || n.includes('legume') || n.includes('légume') || n.includes('primeur')) return 'fruits_et_legumes'
   return null
 }
+
+// Les 4 rayons de la ventilation fournisseur (colonnes de supplier_rayon_splits)
+const VENT_RAYONS = [
+  { key: 'boucherie',         label: 'Boucherie' },
+  { key: 'charcuterie',       label: 'Charcuterie' },
+  { key: 'traiteur',          label: 'Traiteur' },
+  { key: 'fruits_et_legumes', label: 'Fruits et légumes' },
+] as const
 
 export async function GET(request: NextRequest) {
   const supabase = createClient()
@@ -53,6 +63,20 @@ export async function GET(request: NextRequest) {
   const serviceSupabase = createServiceClient()
   const clientId = await resolveClientId(serviceSupabase, user.id, user.email)
   if (!clientId) return NextResponse.json({ achats_ht: 0, masse_salariale: 0, ca_total: 0 })
+
+  // 0. Configuration du client : postes personnalisés + les 3 familles de marge choisies.
+  const { data: clientRow } = await serviceSupabase
+    .from('clients').select('custom_postes, margin_families').eq('id', clientId).maybeSingle()
+  const customPostes = parseCustomPostes(clientRow?.custom_postes)
+  const familleKeys = parseMarginFamilies(clientRow?.margin_families)
+  const familles = familleKeys.map(key => ({ key, label: posteLabel(key, customPostes) }))
+  // Reconnaissance floue : première famille (dans l'ordre choisi) qui reconnaît le texte.
+  const familleFor = (textKey: string, textLabel?: string): number => {
+    for (let i = 0; i < familles.length; i++) {
+      if (familleMatchesText(familles[i].key, familles[i].label, textKey, textLabel)) return i
+    }
+    return -1
+  }
 
   // 1. Achats HT de la semaine
   const { data: invoicesData } = await serviceSupabase
@@ -115,18 +139,14 @@ export async function GET(request: NextRequest) {
     achats_divers                     += amt * (Number(sp.pct_divers)            / tot)
   }
 
-  // 2. Masse salariale CHARGÉE depuis le planning — moteur partagé lib/payroll (CCN 992 :
-  // HS sur heures travaillées, CP à contrat/5, majorations dimanche/férié, cas gérant,
-  // charges patronales). UNIQUEMENT les employés de CE client (cloisonnement critique).
-  //
-  // Affectation par famille : le coût de chaque employé est réparti d'après les POSTES
-  // du planning (schedule_details — journée entière ou créneaux matin/après-midi).
-  // Ex. : 20 h pointées « boucherie » sur 40 h travaillées → la moitié du coût chargé
-  // de l'employé pèse sur la marge boucherie. Les heures sans poste métier (vente,
-  // administratif, livraison, non renseigné) restent transverses : elles comptent dans
-  // le taux GLOBAL mais ne sont imputées à aucune des trois familles.
+  // 2. Masse salariale CHARGÉE depuis le planning — moteur partagé lib/payroll (CCN 992).
+  // Le coût de chaque employé est réparti d'après les POSTES pointés dans le planning
+  // (journée entière ou créneaux matin/après-midi, postes personnalisés compris), puis
+  // rattaché aux familles de marge du client par reconnaissance floue (« boucher » ≈
+  // « boucherie »). Les heures dont le poste ne correspond à aucune famille restent
+  // transverses : comptées dans le taux GLOBAL, imputées à aucune famille.
   let masse_salariale = 0
-  const salaires_by_rayon: Record<string, number> = { boucherie: 0, charcuterie: 0, traiteur: 0 }
+  const salaires_by_famille = [0, 0, 0]
   let salaires_non_affectes = 0
   const { data: employees } = await serviceSupabase
     .from('employees')
@@ -148,11 +168,14 @@ export async function GET(request: NextRequest) {
       if (!emp) continue
       const cost = entryCost(entry, emp, holidayFlags)
       masse_salariale += cost
-      const w = entryRayonWeights(entry)
-      salaires_by_rayon.boucherie   += cost * w.boucherie
-      salaires_by_rayon.charcuterie += cost * w.charcuterie
-      salaires_by_rayon.traiteur    += cost * w.traiteur
-      salaires_non_affectes         += cost * w.autres
+      const { hours, worked } = entryPosteHours(entry)
+      if (worked <= 0) { salaires_non_affectes += cost; continue }
+      for (const [posteKey, h] of Object.entries(hours)) {
+        const share = cost * (h / worked)
+        const fi = posteKey ? familleFor(posteKey, posteLabel(posteKey, customPostes)) : -1
+        if (fi >= 0) salaires_by_famille[fi] += share
+        else salaires_non_affectes += share
+      }
     }
   }
 
@@ -184,19 +207,19 @@ export async function GET(request: NextRequest) {
   const taux_marge = ca_total > 0 ? (marge_brute / ca_total) * 100 : null
   // Marge après salaires = la « marge brute d'exploitation » demandée par les gérants :
   // CA − achats matière − coût employés (chargé). Les charges fixes restent globales
-  // (résultat net) — elles ne s'affectent pas à un rayon.
+  // (résultat net) — elles ne s'affectent pas à une famille.
   const marge_apres_salaires = ca_total - achats_ht - masse_salariale
   const taux_apres_salaires = ca_total > 0 ? (marge_apres_salaires / ca_total) * 100 : null
   const resultat_net = marge_brute - masse_salariale - charges_fixes
   const ratio_ms = ca_total > 0 ? (masse_salariale / ca_total) * 100 : null
 
-  // Marge par rayon = CA rayon (weekly_ca) − achats ventilés − salaires pointés au planning
   const round2 = (n: number) => Math.round(n * 100) / 100
   const round1 = (n: number) => Math.round(n * 10) / 10
   const RAYONS = ['boucherie', 'charcuterie', 'traiteur', 'fruits_et_legumes'] as const
 
-  // CA par rayon — lu automatiquement depuis le rapport (families_detail).
-  // Repli sur les champs ca_* saisis uniquement si le rapport n'a pas encore de détail par famille.
+  // CA par rayon CLASSIQUE — lu automatiquement depuis le rapport (families_detail),
+  // repli sur les champs ca_* saisis. Sert à la redistribution du « divers » et au
+  // repli de CA des familles classiques.
   const caByRayon: Record<string, number> = { boucherie: 0, charcuterie: 0, traiteur: 0, fruits_et_legumes: 0 }
   const fams: any[] = Array.isArray((caData as any)?.families_detail) ? (caData as any).families_detail : []
   for (const f of fams) { const rr = rayonOfFamily(f?.nom); if (rr) caByRayon[rr] += Number(f?.montant) || 0 }
@@ -212,30 +235,43 @@ export async function GET(request: NextRequest) {
       achats_by_rayon[r] += achats_divers * share
     }
   }
-  // Salaires par famille = UNIQUEMENT le coût des heures pointées sur le poste dans le
-  // planning (taux EXACT demandé par les gérants). Aucun prorata : les salaires sans
-  // poste restent hors familles — ils pèsent sur le taux global et le résultat net.
-  // fruits_et_legumes n'a pas de poste au planning → jamais de salaires directs.
-  const marge_by_rayon: Record<string, {
-    ca: number; achats: number; salaires: number
-    marge: number; taux: number | null
-    marge_totale: number; taux_totale: number | null
-  }> = {}
-  for (const r of RAYONS) {
-    const caR = caByRayon[r] || 0
-    const achR = achats_by_rayon[r] || 0
-    const salR = salaires_by_rayon[r] || 0
-    marge_by_rayon[r] = {
+
+  // CA par FAMILLE de marge : chaque famille de vente du rapport est rattachée à la
+  // première famille qui la reconnaît (flou). Repli : une famille sans CA reconnu qui
+  // correspond à un rayon classique reprend le CA de ce rayon (couvre la saisie manuelle).
+  const caByFamille = [0, 0, 0]
+  for (const f of fams) {
+    const fi = familleFor('', String(f?.nom ?? ''))
+    if (fi >= 0) caByFamille[fi] += Number(f?.montant) || 0
+  }
+  const rayonClaimedByFamille: number[] = VENT_RAYONS.map(r => familleFor(r.key, r.label))
+  for (let i = 0; i < familles.length; i++) {
+    if (caByFamille[i] > 0) continue
+    const ri = rayonClaimedByFamille.findIndex(fi => fi === i)
+    if (ri >= 0) caByFamille[i] = caByRayon[VENT_RAYONS[ri].key] || 0
+  }
+
+  // Achats par famille : la famille récupère les rayons de ventilation qu'elle reconnaît
+  // (un rayon ne compte que pour une seule famille — la première dans l'ordre choisi).
+  const famillesOut = familles.map((f, i) => {
+    const claimed = VENT_RAYONS.filter((_, ri) => rayonClaimedByFamille[ri] === i)
+    const achR = claimed.reduce((s, r) => s + (achats_by_rayon[r.key] || 0), 0)
+    const caR = caByFamille[i] || 0
+    const salR = salaires_by_famille[i] || 0
+    return {
+      key: f.key,
+      label: f.label,
       ca: round2(caR),
       achats: round2(achR),
+      achats_ventiles: claimed.length > 0,
       salaires: round2(salR),
       marge: round2(caR - achR),
       taux: caR > 0 ? round1(((caR - achR) / caR) * 100) : null,
       marge_totale: round2(caR - achR - salR),
       taux_totale: caR > 0 ? round1(((caR - achR - salR) / caR) * 100) : null,
     }
-  }
-  const salaires_affectes_total = salaires_by_rayon.boucherie + salaires_by_rayon.charcuterie + salaires_by_rayon.traiteur
+  })
+  const salaires_affectes_total = salaires_by_famille[0] + salaires_by_famille[1] + salaires_by_famille[2]
 
   return NextResponse.json({
     achats_ht: round2(achats_ht),
@@ -244,7 +280,7 @@ export async function GET(request: NextRequest) {
     achats_by_rayon: Object.fromEntries(Object.entries(achats_by_rayon).map(([k, v]) => [k, round2(v)])),
     achats_non_ventiles: round2(achats_non_ventiles),
     achats_divers: round2(achats_divers),
-    marge_by_rayon,
+    familles: famillesOut,
     masse_salariale: round2(masse_salariale),
     salaires_affectes: round2(salaires_affectes_total),
     salaires_non_affectes: round2(salaires_non_affectes),
