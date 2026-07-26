@@ -1,13 +1,13 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, Fragment } from 'react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useToast } from '@/components/ui/toast'
 import { useConfirm } from '@/components/ui/confirm-dialog'
 import {
-  Receipt, ChevronLeft, ChevronRight, Plus, Trash2,
+  Receipt, ChevronLeft, ChevronRight, ChevronDown, Plus, Trash2,
   TrendingUp, TrendingDown, ShoppingCart, Users, Euro,
   Save, X, Settings, Check, Loader2, AlertCircle,
   Link2, Link2Off, RefreshCw, ArrowUpRight, Repeat, PieChart,
@@ -18,7 +18,7 @@ import {
   type RecurringCharge, type RecurringActual, type Periodicity,
 } from '@/lib/recurring-charges'
 
-// ─── Types ──────────────────────────────
+// ─── Types ──────────────────────
 
 type Invoice = {
   id: string; supplier_name: string; invoice_number?: string; invoice_date: string
@@ -28,14 +28,25 @@ type Invoice = {
   status?: string | null
 }
 
-type WeeklyCA = { ca_total: number; ca_boucherie: number; ca_charcuterie: number; ca_traiteur: number; ca_fruits_et_legumes: number; ca_vente: number }
+type WeeklyCA = {
+  ca_total: number; ca_boucherie: number; ca_charcuterie: number; ca_traiteur: number
+  ca_fruits_et_legumes: number; ca_vente: number
+  families_detail?: { nom: string; montant: number }[] | null
+}
 
-type RayonMargin = { ca: number; achats: number; marge: number; taux: number | null }
+type RayonMargin = {
+  ca: number; achats: number; salaires?: number
+  marge: number; taux: number | null
+  marge_totale?: number; taux_totale?: number | null
+}
 type Summary = {
   achats_ht: number; achats_by_category: Record<string, number>; masse_salariale: number
+  achats_a_verifier?: number
   charges_fixes?: number; charges_fixes_lines?: { id: string; label: string; category: string; cost: number; hasActual: boolean }[]
   ca_total: number; ca_detail: WeeklyCA | null; marge_brute: number
   taux_marge: number | null; resultat_net: number; ratio_ms: number | null
+  marge_apres_salaires?: number
+  taux_apres_salaires?: number | null
   achats_by_rayon?: Record<string, number>
   achats_non_ventiles?: number
   achats_divers?: number
@@ -47,20 +58,37 @@ type SupplierMemo = { name: string; category: string; tva_rate: number | null }
 
 /** Répartition d'un fournisseur sur les rayons (en %) */
 type RayonSplit = { supplier_key: string; supplier_label: string | null; pct_boucherie: number; pct_charcuterie: number; pct_traiteur: number; pct_fruits_et_legumes: number; pct_divers: number }
+// Code couleur des rayons ALIGNÉ sur la page Marges (rouge/orange/émeraude/ciel) :
+// un même métier garde la même couleur partout dans l'application.
 const RAYONS = [
-  { key: 'boucherie',         label: 'Boucherie',        dot: '#1E3A5F' },
-  { key: 'charcuterie',       label: 'Charcuterie',      dot: '#FF8C00' },
-  { key: 'traiteur',          label: 'Traiteur',         dot: '#2a4f7c' },
-  { key: 'fruits_et_legumes', label: 'Fruits & légumes', dot: '#16a34a' },
+  { key: 'boucherie',         label: 'Boucherie',        dot: '#b91c1c' },
+  { key: 'charcuterie',       label: 'Charcuterie',      dot: '#c2410c' },
+  { key: 'traiteur',          label: 'Traiteur',         dot: '#047857' },
+  { key: 'fruits_et_legumes', label: 'Fruits & légumes', dot: '#0284c7' },
 ] as const
 // Champs de ventilation saisis : les 4 rayons + « divers » (redistribué au prorata du CA côté serveur)
 const VENT_FIELDS = [
-  { key: 'boucherie',         label: 'Boucherie',        dot: '#1E3A5F' },
-  { key: 'charcuterie',       label: 'Charcuterie',      dot: '#FF8C00' },
-  { key: 'traiteur',          label: 'Traiteur',         dot: '#2a4f7c' },
-  { key: 'fruits_et_legumes', label: 'Fruits & légumes', dot: '#16a34a' },
+  { key: 'boucherie',         label: 'Boucherie',        dot: '#b91c1c' },
+  { key: 'charcuterie',       label: 'Charcuterie',      dot: '#c2410c' },
+  { key: 'traiteur',          label: 'Traiteur',         dot: '#047857' },
+  { key: 'fruits_et_legumes', label: 'Fruits & légumes', dot: '#0284c7' },
   { key: 'divers',            label: 'Divers',           dot: '#9ca3af' },
 ] as const
+
+// Repères sectoriels de marge MATIÈRE (boucherie artisanale) — fourchettes typiques
+// constatées par rayon. Sert uniquement à colorer le taux matière (vert dans la
+// fourchette ou au-dessus, orange juste en dessous, rouge nettement en dessous).
+const MATIERE_BENCH: Record<string, [number, number]> = {
+  boucherie: [35, 45], charcuterie: [40, 55], traiteur: [50, 65], fruits_et_legumes: [20, 35],
+}
+function matiereColor(rayon: string, taux: number | null): string {
+  if (taux === null) return 'text-gray-400'
+  const bench = MATIERE_BENCH[rayon]
+  if (!bench) return taux >= 40 ? 'text-green-600' : taux >= 30 ? 'text-orange-500' : 'text-red-500'
+  if (taux >= bench[0]) return 'text-green-600'
+  if (taux >= bench[0] - 5) return 'text-orange-500'
+  return 'text-red-500'
+}
 
 // Correspondance société → répartition mémorisée (exacte ou par famille de noms).
 // Réutilise normSupplier (défini plus bas, hoisté).
@@ -108,15 +136,16 @@ type ProviderMeta = {
   helpUrl: string; description: string
 }
 
-// ─── Constantes ────────────────────
+// ─── Constantes ──────────────────
 
-// Palette catégories : teintes sourdes et cohérentes (fond -50, texte -700) + point de
-// couleur pour la barre de répartition — évite l'effet « arc-en-ciel » criard.
+// Palette catégories : teintes sourdes (fond -50, texte -700), ALIGNÉE sur le code
+// couleur des rayons et de la page Marges — boucherie rouge, charcuterie orange,
+// traiteur émeraude ; « frais divers » en gris neutre.
 const CATEGORIES = [
-  { key: 'boucherie',    label: 'Boucherie',    color: 'bg-red-50 text-red-700',       dot: '#b91c1c' },
-  { key: 'charcuterie',  label: 'Charcuterie',  color: 'bg-orange-50 text-orange-700', dot: '#c2410c' },
-  { key: 'traiteur',     label: 'Traiteur',     color: 'bg-blue-50 text-blue-700',     dot: '#1d4ed8' },
-  { key: 'frais_divers', label: 'Frais divers', color: 'bg-teal-50 text-teal-700',     dot: '#0f766e' },
+  { key: 'boucherie',    label: 'Boucherie',    color: 'bg-red-50 text-red-700',         dot: '#b91c1c' },
+  { key: 'charcuterie',  label: 'Charcuterie',  color: 'bg-orange-50 text-orange-700',   dot: '#c2410c' },
+  { key: 'traiteur',     label: 'Traiteur',     color: 'bg-emerald-50 text-emerald-700', dot: '#047857' },
+  { key: 'frais_divers', label: 'Frais divers', color: 'bg-gray-100 text-gray-600',      dot: '#64748b' },
 ]
 
 const TVA_RATES = [0, 5.5, 10, 20]
@@ -149,7 +178,7 @@ const PROVIDERS_META: ProviderMeta[] = [
   { id: 'ebp',       name: 'EBP',       logo: 'EBP', color: 'bg-orange-500', tokenLabel: 'Token API EBP en ligne', tokenPlaceholder: 'Token depuis EBP → Paramètres → API', needsCompanyId: true, companyIdLabel: 'Identifiant dossier EBP', helpUrl: 'https://developer.ebp.com', description: 'EBP en ligne — import factures fournisseurs automatique' },
 ]
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────────────────────────
 
 function getISOWeek(date: Date) {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
@@ -221,7 +250,7 @@ function getLastWeek() {
   return getISOWeek(ref)
 }
 
-// ─── Composant principal ────────────────────────────────────────────────
+// ─── Composant principal ────────────────────────────────────────
 
 export default function FacturationPage() {
   const router = useRouter()
@@ -260,6 +289,8 @@ export default function FacturationPage() {
   const [categoryTouched, setCategoryTouched] = useState(false)
   const [newInvoice, setNewInvoice] = useState<any>(EMPTY_INVOICE)
   const [saving,    setSaving]    = useState(false)
+  // Tri de la liste d'achats : par catégorie (sous-totaux par poste) ou à plat par date
+  const [invoiceView, setInvoiceView] = useState<'categorie' | 'date'>('categorie')
   // Mémoire fournisseur (pré-remplissage auto catégorie + TVA à la saisie d'un achat)
   const [suppliersMemo, setSuppliersMemo] = useState<SupplierMemo[]>([])
   // Le boucher a choisi catégorie ou TVA à la main → la mémoire ne l'écrase plus
@@ -452,8 +483,13 @@ export default function FacturationPage() {
   async function addInvoice() {
     if (!newInvoice.supplier_name || !newInvoice.invoice_date || !newInvoice.amount_ht) return
     setSaving(true)
-    const res = await fetch('/api/invoices', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...newInvoice, week_number: week, year }) })
-    const data = await res.json()
+    const res = await fetch('/api/invoices', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...newInvoice, week_number: week, year }) }).catch(() => null)
+    const data = res ? await res.json().catch(() => ({} as any)) : ({} as any)
+    if (!res?.ok || !data.id) {
+      toast({ variant: 'error', title: 'Facture non enregistrée', description: data.error || 'Vérifiez les champs et réessayez.' })
+      setSaving(false)
+      return
+    }
     if (data.id) {
       // Mémorise la répartition par rayon de cette société — ré-appliquée à ses prochaines factures
       const pcts = {
@@ -536,7 +572,7 @@ export default function FacturationPage() {
   async function validateInvoice(inv: Invoice) {
     setInvoices(prev => prev.map(i => i.id === inv.id ? { ...i, status: 'validee' } : i))
     const res = await fetch(`/api/invoices/${inv.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'validee' }) })
-    if (res.ok) toast({ variant: 'success', title: 'Facture validée' })
+    if (res.ok) { toast({ variant: 'success', title: 'Facture validée' }); load() }
     else { toast({ variant: 'error', title: 'Erreur', description: 'La validation a échoué.' }); load() }
   }
 
@@ -576,13 +612,22 @@ export default function FacturationPage() {
     const label = recForm.label.trim()
     if (!label) { toast({ variant: 'error', title: 'Libellé requis' }); return }
     if (!recForm.start_date) { toast({ variant: 'error', title: 'Date de début requise' }); return }
+    const amount = parseFloat(recForm.amount_ht)
+    if (!Number.isFinite(amount) || amount <= 0) {
+      toast({ variant: 'error', title: 'Montant invalide', description: 'Saisissez le montant HT d\'une période (strictement positif).' })
+      return
+    }
+    if (recForm.end_date && recForm.end_date < recForm.start_date) {
+      toast({ variant: 'error', title: 'Dates incohérentes', description: 'La date de fin est antérieure à la date de début.' })
+      return
+    }
     setRecSaving(true)
     try {
       const payload = {
         id: recForm.id || undefined,
         label,
         category: recForm.category,
-        amount_ht: parseFloat(recForm.amount_ht) || 0,
+        amount_ht: amount,
         tva_rate: parseFloat(recForm.tva_rate) || 0,
         periodicity: recForm.periodicity,
         start_date: recForm.start_date,
@@ -662,8 +707,10 @@ export default function FacturationPage() {
 
   async function saveSettings() {
     setSaving(true)
-    await fetch('/api/billing-settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(settForm) })
-    setSaving(false); setShowSettings(false)
+    const res = await fetch('/api/billing-settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(settForm) }).catch(() => null)
+    setSaving(false)
+    if (res?.ok) { setShowSettings(false); toast({ variant: 'success', title: 'Paramètres enregistrés' }) }
+    else toast({ variant: 'error', title: 'Erreur', description: 'Les paramètres n\'ont pas été enregistrés.' })
   }
 
   async function connectIntegration() {
@@ -689,12 +736,23 @@ export default function FacturationPage() {
 
   async function syncNow(provider: string) {
     setSyncing(provider)
-    await fetch('/api/billing-integrations/sync', {
+    const res = await fetch('/api/billing-integrations/sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ provider, week, year }),
-    })
+    }).catch(() => null)
+    const data = res ? await res.json().catch(() => ({} as any)) : ({} as any)
     setSyncing(null); loadIntegrations(); load()
+    const r = data?.results?.[provider]
+    if (res?.ok && r?.success) {
+      const n = typeof r.imported === 'number' ? r.imported : 0
+      toast({
+        variant: 'success', title: 'Synchronisation terminée',
+        description: n > 0 ? `${n} facture${n > 1 ? 's' : ''} importée${n > 1 ? 's' : ''} sur la semaine ${week}.` : `Aucune nouvelle facture sur la semaine ${week}.`,
+      })
+    } else {
+      toast({ variant: 'error', title: 'Synchronisation échouée', description: r?.error || data?.error || 'Vérifiez la connexion au logiciel comptable.' })
+    }
   }
 
   function openValorisation(inv: Invoice) {
@@ -713,12 +771,17 @@ export default function FacturationPage() {
 
   // ── Achats variables de la semaine ──
   const variableInvoices = invoices.filter(i => !i.is_fixed_charge)
-  // Liste plate triée par date (puis montant) — le groupement par catégorie était peu fiable,
-  // la catégorie reste visible en pastille sur chaque ligne
+  // Tri par date (puis montant) — base des deux vues ; en vue « par catégorie »,
+  // les factures sont regroupées par poste avec sous-total, triées par date à l'intérieur.
   const sortedVariable   = [...variableInvoices].sort(
     (a, b) => (b.invoice_date || '').localeCompare(a.invoice_date || '') || b.amount_ht - a.amount_ht,
   )
+  // Groupes par catégorie (catégorie inconnue → « Frais divers », via catInfo)
+  const invoiceGroups = CATEGORIES
+    .map(cat => ({ cat, rows: sortedVariable.filter(i => catInfo(i.category).key === cat.key) }))
+    .filter(g => g.rows.length > 0)
   const pendingCount = new Set(invoices.filter(i => i.status === 'a_verifier').map(i => i.id)).size
+  const pendingHt = variableInvoices.filter(i => i.status === 'a_verifier').reduce((s, i) => s + i.amount_ht, 0)
 
   // Répartition — partition des sociétés selon l'état ENREGISTRÉ (splits), pas le brouillon en cours,
   // pour qu'une ligne ne saute pas d'onglet pendant la saisie (elle bascule à l'enregistrement).
@@ -735,6 +798,74 @@ export default function FacturationPage() {
   const chargeHasActualThisWeek: Record<string, boolean> = {}
   for (const l of recurWeek.lines) chargeHasActualThisWeek[l.id] = l.hasActual
   const activeRecurring = [...recurringCharges].sort((a, b) => a.label.localeCompare(b.label, 'fr'))
+
+  /** Ligne du tableau d'achats — partagée entre la vue « par date » et la vue « par catégorie » */
+  const renderInvoiceRow = (inv: Invoice) => {
+    const cat = catInfo(inv.category)
+    const isViande = cat.key === 'boucherie'
+    const sp = matchSplit(inv.supplier_name, splits)
+    const ventil = sp ? VENT_FIELDS.map(r => ({ label: r.label, dot: r.dot, pct: Number((sp as any)[`pct_${r.key}`]) || 0 })).filter(p => p.pct > 0) : []
+    return (
+      <tr key={inv.id} className="border-t border-gray-50 hover:bg-gray-50 group transition-colors">
+        <td className="px-4 py-2.5">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-md bg-pilote-50 text-pilote flex items-center justify-center text-[11px] font-extrabold flex-shrink-0">{initials(inv.supplier_name)}</div>
+            <div>
+              <div className="font-semibold text-sm text-gray-900">{inv.supplier_name}</div>
+              {inv.invoice_number && <div className="text-xs text-gray-400">{inv.invoice_number}</div>}
+              {inv.status === 'a_verifier' && (
+                <button onClick={() => validateInvoice(inv)} title="Importée automatiquement — cliquer pour valider (elle comptera dans les marges)"
+                  className="mt-0.5 inline-flex items-center gap-1 text-[9px] font-bold text-amber-700 bg-amber-100 hover:bg-amber-200 px-1.5 py-0.5 rounded-full transition-colors">
+                  à vérifier · valider
+                </button>
+              )}
+            </div>
+          </div>
+        </td>
+        <td className="px-4 py-2.5">
+          <span className="relative inline-flex items-center">
+            <select value={cat.key} onChange={e => updateCategory(inv, e.target.value)}
+              title="Changer la catégorie — PILOTE proposera d'en faire une règle pour ce fournisseur"
+              className={`appearance-none cursor-pointer text-[11px] font-semibold rounded-full pl-2.5 pr-5 py-1 border-0 focus:outline-none focus:ring-2 focus:ring-pilote-200 transition-colors ${cat.color}`}>
+              {CATEGORIES.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
+            </select>
+            <ChevronDown className="w-3 h-3 absolute right-1.5 pointer-events-none opacity-40" />
+          </span>
+        </td>
+        <td className="px-4 py-2.5">
+          {ventil.length === 0 ? (
+            <button onClick={openSplits} title="Définir la répartition par rayon de cette société"
+              className="text-xs text-gray-400 hover:text-pilote hover:underline">Non réparti</button>
+          ) : (
+            <div className="flex flex-wrap items-center gap-1">
+              {ventil.map(p => (
+                <span key={p.label} className="inline-flex items-center gap-1 text-[11px] font-semibold text-gray-700 bg-gray-50 rounded-full px-2 py-0.5">
+                  <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: p.dot }} />
+                  {p.label} {Math.round(p.pct)} %
+                </span>
+              ))}
+            </div>
+          )}
+        </td>
+        <td className="px-4 py-2.5 text-sm text-gray-600">{new Date(inv.invoice_date).toLocaleDateString('fr-FR')}</td>
+        <td className={`px-4 py-2.5 text-right font-semibold text-sm ${inv.amount_ht < 0 ? 'text-green-600' : 'text-gray-900'}`}>{fmtEuro(inv.amount_ht)}</td>
+        <td className="px-4 py-2.5 text-right text-xs text-gray-400">{inv.tva_rate} %</td>
+        <td className="px-4 py-2.5 text-right text-sm text-gray-600">{fmtEuro(inv.amount_ttc)}</td>
+        <td className="px-4 py-2.5 text-center">
+          <div className="flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+            {isViande && (
+              <button onClick={() => openValorisation(inv)} className="p-1.5 rounded hover:bg-pilote-50 text-gray-300 hover:text-pilote transition-colors" title="Valoriser cet animal">
+                <ArrowUpRight className="w-3.5 h-3.5" />
+              </button>
+            )}
+            <button onClick={() => deleteInvoice(inv.id)} className="p-1.5 rounded hover:bg-red-50 text-gray-300 hover:text-red-400 transition-colors" title="Supprimer">
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </td>
+      </tr>
+    )
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
@@ -842,11 +973,11 @@ export default function FacturationPage() {
               { icon: Euro,         label: 'CA semaine',      value: summary.ca_total > 0 ? fmtEuro(summary.ca_total) : '—',
                 sub: summary.ca_total === 0 ? 'Cliquer sur « Saisir le CA »' : `${fmtDate(mon)} – ${fmtDate(sun)}`,
                 chip: 'bg-pilote-50 text-pilote' },
-              { icon: ShoppingCart, label: 'Achats HT',       value: fmtEuro(variableTotalHt + recurringWeekly),
-                sub: `${variableInvoices.length} facture${variableInvoices.length > 1 ? 's' : ''} + charges ≈ ${fmtEuro(recurringWeekly)}/sem`,
+              { icon: ShoppingCart, label: 'Achats HT',       value: fmtEuro(summary.achats_ht + recurringWeekly),
+                sub: `${variableInvoices.length} facture${variableInvoices.length > 1 ? 's' : ''} + charges ≈ ${fmtEuro(recurringWeekly)}/sem${(summary.achats_a_verifier ?? 0) > 0 ? ` · ${fmtEuro(summary.achats_a_verifier!)} à vérifier exclus` : ''}`,
                 chip: 'bg-pilote-50 text-pilote' },
               { icon: Users,        label: 'Masse salariale', value: fmtEuro(summary.masse_salariale),
-                sub: summary.ratio_ms !== null ? `${summary.ratio_ms} % du CA` : 'Depuis le planning',
+                sub: summary.ratio_ms !== null ? `${summary.ratio_ms} % du CA · chargée (CCN 992)` : 'Depuis le planning · chargée (CCN 992)',
                 chip: 'bg-pilote-50 text-pilote' },
               { icon: summary.marge_brute >= 0 ? TrendingUp : TrendingDown, label: 'Marge brute',
                 value: summary.ca_total > 0 ? fmtEuro(summary.marge_brute) : '—',
@@ -859,7 +990,7 @@ export default function FacturationPage() {
                   <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">{k.label}</p>
                 </div>
                 <p className="text-xl font-extrabold leading-tight text-gray-900 tabular">{k.value}</p>
-                <p className="text-xs text-gray-400 mt-0.5 truncate">{k.sub}</p>
+                <p className="text-xs text-gray-400 mt-0.5 truncate" title={k.sub}>{k.sub}</p>
               </div>
             ))}
           </div>
@@ -889,41 +1020,119 @@ export default function FacturationPage() {
           </div>
         )}
 
-        {/* Marge par rayon — achats fournisseur ventilés par rayon (répartition %) */}
-        {summary?.marge_by_rayon && summary.ca_total > 0 && (
+        {/* ── Marge par famille — CA − achats ventilés − salaires (prorata CA), hors charges fixes ──
+            Le chiffre que le gérant vient chercher : ce que chaque métier lui laisse
+            réellement une fois la matière ET le personnel payés, + le taux global. */}
+        {summary !== null && (summary.ca_total > 0 || variableInvoices.length > 0) && (
           <div className="bg-white rounded-lg border border-gray-100 shadow-card p-5">
-            <div className="flex items-center justify-between mb-3.5">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-gray-400">Marge par rayon</h3>
-              <button onClick={openSplits} className="text-xs font-medium text-pilote hover:underline">Régler la répartition</button>
+            <div className="flex flex-wrap items-start justify-between gap-2 mb-4">
+              <div>
+                <h3 className="text-xs font-bold uppercase tracking-wider text-gray-400">Marge par famille</h3>
+                <p className="text-[11px] text-gray-400 mt-0.5">CA − achats ventilés − salaires répartis au prorata du CA de chaque famille · hors charges fixes (voir résultat net)</p>
+              </div>
+              <button onClick={openSplits} className="text-xs font-medium text-pilote hover:underline flex-shrink-0">Régler la répartition des achats</button>
             </div>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              {RAYONS.map(r => {
-                const d = summary.marge_by_rayon![r.key]
-                if (!d) return null
-                return (
-                  <div key={r.key} className="rounded-lg border border-gray-100 p-3">
-                    <div className="flex items-center gap-1.5 mb-1.5">
-                      <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: r.dot }} />
-                      <span className="text-xs font-semibold text-gray-600">{r.label}</span>
+
+            {summary.ca_total === 0 ? (
+              <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50/50 px-4 py-6 text-center">
+                <p className="text-sm font-semibold text-gray-700">Saisissez le CA de la semaine pour calculer vos marges</p>
+                <p className="text-xs text-gray-400 mt-1">Vos achats sont déjà comptés — il ne manque que le chiffre d&apos;affaires.</p>
+                <button onClick={() => setShowCA(true)} className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-white bg-pilote hover:bg-pilote-hover rounded-md px-3.5 py-2 shadow-card active:scale-[0.98] transition-all">
+                  <Euro className="w-3.5 h-3.5" />Saisir le CA
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  {/* Tuile globale — taux de marge boutique après achats + salaires */}
+                  <div className="rounded-lg bg-pilote-50/70 ring-1 ring-pilote-100 p-4 flex flex-col">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-pilote">Global · boutique</p>
+                    <p className={`text-2xl font-extrabold tracking-tight tabular mt-1.5 ${(summary.marge_apres_salaires ?? 0) >= 0 ? 'text-pilote-800' : 'text-red-600'}`}>
+                      {summary.taux_apres_salaires !== null && summary.taux_apres_salaires !== undefined ? `${summary.taux_apres_salaires.toFixed(1)} %` : '—'}
+                    </p>
+                    <p className={`text-xs font-semibold tabular ${(summary.marge_apres_salaires ?? 0) >= 0 ? 'text-gray-600' : 'text-red-500'}`}>{fmtEuro(summary.marge_apres_salaires ?? 0)} après salaires</p>
+                    <div className="mt-auto pt-2.5 space-y-0.5 text-[11px] text-gray-500 tabular">
+                      <p>Marge matière <strong className={summary.taux_marge !== null ? (summary.taux_marge >= 40 ? 'text-green-600' : summary.taux_marge >= 30 ? 'text-orange-500' : 'text-red-500') : 'text-gray-400'}>{summary.taux_marge !== null ? `${summary.taux_marge.toFixed(1)} %` : '—'}</strong></p>
+                      <p>Salaires <strong className="text-gray-700">{summary.ratio_ms !== null ? `${summary.ratio_ms.toFixed(0)} % du CA` : '—'}</strong></p>
                     </div>
-                    <p className={`text-lg font-extrabold tabular ${d.marge >= 0 ? 'text-gray-900' : 'text-red-600'}`}>{d.ca > 0 ? fmtEuro(d.marge) : '—'}</p>
-                    <p className="text-[11px] text-gray-400 mt-0.5">CA {fmtEuro(d.ca)} · achats {fmtEuro(d.achats)}</p>
-                    {d.taux !== null && <p className="text-[11px] text-gray-400">Taux {d.taux.toFixed(1)} %</p>}
                   </div>
-                )
-              })}
-            </div>
-            {(summary.achats_divers ?? 0) > 0 && (
-              <p className="text-[11px] text-gray-400 mt-3 flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-gray-300 flex-shrink-0" />
-                {fmtEuro(summary.achats_divers!)} de « divers » redistribués sur les rayons au prorata de leur part de CA.
-              </p>
-            )}
-            {(summary.achats_non_ventiles ?? 0) > 0 && (
-              <p className="text-[11px] text-gray-400 mt-2">
-                {fmtEuro(summary.achats_non_ventiles!)} d&apos;achats non répartis — fournisseurs sans répartition définie.
-                <button onClick={openSplits} className="ml-1 text-pilote hover:underline">Compléter</button>
-              </p>
+
+                  {/* Les 3 familles métier */}
+                  {RAYONS.filter(r => r.key !== 'fruits_et_legumes').map(r => {
+                    const d = summary.marge_by_rayon?.[r.key]
+                    const caPart = d && summary.ca_total > 0 && d.ca > 0 ? (d.ca / summary.ca_total) * 100 : null
+                    return (
+                      <div key={r.key} className="rounded-lg border border-gray-100 p-4 flex flex-col">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="flex items-center gap-1.5 min-w-0">
+                            <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: r.dot }} />
+                            <span className="text-xs font-bold text-gray-700 truncate">{r.label}</span>
+                          </span>
+                          {caPart !== null && <span className="text-[10px] font-semibold text-gray-400 tabular flex-shrink-0">{Math.round(caPart)} % du CA</span>}
+                        </div>
+                        {!d || d.ca <= 0 ? (
+                          <p className="text-xs text-gray-400 py-2 leading-relaxed">
+                            CA de la famille inconnu — détail absent du rapport et non saisi.
+                            <button onClick={() => setShowCA(true)} className="ml-1 text-pilote font-medium hover:underline">Saisir le détail</button>
+                          </p>
+                        ) : (
+                          <>
+                            <div className="space-y-1 text-[11px] tabular">
+                              <div className="flex justify-between gap-2"><span className="text-gray-400">CA</span><span className="font-semibold text-gray-700">{fmtEuro(d.ca)}</span></div>
+                              <div className="flex justify-between gap-2"><span className="text-gray-400">Achats</span><span className="font-semibold text-gray-700">− {fmtEuro(d.achats)}</span></div>
+                              <div className="flex justify-between gap-2"><span className="text-gray-400">Salaires</span><span className="font-semibold text-gray-700">− {fmtEuro(d.salaires ?? 0)}</span></div>
+                            </div>
+                            <div className="mt-2.5 pt-2.5 border-t border-gray-100">
+                              <p className={`text-xl font-extrabold tracking-tight tabular ${(d.marge_totale ?? 0) >= 0 ? 'text-gray-900' : 'text-red-600'}`}>
+                                {d.taux_totale !== null && d.taux_totale !== undefined ? `${d.taux_totale.toFixed(1)} %` : '—'}
+                              </p>
+                              <p className="text-xs text-gray-500 tabular">{fmtEuro(d.marge_totale ?? 0)} de marge</p>
+                              {d.taux !== null && (
+                                <p className={`text-[11px] font-semibold tabular mt-1 ${matiereColor(r.key, d.taux)}`}>
+                                  matière {d.taux.toFixed(1)} % <span className="text-gray-300 font-normal">(repère {MATIERE_BENCH[r.key][0]}–{MATIERE_BENCH[r.key][1]} %)</span>
+                                </p>
+                              )}
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+
+                {/* Fruits & légumes — affiché seulement s'il pèse quelque chose */}
+                {(() => {
+                  const fl = summary.marge_by_rayon?.fruits_et_legumes
+                  if (!fl || (fl.ca <= 0 && fl.achats <= 0)) return null
+                  return (
+                    <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-gray-100 bg-gray-50/50 px-3.5 py-2.5 text-[11px] tabular">
+                      <span className="flex items-center gap-1.5 font-bold text-gray-700"><span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: '#0284c7' }} />Fruits &amp; légumes</span>
+                      <span className="text-gray-500">CA <strong className="text-gray-700">{fl.ca > 0 ? fmtEuro(fl.ca) : '—'}</strong></span>
+                      <span className="text-gray-500">Achats <strong className="text-gray-700">{fmtEuro(fl.achats)}</strong></span>
+                      <span className="text-gray-500">Salaires <strong className="text-gray-700">{fmtEuro(fl.salaires ?? 0)}</strong></span>
+                      <span className="text-gray-500">Marge <strong className={(fl.marge_totale ?? 0) >= 0 ? 'text-gray-900' : 'text-red-600'}>{fl.ca > 0 ? `${fmtEuro(fl.marge_totale ?? 0)}${fl.taux_totale !== null && fl.taux_totale !== undefined ? ` · ${fl.taux_totale.toFixed(1)} %` : ''}` : '—'}</strong></span>
+                    </div>
+                  )
+                })()}
+
+                {(summary.achats_a_verifier ?? 0) > 0 && (
+                  <p className="text-[11px] text-amber-600 mt-3">
+                    {fmtEuro(summary.achats_a_verifier!)} de factures « à vérifier » ne comptent pas encore dans ces marges — validez-les ci-dessous.
+                  </p>
+                )}
+                {(summary.achats_divers ?? 0) > 0 && (
+                  <p className="text-[11px] text-gray-400 mt-2 flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-gray-300 flex-shrink-0" />
+                    {fmtEuro(summary.achats_divers!)} de « divers » redistribués sur les familles au prorata de leur part de CA.
+                  </p>
+                )}
+                {(summary.achats_non_ventiles ?? 0) > 0 && (
+                  <p className="text-[11px] text-gray-400 mt-2">
+                    {fmtEuro(summary.achats_non_ventiles!)} d&apos;achats non répartis — fournisseurs sans répartition définie.
+                    <button onClick={openSplits} className="ml-1 text-pilote hover:underline">Compléter</button>
+                  </p>
+                )}
+              </>
             )}
           </div>
         )}
@@ -937,11 +1146,21 @@ export default function FacturationPage() {
           </div>
         )}
 
-        {/* ── Achats de la semaine (liste plate, catégorie en pastille) ── */}
+        {/* ── Achats de la semaine — triables par catégorie (sous-totaux) ou par date ── */}
         <div className="bg-white rounded-lg border border-gray-100 shadow-card overflow-hidden">
-          <div className="px-5 py-3.5 border-b border-gray-100 flex items-center justify-between">
+          <div className="px-5 py-3.5 border-b border-gray-100 flex flex-wrap items-center justify-between gap-2">
             <h2 className="font-bold text-gray-900">Achats de la semaine {week}</h2>
-            <span className="text-xs text-gray-400 tabular">{variableInvoices.length} facture{variableInvoices.length > 1 ? 's' : ''} · {fmtEuro(variableTotalHt)} HT</span>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-0.5 bg-gray-50 border border-gray-100 rounded-md p-0.5">
+                {([['categorie', 'Par catégorie'], ['date', 'Par date']] as const).map(([key, label]) => (
+                  <button key={key} onClick={() => setInvoiceView(key)}
+                    className={`px-2.5 py-1 rounded text-[11px] font-semibold transition-all ${invoiceView === key ? 'bg-white text-pilote shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <span className="text-xs text-gray-400 tabular">{variableInvoices.length} facture{variableInvoices.length > 1 ? 's' : ''} · {fmtEuro(variableTotalHt)} HT</span>
+            </div>
           </div>
           {loading ? (
             <div className="p-6 animate-pulse space-y-3">
@@ -961,86 +1180,56 @@ export default function FacturationPage() {
               </button>
             </div>
           ) : (
-            <table className="w-full tabular">
-              <thead>
-                <tr className="bg-gray-50 text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
-                  <th className="px-4 py-2.5 text-left">Fournisseur</th>
-                  <th className="px-4 py-2.5 text-left">Ventilation</th>
-                  <th className="px-4 py-2.5 text-left">Date</th>
-                  <th className="px-4 py-2.5 text-right">HT</th>
-                  <th className="px-4 py-2.5 text-right">TVA</th>
-                  <th className="px-4 py-2.5 text-right">TTC</th>
-                  <th className="px-4 py-2.5 text-center w-24"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {sortedVariable.map(inv => {
-                  const cat = catInfo(inv.category)
-                  const isViande = cat.key === 'boucherie'
-                  const sp = matchSplit(inv.supplier_name, splits)
-                  const ventil = sp ? VENT_FIELDS.map(r => ({ label: r.label, dot: r.dot, pct: Number((sp as any)[`pct_${r.key}`]) || 0 })).filter(p => p.pct > 0) : []
-                  return (
-                    <tr key={inv.id} className="border-t border-gray-50 hover:bg-gray-50 group transition-colors">
-                      <td className="px-4 py-2.5">
-                        <div className="flex items-center gap-2.5">
-                          <div className="w-8 h-8 rounded-md bg-pilote-50 text-pilote flex items-center justify-center text-[11px] font-extrabold flex-shrink-0">{initials(inv.supplier_name)}</div>
-                          <div>
-                            <div className="font-semibold text-sm text-gray-900">{inv.supplier_name}</div>
-                            {inv.invoice_number && <div className="text-xs text-gray-400">{inv.invoice_number}</div>}
-                            {inv.status === 'a_verifier' && (
-                              <button onClick={() => validateInvoice(inv)} title="Importée automatiquement — cliquer pour valider (elle comptera dans les marges)"
-                                className="mt-0.5 inline-flex items-center gap-1 text-[9px] font-bold text-amber-700 bg-amber-100 hover:bg-amber-200 px-1.5 py-0.5 rounded-full transition-colors">
-                                à vérifier · valider
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-4 py-2.5">
-                        {ventil.length === 0 ? (
-                          <button onClick={openSplits} title="Définir la répartition par rayon de cette société"
-                            className="text-xs text-gray-400 hover:text-pilote hover:underline">Non réparti</button>
-                        ) : (
-                          <div className="flex flex-wrap items-center gap-1">
-                            {ventil.map(p => (
-                              <span key={p.label} className="inline-flex items-center gap-1 text-[11px] font-semibold text-gray-700 bg-gray-50 rounded-full px-2 py-0.5">
-                                <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: p.dot }} />
-                                {p.label} {Math.round(p.pct)} %
+            <div className="overflow-x-auto">
+              <table className="w-full tabular min-w-[820px]">
+                <thead>
+                  <tr className="bg-gray-50 text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
+                    <th className="px-4 py-2.5 text-left">Fournisseur</th>
+                    <th className="px-4 py-2.5 text-left">Catégorie</th>
+                    <th className="px-4 py-2.5 text-left">Ventilation</th>
+                    <th className="px-4 py-2.5 text-left">Date</th>
+                    <th className="px-4 py-2.5 text-right">HT</th>
+                    <th className="px-4 py-2.5 text-right">TVA</th>
+                    <th className="px-4 py-2.5 text-right">TTC</th>
+                    <th className="px-4 py-2.5 text-center w-24"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {invoiceView === 'date'
+                    ? sortedVariable.map(renderInvoiceRow)
+                    : invoiceGroups.map(g => (
+                        <Fragment key={g.cat.key}>
+                          <tr className="border-t border-gray-100 bg-gray-50/80">
+                            <td colSpan={4} className="px-4 py-2">
+                              <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-gray-500">
+                                <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: g.cat.dot }} />
+                                {g.cat.label}
+                                <span className="font-semibold normal-case tracking-normal text-gray-400">· {g.rows.length} facture{g.rows.length > 1 ? 's' : ''}</span>
                               </span>
-                            ))}
-                          </div>
-                        )}
-                      </td>
-                      <td className="px-4 py-2.5 text-sm text-gray-600">{new Date(inv.invoice_date).toLocaleDateString('fr-FR')}</td>
-                      <td className={`px-4 py-2.5 text-right font-semibold text-sm ${inv.amount_ht < 0 ? 'text-green-600' : 'text-gray-900'}`}>{fmtEuro(inv.amount_ht)}</td>
-                      <td className="px-4 py-2.5 text-right text-xs text-gray-400">{inv.tva_rate} %</td>
-                      <td className="px-4 py-2.5 text-right text-sm text-gray-600">{fmtEuro(inv.amount_ttc)}</td>
-                      <td className="px-4 py-2.5 text-center">
-                        <div className="flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
-                          {isViande && (
-                            <button onClick={() => openValorisation(inv)} className="p-1.5 rounded hover:bg-pilote-50 text-gray-300 hover:text-pilote transition-colors" title="Valoriser cet animal">
-                              <ArrowUpRight className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                          <button onClick={() => deleteInvoice(inv.id)} className="p-1.5 rounded hover:bg-red-50 text-gray-300 hover:text-red-400 transition-colors" title="Supprimer">
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-              <tfoot>
-                <tr className="bg-pilote text-white">
-                  <td colSpan={3} className="px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-white/60">Total achats variables</td>
-                  <td className="px-4 py-2.5 text-right font-bold">{fmtEuro(variableTotalHt)}</td>
-                  <td className="px-4 py-2.5"></td>
-                  <td className="px-4 py-2.5 text-right font-bold text-orange-300">{fmtEuro(variableTotalTtc)}</td>
-                  <td></td>
-                </tr>
-              </tfoot>
-            </table>
+                            </td>
+                            <td className="px-4 py-2 text-right text-xs font-bold text-gray-700 tabular">{fmtEuro(g.rows.reduce((s, i) => s + i.amount_ht, 0))}</td>
+                            <td></td>
+                            <td className="px-4 py-2 text-right text-xs font-semibold text-gray-500 tabular">{fmtEuro(g.rows.reduce((s, i) => s + i.amount_ttc, 0))}</td>
+                            <td></td>
+                          </tr>
+                          {g.rows.map(renderInvoiceRow)}
+                        </Fragment>
+                      ))}
+                </tbody>
+                <tfoot>
+                  <tr className="bg-pilote text-white">
+                    <td colSpan={4} className="px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-white/60">
+                      Total achats variables
+                      {pendingHt > 0 && <span className="normal-case tracking-normal font-semibold text-white/50"> · dont {fmtEuro(pendingHt)} à vérifier</span>}
+                    </td>
+                    <td className="px-4 py-2.5 text-right font-bold">{fmtEuro(variableTotalHt)}</td>
+                    <td className="px-4 py-2.5"></td>
+                    <td className="px-4 py-2.5 text-right font-bold text-orange-300">{fmtEuro(variableTotalTtc)}</td>
+                    <td></td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
           )}
         </div>
 
@@ -1082,7 +1271,8 @@ export default function FacturationPage() {
               <button onClick={openNewRecurring} className="mt-4 inline-flex items-center gap-1.5 rounded-md bg-pilote hover:bg-pilote-hover text-white px-3.5 py-2 text-xs font-semibold shadow-card active:scale-[0.98] transition-all"><Plus className="w-3.5 h-3.5" />Ajouter une charge</button>
             </div>
           ) : (
-            <table className="w-full tabular">
+            <div className="overflow-x-auto">
+            <table className="w-full tabular min-w-[720px]">
               <thead>
                 <tr className="bg-gray-50 text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
                   <th className="px-4 py-2.5 text-left">Charge</th>
@@ -1146,11 +1336,12 @@ export default function FacturationPage() {
               <tfoot>
                 <tr className="bg-pilote text-white">
                   <td colSpan={5} className="px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-white/60">Provision de la semaine {week}</td>
-                  <td className="px-4 py-2.5 text-right font-bold text-yellow-300">≈ {fmtEuro(recurringWeekly)}/sem</td>
+                  <td className="px-4 py-2.5 text-right font-bold text-orange-300">≈ {fmtEuro(recurringWeekly)}/sem</td>
                   <td></td>
                 </tr>
               </tfoot>
             </table>
+            </div>
           )}
         </div>
       </div>
@@ -1158,7 +1349,7 @@ export default function FacturationPage() {
       {/* Modal : Charge récurrente (création / édition) */}
       {showRecurring && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 backdrop-blur-sm p-4" onClick={() => setShowRecurring(false)}>
-          <div className="bg-white rounded-lg w-full max-w-md shadow-2xl" onClick={e => e.stopPropagation()}>
+          <div className="bg-white rounded-lg w-full max-w-md shadow-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between p-5 border-b border-gray-100">
               <h2 className="text-base font-bold text-gray-900">{recForm.id ? 'Modifier la charge' : 'Nouvelle charge récurrente'}</h2>
               <button onClick={() => setShowRecurring(false)} className="p-1.5 rounded-md hover:bg-gray-100"><X className="w-4 h-4 text-gray-500" /></button>
@@ -1338,8 +1529,8 @@ export default function FacturationPage() {
 
       {/* Modal : Ajouter facture */}
       {showAdd && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 backdrop-blur-sm" onClick={() => setShowAdd(false)}>
-          <div className="bg-white rounded-lg p-6 w-full max-w-md shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 backdrop-blur-sm p-4" onClick={() => setShowAdd(false)}>
+          <div className="bg-white rounded-lg p-6 w-full max-w-md shadow-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-5">
               <h2 className="text-base font-bold text-gray-900">Nouvelle facture</h2>
               <button onClick={() => setShowAdd(false)} className="p-1.5 rounded-md hover:bg-gray-100"><X className="w-4 h-4 text-gray-500" /></button>
@@ -1370,6 +1561,11 @@ export default function FacturationPage() {
                   <Input type="date" value={newInvoice.invoice_date} onChange={e => setNewInvoice((p: any) => ({ ...p, invoice_date: e.target.value }))} />
                 </div>
               </div>
+              {newInvoice.invoice_date && (newInvoice.invoice_date < monISO || newInvoice.invoice_date > sunISO) && (
+                <p className="text-[11px] text-amber-600 bg-amber-50 border border-amber-200 rounded-md px-2.5 py-1.5 -mt-1.5">
+                  Cette date est hors de la semaine {week} affichée — la facture sera tout de même comptée sur la semaine {week}.
+                </p>
+              )}
               <div>
                 <label className="block text-xs font-semibold text-gray-600 mb-1">Catégorie</label>
                 <div className="grid grid-cols-3 gap-1.5">
@@ -1548,6 +1744,11 @@ export default function FacturationPage() {
                 <Input type="number" step="0.01" min="0" value={caForm.ca_total} onChange={e => setCaForm(p => ({ ...p, ca_total: e.target.value }))} placeholder="0.00" className="text-lg font-bold" autoFocus />
               </div>
               <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider pt-1">Détail par rayon (optionnel)</p>
+              {Array.isArray(summary?.ca_detail?.families_detail) && summary!.ca_detail!.families_detail!.length > 0 && (
+                <p className="text-[11px] text-pilote bg-pilote-50 rounded-md px-2.5 py-1.5">
+                  Le détail par rayon est lu automatiquement depuis votre rapport hebdo — cette saisie ne sert que de secours.
+                </p>
+              )}
               {[{ key: 'ca_boucherie', label: 'Boucherie' }, { key: 'ca_charcuterie', label: 'Charcuterie' }, { key: 'ca_traiteur', label: 'Traiteur' }, { key: 'ca_fruits_et_legumes', label: 'Fruits & légumes' }].map(({ key, label }) => (
                 <div key={key} className="flex items-center gap-2">
                   <label className="text-xs text-gray-500 w-28 flex-shrink-0">{label}</label>
