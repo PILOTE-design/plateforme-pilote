@@ -1,6 +1,6 @@
 'use client'
 
-import { Fragment, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 
 const fmt  = (n: number) => n.toLocaleString('fr-FR', { maximumFractionDigits: 0 })
 const fmt2 = (n: number) => n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -44,8 +44,11 @@ export default function ProduitsParFamille({
   const [selected, setSelected] = useState<string>(() => familles[0] ?? NON_CLASSE)
   const active = familles.includes(selected) ? selected : (familles[0] ?? NON_CLASSE)
 
-  // Produits de la famille choisie, tri CA décroissant + cumul 20/80 (sur le CA DE LA FAMILLE)
-  const { rows, famTotal, vitalCount, vitalShare } = useMemo(() => {
+  // Produits de la famille choisie, tri CA décroissant, puis coupe au 20/80
+  // (cumul sur le CA DE LA FAMILLE). Seuls les produits « vitaux » — ceux qui
+  // cumulent les 80 premiers % du CA — sont affichés ; la traîne est comptée
+  // dans le bandeau de synthèse mais pas listée.
+  const { rows, famTotal, vitalCount, vitalShare, totalCount } = useMemo(() => {
     const inFam = products
       .filter(p => (p.famille || NON_CLASSE) === active)
       .sort((a, b) => b.last - a.last)
@@ -59,8 +62,15 @@ export default function ProduitsParFamille({
         if (cum / total >= 0.8) break
       }
     }
-    const vitalSum = inFam.slice(0, vc).reduce((s, p) => s + p.last, 0)
-    return { rows: inFam, famTotal: total, vitalCount: vc, vitalShare: total > 0 ? (vitalSum / total) * 100 : 0 }
+    const vital = vc > 0 ? inFam.slice(0, vc) : inFam
+    const vitalSum = vital.reduce((s, p) => s + p.last, 0)
+    return {
+      rows: vital,
+      famTotal: total,
+      vitalCount: vc,
+      vitalShare: total > 0 ? (vitalSum / total) * 100 : 0,
+      totalCount: inFam.length,
+    }
   }, [products, active])
 
   return (
@@ -69,7 +79,7 @@ export default function ProduitsParFamille({
         <div className="flex items-center justify-between mb-3">
           <div>
             <h2 className="font-bold text-gray-900">Produits par famille</h2>
-            <p className="text-xs text-gray-400 mt-0.5">Analyse 20/80 sur le CA de la famille sélectionnée · CA {lastLabel}</p>
+            <p className="text-xs text-gray-400 mt-0.5">Les produits qui font 80 % du CA de la famille sélectionnée · CA {lastLabel}</p>
           </div>
         </div>
         {!hasFamilles ? (
@@ -100,7 +110,11 @@ export default function ProduitsParFamille({
               <span className="text-gray-600">
                 <strong className="text-pilote">{vitalCount}</strong> produit{vitalCount > 1 ? 's' : ''} font <strong className="text-pilote">{vitalShare.toFixed(0)} %</strong> du CA
               </span>
-              <span className="text-gray-400">({rows.length} produits au total dans « {active} »)</span>
+              <span className="text-gray-400">
+                {totalCount - vitalCount > 0
+                  ? `(${totalCount - vitalCount} autre${totalCount - vitalCount > 1 ? 's' : ''} produit${totalCount - vitalCount > 1 ? 's' : ''} masqué${totalCount - vitalCount > 1 ? 's' : ''} sur ${totalCount})`
+                  : `(${totalCount} produit${totalCount > 1 ? 's' : ''} dans « ${active} »)`}
+              </span>
             </div>
           )}
           <table className="w-full">
@@ -116,34 +130,20 @@ export default function ProduitsParFamille({
             </thead>
             <tbody>
               {rows.map((p, i) => {
-                const vital = i < vitalCount
                 const share = famTotal > 0 ? (p.last / famTotal) * 100 : 0
-                const showCut = i === vitalCount && vitalCount > 0 && vitalCount < rows.length
                 return (
-                  <Fragment key={p.name}>
-                    {showCut && (
-                      <tr>
-                        <td colSpan={hasComparison ? 6 : 5} className="px-4 py-1.5 bg-pilote-50/40">
-                          <span className="text-[10px] font-bold uppercase tracking-wider text-pilote-800">— 80 % du CA de « {active} » —</span>
-                        </td>
-                      </tr>
-                    )}
-                    <tr className={`border-t border-gray-100 hover:bg-gray-50 transition-colors ${vital ? '' : 'opacity-60'}`}>
-                      <td className="px-4 py-2 text-xs text-gray-400 tabular">{i + 1}</td>
-                      <td className="px-4 py-2 text-sm font-medium text-gray-900">
-                        {p.name}
-                        {vital && <span className="ml-2 text-[9px] font-bold text-pilote bg-pilote-50 px-1.5 py-0.5 rounded-full align-middle">20/80</span>}
+                  <tr key={p.name} className="border-t border-gray-100 hover:bg-gray-50 transition-colors">
+                    <td className="px-4 py-2 text-xs text-gray-400 tabular">{i + 1}</td>
+                    <td className="px-4 py-2 text-sm font-medium text-gray-900">{p.name}</td>
+                    <td className="px-4 py-2"><div className="flex justify-center"><MiniSpark vals={p.vals} /></div></td>
+                    <td className="px-4 py-2 text-right text-sm font-semibold text-gray-900 tabular">{fmt2(p.last)} €</td>
+                    <td className="px-4 py-2 text-right text-xs text-gray-500 tabular">{share.toFixed(1)} %</td>
+                    {hasComparison && (
+                      <td className={`px-4 py-2 text-right text-xs font-bold tabular ${p.prevDelta >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                        {p.prevDelta >= 0 ? '+' : ''}{fmt(p.prevDelta)} €
                       </td>
-                      <td className="px-4 py-2"><div className="flex justify-center"><MiniSpark vals={p.vals} /></div></td>
-                      <td className="px-4 py-2 text-right text-sm font-semibold text-gray-900 tabular">{fmt2(p.last)} €</td>
-                      <td className="px-4 py-2 text-right text-xs text-gray-500 tabular">{share.toFixed(1)} %</td>
-                      {hasComparison && (
-                        <td className={`px-4 py-2 text-right text-xs font-bold tabular ${p.prevDelta >= 0 ? 'text-green-600' : 'text-red-500'}`}>
-                          {p.prevDelta >= 0 ? '+' : ''}{fmt(p.prevDelta)} €
-                        </td>
-                      )}
-                    </tr>
-                  </Fragment>
+                    )}
+                  </tr>
                 )
               })}
             </tbody>
