@@ -7,6 +7,10 @@ import { useToast } from '@/components/ui/toast'
 import { useConfirm } from '@/components/ui/confirm-dialog'
 import { Plus, ChevronLeft, ChevronRight, Trash2, CalendarDays, FileDown, Copy, Clipboard, BarChart2, X, AlertTriangle, Send } from 'lucide-react'
 import EmployeeProfileModal, { EmployeeProfile } from '@/components/EmployeeProfileModal'
+import {
+  getWeekDates, frenchHolidayNames, entryHours, entryBrutCost, chargeMultiplier,
+  type PayrollEmployee, type PayrollEntry,
+} from '@/lib/payroll'
 
 type DayType = 'travail' | 'conges' | 'maladie' | 'repos'
 
@@ -124,51 +128,10 @@ function getISOWeek(date: Date) {
   return { week: Math.ceil((((d.getTime() - y.getTime()) / 86400000) + 1) / 7), year: d.getUTCFullYear() }
 }
 
-function getWeekDates(week: number, year: number): Date[] {
-  const jan4 = new Date(Date.UTC(year, 0, 4))
-  const dow = jan4.getUTCDay() || 7
-  const mon = new Date(jan4)
-  mon.setUTCDate(jan4.getUTCDate() - dow + 1 + (week - 1) * 7)
-  return Array.from({ length: 7 }, (_, i) => { const d = new Date(mon); d.setUTCDate(mon.getUTCDate() + i); return d })
-}
-
 function getWeekLabel(week: number, year: number) {
   const d = getWeekDates(week, year)
   const f = (x: Date) => x.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', timeZone: 'UTC' })
   return `${f(d[0])} – ${f(d[6])} ${year}`
-}
-
-function getEaster(year: number): Date {
-  const a = year % 19, b = Math.floor(year / 100), c = year % 100
-  const d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25)
-  const g = Math.floor((b - f + 1) / 3)
-  const h = (19 * a + b - d - g + 15) % 30
-  const i = Math.floor(c / 4), k = c % 4
-  const l = (32 + 2 * e + 2 * i - h - k) % 7
-  const m = Math.floor((a + 11 * h + 22 * l) / 451)
-  const month = Math.floor((h + l - 7 * m + 114) / 31)
-  const day = ((h + l - 7 * m + 114) % 31) + 1
-  return new Date(Date.UTC(year, month - 1, day))
-}
-
-/** Returns a Map of ISO date string → holiday name for all 11 French public holidays */
-function getFrenchHolidays(year: number): Map<string, string> {
-  const easter = getEaster(year)
-  const add = (d: Date, n: number) => { const r = new Date(d); r.setUTCDate(d.getUTCDate() + n); return r }
-  const fmt = (d: Date) => d.toISOString().slice(0, 10)
-  return new Map([
-    [fmt(new Date(Date.UTC(year, 0, 1))),   "Jour de l'An"],
-    [fmt(add(easter, 1)),                    'Lundi de Pâques'],
-    [fmt(new Date(Date.UTC(year, 4, 1))),   'Fête du Travail'],
-    [fmt(new Date(Date.UTC(year, 4, 8))),   'Victoire 1945'],
-    [fmt(add(easter, 39)),                   'Ascension'],
-    [fmt(add(easter, 50)),                   'Lundi de Pentecôte'],
-    [fmt(new Date(Date.UTC(year, 6, 14))),  'Fête Nationale'],
-    [fmt(new Date(Date.UTC(year, 7, 15))),  'Assomption'],
-    [fmt(new Date(Date.UTC(year, 10, 1))),  'Toussaint'],
-    [fmt(new Date(Date.UTC(year, 10, 11))), 'Armistice'],
-    [fmt(new Date(Date.UTC(year, 11, 25))), 'Noël'],
-  ])
 }
 
 // ── Vacances scolaires françaises par zone — calendriers officiels 2025-2026
@@ -231,63 +194,24 @@ function contractLabel(ct: string | undefined) {
   return CONTRACT_TYPES.find(c => c.key === ct)?.short ?? (ct ?? 'CDI 35h')
 }
 
+// Le calcul CCN (heures payées, HS, majorations, charges patronales) vit dans
+// lib/payroll — moteur partagé avec le tableau de bord, la facturation et le
+// rapport PDF. Ces trois adaptateurs ne font que typer les objets de la page.
+const asEntry = (e: PlanningEntry) => e as unknown as PayrollEntry
+const asEmp   = (e: Employee)      => e as unknown as PayrollEmployee
+
 /** Heures payées de la semaine : travail + CP (les CP sont payés à heures contrat ÷ 5 par jour) */
-function calcTotalH(entry: PlanningEntry, contractH = 35) {
-  const dailyCP = contractH / 5
-  return JOURS_DB.reduce((s, j) => {
-    const t = (entry[`${j}_type` as keyof PlanningEntry] as DayType) || 'travail'
-    return s + (t === 'travail' ? (entry[j] || 0) : t === 'conges' ? dailyCP : 0)
-  }, 0)
-}
+const calcTotalH = (entry: PlanningEntry, contractH = 35) => entryHours(asEntry(entry), contractH).totalH
 
-/** Heures réellement travaillées — temps de travail effectif : exclut CP, maladie, repos.
- *  C'est LA base légale du calcul des heures supplémentaires : les CP ne génèrent pas de HS. */
-function calcWorkedH(entry: PlanningEntry) {
-  return JOURS_DB.reduce((s, j) => {
-    const t = (entry[`${j}_type` as keyof PlanningEntry] as DayType) || 'travail'
-    return s + (t === 'travail' ? (entry[j] || 0) : 0)
-  }, 0)
-}
+/** Heures réellement travaillées — base légale des heures supplémentaires (les CP n'en génèrent pas) */
+const calcWorkedH = (entry: PlanningEntry) => entryHours(asEntry(entry)).workedH
 
-/** Coût de base : CP payés au taux normal ; majorations HS (+25 %/+50 %) calculées
- *  uniquement sur les heures travaillées (temps de travail effectif).
- *  Gérant/propriétaire : non salarié → TOUTES les heures au taux normal, aucune majoration. */
-function calcBaseCost(entry: PlanningEntry, rate: number, contractH: number, isGerant = false) {
-  const workedH = calcWorkedH(entry)
-  const cpH     = calcTotalH(entry, contractH) - workedH
-  if (isGerant) return (workedH + cpH) * rate
-  const t2 = contractH + 8
-  let workCost: number
-  if (workedH <= contractH)      workCost = workedH * rate
-  else if (workedH <= t2)        workCost = contractH * rate + (workedH - contractH) * rate * 1.25
-  else                           workCost = contractH * rate + (t2 - contractH) * rate * 1.25 + (workedH - t2) * rate * 1.5
-  return workCost + cpH * rate
-}
-
-/** Primes CCN 992 : dimanche travaillé +20 %, jour férié travaillé +100 % */
-function calcPremiums(entry: PlanningEntry, rate: number, holidayFlags: boolean[]) {
-  let sundayH = 0, holidayH = 0
-  JOURS_DB.forEach((j, idx) => {
-    const t = (entry[`${j}_type` as keyof PlanningEntry] as DayType) || 'travail'
-    if (t !== 'travail') return
-    const h = (entry[j] as number) || 0
-    if (holidayFlags[idx]) holidayH += h
-    else if (idx === 6) sundayH += h
-  })
-  return sundayH * rate * 0.20 + holidayH * rate * 1.00
-}
-
-/** Coût brut complet CCN : base + heures sup + majorations dimanche/férié.
- *  Gérant : taux normal uniquement — ni majoration HS, ni primes dimanche/férié. */
-function calcCostCCN(entry: PlanningEntry, rate: number, contractH: number, holidayFlags: boolean[], isGerant = false) {
-  if (isGerant) return calcBaseCost(entry, rate, contractH, true)
-  return calcBaseCost(entry, rate, contractH) + calcPremiums(entry, rate, holidayFlags)
-}
+/** Coût BRUT complet CCN : base + heures sup + majorations dimanche/férié */
+const calcCostCCN = (entry: PlanningEntry, emp: Employee, holidayFlags: boolean[]) =>
+  entryBrutCost(asEntry(entry), asEmp(emp), holidayFlags)
 
 /** Multiplicateur charges patronales (défaut 45 %) */
-function chargeMult(emp: Employee) {
-  return 1 + (Number(emp.charges_patronales ?? 45) / 100)
-}
+const chargeMult = (emp: Employee) => chargeMultiplier(asEmp(emp))
 
 /** Alertes légales Code du travail / CCN 992 pour la semaine (basées sur le travail effectif).
  *  Gérant/propriétaire : non salarié, durées maximales du Code du travail non applicables. */
@@ -476,7 +400,7 @@ export default function PlanningPage() {
   const todayISO = `${tNow.getFullYear()}-${String(tNow.getMonth() + 1).padStart(2, '0')}-${String(tNow.getDate()).padStart(2, '0')}`
 
   // Jours fériés pour l'année affichée
-  const holidays     = getFrenchHolidays(year)
+  const holidays     = frenchHolidayNames(year)
   const weekHolidays = weekDates.map(d => holidays.get(d.toISOString().slice(0, 10)) ?? null)
   const weekVacances = getWeekVacances(weekDates)
   const holidayFlags = weekHolidays.map(h => h !== null)
@@ -754,7 +678,7 @@ export default function PlanningPage() {
       allResults.forEach((weekEntries, wi) => {
         if (!Array.isArray(weekEntries)) return
         const { week: w, year: y } = weeks[wi]
-        if (!holidayCache[y]) holidayCache[y] = getFrenchHolidays(y)
+        if (!holidayCache[y]) holidayCache[y] = frenchHolidayNames(y)
         const wDates = getWeekDates(w, y)
         const wFlags = wDates.map(d => holidayCache[y].has(d.toISOString().slice(0, 10)))
         for (const entry of weekEntries) {
@@ -764,7 +688,7 @@ export default function PlanningPage() {
           const ch = emp.contract_hours || 35
           const weekH = calcTotalH(entry, ch)
           const weekWorkedH = calcWorkedH(entry)
-          const weekCost = calcCostCCN(entry, Number(emp.hourly_rate), ch, wFlags, emp.is_gerant ?? false)
+          const weekCost = calcCostCCN(entry, emp, wFlags)
           stats[entry.employee_id].hours   += weekH
           stats[entry.employee_id].cost    += weekCost
           stats[entry.employee_id].charged += weekCost * chargeMult(emp)
@@ -787,7 +711,7 @@ export default function PlanningPage() {
   const rowStats = employees.map(emp => {
     const e  = getEntryState(emp.id)
     const ch = emp.contract_hours || 35
-    const cost = calcCostCCN(e, Number(emp.hourly_rate), ch, holidayFlags, emp.is_gerant ?? false)
+    const cost = calcCostCCN(e, emp, holidayFlags)
     return {
       empId: emp.id, name: emp.name,
       totalH: calcTotalH(e, ch),
