@@ -15,6 +15,7 @@ import {
 } from '@react-pdf/renderer'
 import { Resend } from 'resend'
 import { computeWeekEconomics, type WeekEconomics } from '@/lib/week-economics'
+import { benchOf } from '@/lib/postes'
 
 export const maxDuration = 60
 
@@ -1043,19 +1044,6 @@ function buildStatus(caVar: number): WeekStatus {
 
 // Repères sectoriels de marge MATIÈRE (boucherie artisanale) — mêmes fourchettes
 // que la page Facturation, pour que l'écran et le PDF racontent la même histoire.
-const MATIERE_BENCH: Record<string, [number, number]> = {
-  boucherie: [35, 45], charcuterie: [40, 55], traiteur: [50, 65], fruits_et_legumes: [20, 35], vente: [20, 35],
-}
-/** Repère d'une famille — reconnaissance souple sur le libellé (« boucher » ≈ boucherie) */
-function benchOf(key: string, label: string): [number, number] | null {
-  const n = (label || key).toLowerCase()
-  if (MATIERE_BENCH[key]) return MATIERE_BENCH[key]
-  if (n.includes('bouch')) return MATIERE_BENCH.boucherie
-  if (n.includes('charcut')) return MATIERE_BENCH.charcuterie
-  if (n.includes('traiteur')) return MATIERE_BENCH.traiteur
-  return null
-}
-
 /** Le rapport a-t-il de quoi parler d'argent ? (sinon la page affiche un mode d'emploi) */
 function hasEconomics(e: WeekEconomics | null): e is WeekEconomics {
   return !!e && (e.achats_ht > 0 || e.masse_salariale > 0 || e.charges_fixes > 0)
