@@ -56,6 +56,9 @@ export type WeekEconomics = {
   divers: FamilleEconomics
   masse_salariale: number
   salaires_affectes: number
+  /** Salaires des heures sans poste, répartis au prorata du CA sur les 4 blocs */
+  salaires_repartis: number
+  /** Reliquat vraiment non réparti — uniquement quand il n'y a aucun CA pour arbitrer */
   salaires_non_affectes: number
   charges_fixes: number
   charges_fixes_lines: ReturnType<typeof weekRecurringCost>['lines']
@@ -264,6 +267,33 @@ export async function computeWeekEconomics(
     if (ri >= 0) caByFamille[i] = caByRayon[VENT_RAYONS[ri].key] || 0
   }
 
+  // CA du bloc Divers — calculé AVANT la répartition des salaires, car il en prend sa part.
+  const caDivers = Math.max(0, ca_total - caByFamille.reduce((a, b) => a + b, 0))
+
+  // Salaires réellement POINTÉS sur un poste métier — figé AVANT la redistribution
+  // ci-dessous. Le mesurer après y mélangerait les heures réparties, et l'écran
+  // afficherait « X € suivent les postes · Y € répartis au prorata » avec X + Y
+  // supérieur à la masse salariale : les mêmes heures comptées deux fois.
+  // Invariant garanti ici : affectés + répartis + non affectés = masse salariale.
+  const salaires_affectes_total = salaires_by_famille[0] + salaires_by_famille[1] + salaires_by_famille[2]
+
+  // Heures sans poste (vente, administratif, non renseigné) : réparties au PRORATA DU CA
+  // sur les 3 familles + Divers. Un vendeur qui encaisse indifféremment du bœuf et du
+  // traiteur ne « travaille » pour aucune famille en particulier : sa part suit celle du
+  // CA. Plus rien ne reste hors des blocs — sauf s'il n'y a aucun CA pour arbitrer, cas
+  // où le reliquat reste visible plutôt qu'inventé.
+  let salaires_divers = 0
+  let salaires_repartis = 0
+  const caArbitrage = caByFamille.reduce((a, b) => a + b, 0) + caDivers
+  if (salaires_non_affectes > 0 && caArbitrage > 0) {
+    salaires_repartis = salaires_non_affectes
+    for (let i = 0; i < caByFamille.length; i++) {
+      salaires_by_famille[i] += salaires_repartis * (caByFamille[i] / caArbitrage)
+    }
+    salaires_divers = salaires_repartis * (caDivers / caArbitrage)
+    salaires_non_affectes = 0
+  }
+
   // Achats par famille : la famille récupère les rayons de ventilation qu'elle
   // reconnaît (un rayon ne compte que pour une seule famille — la première).
   const famillesOut: FamilleEconomics[] = familles.map((f, i) => {
@@ -284,24 +314,22 @@ export async function computeWeekEconomics(
       taux_totale: caR > 0 ? round1(((caR - achR - salR) / caR) * 100) : null,
     }
   })
-  const salaires_affectes_total = salaires_by_famille[0] + salaires_by_famille[1] + salaires_by_famille[2]
 
   // Bloc Divers : tout le CA qu'aucune famille ne revendique (rachat, épicerie,
-  // boissons, fruits & légumes, prestations…) face aux achats ventilés en divers.
-  // Le solde se lit directement : les 3 familles + Divers font le CA total.
-  const caDivers = Math.max(0, round2(ca_total - famillesOut.reduce((s, f) => s + f.ca, 0)))
+  // boissons, fruits & légumes, prestations…), face aux achats ventilés en divers et à
+  // sa part d'heures sans poste. Les 3 familles + Divers font le CA total.
   const achDivers = round2(achats_by_rayon.divers || 0)
   const divers: FamilleEconomics = {
     key: DIVERS_POSTE.key,
     label: DIVERS_POSTE.label,
-    ca: caDivers,
+    ca: round2(caDivers),
     achats: achDivers,
     achats_ventiles: achDivers > 0,
-    salaires: 0,
+    salaires: round2(salaires_divers),
     marge: round2(caDivers - achDivers),
     taux: caDivers > 0 ? round1(((caDivers - achDivers) / caDivers) * 100) : null,
-    marge_totale: round2(caDivers - achDivers),
-    taux_totale: caDivers > 0 ? round1(((caDivers - achDivers) / caDivers) * 100) : null,
+    marge_totale: round2(caDivers - achDivers - salaires_divers),
+    taux_totale: caDivers > 0 ? round1(((caDivers - achDivers - salaires_divers) / caDivers) * 100) : null,
   }
 
   return {
@@ -315,6 +343,7 @@ export async function computeWeekEconomics(
     divers,
     masse_salariale: round2(masse_salariale),
     salaires_affectes: round2(salaires_affectes_total),
+    salaires_repartis: round2(salaires_repartis),
     salaires_non_affectes: round2(salaires_non_affectes),
     charges_fixes: round2(charges_fixes),
     charges_fixes_lines: recur.lines,
