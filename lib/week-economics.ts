@@ -15,7 +15,7 @@ import {
   PAYROLL_EMPLOYEE_COLUMNS, PAYROLL_ENTRY_COLUMNS,
   type PayrollEmployee, type PayrollEntry,
 } from '@/lib/payroll'
-import { parseCustomPostes, parseMarginFamilies, posteLabel, familleMatchesText } from '@/lib/postes'
+import { parseCustomPostes, parseMarginFamilies, posteLabel, familleMatchesText, classicRayonOfLabel } from '@/lib/postes'
 import type { createServiceClient } from '@/lib/supabase/server'
 
 type ServiceClient = ReturnType<typeof createServiceClient>
@@ -63,18 +63,6 @@ export type WeekEconomics = {
   taux_apres_salaires: number | null
   resultat_net: number
   ratio_ms: number | null
-}
-
-// Famille de vente (rapport) → rayon de VENTILATION des achats. Correspondance
-// souple sur le nom — sert au CA des 4 rayons classiques (redistribution du
-// « divers » + repli des familles de marge classiques).
-function rayonOfFamily(nom: string): string | null {
-  const n = String(nom || '').toLowerCase()
-  if (n.includes('bouch')) return 'boucherie'
-  if (n.includes('charcut')) return 'charcuterie'
-  if (n.includes('traiteur')) return 'traiteur'
-  if (n.includes('fruit') || n.includes('legume') || n.includes('légume') || n.includes('primeur')) return 'fruits_et_legumes'
-  return null
 }
 
 // Les 4 rayons de la ventilation fournisseur (colonnes de supplier_rayon_splits)
@@ -251,7 +239,7 @@ export async function computeWeekEconomics(
   // des familles classiques.
   const caByRayon: Record<string, number> = { boucherie: 0, charcuterie: 0, traiteur: 0, fruits_et_legumes: 0 }
   const fams: { nom: string; montant: number }[] = Array.isArray(ca.familles) ? ca.familles : []
-  for (const f of fams) { const rr = rayonOfFamily(f?.nom); if (rr) caByRayon[rr] += Number(f?.montant) || 0 }
+  for (const f of fams) { const rr = classicRayonOfLabel(f?.nom); if (rr && rr in caByRayon) caByRayon[rr] += Number(f?.montant) || 0 }
   let caRayonSum = RAYONS.reduce((s, r) => s + caByRayon[r], 0)
   if (caRayonSum === 0) {
     for (const r of RAYONS) { const v = Number(ca.by_rayon?.[r]) || 0; caByRayon[r] = v; caRayonSum += v }
