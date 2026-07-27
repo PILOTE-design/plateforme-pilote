@@ -198,7 +198,7 @@ const PROVIDERS_META: ProviderMeta[] = [
   { id: 'ebp',       name: 'EBP',       logo: 'EBP', color: 'bg-orange-500', tokenLabel: 'Token API EBP en ligne', tokenPlaceholder: 'Token depuis EBP → Paramètres → API', needsCompanyId: true, companyIdLabel: 'Identifiant dossier EBP', helpUrl: 'https://developer.ebp.com', description: 'EBP en ligne — import factures fournisseurs automatique' },
 ]
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────────────────────────────────────────
+// ─── Helpers ────────────────────────────────────────────────────────────────────────────────────────────
 
 function getISOWeek(date: Date) {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
