@@ -15,7 +15,7 @@ import {
   PAYROLL_EMPLOYEE_COLUMNS, PAYROLL_ENTRY_COLUMNS,
   type PayrollEmployee, type PayrollEntry,
 } from '@/lib/payroll'
-import { parseCustomPostes, parseMarginFamilies, posteLabel, familleMatchesText, classicRayonOfLabel } from '@/lib/postes'
+import { parseCustomPostes, parseMarginFamilies, posteLabel, familleMatchesText, classicRayonOfLabel, DIVERS_POSTE } from '@/lib/postes'
 import type { createServiceClient } from '@/lib/supabase/server'
 
 type ServiceClient = ReturnType<typeof createServiceClient>
@@ -25,7 +25,7 @@ export type CaInput = {
   ca_total: number
   /** Familles de vente telles qu'elles sortent du rapport (nom libre, montant) */
   familles?: { nom: string; montant: number }[] | null
-  /** Repli saisi à la main, par clé de rayon classique (boucherie, charcuterie…) */
+  /** Repli saisi à la main, par clé de rayon (boucherie, charcuterie, traiteur, divers) */
   by_rayon?: Record<string, number> | null
 }
 
@@ -51,6 +51,9 @@ export type WeekEconomics = {
   achats_non_ventiles: number
   achats_divers: number
   familles: FamilleEconomics[]
+  /** 4e bloc : rachat, épicerie, boissons, fruits & légumes, prestations… — CA et achats
+   *  qui ne relèvent d'aucun métier. Jamais redistribué sur les familles. */
+  divers: FamilleEconomics
   masse_salariale: number
   salaires_affectes: number
   salaires_non_affectes: number
@@ -65,15 +68,15 @@ export type WeekEconomics = {
   ratio_ms: number | null
 }
 
-// Les 4 rayons de la ventilation fournisseur (colonnes de supplier_rayon_splits)
+// Les 3 rayons MÉTIER de la ventilation fournisseur. Le 4e champ, « divers », n'est
+// pas un métier : il ne se rattache à aucune famille et n'est plus redistribué au
+// prorata du CA — un cageot de tomates n'a rien à faire dans la marge boucherie.
+// La colonne historique pct_fruits_et_legumes est repliée dans divers à la lecture.
 const VENT_RAYONS = [
-  { key: 'boucherie',         label: 'Boucherie' },
-  { key: 'charcuterie',       label: 'Charcuterie' },
-  { key: 'traiteur',          label: 'Traiteur' },
-  { key: 'fruits_et_legumes', label: 'Fruits et légumes' },
+  { key: 'boucherie',   label: 'Boucherie' },
+  { key: 'charcuterie', label: 'Charcuterie' },
+  { key: 'traiteur',    label: 'Traiteur' },
 ] as const
-
-const RAYONS = ['boucherie', 'charcuterie', 'traiteur', 'fruits_et_legumes'] as const
 
 /** Dates ISO (lundi, dimanche) d'une semaine — dérivées du calendrier de lib/payroll */
 function weekBoundsISO(week: number, year: number): [string, string] {
@@ -152,22 +155,23 @@ export async function computeWeekEconomics(
     return best
   }
 
-  // 4 rayons réels ; le « divers » est accumulé à part puis redistribué au prorata du CA
-  const achats_by_rayon: Record<string, number> = { boucherie: 0, charcuterie: 0, traiteur: 0, fruits_et_legumes: 0 }
+  // 3 rayons métier + divers. pct_fruits_et_legumes (colonne historique) est replié
+  // dans divers : les fruits & légumes ne sont plus un rayon, c'est de l'achat-revente.
+  const achats_by_rayon: Record<string, number> = { boucherie: 0, charcuterie: 0, traiteur: 0, divers: 0 }
   let achats_non_ventiles = 0
-  let achats_divers = 0
   for (const inv of varInv) {
     const amt = parseFloat(inv.amount_ht || 0)
     if (!amt) continue
     const sp = splitFor(inv.supplier_name)
-    const tot = sp ? (Number(sp.pct_boucherie) + Number(sp.pct_charcuterie) + Number(sp.pct_traiteur) + Number(sp.pct_fruits_et_legumes) + Number(sp.pct_divers)) : 0
+    const pDivers = Number(sp?.pct_divers || 0) + Number(sp?.pct_fruits_et_legumes || 0)
+    const tot = sp ? (Number(sp.pct_boucherie) + Number(sp.pct_charcuterie) + Number(sp.pct_traiteur) + pDivers) : 0
     if (!sp || tot <= 0) { achats_non_ventiles += amt; continue }
-    achats_by_rayon.boucherie         += amt * (Number(sp.pct_boucherie)         / tot)
-    achats_by_rayon.charcuterie       += amt * (Number(sp.pct_charcuterie)       / tot)
-    achats_by_rayon.traiteur          += amt * (Number(sp.pct_traiteur)          / tot)
-    achats_by_rayon.fruits_et_legumes += amt * (Number(sp.pct_fruits_et_legumes) / tot)
-    achats_divers                     += amt * (Number(sp.pct_divers)            / tot)
+    achats_by_rayon.boucherie   += amt * (Number(sp.pct_boucherie)   / tot)
+    achats_by_rayon.charcuterie += amt * (Number(sp.pct_charcuterie) / tot)
+    achats_by_rayon.traiteur    += amt * (Number(sp.pct_traiteur)    / tot)
+    achats_by_rayon.divers      += amt * (pDivers                    / tot)
   }
+  const achats_divers = achats_by_rayon.divers
 
   // 2. Masse salariale CHARGÉE depuis le planning — moteur partagé lib/payroll (CCN 992).
   // Le coût de chaque employé est réparti d'après les POSTES pointés dans le planning,
@@ -234,23 +238,15 @@ export async function computeWeekEconomics(
   const resultat_net = marge_brute - masse_salariale - charges_fixes
   const ratio_ms = ca_total > 0 ? (masse_salariale / ca_total) * 100 : null
 
-  // CA par rayon CLASSIQUE — lu depuis les familles de vente du rapport, repli sur
-  // les montants saisis. Sert à la redistribution du « divers » et au repli de CA
-  // des familles classiques.
-  const caByRayon: Record<string, number> = { boucherie: 0, charcuterie: 0, traiteur: 0, fruits_et_legumes: 0 }
+  // CA par rayon MÉTIER — lu depuis les familles de vente du rapport, repli sur les
+  // montants saisis à la main. Sert de repli de CA aux familles de marge classiques.
+  const caByRayon: Record<string, number> = { boucherie: 0, charcuterie: 0, traiteur: 0 }
+  const RAYON_KEYS = VENT_RAYONS.map(r => r.key)
   const fams: { nom: string; montant: number }[] = Array.isArray(ca.familles) ? ca.familles : []
   for (const f of fams) { const rr = classicRayonOfLabel(f?.nom); if (rr && rr in caByRayon) caByRayon[rr] += Number(f?.montant) || 0 }
-  let caRayonSum = RAYONS.reduce((s, r) => s + caByRayon[r], 0)
+  const caRayonSum = RAYON_KEYS.reduce((s, r) => s + caByRayon[r], 0)
   if (caRayonSum === 0) {
-    for (const r of RAYONS) { const v = Number(ca.by_rayon?.[r]) || 0; caByRayon[r] = v; caRayonSum += v }
-  }
-  // Redistribution du « divers » sur les 4 rayons, au prorata de leur part de CA
-  // (à défaut de CA par rayon renseigné : répartition égale)
-  if (achats_divers > 0) {
-    for (const r of RAYONS) {
-      const share = caRayonSum > 0 ? caByRayon[r] / caRayonSum : 1 / RAYONS.length
-      achats_by_rayon[r] += achats_divers * share
-    }
+    for (const r of RAYON_KEYS) caByRayon[r] = Number(ca.by_rayon?.[r]) || 0
   }
 
   // CA par FAMILLE de marge : chaque famille de vente est rattachée à la première
@@ -290,6 +286,24 @@ export async function computeWeekEconomics(
   })
   const salaires_affectes_total = salaires_by_famille[0] + salaires_by_famille[1] + salaires_by_famille[2]
 
+  // Bloc Divers : tout le CA qu'aucune famille ne revendique (rachat, épicerie,
+  // boissons, fruits & légumes, prestations…) face aux achats ventilés en divers.
+  // Le solde se lit directement : les 3 familles + Divers font le CA total.
+  const caDivers = Math.max(0, round2(ca_total - famillesOut.reduce((s, f) => s + f.ca, 0)))
+  const achDivers = round2(achats_by_rayon.divers || 0)
+  const divers: FamilleEconomics = {
+    key: DIVERS_POSTE.key,
+    label: DIVERS_POSTE.label,
+    ca: caDivers,
+    achats: achDivers,
+    achats_ventiles: achDivers > 0,
+    salaires: 0,
+    marge: round2(caDivers - achDivers),
+    taux: caDivers > 0 ? round1(((caDivers - achDivers) / caDivers) * 100) : null,
+    marge_totale: round2(caDivers - achDivers),
+    taux_totale: caDivers > 0 ? round1(((caDivers - achDivers) / caDivers) * 100) : null,
+  }
+
   return {
     achats_ht: round2(achats_ht),
     achats_a_verifier: round2(achats_a_verifier),
@@ -298,6 +312,7 @@ export async function computeWeekEconomics(
     achats_non_ventiles: round2(achats_non_ventiles),
     achats_divers: round2(achats_divers),
     familles: famillesOut,
+    divers,
     masse_salariale: round2(masse_salariale),
     salaires_affectes: round2(salaires_affectes_total),
     salaires_non_affectes: round2(salaires_non_affectes),

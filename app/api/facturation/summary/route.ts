@@ -38,10 +38,9 @@ export async function GET(request: NextRequest) {
     ca_total: parseFloat((caData as any)?.ca_total || 0) || 0,
     familles: Array.isArray((caData as any)?.families_detail) ? (caData as any).families_detail : null,
     by_rayon: {
-      boucherie:         parseFloat((caData as any)?.ca_boucherie || 0) || 0,
-      charcuterie:       parseFloat((caData as any)?.ca_charcuterie || 0) || 0,
-      traiteur:          parseFloat((caData as any)?.ca_traiteur || 0) || 0,
-      fruits_et_legumes: parseFloat((caData as any)?.ca_fruits_et_legumes || 0) || 0,
+      boucherie:   parseFloat((caData as any)?.ca_boucherie || 0) || 0,
+      charcuterie: parseFloat((caData as any)?.ca_charcuterie || 0) || 0,
+      traiteur:    parseFloat((caData as any)?.ca_traiteur || 0) || 0,
     },
   })
 

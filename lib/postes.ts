@@ -27,17 +27,29 @@ export const BUILTIN_POSTES: Poste[] = [
 
 export const DEFAULT_MARGIN_FAMILIES = ['boucherie', 'charcuterie', 'traiteur']
 
-// Racines de rattachement du CA aux 4 rayons classiques. Les familles de vente des
-// rapports (CRISALID) ne portent JAMAIS le nom du rayon : un boucher vend « VIANDE DE
-// BOEUF », « VIANDE DE VOLAILLE », « VIANDE DE PORC »… et jamais « BOUCHERIE ». Sans
-// ce vocabulaire, la famille boucherie recevait 0 € de CA alors qu'elle porte le gros
-// du chiffre. L'ORDRE COMPTE : la première racine qui reconnaît le libellé l'emporte,
-// et « CHARCUTERIE RACHAT » doit rester en charcuterie, pas basculer en boucherie.
+/** Le 4e bloc, en face des familles métier : tout ce qui n'est pas fabriqué en atelier */
+export const DIVERS_POSTE: Poste = { key: 'divers', label: 'Divers' }
+
+// Racines de rattachement du CA aux métiers. Les familles de vente des rapports
+// (CRISALID) ne portent JAMAIS le nom du rayon : un boucher vend « VIANDE DE BOEUF »,
+// « VIANDE DE VOLAILLE », « VIANDE DE PORC »… et jamais « BOUCHERIE ». Sans ce
+// vocabulaire, la famille boucherie recevait 0 € de CA alors qu'elle porte le gros du
+// chiffre. L'ORDRE COMPTE : la première racine qui reconnaît le libellé l'emporte.
 export const CLASSIC_CA_STEMS: Record<string, string[]> = {
-  charcuterie:       ['charcut', 'salaison', 'saucis', 'jambon', 'terrine', 'rillette', 'boudin', 'andouill'],
-  boucherie:         ['bouch', 'viande', 'boeuf', 'veau', 'agneau', 'mouton', 'porc', 'volaille', 'poulet', 'gibier', 'abat', 'triperie'],
-  traiteur:          ['traiteur', 'rotisserie', 'snack', 'sandwich', 'plat'],
-  fruits_et_legumes: ['fruit', 'legume', 'primeur'],
+  charcuterie: ['charcut', 'salaison', 'saucis', 'jambon', 'terrine', 'rillette', 'boudin', 'andouill'],
+  boucherie:   ['bouch', 'viande', 'boeuf', 'veau', 'agneau', 'mouton', 'porc', 'volaille', 'poulet', 'gibier', 'abat', 'triperie'],
+  traiteur:    ['traiteur', 'rotisserie', 'snack', 'sandwich', 'plat'],
+}
+
+// RACHAT / REVENTE : produit acheté fini et revendu tel quel. Ce n'est pas le métier —
+// ni la matière, ni la main-d'œuvre, ni la marge. Testé AVANT tout le reste, sinon
+// « CHARCUTERIE RACHAT » partirait en charcuterie et gonflerait sa marge apparente.
+const DIVERS_STEMS = ['rachat', 'revente', 'revendeur', 'revend']
+
+/** Ce libellé est-il un rachat / une revente ? (« CHARCUTERIE RACHAT », « REVENDEUR ») */
+export function isDiversLabel(nom: unknown): boolean {
+  const n = normText(nom)
+  return !!n && DIVERS_STEMS.some(st => stemInText(st, n))
 }
 
 /** Une racine reconnaît-elle ce texte ? Test au MOT, pas en sous-chaîne : « NOUVEAUTÉS »
@@ -46,10 +58,13 @@ function stemInText(stem: string, normalized: string): boolean {
   return normalized.split(' ').some(w => w.startsWith(stem))
 }
 
-/** Rayon classique d'une famille de vente (« VIANDE DE BOEUF » → boucherie), sinon null */
+/** Rayon métier d'une famille de vente (« VIANDE DE BOEUF » → boucherie).
+ *  « divers » pour un rachat, `null` pour tout ce qui n'est reconnu par personne —
+ *  les deux finissent dans le bloc Divers, mais seul le rachat est un choix explicite. */
 export function classicRayonOfLabel(nom: unknown): string | null {
   const n = normText(nom)
   if (!n) return null
+  if (DIVERS_STEMS.some(st => stemInText(st, n))) return DIVERS_POSTE.key
   for (const [rayon, stems] of Object.entries(CLASSIC_CA_STEMS)) {
     if (stems.some(st => stemInText(st, n))) return rayon
   }
@@ -120,11 +135,13 @@ export function parseMarginFamilies(raw: unknown): string[] {
 /** Une famille (clé + libellé) reconnaît-elle ce texte (poste, famille de CA, rayon) ?
  *  Clé identique, libellés à racine commune, ou racine historique des 4 rayons classiques. */
 export function familleMatchesText(familleKey: string, familleLabel: string, textKey: string, textLabel?: string): boolean {
-  if (familleKey === textKey) return true
   const t = textLabel ?? textKey
+  // BARRIÈRE PRIORITAIRE : un rachat n'appartient à aucun métier, même quand son nom
+  // en porte le mot. Sans elle, « CHARCUTERIE RACHAT » ressemble trop à « Charcuterie »
+  // pour être écarté par la reconnaissance floue, et gonflerait sa marge.
+  if (familleKey !== DIVERS_POSTE.key && isDiversLabel(t)) return false
+  if (familleKey === textKey) return true
   if (labelsMatch(familleLabel, t)) return true
-  // Racines du rayon classique — mais une famille ne prend un libellé que si AUCUN
-  // rayon prioritaire ne le revendique (« CHARCUTERIE RACHAT » reste en charcuterie).
   if (CLASSIC_CA_STEMS[familleKey]) return classicRayonOfLabel(t) === familleKey
   return false
 }
@@ -133,7 +150,7 @@ export function familleMatchesText(familleKey: string, familleLabel: string, tex
 // Taux de marge matière = (CA − achats) / CA. Un seul tableau pour tout PILOTE :
 // page Marges, rapport PDF hebdomadaire, commentaires automatiques.
 export const MATIERE_BENCH: Record<string, [number, number]> = {
-  boucherie: [35, 45], charcuterie: [40, 55], traiteur: [50, 65], fruits_et_legumes: [20, 35], vente: [20, 35],
+  boucherie: [35, 45], charcuterie: [40, 55], traiteur: [50, 65], vente: [20, 35],
 }
 
 /** Repère d'une famille — reconnaissance souple sur le libellé (« boucher » ≈ boucherie) */
