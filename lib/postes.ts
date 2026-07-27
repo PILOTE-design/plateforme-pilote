@@ -27,6 +27,12 @@ export const BUILTIN_POSTES: Poste[] = [
 
 export const DEFAULT_MARGIN_FAMILIES = ['boucherie', 'charcuterie', 'traiteur']
 
+/** Taux de TVA par défaut — taux réduit alimentaire (boucherie, charcuterie,
+ *  traiteur à emporter). Sert à ramener le CA caisse en HT avant tout calcul de
+ *  marge : ici plutôt que dans lib/week-economics, pour rester importable depuis un
+ *  composant client sans tirer le moteur serveur et ses clients Supabase. */
+export const DEFAULT_TVA_RATE = 5.5
+
 /** Le 4e bloc, en face des familles métier : tout ce qui n'est pas fabriqué en atelier */
 export const DIVERS_POSTE: Poste = { key: 'divers', label: 'Divers' }
 

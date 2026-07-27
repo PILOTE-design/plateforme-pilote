@@ -24,7 +24,7 @@ import {
   PAYROLL_EMPLOYEE_COLUMNS, PAYROLL_ENTRY_COLUMNS,
   type PayrollEmployee, type PayrollEntry,
 } from '@/lib/payroll'
-import { parseCustomPostes, parseMarginFamilies, posteLabel, familleMatchesText, classicRayonOfLabel, DIVERS_POSTE } from '@/lib/postes'
+import { parseCustomPostes, parseMarginFamilies, posteLabel, familleMatchesText, classicRayonOfLabel, DIVERS_POSTE, DEFAULT_TVA_RATE } from '@/lib/postes'
 import type { createServiceClient } from '@/lib/supabase/server'
 
 type ServiceClient = ReturnType<typeof createServiceClient>
@@ -104,9 +104,6 @@ function weekBoundsISO(week: number, year: number): [string, string] {
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 const round1 = (n: number) => Math.round(n * 10) / 10
-
-/** Taux réduit alimentaire — boucherie, charcuterie et traiteur à emporter */
-export const DEFAULT_TVA_RATE = 5.5
 
 /** Convertisseur TTC → HT. Un taux absent, nul ou aberrant laisse le montant tel quel
  *  plutôt que de produire un CA fantaisiste : mieux vaut une marge inchangée qu'une
