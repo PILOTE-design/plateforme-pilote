@@ -18,7 +18,7 @@ import {
   costForWindow, weekRecurringCost, provisionForWindow, enumeratePeriods,
   type RecurringCharge, type RecurringActual, type Periodicity,
 } from '@/lib/recurring-charges'
-import { labelsMatch, DEFAULT_MARGIN_FAMILIES, type Poste } from '@/lib/postes'
+import { labelsMatch, DEFAULT_MARGIN_FAMILIES, MATIERE_BENCH, DIVERS_POSTE, type Poste } from '@/lib/postes'
 
 // ─── Types ──────────────────
 
@@ -32,7 +32,7 @@ type Invoice = {
 
 type WeeklyCA = {
   ca_total: number; ca_boucherie: number; ca_charcuterie: number; ca_traiteur: number
-  ca_fruits_et_legumes: number; ca_vente: number
+  ca_divers: number; ca_vente: number
   families_detail?: { nom: string; montant: number }[] | null
 }
 
@@ -57,45 +57,39 @@ type Summary = {
   achats_non_ventiles?: number
   achats_divers?: number
   familles?: FamilleMargin[]
+  /** 4e bloc : rachat, épicerie, boissons, fruits & légumes, prestations… */
+  divers?: FamilleMargin
 }
 
 /** Mémoire fournisseur : dernière catégorie et dernier taux de TVA utilisés */
 type SupplierMemo = { name: string; category: string; tva_rate: number | null }
 
 /** Répartition d'un fournisseur sur les rayons (en %) */
-type RayonSplit = { supplier_key: string; supplier_label: string | null; pct_boucherie: number; pct_charcuterie: number; pct_traiteur: number; pct_fruits_et_legumes: number; pct_divers: number }
-// Code couleur des rayons ALIGNÉ sur la page Marges (rouge/orange/émeraude/ciel) :
-// un même métier garde la même couleur partout dans l'application.
-const RAYONS = [
-  { key: 'boucherie',         label: 'Boucherie',        dot: '#b91c1c' },
-  { key: 'charcuterie',       label: 'Charcuterie',      dot: '#c2410c' },
-  { key: 'traiteur',          label: 'Traiteur',         dot: '#047857' },
-  { key: 'fruits_et_legumes', label: 'Fruits & légumes', dot: '#0284c7' },
-] as const
-// Champs de ventilation saisis : les 4 rayons + « divers » (redistribué au prorata du CA côté serveur)
+type RayonSplit = { supplier_key: string; supplier_label: string | null; pct_boucherie: number; pct_charcuterie: number; pct_traiteur: number; pct_divers: number }
+// Champs de ventilation d'un fournisseur : les 3 métiers + « divers ». Le divers n'est
+// plus redistribué au prorata du CA — il alimente son propre bloc de marge, en face du
+// CA de rachat, d'épicerie, de boissons et de fruits & légumes. Code couleur ALIGNÉ sur
+// la page Marges : un même métier garde la même couleur partout dans l'application.
 const VENT_FIELDS = [
-  { key: 'boucherie',         label: 'Boucherie',        dot: '#b91c1c' },
-  { key: 'charcuterie',       label: 'Charcuterie',      dot: '#c2410c' },
-  { key: 'traiteur',          label: 'Traiteur',         dot: '#047857' },
-  { key: 'fruits_et_legumes', label: 'Fruits & légumes', dot: '#0284c7' },
-  { key: 'divers',            label: 'Divers',           dot: '#9ca3af' },
+  { key: 'boucherie',   label: 'Boucherie',   dot: '#b91c1c' },
+  { key: 'charcuterie', label: 'Charcuterie', dot: '#c2410c' },
+  { key: 'traiteur',    label: 'Traiteur',    dot: '#047857' },
+  { key: 'divers',      label: 'Divers',      dot: '#9ca3af' },
 ] as const
+type VentKey = typeof VENT_FIELDS[number]['key']
+type VentDraft = Record<VentKey, string>
+const emptyVent = (): VentDraft => ({ boucherie: '', charcuterie: '', traiteur: '', divers: '' })
+const DIVERS_DOT = '#9ca3af'
 
-// Repères sectoriels de marge MATIÈRE (boucherie artisanale) — fourchettes typiques
-// constatées par rayon. Sert uniquement à colorer le taux matière (vert dans la
-// fourchette ou au-dessus, orange juste en dessous, rouge nettement en dessous).
-const MATIERE_BENCH: Record<string, [number, number]> = {
-  boucherie: [35, 45], charcuterie: [40, 55], traiteur: [50, 65], fruits_et_legumes: [20, 35],
-}
 // Identité visuelle des familles classiques — une famille personnalisée dont le
-// libellé ressemble à un métier classique (« boucher » ≈ « boucherie ») hérite de
-// sa couleur et de son repère ; sinon point gris ardoise, pas de repère.
+// libellé ressemble à un métier classique (« boucher » ≈ « boucherie ») hérite de sa
+// couleur et de son repère de marge matière (MATIERE_BENCH, table partagée avec la
+// page Marges et le rapport PDF) ; sinon point gris ardoise, pas de repère.
 const CLASSIC_FAMILLES = [
-  { key: 'boucherie',         label: 'Boucherie',         dot: '#b91c1c' },
-  { key: 'charcuterie',       label: 'Charcuterie',       dot: '#c2410c' },
-  { key: 'traiteur',          label: 'Traiteur',          dot: '#047857' },
-  { key: 'fruits_et_legumes', label: 'Fruits et légumes', dot: '#0284c7' },
-  { key: 'vente',             label: 'Vente',             dot: '#0369a1' },
+  { key: 'boucherie',   label: 'Boucherie',   dot: '#b91c1c' },
+  { key: 'charcuterie', label: 'Charcuterie', dot: '#c2410c' },
+  { key: 'traiteur',    label: 'Traiteur',    dot: '#047857' },
+  { key: 'vente',       label: 'Vente',       dot: '#0369a1' },
 ] as const
 function classicFor(key: string, label: string) {
   return CLASSIC_FAMILLES.find(c => c.key === key || labelsMatch(c.label, label)) ?? null
@@ -132,7 +126,7 @@ function sameSupplierFam(a: string, b: string): boolean {
   return long.startsWith(short) && !/[\p{L}\p{N}]/u.test(long.charAt(short.length))
 }
 // Rayon dominant de la ventilation → catégorie d'achat (viande / charcuterie / … / autre)
-const RAYON_TO_CATEGORY: Record<string, string> = { boucherie: 'boucherie', charcuterie: 'charcuterie', traiteur: 'traiteur', fruits_et_legumes: 'frais_divers', divers: 'frais_divers' }
+const RAYON_TO_CATEGORY: Record<string, string> = { boucherie: 'boucherie', charcuterie: 'charcuterie', traiteur: 'traiteur', divers: 'frais_divers' }
 function categoryFromSplit(sp: Record<string, string>): string | null {
   const entries = VENT_FIELDS.map(f => [f.key, parseFloat((sp as any)[f.key]) || 0] as [string, number])
   const top = entries.slice().sort((a, b) => b[1] - a[1])[0]
@@ -203,7 +197,7 @@ const PROVIDERS_META: ProviderMeta[] = [
   { id: 'ebp',       name: 'EBP',       logo: 'EBP', color: 'bg-orange-500', tokenLabel: 'Token API EBP en ligne', tokenPlaceholder: 'Token depuis EBP → Paramètres → API', needsCompanyId: true, companyIdLabel: 'Identifiant dossier EBP', helpUrl: 'https://developer.ebp.com', description: 'EBP en ligne — import factures fournisseurs automatique' },
 ]
 
-// ─── Helpers ────────────────────────────────────────────────────────────────────────────────────────────
+// ─── Helpers ───────────────────────────────────────────────────────────────────────────────────────
 
 function getISOWeek(date: Date) {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
@@ -304,12 +298,12 @@ export default function FacturationPage() {
   const [showSplits,     setShowSplits]     = useState(false)
   const [splits,         setSplits]         = useState<RayonSplit[]>([])
   const [splitSuppliers, setSplitSuppliers] = useState<{ key: string; name: string }[]>([])
-  const [splitDraft,     setSplitDraft]     = useState<Record<string, { label: string; boucherie: string; charcuterie: string; traiteur: string; fruits_et_legumes: string; divers: string }>>({})
+  const [splitDraft,     setSplitDraft]     = useState<Record<string, VentDraft & { label: string }>>({})
   const [splitSaving,    setSplitSaving]    = useState(false)
   // Onglet actif de la modale : « à répartir » (sociétés sans ventilation) ou « toutes »
   const [splitsTab,      setSplitsTab]      = useState<'todo' | 'all'>('todo')
   // Répartition saisie sur la facture en cours (mémorisée par société)
-  const [newSplit,       setNewSplit]       = useState<{ boucherie: string; charcuterie: string; traiteur: string; fruits_et_legumes: string; divers: string }>({ boucherie: '', charcuterie: '', traiteur: '', fruits_et_legumes: '', divers: '' })
+  const [newSplit,       setNewSplit]       = useState<VentDraft>(emptyVent())
   const [splitTouched,   setSplitTouched]   = useState(false)
   const [categoryTouched, setCategoryTouched] = useState(false)
   const [newInvoice, setNewInvoice] = useState<any>(EMPTY_INVOICE)
@@ -325,7 +319,7 @@ export default function FacturationPage() {
   const [suppliersMemo, setSuppliersMemo] = useState<SupplierMemo[]>([])
   // Le boucher a choisi catégorie ou TVA à la main → la mémoire ne l'écrase plus
   const [memoTouched, setMemoTouched] = useState(false)
-  const [caForm,    setCaForm]    = useState({ ca_total: '', ca_boucherie: '', ca_charcuterie: '', ca_traiteur: '', ca_fruits_et_legumes: '' })
+  const [caForm,    setCaForm]    = useState({ ca_total: '', ca_boucherie: '', ca_charcuterie: '', ca_traiteur: '', ca_divers: '' })
   const [settForm,  setSettForm]  = useState({ company_name: '', siret: '' })
 
   const [integrations,     setIntegrations]     = useState<BillingIntegration[]>([])
@@ -366,8 +360,8 @@ export default function FacturationPage() {
     setSummary(sumRes)
     const s = settRes || {}
     setSettForm({ company_name: s.company_name || '', siret: s.siret || '' })
-    if (caRes && !caRes.error) setCaForm({ ca_total: String(caRes.ca_total || ''), ca_boucherie: String(caRes.ca_boucherie || ''), ca_charcuterie: String(caRes.ca_charcuterie || ''), ca_traiteur: String(caRes.ca_traiteur || ''), ca_fruits_et_legumes: String(caRes.ca_fruits_et_legumes || '') })
-    else setCaForm({ ca_total: '', ca_boucherie: '', ca_charcuterie: '', ca_traiteur: '', ca_fruits_et_legumes: '' })
+    if (caRes && !caRes.error) setCaForm({ ca_total: String(caRes.ca_total || ''), ca_boucherie: String(caRes.ca_boucherie || ''), ca_charcuterie: String(caRes.ca_charcuterie || ''), ca_traiteur: String(caRes.ca_traiteur || ''), ca_divers: String(caRes.ca_divers || '') })
+    else setCaForm({ ca_total: '', ca_boucherie: '', ca_charcuterie: '', ca_traiteur: '', ca_divers: '' })
     setLoading(false)
   }, [week, year])
 
@@ -412,7 +406,7 @@ export default function FacturationPage() {
   function openAdd() {
     setNewInvoice(EMPTY_INVOICE)
     setMemoTouched(false)
-    setNewSplit({ boucherie: '', charcuterie: '', traiteur: '', fruits_et_legumes: '', divers: '' })
+    setNewSplit(emptyVent())
     setSplitTouched(false)
     setCategoryTouched(false)
     setShowAdd(true)
@@ -434,10 +428,9 @@ export default function FacturationPage() {
           boucherie:   m.pct_boucherie   ? String(m.pct_boucherie)   : '',
           charcuterie: m.pct_charcuterie ? String(m.pct_charcuterie) : '',
           traiteur:    m.pct_traiteur    ? String(m.pct_traiteur)    : '',
-          fruits_et_legumes: m.pct_fruits_et_legumes ? String(m.pct_fruits_et_legumes) : '',
           divers:            m.pct_divers            ? String(m.pct_divers)            : '',
         }
-      : { boucherie: '', charcuterie: '', traiteur: '', fruits_et_legumes: '', divers: '' })
+      : emptyVent())
   }, [newInvoice.supplier_name, splits, showAdd, splitTouched])
 
   /** Construit le brouillon d'édition en fusionnant fournisseurs connus + règles enregistrées */
@@ -445,9 +438,9 @@ export default function FacturationPage() {
     suppliers: { key: string; name: string }[],
     splitList: RayonSplit[],
   ) {
-    const draft: Record<string, { label: string; boucherie: string; charcuterie: string; traiteur: string; fruits_et_legumes: string; divers: string }> = {}
+    const draft: Record<string, VentDraft & { label: string }> = {}
     for (const s of suppliers) {
-      draft[s.key] = { label: s.name || s.key, boucherie: '', charcuterie: '', traiteur: '', fruits_et_legumes: '', divers: '' }
+      draft[s.key] = { label: s.name || s.key, ...emptyVent() }
     }
     for (const sp of splitList) {
       draft[sp.supplier_key] = {
@@ -455,7 +448,6 @@ export default function FacturationPage() {
         boucherie:   sp.pct_boucherie   ? String(sp.pct_boucherie)   : '',
         charcuterie: sp.pct_charcuterie ? String(sp.pct_charcuterie) : '',
         traiteur:    sp.pct_traiteur    ? String(sp.pct_traiteur)    : '',
-        fruits_et_legumes: sp.pct_fruits_et_legumes ? String(sp.pct_fruits_et_legumes) : '',
         divers:            sp.pct_divers            ? String(sp.pct_divers)            : '',
       }
     }
@@ -478,7 +470,6 @@ export default function FacturationPage() {
         pct_boucherie:   parseFloat(v.boucherie)   || 0,
         pct_charcuterie: parseFloat(v.charcuterie) || 0,
         pct_traiteur:    parseFloat(v.traiteur)    || 0,
-        pct_fruits_et_legumes: parseFloat(v.fruits_et_legumes) || 0,
         pct_divers:            parseFloat(v.divers)            || 0,
       }))
       const res = await fetch('/api/supplier-splits', {
@@ -526,10 +517,9 @@ export default function FacturationPage() {
         pct_boucherie:   parseFloat(newSplit.boucherie)   || 0,
         pct_charcuterie: parseFloat(newSplit.charcuterie) || 0,
         pct_traiteur:    parseFloat(newSplit.traiteur)    || 0,
-        pct_fruits_et_legumes: parseFloat(newSplit.fruits_et_legumes) || 0,
         pct_divers:            parseFloat(newSplit.divers)            || 0,
       }
-      if (pcts.pct_boucherie || pcts.pct_charcuterie || pcts.pct_traiteur || pcts.pct_fruits_et_legumes || pcts.pct_divers) {
+      if (pcts.pct_boucherie || pcts.pct_charcuterie || pcts.pct_traiteur || pcts.pct_divers) {
         await fetch('/api/supplier-splits', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ split: { supplier_key: newInvoice.supplier_name, supplier_label: newInvoice.supplier_name, ...pcts } }),
@@ -669,7 +659,7 @@ export default function FacturationPage() {
       ca_boucherie:   parseFloat(caForm.ca_boucherie)   || 0,
       ca_charcuterie: parseFloat(caForm.ca_charcuterie) || 0,
       ca_traiteur:    parseFloat(caForm.ca_traiteur)    || 0,
-      ca_fruits_et_legumes: parseFloat(caForm.ca_fruits_et_legumes) || 0,
+      ca_divers:      parseFloat(caForm.ca_divers)      || 0,
     }
     if (!caForm.ca_total.trim() || isNaN(total) || total <= 0) {
       toast({ variant: 'error', title: 'CA total invalide', description: 'Saisissez un chiffre d\'affaires total strictement positif.' })
@@ -679,7 +669,7 @@ export default function FacturationPage() {
       toast({ variant: 'error', title: 'Montant négatif', description: 'Le détail par rayon ne peut pas contenir de valeur négative.' })
       return
     }
-    const sumRayons = rayons.ca_boucherie + rayons.ca_charcuterie + rayons.ca_traiteur + rayons.ca_fruits_et_legumes
+    const sumRayons = rayons.ca_boucherie + rayons.ca_charcuterie + rayons.ca_traiteur + rayons.ca_divers
     if (sumRayons > total + 0.01) {
       toast({ variant: 'error', title: 'Détail incohérent', description: `La somme des rayons (${fmtEuro(sumRayons)}) dépasse le CA total (${fmtEuro(total)}).` })
       return
@@ -1056,7 +1046,7 @@ export default function FacturationPage() {
               </div>
             ) : (
               <>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
                   {/* Tuile globale — taux de marge boutique après achats + salaires */}
                   <div className="rounded-lg bg-pilote-50/70 ring-1 ring-pilote-100 p-4 flex flex-col">
                     <p className="text-[10px] font-bold uppercase tracking-wider text-pilote">Global · boutique</p>
@@ -1116,6 +1106,35 @@ export default function FacturationPage() {
                       </div>
                     )
                   })}
+
+                  {/* Divers — le 4e bloc : rachat, épicerie, boissons, fruits & légumes,
+                      prestations. Ni matière travaillée ni main-d'œuvre : pas de repère de
+                      marge, pas de salaires. Il existe pour que les 3 familles restent
+                      propres — sans lui, ses achats retomberaient sur elles. */}
+                  {summary.divers && (summary.divers.ca > 0 || summary.divers.achats > 0) && (
+                    <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50/50 p-4 flex flex-col">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="flex items-center gap-1.5 min-w-0">
+                          <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: DIVERS_DOT }} />
+                          <span className="text-xs font-bold text-gray-700 truncate">{summary.divers.label}</span>
+                        </span>
+                        {summary.ca_total > 0 && summary.divers.ca > 0 && (
+                          <span className="text-[10px] font-semibold text-gray-400 tabular flex-shrink-0">{Math.round((summary.divers.ca / summary.ca_total) * 100)} % du CA</span>
+                        )}
+                      </div>
+                      <div className="space-y-1 text-[11px] tabular">
+                        <div className="flex justify-between gap-2"><span className="text-gray-400">CA</span><span className="font-semibold text-gray-700">{fmtEuro(summary.divers.ca)}</span></div>
+                        <div className="flex justify-between gap-2"><span className="text-gray-400">Achats</span><span className="font-semibold text-gray-700">− {fmtEuro(summary.divers.achats)}</span></div>
+                      </div>
+                      <div className="mt-2.5 pt-2.5 border-t border-gray-200">
+                        <p className={`text-xl font-extrabold tracking-tight tabular ${summary.divers.marge >= 0 ? 'text-gray-900' : 'text-red-600'}`}>
+                          {summary.divers.taux !== null && summary.divers.taux !== undefined ? `${summary.divers.taux.toFixed(1)} %` : '—'}
+                        </p>
+                        <p className="text-xs text-gray-500 tabular">{fmtEuro(summary.divers.marge)} de marge</p>
+                        <p className="text-[11px] text-gray-400 mt-1 leading-snug">rachat, épicerie, boissons, fruits &amp; légumes, prestations</p>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Salaires sans poste : hors familles (transverses), comptés dans le global.
@@ -1706,7 +1725,7 @@ export default function FacturationPage() {
                         const upd = (field: string, val: string) =>
                           setSplitDraft(prev => ({ ...prev, [key]: { ...prev[key], [field]: val } }))
                         const clearRow = () =>
-                          setSplitDraft(prev => ({ ...prev, [key]: { ...prev[key], boucherie: '', charcuterie: '', traiteur: '', fruits_et_legumes: '', divers: '' } }))
+                          setSplitDraft(prev => ({ ...prev, [key]: { ...prev[key], ...emptyVent() } }))
                         return (
                           <div key={key} className="group flex flex-col md:flex-row md:items-center gap-2 p-2 rounded-md hover:bg-gray-50">
                             <span className="flex-1 text-sm font-medium text-gray-800 truncate" title={v.label}>{v.label}</span>
@@ -1797,7 +1816,7 @@ export default function FacturationPage() {
                   Le détail par rayon est lu automatiquement depuis votre rapport hebdo — cette saisie ne sert que de secours.
                 </p>
               )}
-              {[{ key: 'ca_boucherie', label: 'Boucherie' }, { key: 'ca_charcuterie', label: 'Charcuterie' }, { key: 'ca_traiteur', label: 'Traiteur' }, { key: 'ca_fruits_et_legumes', label: 'Fruits & légumes' }].map(({ key, label }) => (
+              {[{ key: 'ca_boucherie', label: 'Boucherie' }, { key: 'ca_charcuterie', label: 'Charcuterie' }, { key: 'ca_traiteur', label: 'Traiteur' }, { key: 'ca_divers', label: 'Divers' }].map(({ key, label }) => (
                 <div key={key} className="flex items-center gap-2">
                   <label className="text-xs text-gray-500 w-28 flex-shrink-0">{label}</label>
                   <Input type="number" step="0.01" min="0" value={(caForm as any)[key]} onChange={e => setCaForm(p => ({ ...p, [key]: e.target.value }))} placeholder="0.00" />
