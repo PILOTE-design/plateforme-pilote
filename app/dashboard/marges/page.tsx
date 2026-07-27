@@ -78,7 +78,8 @@ export default async function MargesPage() {
   const aVerifier      = sum(e => e.achats_a_verifier)
   const nonVentiles    = sum(e => e.achats_non_ventiles)
   const masseSalariale = sum(e => e.masse_salariale)
-  const salairesHorsFam = sum(e => e.salaires_non_affectes)
+  const salairesRepartis = sum(e => e.salaires_repartis)
+  const salairesHorsFam  = sum(e => e.salaires_non_affectes)
   const chargesFixes   = sum(e => e.charges_fixes)
 
   const margeBrute  = caTotal - achatsTotal
@@ -106,12 +107,12 @@ export default async function MargesPage() {
   const diversRow: FamRow = {
     key: 'divers',
     label: weeks[0]?.eco.divers.label || 'Divers',
-    ca: sum(e => e.divers.ca), achats: sum(e => e.divers.achats), salaires: 0,
+    ca: sum(e => e.divers.ca), achats: sum(e => e.divers.achats), salaires: sum(e => e.divers.salaires),
     ventile: weeks.some(w => w.eco.divers.achats_ventiles),
     taux: null, tauxTotal: null, bench: null,
   }
   diversRow.taux = diversRow.ca > 0 ? ((diversRow.ca - diversRow.achats) / diversRow.ca) * 100 : null
-  diversRow.tauxTotal = diversRow.taux
+  diversRow.tauxTotal = diversRow.ca > 0 ? ((diversRow.ca - diversRow.achats - diversRow.salaires) / diversRow.ca) * 100 : null
   const hasDivers = diversRow.ca > 0 || diversRow.achats > 0
 
   const famSansAchats = famRows.filter(f => f.ca > 0 && !f.ventile)
@@ -264,7 +265,7 @@ export default async function MargesPage() {
                       <td className={`px-4 py-3 text-right text-sm font-semibold tabular ${diversRow.ca - diversRow.achats >= 0 ? 'text-gray-900' : 'text-red-600'}`}>{fmt(diversRow.ca - diversRow.achats)} €</td>
                       <td className="px-4 py-3 text-right text-sm font-bold tabular text-gray-600">{pct(diversRow.taux)}</td>
                       <td className="px-4 py-3 text-right text-[11px] text-gray-400">—</td>
-                      <td className="px-4 py-3 text-right text-xs text-gray-400 tabular">—</td>
+                      <td className="px-4 py-3 text-right text-xs text-gray-500 tabular">{diversRow.salaires > 0 ? `${fmt(diversRow.salaires)} €` : '—'}</td>
                       <td className="px-4 py-3 text-right text-sm font-semibold tabular text-gray-600">{pct(diversRow.tauxTotal)}</td>
                     </tr>
                   )}
@@ -304,7 +305,7 @@ export default async function MargesPage() {
               <p><span className="font-semibold text-gray-800">Comment lire :</span> marge lissée sur {weeks.length} semaine{weeks.length > 1 ? 's' : ''} — les achats d&apos;une semaine se vendent sur les suivantes, le cumul gomme l&apos;effet stock. Précise à 2-3 points près, la tendance est fiable.</p>
               <p><span className="font-semibold text-gray-800">Un seul réglage :</span> les familles affichées sont celles que vous avez choisies en facturation, et les achats sont répartis par la ventilation de chaque fournisseur. Les mêmes chiffres apparaissent en facturation et dans votre rapport hebdomadaire — il n&apos;y a plus de classement séparé à tenir à jour.</p>
               <p><span className="font-semibold text-gray-800">Divers :</span> rachat, épicerie, boissons, fromage, fruits &amp; légumes, prestations — acheté fini, revendu tel quel. Ce bloc existe pour que les trois métiers restent lisibles : sans lui, ses achats seraient étalés sur eux et un cageot de tomates viendrait plomber la marge boucherie.</p>
-              <p><span className="font-semibold text-gray-800">Salaires :</span> coût chargé issu du planning, réparti d&apos;après les postes pointés. Les heures dont le poste ne correspond à aucune famille (vente, administratif, livraison…) restent transverses : elles comptent dans la masse salariale globale, pas dans une famille.</p>
+              <p><span className="font-semibold text-gray-800">Salaires :</span> coût chargé issu du planning, réparti d&apos;après les postes pointés. Les heures sans poste métier (vente, administratif, livraison…) sont réparties <strong>au prorata du CA</strong> sur les familles et Divers{salairesRepartis > 0 ? ` — ${fmt(salairesRepartis)} € sur la période` : ''} : un vendeur qui encaisse indifféremment du bœuf et du traiteur ne travaille pour aucune famille en particulier, sa part suit celle du chiffre. Plus rien ne reste en dehors des blocs.</p>
               <p><span className="font-semibold text-gray-800">Fiabilité :</span> seules les factures <strong>validées</strong> comptent — les imports automatiques restent « à vérifier » jusqu&apos;à votre validation en page Facturation. Contrôle croisé : comparez avec la marge théorique de vos valorisations carcasse ; un écart durable = démarque (pertes, erreurs de prix, vol).</p>
             </div>
           </div>
