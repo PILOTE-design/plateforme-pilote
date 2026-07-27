@@ -154,7 +154,7 @@ async function extractProductAmounts(text: string): Promise<{ amounts: Map<strin
       `Ignore les lignes de famille/sous-total/total general : uniquement les produits individuels.\n` +
       `Limite-toi aux 60 produits au plus gros CA (ignore les tout petits montants).\n` +
       `Retourne UNIQUEMENT des lignes au format NOM|FAMILLE|MONTANT (point decimal, une ligne par produit, aucun autre texte) :\n` +
-      `STEAK HACHE|BOUCHERIE|412.35\nROTI DE PORC|BOUCHERIE|187.20\nSAUCISSON SEC|CHARCUTERIE|96.40\n\n${text.slice(0, 9000)}` }],
+      `STEAK HACHE|BOUCHERIE|412.35\nROTI DE PORC|BOUCHERIE|187.20\nSAUCISSON SEC|CHARCUTERIE|96.40\n\n${text.slice(0, 12000)}` }],
   })
   const amounts = new Map<string, number>()
   const familles = new Map<string, string>()
@@ -175,13 +175,46 @@ async function extractProductAmounts(text: string): Promise<{ amounts: Map<strin
 }
 
 /** Calcule les tops/flops en code a partir des CA produits N et N-1 (zero IA, zero erreur de calcul) */
-function computeTopFlop(prodN: Map<string, number>, prodN1: Map<string, number>): {
+/** Un produit absent d'une des deux listes vaut-il vraiment zéro, ou n'a-t-il simplement
+ *  pas été lu ? L'extraction produit est plafonnée (slice + max_tokens) : sur un fichier
+ *  fourni, les produits de fin de liste tombent hors champ. Traiter cette absence comme
+ *  un zéro fabrique de fausses progressions à +100 % et de fausses baisses — et l'analyse
+ *  IA, qui lit ces classements, part alors enquêter sur un problème inexistant.
+ *
+ *  Règle : une extraction est jugée COMPLÈTE si la somme des produits lus couvre au moins
+ *  70 % du CA de la période. En dessous, on sait qu'on n'a pas tout vu, et le classement se
+ *  limite aux produits présents des DEUX côtés — comparables à coup sûr. */
+const COUVERTURE_MIN = 0.7
+
+function couvertureOk(prod: Map<string, number>, caPeriode: number): boolean {
+  if (caPeriode <= 0) return true
+  let somme = 0
+  for (const v of prod.values()) somme += v
+  return somme >= caPeriode * COUVERTURE_MIN
+}
+
+function computeTopFlop(
+  prodN: Map<string, number>,
+  prodN1: Map<string, number>,
+  caN = 0,
+  caN1 = 0,
+): {
   tops: { designation: string; n: number; ecart: number }[]
   flops: { designation: string; n: number; ecart: number }[]
 } {
+  // Les nouveautés et les arrêts ne sont crédibles que si les deux listes sont complètes.
+  const completeN = couvertureOk(prodN, caN)
+  const completeN1 = couvertureOk(prodN1, caN1)
+  if (!completeN || !completeN1) {
+    console.warn('[topflop] extraction produit partielle (N complet:', completeN, ', N-1 complet:', completeN1,
+      ') - classement limite aux produits presents des deux cotes')
+  }
   const names = new Set<string>([...prodN.keys(), ...prodN1.keys()])
   const diffs: { designation: string; n: number; ecart: number }[] = []
   for (const name of names) {
+    const vuN = prodN.has(name), vuN1 = prodN1.has(name)
+    if (!vuN && !completeN) continue    // absent côté N, mais N est tronqué -> indécidable
+    if (!vuN1 && !completeN1) continue  // absent côté N-1, mais N-1 est tronqué -> indécidable
     const n  = prodN.get(name)  ?? 0
     const n1 = prodN1.get(name) ?? 0
     diffs.push({ designation: name, n, ecart: +(n - n1).toFixed(2) })
@@ -201,15 +234,41 @@ export async function extractData(texts: { fin_n: string; fin_n1: string; ventes
   ])
   const prodN = prodRes.amounts, prodN1 = prodRes1.amounts
   const prodFamN = prodRes.familles, prodFamN1 = prodRes1.familles
-  const topFlop = computeTopFlop(prodN, prodN1)
+
+  // Le CA d'une semaine est lu DEUX fois, dans deux fichiers différents : `ca_net` dans
+  // le relevé financier, `total` dans les ventes par familles. Ce sont censément le même
+  // chiffre, et ils étaient affichés côte à côte sur la page 2 sans jamais être recoupés.
+  // Sur un rapport réel : KPI « CA N-1 : 15 843 € » et « TOTAL GENERAL : 11 584 € » —
+  // 4 259 € d'écart, sous les yeux du client, avec deux variations contradictoires.
+  //
+  // Le relevé financier fait foi (c'est la caisse). Le total du fichier ventes n'est
+  // gardé que s'il concorde ; sinon on recalcule la somme des familles réellement lues,
+  // et à défaut on reprend le CA caisse. Aucune de ces valeurs n'est inventée.
+  const reconcile = (v: { total: number; familles: Famille[] }, caCaisse: number, label: string) => {
+    if (!(caCaisse > 0)) return v
+    const ecart = Math.abs(v.total - caCaisse) / caCaisse
+    if (ecart <= 0.02) return v
+    const sommeFamilles = v.familles.reduce((s, f) => s + f.total_montant, 0)
+    const ecartSomme = Math.abs(sommeFamilles - caCaisse) / caCaisse
+    const retenu = ecartSomme < ecart ? sommeFamilles : caCaisse
+    console.warn(`[ventes ${label}] total extrait ${v.total} incoherent avec le CA caisse ${caCaisse}`
+      + ` (somme des familles ${sommeFamilles.toFixed(2)}) -> total retenu ${retenu.toFixed(2)}`)
+    return { ...v, total: retenu }
+  }
+  const finN = cleanFin(financials.financier_n)
+  const finN1 = cleanFin(financials.financier_n1)
+  const ventesN = reconcile(ventes_n, finN.ca_net, 'N')
+  const ventesN1 = reconcile(ventes_n1, finN1.ca_net, 'N-1')
+
+  const topFlop = computeTopFlop(prodN, prodN1, ventesN.total, ventesN1.total)
   // Semaine ISO recalculee en code depuis les dates de la periode
   const isoFixed = weekFromPeriod(String(financials.period_n || ''))
   return {
     period_n: String(financials.period_n || ''), period_n1: String(financials.period_n1 || ''),
     week_number: isoFixed?.week ?? toNum(financials.week_number),
     year: isoFixed?.year ?? toNum(financials.year),
-    financier_n: cleanFin(financials.financier_n), financier_n1: cleanFin(financials.financier_n1),
-    ventes_n, ventes_n1, tops: topFlop.tops, flops: topFlop.flops,
+    financier_n: finN, financier_n1: finN1,
+    ventes_n: ventesN, ventes_n1: ventesN1, tops: topFlop.tops, flops: topFlop.flops,
     prodN, prodN1, prodFamN, prodFamN1,
   }
 }
