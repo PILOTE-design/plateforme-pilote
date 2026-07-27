@@ -1,0 +1,115 @@
+// Palette et feuille de styles react-pdf du rapport. Un seul module partagé par
+// les sous-composants ET le document : dupliquer la palette rendrait invisible
+// toute divergence future entre les deux.
+import { StyleSheet } from '@react-pdf/renderer'
+import { FONT_FAMILY } from './report-fonts'
+
+// ─── Palette ────────────────────────────────────────────────────────
+export const C = {
+  navy:        '#1E3A5F',
+  blue:        '#2D5986',
+  lightBlue:   '#E8F0FE',
+  blueMid:     '#90CAF9',
+  orange:      '#FF8C00',
+  lightOrange: '#FFF3E0',
+  amber:       '#D97706',
+  lightAmber:  '#FEF3C7',
+  green:       '#2E7D32',
+  lightGreen:  '#E6F4EA',
+  red:         '#C62828',
+  lightRed:    '#FCE8E6',
+  gray:        '#F0F4F8',
+  grayMid:     '#DCE4EC',
+  line:        '#E0E0E0',
+  textDark:    '#1A1A1A',
+  textMid:     '#444444',
+  textLight:   '#888888',
+  white:       '#FFFFFF',
+}
+
+// ─── Styles ───────────────────────────────────────────────────────
+export const S = StyleSheet.create({
+  coverBlueBg:    { backgroundColor: C.navy, padding: 56, paddingBottom: 44, flexGrow: 1 },
+  coverTagRow:    { flexDirection: 'row', alignItems: 'center', marginBottom: 44 },
+  coverTagDot:    { width: 8, height: 8, borderRadius: 4, backgroundColor: C.orange, marginRight: 6 },
+  coverTagText:   { color: C.orange, fontSize: 10, letterSpacing: 4 },
+  coverTitle:     { color: C.white, fontSize: 40, fontWeight: 700, lineHeight: 1.15, marginBottom: 10 },
+  coverSub:       { color: C.blueMid, fontSize: 13, marginBottom: 30 },
+  coverDivider:   { width: 52, height: 3, backgroundColor: C.orange, marginBottom: 24 },
+  coverWeek:      { color: C.white, fontWeight: 700, fontSize: 21, marginBottom: 4 },
+  coverPeriod:    { color: C.blueMid, fontSize: 11, marginBottom: 26 },
+  coverKpiRow:    { flexDirection: 'row', marginTop: 8 },
+  coverKpi:       { flex: 1, borderLeftWidth: 2, borderLeftColor: C.orange, paddingLeft: 10, marginRight: 16 },
+  coverKpiLabel:  { color: C.blueMid, fontSize: 7.5, letterSpacing: 1.5, marginBottom: 3 },
+  coverKpiValue:  { color: C.white, fontWeight: 700, fontSize: 15 },
+  coverWhiteBg:   { backgroundColor: C.white, paddingVertical: 30, paddingHorizontal: 56, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end' },
+  coverLabel:     { color: C.textLight, fontSize: 8, letterSpacing: 2, marginBottom: 3 },
+  coverClient:    { color: C.navy, fontWeight: 700, fontSize: 14 },
+  coverMeta:      { color: C.textLight, fontSize: 8, marginBottom: 2, textAlign: 'right' },
+
+  page:           { backgroundColor: C.white, paddingTop: 0, paddingBottom: 42, paddingHorizontal: 0, fontFamily: FONT_FAMILY },
+  secHeader:      { flexDirection: 'row', alignItems: 'center', backgroundColor: C.navy, paddingVertical: 11, paddingHorizontal: 36, marginBottom: 18 },
+  secHeaderNum:   { color: C.orange, fontWeight: 700, fontSize: 11, marginRight: 10, letterSpacing: 1 },
+  secHeaderText:  { color: C.white, fontWeight: 700, fontSize: 11, letterSpacing: 1 },
+  footer:         { position: 'absolute', bottom: 20, left: 36, right: 36, flexDirection: 'row', justifyContent: 'space-between', borderTopColor: C.line, borderTopWidth: 0.5, paddingTop: 6 },
+  footerText:     { fontSize: 7.5, color: C.textLight },
+
+  execBox:        { marginHorizontal: 36, marginBottom: 16, backgroundColor: C.lightBlue, borderLeftWidth: 3, borderLeftColor: C.navy, borderRadius: 4, padding: 12 },
+  execLabel:      { fontSize: 7.5, letterSpacing: 1.5, color: C.blue, marginBottom: 4, fontWeight: 700 },
+  execText:       { fontSize: 9.5, color: C.textMid, lineHeight: 1.5 },
+
+  kpiRow:         { flexDirection: 'row', paddingHorizontal: 36, marginBottom: 10 },
+  kpiBox:         { flex: 1, borderRadius: 6, padding: 14, marginRight: 8 },
+  kpiLabel:       { fontSize: 8, letterSpacing: 1, marginBottom: 6 },
+  kpiValue:       { fontWeight: 700, fontSize: 17, color: C.white },
+  kpiSub:         { fontSize: 9, marginTop: 3 },
+
+  tableWrap:      { paddingHorizontal: 36 },
+  tHead:          { flexDirection: 'row', backgroundColor: C.blue, paddingVertical: 7, paddingHorizontal: 8 },
+  tHeadCell:      { color: C.white, fontWeight: 700, fontSize: 8 },
+  tRow:           { flexDirection: 'row', alignItems: 'center', paddingVertical: 6, paddingHorizontal: 8, borderBottomColor: C.line, borderBottomWidth: 0.5 },
+  tRowAlt:        { flexDirection: 'row', alignItems: 'center', paddingVertical: 6, paddingHorizontal: 8, backgroundColor: C.gray, borderBottomColor: C.line, borderBottomWidth: 0.5 },
+  tTotal:         { flexDirection: 'row', paddingVertical: 7, paddingHorizontal: 8, backgroundColor: C.navy },
+  tCell:          { fontSize: 8.5, color: C.textDark },
+  tCellB:         { fontSize: 8.5, color: C.textDark, fontWeight: 700 },
+  tCellR:         { fontSize: 8.5, color: C.textDark, textAlign: 'right' },
+  tCellRB:        { fontSize: 8.5, color: C.textDark, fontWeight: 700, textAlign: 'right' },
+  tCellGreen:     { fontSize: 8.5, color: C.green, fontWeight: 700, textAlign: 'right' },
+  tCellRed:       { fontSize: 8.5, color: C.red, fontWeight: 700, textAlign: 'right' },
+  tTotalCell:     { fontSize: 8.5, color: C.white, fontWeight: 700, textAlign: 'right' },
+  tTotalCellL:    { fontSize: 8.5, color: C.white, fontWeight: 700 },
+
+  shareBarBg:     { height: 5, backgroundColor: C.grayMid, borderRadius: 2.5, flex: 1, marginLeft: 6, marginRight: 6 },
+  shareBarFill:   { height: 5, backgroundColor: C.navy, borderRadius: 2.5 },
+
+  chartWrap:      { alignItems: 'center', paddingHorizontal: 36, marginBottom: 8 },
+  chartCaption:   { fontSize: 8, color: C.textLight, textAlign: 'center', marginTop: 4, paddingHorizontal: 36 },
+
+  insightBlock:   { paddingHorizontal: 36 },
+  insightRow:     { flexDirection: 'row', alignItems: 'flex-start', marginBottom: 11 },
+  insightBullet:  { width: 20, height: 20, borderRadius: 10, backgroundColor: C.navy, alignItems: 'center', justifyContent: 'center', marginRight: 12, flexShrink: 0 },
+  recoBullet:     { width: 20, height: 20, borderRadius: 10, backgroundColor: C.orange, alignItems: 'center', justifyContent: 'center', marginRight: 12, flexShrink: 0 },
+  bulletNum:      { color: C.white, fontWeight: 700, fontSize: 8 },
+  insightText:    { fontSize: 9.5, color: C.textMid, flex: 1, lineHeight: 1.55 },
+  vigilanceBox:   { marginHorizontal: 36, marginTop: 4, marginBottom: 14, backgroundColor: C.lightAmber, borderLeftWidth: 3, borderLeftColor: C.amber, borderRadius: 4, padding: 11 },
+  vigilanceTitle: { fontSize: 8, letterSpacing: 1.5, color: C.amber, fontWeight: 700, marginBottom: 5 },
+  vigilanceText:  { fontSize: 9, color: '#7C4A03', lineHeight: 1.5, marginBottom: 3 },
+
+  topFlopWrap:    { flexDirection: 'row', paddingHorizontal: 36 },
+  topFlopLeft:    { flex: 1, marginRight: 10 },
+  topFlopRight:   { flex: 1, marginLeft: 10 },
+  rankChip:       { width: 16, height: 16, borderRadius: 8, alignItems: 'center', justifyContent: 'center', marginRight: 6 },
+  rankChipText:   { fontSize: 7, fontWeight: 700, color: C.white },
+
+  statusBanner:   { marginHorizontal: 36, borderRadius: 8, padding: 18, marginBottom: 18 },
+  statusLabel:    { color: C.white, fontWeight: 700, fontSize: 16, marginBottom: 4, letterSpacing: 0.5 },
+  statusDesc:     { color: C.white, fontSize: 9.5, opacity: 0.9, lineHeight: 1.5 },
+  recapGrid:      { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 30 },
+  recapCard:      { width: '31%', marginHorizontal: '1.16%', marginBottom: 10, backgroundColor: C.gray, borderRadius: 6, padding: 11 },
+  recapLabel:     { fontSize: 7, letterSpacing: 1, color: C.textLight, marginBottom: 4 },
+  recapValue:     { fontSize: 13, fontWeight: 700, color: C.navy },
+  recapSub:       { fontSize: 7.5, color: C.textLight, marginTop: 2 },
+  actionBox:      { marginHorizontal: 36, marginTop: 8, backgroundColor: C.lightOrange, borderLeftWidth: 3, borderLeftColor: C.orange, borderRadius: 4, padding: 13 },
+  actionLabel:    { fontSize: 8, letterSpacing: 1.5, color: C.orange, fontWeight: 700, marginBottom: 5 },
+  actionText:     { fontSize: 10, color: '#7A4100', lineHeight: 1.55, fontWeight: 700 },
+})
