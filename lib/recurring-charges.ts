@@ -29,6 +29,8 @@ export type RecurringActual = {
   period_start: string      // 'YYYY-MM-DD'
   period_end: string        // 'YYYY-MM-DD'
   amount_ht: number
+  /** Sert à départager deux réels qui se chevauchent (cf. actualOn) */
+  created_at?: string | null
 }
 
 // ── Utilitaires date (UTC, pour éviter toute dérive de fuseau) ──
@@ -98,14 +100,34 @@ function activeOn(charge: RecurringCharge, d: Date): boolean {
   return true
 }
 
-/** Réel couvrant le jour `d` pour cette charge (le 1er trouvé), ou null. */
+/** Réel couvrant le jour `d` pour cette charge, ou null.
+ *
+ *  Rien n'empêche deux réels de se chevaucher sur la même charge : l'insertion ne
+ *  contrôle pas les fenêtres (une facture EDF saisie à 420 €, puis une régularisation
+ *  à 480 € sur la même période). Prendre « le premier trouvé » faisait alors dépendre
+ *  le résultat de l'ordre de retour de Postgres, que rien ne garantit : le résultat
+ *  net de la semaine changeait d'un rechargement à l'autre, sans qu'aucune donnée
+ *  n'ait bougé, et l'écran pouvait diverger du PDF sur le même exercice.
+ *
+ *  Départage déterministe : la fenêtre la plus ÉTROITE gagne (la plus précise sur ce
+ *  jour-là), puis à durée égale la plus récemment saisie. */
 function actualOn(actuals: RecurringActual[], chargeId: string, d: Date): RecurringActual | null {
   const t = d.getTime()
+  let best: RecurringActual | null = null
+  let bestSpan = Infinity
+  let bestCreated = -Infinity
   for (const a of actuals) {
     if (a.recurring_charge_id !== chargeId) continue
-    if (parseISO(a.period_start).getTime() <= t && t <= parseISO(a.period_end).getTime()) return a
+    const start = parseISO(a.period_start).getTime()
+    const end = parseISO(a.period_end).getTime()
+    if (start > t || t > end) continue
+    const span = end - start
+    const created = a.created_at ? new Date(a.created_at).getTime() : 0
+    if (span < bestSpan || (span === bestSpan && created > bestCreated)) {
+      best = a; bestSpan = span; bestCreated = created
+    }
   }
-  return null
+  return best
 }
 
 /** Taux journalier d'une charge le jour `d` (réel si présent, sinon provision), 0 si inactive. */

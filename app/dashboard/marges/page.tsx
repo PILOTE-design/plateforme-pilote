@@ -97,8 +97,10 @@ export default async function MargesPage() {
       label: f.label,
       ca, achats, salaires,
       ventile: weeks.some(w => w.eco.familles[i]?.achats_ventiles),
-      taux: ca > 0 ? ((ca - achats) / ca) * 100 : null,
-      tauxTotal: ca > 0 ? ((ca - achats - salaires) / ca) * 100 : null,
+      // Voir lib/week-economics : sans achats rattachés, le taux vaudrait 100 %
+      // et serait peint en vert. On n'affiche rien plutôt qu'un chiffre faux.
+      taux: ca > 0 && achats > 0 ? ((ca - achats) / ca) * 100 : null,
+      tauxTotal: ca > 0 && achats > 0 ? ((ca - achats - salaires) / ca) * 100 : null,
       bench: benchOf(f.key, f.label),
     }
   })
@@ -112,8 +114,8 @@ export default async function MargesPage() {
     ventile: weeks.some(w => w.eco.divers.achats_ventiles),
     taux: null, tauxTotal: null, bench: null,
   }
-  diversRow.taux = diversRow.ca > 0 ? ((diversRow.ca - diversRow.achats) / diversRow.ca) * 100 : null
-  diversRow.tauxTotal = diversRow.ca > 0 ? ((diversRow.ca - diversRow.achats - diversRow.salaires) / diversRow.ca) * 100 : null
+  diversRow.taux = diversRow.ca > 0 && diversRow.achats > 0 ? ((diversRow.ca - diversRow.achats) / diversRow.ca) * 100 : null
+  diversRow.tauxTotal = diversRow.ca > 0 && diversRow.achats > 0 ? ((diversRow.ca - diversRow.achats - diversRow.salaires) / diversRow.ca) * 100 : null
   const hasDivers = diversRow.ca > 0 || diversRow.achats > 0
 
   const famSansAchats = famRows.filter(f => f.ca > 0 && !f.ventile)
