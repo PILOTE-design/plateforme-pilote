@@ -248,8 +248,9 @@ export async function computeWeekEconomics(
     .eq('client_id', clientId)
   const { data: recActuals } = await supabase
     .from('recurring_actuals')
-    .select('id, recurring_charge_id, period_start, period_end, amount_ht')
+    .select('id, recurring_charge_id, period_start, period_end, amount_ht, created_at')
     .eq('client_id', clientId)
+    .order('created_at', { ascending: false })
   const recur = weekRecurringCost((recCharges || []) as any, (recActuals || []) as any, monISO, sunISO)
   const charges_fixes = recur.total
 
@@ -286,15 +287,30 @@ export async function computeWeekEconomics(
   // famille qui la reconnaît (flou). Repli : une famille sans CA reconnu qui
   // correspond à un rayon classique reprend le CA de ce rayon.
   const caByFamille = [0, 0, 0]
+  // Ce qu'une famille a déjà pris À un rayon classique : sans ce suivi, le repli
+  // ci-dessous réattribue un montant déjà compté. Cas réel : familles de marge
+  // « Volaille / Boucherie / Charcuterie » et une ligne « VIANDE DE VOLAILLE » à
+  // 8 000 € — elle part chez Volaille (reconnaissance de libellé) ET alimente le
+  // rayon boucherie (racine « viande »), si bien que Boucherie, restée à zéro,
+  // reprenait les mêmes 8 000 €. La somme des familles dépassait alors le CA de la
+  // semaine, et le Math.max(0, …) du bloc Divers écrasait le dépassement en silence.
+  const caPrisParRayon: Record<string, number> = { boucherie: 0, charcuterie: 0, traiteur: 0 }
   for (const f of fams) {
-    const fi = familleFor('', String(f?.nom ?? ''))
-    if (fi >= 0) caByFamille[fi] += toHT(Number(f?.montant) || 0)
+    const nom = String(f?.nom ?? '')
+    const montant = toHT(Number(f?.montant) || 0)
+    const fi = familleFor('', nom)
+    if (fi < 0) continue
+    caByFamille[fi] += montant
+    const rr = classicRayonOfLabel(nom)
+    if (rr && rr in caPrisParRayon) caPrisParRayon[rr] += montant
   }
   const rayonClaimedByFamille: number[] = VENT_RAYONS.map(r => familleFor(r.key, r.label))
   for (let i = 0; i < familles.length; i++) {
     if (caByFamille[i] > 0) continue
     const ri = rayonClaimedByFamille.findIndex(fi => fi === i)
-    if (ri >= 0) caByFamille[i] = caByRayon[VENT_RAYONS[ri].key] || 0
+    if (ri < 0) continue
+    const key = VENT_RAYONS[ri].key
+    caByFamille[i] = Math.max(0, (caByRayon[key] || 0) - (caPrisParRayon[key] || 0))
   }
 
   // CA du bloc Divers — calculé AVANT la répartition des salaires, car il en prend sa part.
@@ -339,9 +355,15 @@ export async function computeWeekEconomics(
       achats_ventiles: claimed.length > 0,
       salaires: round2(salR),
       marge: round2(caR - achR),
-      taux: caR > 0 ? round1(((caR - achR) / caR) * 100) : null,
+      // Aucun achat rattaché = donnée manquante, pas une marge de 100 %. Deux cas
+      // mènent là : une famille personnalisée (« Volaille ») qui ne correspond à
+      // aucun des trois rayons figés de la ventilation fournisseur, et une famille
+      // dont aucun fournisseur n'est encore ventilé. Dans les deux cas le taux
+      // s'affichait à 100,0 %, en vert, à côté d'un petit label ambre — le gérant
+      // lisait « Volaille : 100 % de marge ». Un tiret est plus honnête.
+      taux: caR > 0 && achR > 0 ? round1(((caR - achR) / caR) * 100) : null,
       marge_totale: round2(caR - achR - salR),
-      taux_totale: caR > 0 ? round1(((caR - achR - salR) / caR) * 100) : null,
+      taux_totale: caR > 0 && achR > 0 ? round1(((caR - achR - salR) / caR) * 100) : null,
     }
   })
 
@@ -357,9 +379,9 @@ export async function computeWeekEconomics(
     achats_ventiles: achDivers > 0,
     salaires: round2(salaires_divers),
     marge: round2(caDivers - achDivers),
-    taux: caDivers > 0 ? round1(((caDivers - achDivers) / caDivers) * 100) : null,
+    taux: caDivers > 0 && achDivers > 0 ? round1(((caDivers - achDivers) / caDivers) * 100) : null,
     marge_totale: round2(caDivers - achDivers - salaires_divers),
-    taux_totale: caDivers > 0 ? round1(((caDivers - achDivers - salaires_divers) / caDivers) * 100) : null,
+    taux_totale: caDivers > 0 && achDivers > 0 ? round1(((caDivers - achDivers - salaires_divers) / caDivers) * 100) : null,
   }
 
   return {
