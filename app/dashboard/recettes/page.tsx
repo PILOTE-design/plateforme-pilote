@@ -56,6 +56,7 @@ export default function RecettesPage() {
 
   // Modale création / édition
   const [search, setSearch] = useState('')
+  const [searchOpen, setSearchOpen] = useState(false)
   const [catFilter, setCatFilter] = useState<string | null>(null)
   const [show, setShow] = useState(false)
   const [editId, setEditId] = useState<string | null>(null)
@@ -111,6 +112,21 @@ export default function RecettesPage() {
     }
     return list
   }, [recipes, search, catFilter])
+
+  // Résultats de la liste déroulante sous la barre : nom + catégorie, clic →
+  // ouvre la fiche. Cherche dans TOUTES les fiches (ignore le filtre catégorie
+  // actif — c'est un outil de navigation, pas un filtre).
+  const suggestions = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    if (!q) return []
+    return recipes
+      .filter(r =>
+        r.name.toLowerCase().includes(q)
+        || catLabel(r.category).includes(q)
+        || r.ingredients.some(i => i.label.toLowerCase().includes(q)))
+      .sort((a, b) => a.name.localeCompare(b.name, 'fr'))
+      .slice(0, 8)
+  }, [recipes, search])
 
   // Sections par catégorie, triées ; les recettes par nom à l'intérieur.
   const grouped = useMemo(() => {
@@ -232,9 +248,30 @@ export default function RecettesPage() {
         <div className="mb-5 space-y-3">
           <div className="relative">
             <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input value={search} onChange={e => setSearch(e.target.value)}
+            <input value={search}
+              onChange={e => { setSearch(e.target.value); setSearchOpen(true) }}
+              onFocus={() => setSearchOpen(true)}
+              onBlur={() => setSearchOpen(false)}
+              onKeyDown={e => { if (e.key === 'Escape') setSearchOpen(false) }}
               placeholder="Chercher une fiche par produit, catégorie ou ingrédient…"
               className="w-full border border-gray-200 rounded-xl pl-9 pr-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200" />
+            {searchOpen && search.trim() !== '' && (
+              <div className="absolute z-20 top-full left-0 right-0 mt-1.5 bg-white border border-gray-100 rounded-xl shadow-card-hover overflow-hidden">
+                {suggestions.length === 0 ? (
+                  <p className="px-3.5 py-3 text-xs text-gray-400">Aucune fiche pour « {search.trim()} »</p>
+                ) : suggestions.map(r => (
+                  <button key={r.id} type="button"
+                    onMouseDown={e => e.preventDefault()}
+                    onClick={() => { setSearchOpen(false); openEdit(r) }}
+                    className="w-full flex items-center justify-between gap-3 px-3.5 py-2.5 text-left hover:bg-pilote-50/60 transition-colors border-b border-gray-50 last:border-b-0">
+                    <span className="text-sm font-semibold text-gray-900 truncate">{r.name}</span>
+                    <span className={`text-[10px] font-semibold uppercase tracking-wider rounded-md px-1.5 py-0.5 flex-shrink-0 capitalize ${r.category && r.category.trim() ? 'text-pilote bg-pilote-50' : 'text-gray-400 bg-gray-50'}`}>
+                      {catLabel(r.category)}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
           {allCats.length > 1 && (
             <div className="flex items-center gap-2 flex-wrap">
