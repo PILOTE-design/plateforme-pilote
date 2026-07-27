@@ -8,7 +8,7 @@ import { eur, eur0, signEur, trunc, sanitize } from './report-format'
 import { extractJSONObject } from './report-extract'
 import type { ReportData, FamRow, WeekStatus, Insights, Famille } from './report-types'
 
-// ─── Calculs métier ──────────────────────────────────────────────────────────
+// ─── Calculs métier ───────────────────────────────────────────────────────
 
 /** Familles fusionnées N/N-1, triées par CA N desc, plafonnées à 12 lignes (le reste en AUTRES) */
 export function buildFamRows(vn: { total: number; familles: Famille[] }, vn1: { total: number; familles: Famille[] }, max = 12): FamRow[] {
@@ -66,17 +66,32 @@ export function buildMargeRead(e: WeekEconomics | null, week: number): { alerts:
     alerts.push(`Masse salariale à ${ms.toFixed(0)} % du CA, au-dessus du seuil de vigilance de 40 %. Si cela se répète une deuxième semaine, c'est le signe d'un sureffectif ou d'une sous-activité.`)
   }
 
-  if (tm !== null && tm < 30) {
+  // Symétrique du garde-fou masse salariale : un taux ANORMALEMENT HAUT ne récompense
+  // pas une bonne gestion, il signale des achats non saisis. Une boucherie tourne entre
+  // 35 et 45 % de marge matière ; au-delà de 55 %, c'est la facture qui manque, pas le
+  // client qui paie plus cher. Sans ce test, le rapport félicitait le gérant sur une
+  // semaine à 61,6 % — « la structure de coûts est saine » — alors qu'il lui manquait
+  // les deux tiers de ses achats.
+  if (tm !== null && tm > 55) {
+    alerts.push(`Marge brute à ${tm.toFixed(1)} % : ce niveau n'existe pas en boucherie artisanale (repère 35-45 %) et signale presque toujours des factures d'achat non saisies sur la semaine ${week}. Complétez la facturation avant de lire ces taux — ils sont surévalués tant qu'il manque des achats.`)
+  } else if (tm !== null && tm < 30) {
     alerts.push(`Marge brute à ${tm.toFixed(1)} %, sous le plancher sectoriel de 30 %. Regardez d'abord vos prix d'achat de la semaine, puis la valorisation carcasse.`)
   } else if (tm !== null && tm >= 40 && (ms === null || ms <= 40)) {
     alerts.push(`Marge brute à ${tm.toFixed(1)} % et masse salariale maîtrisée : la structure de coûts de la semaine est saine.`)
   }
 
-  // Famille sous son repère métier — on nomme la première concernée, chiffres à l'appui
+  // Famille HORS de son repère métier — on nomme la première concernée, chiffres à
+  // l'appui. Au-dessus comme en dessous : un rayon 15 points au-dessus de son repère
+  // n'est pas un exploit, c'est un rayon dont les achats ne sont pas ventilés.
   for (const f of e.familles) {
     const b = benchOf(f.key, f.label)
-    if (b && f.taux !== null && f.ca > 0 && f.taux < b[0]) {
+    if (!b || f.taux === null || f.ca <= 0) continue
+    if (f.taux < b[0]) {
       alerts.push(`${f.label} ressort à ${f.taux.toFixed(1)} % de marge matière, contre ${b[0]}-${b[1]} % attendu sur ce rayon, soit ${(b[0] - f.taux).toFixed(1)} points d'écart.`)
+      break
+    }
+    if (f.taux > b[1] + 15) {
+      alerts.push(`${f.label} affiche ${f.taux.toFixed(1)} % de marge matière pour un repère de ${b[0]}-${b[1]} % : l'écart est trop large pour être réel, il manque probablement des achats ventilés sur ce rayon.`)
       break
     }
   }
@@ -116,37 +131,4 @@ export function buildExecSummary(data: ReportData, famRows: FamRow[], caVar: num
     ? `${trunc(best.nom, 24)} tire la performance (${signEur(best.ecart)}) tandis que ${trunc(worst.nom, 24)} recule (${signEur(worst.ecart)}).`
     : ''
   return sanitize(`${p1} ${p2} ${p3}`.trim())
-}
-
-/** Insights via Haiku (rapide) — Sonnet depassait le budget 60s de Vercel Hobby */
-export async function generateInsights(data: ReportData, famRows: FamRow[]): Promise<Insights> {
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' })
-  const fn = data.financier_n, fn1 = data.financier_n1
-  const caVar = fn1.ca_net ? ((fn.ca_net - fn1.ca_net) / fn1.ca_net * 100).toFixed(1) : '0'
-  const famSummary = famRows.map(f => {
-    const pctCA = data.ventes_n.total ? (f.caN / data.ventes_n.total * 100).toFixed(1) : '0'
-    return `${f.nom} : ${f.caN.toFixed(0)} EUR (${pctCA}% du CA), ecart N-1 : ${f.ecart >= 0 ? '+' : ''}${f.ecart.toFixed(0)} EUR`
-  }).join('\n')
-  const topsStr  = data.tops.slice(0, 5).map(t => `${t.designation} (+${Math.abs(t.ecart).toFixed(0)} EUR)`).join(', ')
-  const flopsStr = data.flops.slice(0, 5).map(f => `${f.designation} (${f.ecart.toFixed(0)} EUR)`).join(', ')
-  const r = await client.messages.create({
-    model: 'claude-haiku-4-5-20251001', max_tokens: 900,
-    messages: [{ role: 'user', content: `Tu es expert en analyse de ventes pour une boucherie artisanale francaise. Ton : positif d'abord, chiffre et concret, actionnable, respectueux du metier (le boucher connait son metier, tu confirmes et enrichis).\n\nDONNEES SEMAINE ${data.week_number} (${data.period_n}) :\nCA N : ${fn.ca_net.toFixed(2)} EUR | CA N-1 : ${fn1.ca_net.toFixed(2)} EUR | Variation : ${caVar}%\nTickets N : ${fn.nb_tickets} (N-1 : ${fn1.nb_tickets}) | Panier moyen N : ${fn.moyenne_ticket.toFixed(2)} EUR (N-1 : ${fn1.moyenne_ticket.toFixed(2)} EUR)\n\nVENTES PAR FAMILLE :\n${famSummary}\n\nTOP PRODUITS EN PROGRESSION : ${topsStr || 'n/a'}\nPRODUITS EN BAISSE : ${flopsStr || 'n/a'}\n\nRappels metier : une semaine avec jour ferie fait mecaniquement -15 a -20% de CA ; saisonnalite boucherie (pic Paques S15-16, ete, fetes S50-51, creux janvier-fevrier) ; le traiteur a la meilleure marge (50-65%) ; variation > +-25% sans explication saisonniere = a investiguer.\n\nRetourne UNIQUEMENT ce JSON :\n{"resume":"2 phrases max qui resument la semaine","insights":["insight 1","insight 2","insight 3","insight 4","insight 5"],"vigilance":["point de vigilance 1","point de vigilance 2"],"recommendations":["reco 1","reco 2","reco 3"]}\n\nInsights : faits precis avec chiffres (une phrase chacun). Vigilance : risques ou anomalies a surveiller (2 max, une phrase). Recommandations : actions concretes de boucherie pour la semaine prochaine, la premiere etant LA priorite. Tout en francais.` }],
-  })
-  try {
-    const parsed = JSON.parse(extractJSONObject(r.content[0].type === 'text' ? r.content[0].text : ''))
-    return {
-      resume:          sanitize(parsed.resume || ''),
-      insights:        (parsed.insights || []).slice(0, 5).map(sanitize).filter(Boolean),
-      vigilance:       (parsed.vigilance || []).slice(0, 2).map(sanitize).filter(Boolean),
-      recommendations: (parsed.recommendations || []).slice(0, 3).map(sanitize).filter(Boolean),
-    }
-  } catch {
-    return {
-      resume: 'Analyse indisponible cette semaine.',
-      insights: ['Analyse non disponible.'],
-      vigilance: [],
-      recommendations: ['Contactez votre conseiller PILOTE.'],
-    }
-  }
 }
