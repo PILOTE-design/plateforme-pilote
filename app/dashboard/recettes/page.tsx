@@ -40,6 +40,11 @@ type Recipe = {
 const fmtEuro = (n: number) => n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'
 const EMPTY_ING = (): IngredientDraft => ({ article_id: null, label: '', quantity: '', unit: null, manual_price_ht: '' })
 
+// Catégories proposées — les trois métiers de la maison. Le champ reste libre :
+// une catégorie inconnue crée simplement sa propre section.
+const CATEGORIES_SUGGEREES = ['boucherie', 'charcuterie', 'traiteur']
+const catLabel = (c: string | null) => (c && c.trim() ? c.trim().toLowerCase() : 'sans catégorie')
+
 export default function RecettesPage() {
   const { toast } = useToast()
   const { confirm: confirmAction } = useConfirm()
@@ -50,6 +55,8 @@ export default function RecettesPage() {
   const [saving, setSaving] = useState(false)
 
   // Modale création / édition
+  const [search, setSearch] = useState('')
+  const [catFilter, setCatFilter] = useState<string | null>(null)
   const [show, setShow] = useState(false)
   const [editId, setEditId] = useState<string | null>(null)
   const [form, setForm] = useState({ name: '', category: '', yield_qty: '', yield_unit: 'pièces', labor_minutes: '', selling_price_ttc: '', tva_rate: '5.5' })
@@ -89,6 +96,41 @@ export default function RecettesPage() {
     const yieldQty = parseFloat(form.yield_qty.replace(',', '.')) || 0
     return { matiere, mo, total: matiere + mo, parUnite: yieldQty > 0 ? (matiere + mo) / yieldQty : null, manquants }
   }, [ings, form.labor_minutes, form.yield_qty, laborRate, priceOf])
+
+  // Recherche : par nom de recette, par catégorie, et par INGRÉDIENT — taper
+  // « chipolata » amène aussi sur les fiches qui en contiennent.
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    let list = recipes
+    if (catFilter !== null) list = list.filter(r => catLabel(r.category) === catFilter)
+    if (q) {
+      list = list.filter(r =>
+        r.name.toLowerCase().includes(q)
+        || catLabel(r.category).includes(q)
+        || r.ingredients.some(i => i.label.toLowerCase().includes(q)))
+    }
+    return list
+  }, [recipes, search, catFilter])
+
+  // Sections par catégorie, triées ; les recettes par nom à l'intérieur.
+  const grouped = useMemo(() => {
+    const m = new Map<string, Recipe[]>()
+    for (const r of filtered) {
+      const c = catLabel(r.category)
+      const arr = m.get(c) || []
+      arr.push(r)
+      m.set(c, arr)
+    }
+    return [...m.entries()]
+      .map(([cat, list]) => [cat, [...list].sort((a, b) => a.name.localeCompare(b.name, 'fr'))] as const)
+      .sort((a, b) => a[0].localeCompare(b[0], 'fr'))
+  }, [filtered])
+
+  const allCats = useMemo(() => {
+    const set = new Set<string>()
+    for (const r of recipes) set.add(catLabel(r.category))
+    return [...set].sort((a, b) => a.localeCompare(b, 'fr'))
+  }, [recipes])
 
   function openNew() {
     setEditId(null)
@@ -185,6 +227,35 @@ export default function RecettesPage() {
         </div>
       )}
 
+      {/* Recherche + catégories */}
+      {recipes.length > 0 && (
+        <div className="mb-5 space-y-3">
+          <div className="relative">
+            <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input value={search} onChange={e => setSearch(e.target.value)}
+              placeholder="Chercher une fiche par produit, catégorie ou ingrédient…"
+              className="w-full border border-gray-200 rounded-xl pl-9 pr-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200" />
+          </div>
+          {allCats.length > 1 && (
+            <div className="flex items-center gap-2 flex-wrap">
+              <button onClick={() => setCatFilter(null)}
+                className={`text-xs font-semibold rounded-full px-3 py-1.5 transition-colors ${catFilter === null ? 'bg-pilote text-white' : 'bg-pilote-50 text-pilote hover:bg-pilote-100'}`}>
+                Toutes ({recipes.length})
+              </button>
+              {allCats.map(c => {
+                const n = recipes.filter(r => catLabel(r.category) === c).length
+                return (
+                  <button key={c} onClick={() => setCatFilter(prev => prev === c ? null : c)}
+                    className={`text-xs font-semibold rounded-full px-3 py-1.5 capitalize transition-colors ${catFilter === c ? 'bg-pilote text-white' : 'bg-pilote-50 text-pilote hover:bg-pilote-100'}`}>
+                    {c} ({n})
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Liste */}
       {loading ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">{[...Array(6)].map((_, i) => <div key={i} className="h-44 bg-gray-100 rounded-2xl animate-pulse" />)}</div>
@@ -198,9 +269,22 @@ export default function RecettesPage() {
           </p>
           <Button onClick={openNew} className="bg-pilote hover:bg-pilote-hover text-white"><Plus className="w-4 h-4 mr-1.5" />Créer une recette</Button>
         </div>
+      ) : filtered.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-dashed border-gray-200 py-12 text-center">
+          <Search className="w-8 h-8 text-gray-300 mx-auto mb-2" />
+          <p className="text-sm font-medium text-gray-500">Aucune fiche ne correspond{search ? <> à « {search} »</> : ''}</p>
+          <button onClick={() => { setSearch(''); setCatFilter(null) }} className="mt-2 text-xs font-semibold text-pilote hover:underline">Tout afficher</button>
+        </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {recipes.map(r => (
+        <div className="space-y-8">
+          {grouped.map(([cat, list]) => (
+            <section key={cat}>
+              <div className="flex items-baseline gap-2 mb-3">
+                <h2 className="text-sm font-extrabold uppercase tracking-wider text-gray-700 capitalize">{cat}</h2>
+                <span className="text-[11px] text-gray-400 tabular">{list.length} fiche{list.length > 1 ? 's' : ''}</span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {list.map(r => (
             <button key={r.id} onClick={() => openEdit(r)}
               className="text-left bg-white rounded-2xl border border-gray-100 shadow-card p-5 hover:shadow-card-hover hover:-translate-y-0.5 transition-all">
               <div className="flex items-start justify-between gap-2 mb-3">
@@ -229,6 +313,9 @@ export default function RecettesPage() {
                 )}
               </div>
             </button>
+                ))}
+              </div>
+            </section>
           ))}
         </div>
       )}
@@ -250,7 +337,11 @@ export default function RecettesPage() {
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-gray-700 mb-1">Catégorie</label>
-                  <Input value={form.category} onChange={e => setForm(p => ({ ...p, category: e.target.value }))} placeholder="charcuterie, traiteur…" />
+                  <Input list="recette-categories" value={form.category}
+                    onChange={e => setForm(p => ({ ...p, category: e.target.value }))} placeholder="charcuterie, traiteur…" />
+                  <datalist id="recette-categories">
+                    {[...new Set([...CATEGORIES_SUGGEREES, ...allCats.filter(c => c !== 'sans catégorie')])].map(c => <option key={c} value={c} />)}
+                  </datalist>
                 </div>
                 <div className="grid grid-cols-2 gap-2">
                   <div>
