@@ -61,10 +61,9 @@ export default async function MargesPage() {
             ca_total: parseFloat(String(r.ca_total || 0)) || 0,
             familles: Array.isArray(r.families_detail) ? r.families_detail : null,
             by_rayon: {
-              boucherie:         parseFloat(String(r.ca_boucherie || 0)) || 0,
-              charcuterie:       parseFloat(String(r.ca_charcuterie || 0)) || 0,
-              traiteur:          parseFloat(String(r.ca_traiteur || 0)) || 0,
-              fruits_et_legumes: parseFloat(String(r.ca_fruits_et_legumes || 0)) || 0,
+              boucherie:   parseFloat(String(r.ca_boucherie || 0)) || 0,
+              charcuterie: parseFloat(String(r.ca_charcuterie || 0)) || 0,
+              traiteur:    parseFloat(String(r.ca_traiteur || 0)) || 0,
             },
           }),
         })),
@@ -102,11 +101,24 @@ export default async function MargesPage() {
       bench: benchOf(f.key, f.label),
     }
   })
+  // Divers : 4e ligne (rachat, épicerie, boissons, fruits & légumes, prestations).
+  // Ni repère de marge ni salaires — ce n'est pas un métier, juste de l'achat-revente.
+  const diversRow: FamRow = {
+    key: 'divers',
+    label: weeks[0]?.eco.divers.label || 'Divers',
+    ca: sum(e => e.divers.ca), achats: sum(e => e.divers.achats), salaires: 0,
+    ventile: weeks.some(w => w.eco.divers.achats_ventiles),
+    taux: null, tauxTotal: null, bench: null,
+  }
+  diversRow.taux = diversRow.ca > 0 ? ((diversRow.ca - diversRow.achats) / diversRow.ca) * 100 : null
+  diversRow.tauxTotal = diversRow.taux
+  const hasDivers = diversRow.ca > 0 || diversRow.achats > 0
+
   const famSansAchats = famRows.filter(f => f.ca > 0 && !f.ventile)
   const caFamilles     = famRows.reduce((s, f) => s + f.ca, 0)
   const achatsFamilles = famRows.reduce((s, f) => s + f.achats, 0)
   const salFamilles    = famRows.reduce((s, f) => s + f.salaires, 0)
-  const caHorsFamilles = Math.max(0, caTotal - caFamilles)
+  const caHorsFamilles = Math.max(0, caTotal - caFamilles - (hasDivers ? diversRow.ca : 0))
 
   const periodLabel = weeks.length > 0
     ? `S${weeks[0].week} → S${weeks[weeks.length - 1].week} · ${currentYear} (${weeks.length} semaine${weeks.length > 1 ? 's' : ''} lissée${weeks.length > 1 ? 's' : ''})`
@@ -241,6 +253,21 @@ export default async function MargesPage() {
                       <td className={`px-4 py-3 text-right text-sm font-semibold tabular ${f.tauxTotal !== null && f.tauxTotal < 0 ? 'text-red-600' : 'text-gray-700'}`}>{pct(f.tauxTotal)}</td>
                     </tr>
                   ))}
+                  {hasDivers && (
+                    <tr className="border-t border-gray-100 bg-gray-50/40 hover:bg-gray-50 transition-colors">
+                      <td className="px-4 py-3 text-sm font-semibold text-gray-700">
+                        {diversRow.label}
+                        <span className="ml-1.5 text-[10px] font-medium text-gray-400">rachat, épicerie, boissons, fruits &amp; légumes</span>
+                      </td>
+                      <td className="px-4 py-3 text-right text-sm text-gray-700 tabular">{fmt(diversRow.ca)} €</td>
+                      <td className="px-4 py-3 text-right text-sm text-gray-700 tabular">{fmt(diversRow.achats)} €</td>
+                      <td className={`px-4 py-3 text-right text-sm font-semibold tabular ${diversRow.ca - diversRow.achats >= 0 ? 'text-gray-900' : 'text-red-600'}`}>{fmt(diversRow.ca - diversRow.achats)} €</td>
+                      <td className="px-4 py-3 text-right text-sm font-bold tabular text-gray-600">{pct(diversRow.taux)}</td>
+                      <td className="px-4 py-3 text-right text-[11px] text-gray-400">—</td>
+                      <td className="px-4 py-3 text-right text-xs text-gray-400 tabular">—</td>
+                      <td className="px-4 py-3 text-right text-sm font-semibold tabular text-gray-600">{pct(diversRow.tauxTotal)}</td>
+                    </tr>
+                  )}
                   {(caHorsFamilles > 0 || nonVentiles > 0 || salairesHorsFam > 0) && (
                     <tr className="border-t border-gray-100 bg-gray-50/60">
                       <td className="px-4 py-3 text-xs font-semibold text-gray-500">Hors familles</td>
@@ -276,6 +303,7 @@ export default async function MargesPage() {
             <div className="text-xs text-gray-600 space-y-2 leading-relaxed">
               <p><span className="font-semibold text-gray-800">Comment lire :</span> marge lissée sur {weeks.length} semaine{weeks.length > 1 ? 's' : ''} — les achats d&apos;une semaine se vendent sur les suivantes, le cumul gomme l&apos;effet stock. Précise à 2-3 points près, la tendance est fiable.</p>
               <p><span className="font-semibold text-gray-800">Un seul réglage :</span> les familles affichées sont celles que vous avez choisies en facturation, et les achats sont répartis par la ventilation de chaque fournisseur. Les mêmes chiffres apparaissent en facturation et dans votre rapport hebdomadaire — il n&apos;y a plus de classement séparé à tenir à jour.</p>
+              <p><span className="font-semibold text-gray-800">Divers :</span> rachat, épicerie, boissons, fromage, fruits &amp; légumes, prestations — acheté fini, revendu tel quel. Ce bloc existe pour que les trois métiers restent lisibles : sans lui, ses achats seraient étalés sur eux et un cageot de tomates viendrait plomber la marge boucherie.</p>
               <p><span className="font-semibold text-gray-800">Salaires :</span> coût chargé issu du planning, réparti d&apos;après les postes pointés. Les heures dont le poste ne correspond à aucune famille (vente, administratif, livraison…) restent transverses : elles comptent dans la masse salariale globale, pas dans une famille.</p>
               <p><span className="font-semibold text-gray-800">Fiabilité :</span> seules les factures <strong>validées</strong> comptent — les imports automatiques restent « à vérifier » jusqu&apos;à votre validation en page Facturation. Contrôle croisé : comparez avec la marge théorique de vos valorisations carcasse ; un écart durable = démarque (pertes, erreurs de prix, vol).</p>
             </div>

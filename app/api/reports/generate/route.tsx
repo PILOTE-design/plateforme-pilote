@@ -460,6 +460,17 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
                   </View>
                 )
               })}
+              {(eco.divers.ca > 0 || eco.divers.achats > 0) && (
+                <View style={eco.familles.length % 2 === 0 ? S.tRow : S.tRowAlt}>
+                  <Text style={[S.tCellB, { flex: 2.4 }]}>{trunc(eco.divers.label, 20)}</Text>
+                  <Text style={[S.tCellR, { flex: 2 }]}>{eco.divers.ca > 0 ? eur0(eco.divers.ca) : '-'}</Text>
+                  <Text style={[S.tCellR, { flex: 2 }]}>{eco.divers.achats > 0 ? eur0(eco.divers.achats) : '-'}</Text>
+                  <Text style={[S.tCellR, { flex: 2 }]}>-</Text>
+                  <Text style={[S.tCellRB, { flex: 2 }]}>{eco.divers.ca > 0 ? eur0(eco.divers.marge) : '-'}</Text>
+                  <Text style={[S.tCellR, { flex: 1.4 }]}>{eco.divers.taux !== null ? `${eco.divers.taux.toFixed(1)}%` : '-'}</Text>
+                  <Text style={[S.tCellRB, { flex: 1.4 }]}>{eco.divers.taux !== null ? `${eco.divers.taux.toFixed(1)}%` : '-'}</Text>
+                </View>
+              )}
               <View style={S.tTotal}>
                 <Text style={[S.tTotalCellL, { flex: 2.4 }]}>GLOBAL BOUTIQUE</Text>
                 <Text style={[S.tTotalCell, { flex: 2 }]}>{eur0(eco.ca_total)}</Text>
@@ -473,6 +484,8 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
             <Text style={[S.chartCaption, { textAlign: 'left', marginTop: 6, lineHeight: 1.45 }]}>
               TX MAT. = marge matière (CA - achats). TX NET = après les salaires pointés sur le poste dans le planning.
               Repères du métier : boucherie 35-45 %, charcuterie 40-55 %, traiteur 50-65 %.
+              DIVERS regroupe le rachat, l'épicerie, les boissons, les fruits et légumes et les prestations : acheté fini,
+              revendu tel quel - ni matière travaillée, ni repère de marge. Il existe pour que les trois métiers restent lisibles.
             </Text>
 
             {margeRead.alerts.length > 0 && (

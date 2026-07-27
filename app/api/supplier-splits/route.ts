@@ -7,14 +7,15 @@ export const dynamic = 'force-dynamic'
 
 // Rayon dominant → catégorie d'achat des factures de la société
 const RAYON_TO_CATEGORY: Record<string, string> = {
-  boucherie: 'boucherie', charcuterie: 'charcuterie', traiteur: 'traiteur',
-  fruits_et_legumes: 'frais_divers', divers: 'frais_divers',
+  boucherie: 'boucherie', charcuterie: 'charcuterie', traiteur: 'traiteur', divers: 'frais_divers',
 }
+// pct_fruits_et_legumes n'est plus saisie : la colonne survit pour l'historique et
+// tout reliquat est replié dans « divers » à la lecture comme à l'écriture.
 type Pcts = { pct_boucherie: number; pct_charcuterie: number; pct_traiteur: number; pct_fruits_et_legumes: number; pct_divers: number }
 function categoryFromPcts(p: Pcts): string | null {
   const entries: Array<[string, number]> = [
     ['boucherie', p.pct_boucherie], ['charcuterie', p.pct_charcuterie], ['traiteur', p.pct_traiteur],
-    ['fruits_et_legumes', p.pct_fruits_et_legumes], ['divers', p.pct_divers],
+    ['divers', p.pct_divers + p.pct_fruits_et_legumes],
   ]
   const top = entries.sort((a, b) => b[1] - a[1])[0]
   if (!top || top[1] <= 0) return null
@@ -82,8 +83,8 @@ export async function GET() {
       pct_boucherie: Number(s.pct_boucherie) || 0,
       pct_charcuterie: Number(s.pct_charcuterie) || 0,
       pct_traiteur: Number(s.pct_traiteur) || 0,
-      pct_fruits_et_legumes: Number(s.pct_fruits_et_legumes) || 0,
-      pct_divers: Number(s.pct_divers) || 0,
+      pct_fruits_et_legumes: 0,
+      pct_divers: (Number(s.pct_divers) || 0) + (Number(s.pct_fruits_et_legumes) || 0),
     })),
     suppliers,
   })
@@ -112,8 +113,8 @@ export async function PUT(req: NextRequest) {
       pct_boucherie: clamp(r.pct_boucherie),
       pct_charcuterie: clamp(r.pct_charcuterie),
       pct_traiteur: clamp(r.pct_traiteur),
-      pct_fruits_et_legumes: clamp(r.pct_fruits_et_legumes),
-      pct_divers: clamp(r.pct_divers),
+      pct_fruits_et_legumes: 0,
+      pct_divers: clamp(r.pct_divers) + clamp(r.pct_fruits_et_legumes),
       updated_at: new Date().toISOString(),
     }))
     .filter((r: any) => {
@@ -161,8 +162,8 @@ export async function POST(req: NextRequest) {
     pct_boucherie: clamp(s.pct_boucherie),
     pct_charcuterie: clamp(s.pct_charcuterie),
     pct_traiteur: clamp(s.pct_traiteur),
-    pct_fruits_et_legumes: clamp(s.pct_fruits_et_legumes),
-    pct_divers: clamp(s.pct_divers),
+    pct_fruits_et_legumes: 0,
+    pct_divers: clamp(s.pct_divers) + clamp(s.pct_fruits_et_legumes),
   }
 
   // Tout à zéro → on retire la règle de cette société
