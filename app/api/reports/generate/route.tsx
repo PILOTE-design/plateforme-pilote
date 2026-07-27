@@ -66,7 +66,7 @@ function ensureFonts(): Promise<void> {
   return fontsPromise
 }
 
-// ─── Types ────────────────────────────────────────────────────────
+// ─── Types ─────────────────────────────────────────────────────
 interface Produit { plu: string; designation: string; ventes: number; montant: number }
 interface Famille { id: string; nom: string; total_montant: number; produits: Produit[] }
 interface FinancierData { ca_net: number; nb_tickets: number; moyenne_ticket: number }
@@ -105,7 +105,7 @@ interface ComputedReport {
   margeRead: { alerts: string[]; action: string | null }
 }
 
-// ─── Formatters ────────────────────────────────────────────────────────────
+// ─── Formatters ─────────────────────────────────────────────────────────
 // NE PAS utiliser toLocaleString('fr-FR') — produit U+202F (espace fine insécable),
 // on garde un formatage manuel avec espace simple pour un rendu stable
 const eur = (n: number) => {
@@ -136,7 +136,7 @@ const sanitize = (s: string) => (s || '')
   .trim()
   .slice(0, 320)
 
-// ─── Palette ────────────────────────────────────────────────────────
+// ─── Palette ─────────────────────────────────────────────────────
 const C = {
   navy:        '#1E3A5F',
   blue:        '#2D5986',
@@ -159,7 +159,7 @@ const C = {
   white:       '#FFFFFF',
 }
 
-// ─── Styles ───────────────────────────────────────────────────────
+// ─── Styles ───────────────────────────────────────────────────
 const S = StyleSheet.create({
   coverBlueBg:    { backgroundColor: C.navy, padding: 56, paddingBottom: 44, flexGrow: 1 },
   coverTagRow:    { flexDirection: 'row', alignItems: 'center', marginBottom: 44 },
@@ -276,7 +276,7 @@ const ShareBar = ({ pct }: { pct: number }) => (
   </View>
 )
 
-// ─── PDF Document ──────────────────────────────────────────────────────────────
+// ─── PDF Document ───────────────────────────────────────────────────────────────
 
 const PiloteReport = ({ r }: { r: ComputedReport }) => {
   const { data, clientName, insights, pieBuffer, tops, flops, famRows, caVar, status, execSummary, economics, margeRead } = r
@@ -465,10 +465,10 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
                   <Text style={[S.tCellB, { flex: 2.4 }]}>{trunc(eco.divers.label, 20)}</Text>
                   <Text style={[S.tCellR, { flex: 2 }]}>{eco.divers.ca > 0 ? eur0(eco.divers.ca) : '-'}</Text>
                   <Text style={[S.tCellR, { flex: 2 }]}>{eco.divers.achats > 0 ? eur0(eco.divers.achats) : '-'}</Text>
-                  <Text style={[S.tCellR, { flex: 2 }]}>-</Text>
-                  <Text style={[S.tCellRB, { flex: 2 }]}>{eco.divers.ca > 0 ? eur0(eco.divers.marge) : '-'}</Text>
+                  <Text style={[S.tCellR, { flex: 2 }]}>{eco.divers.salaires > 0 ? eur0(eco.divers.salaires) : '-'}</Text>
+                  <Text style={[S.tCellRB, { flex: 2 }]}>{eco.divers.ca > 0 ? eur0(eco.divers.marge_totale) : '-'}</Text>
                   <Text style={[S.tCellR, { flex: 1.4 }]}>{eco.divers.taux !== null ? `${eco.divers.taux.toFixed(1)}%` : '-'}</Text>
-                  <Text style={[S.tCellRB, { flex: 1.4 }]}>{eco.divers.taux !== null ? `${eco.divers.taux.toFixed(1)}%` : '-'}</Text>
+                  <Text style={[S.tCellRB, { flex: 1.4 }]}>{eco.divers.taux_totale !== null ? `${eco.divers.taux_totale.toFixed(1)}%` : '-'}</Text>
                 </View>
               )}
               <View style={S.tTotal}>
@@ -486,6 +486,7 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
               Repères du métier : boucherie 35-45 %, charcuterie 40-55 %, traiteur 50-65 %.
               DIVERS regroupe le rachat, l'épicerie, les boissons, les fruits et légumes et les prestations : acheté fini,
               revendu tel quel - ni matière travaillée, ni repère de marge. Il existe pour que les trois métiers restent lisibles.
+              Les heures sans poste métier (vente, administratif) sont réparties au prorata du CA sur les quatre blocs.
             </Text>
 
             {margeRead.alerts.length > 0 && (
@@ -782,7 +783,7 @@ const PiloteReport = ({ r }: { r: ComputedReport }) => {
   )
 }
 
-// ─── Data extraction ─────────────────────────────────────────────────────────
+// ─── Data extraction ───────────────────────────────────────────────────────────
 
 async function parsePDF(file: File): Promise<string> {
   const buffer = Buffer.from(await file.arrayBuffer())
@@ -830,7 +831,7 @@ async function extractFinancials(fin_n: string, fin_n1: string): Promise<{
   return JSON.parse(extractJSONObject(r.content[0].type === 'text' ? r.content[0].text : ''))
 }
 
-// ─── Semaine ISO deterministe ─────────────────────────────────────────────────
+// ─── Semaine ISO deterministe ────────────────────────────────────────────────
 // La semaine du rapport est TOUJOURS calculee en code a partir des dates de la
 // periode extraite (ex: "29 juin - 5 juillet 2026" => S27), jamais par l'IA.
 
@@ -991,7 +992,7 @@ async function extractData(texts: { fin_n: string; fin_n1: string; ventes_n: str
   }
 }
 
-// ─── Historisation caisse ─────────────────────────────────────────────────────
+// ─── Historisation caisse ───────────────────────────────────────────────────
 
 async function archiveWeekData(
   serviceSupabase: ReturnType<typeof createServiceClient>,
@@ -1025,7 +1026,7 @@ async function archiveWeekData(
   if (rows.length > 0) await serviceSupabase.from('weekly_sales_products').insert(rows)
 }
 
-// ─── Calculs métier ──────────────────────────────────────────────────────────
+// ─── Calculs métier ───────────────────────────────────────────────────────────
 
 /** Familles fusionnées N/N-1, triées par CA N desc, plafonnées à 12 lignes (le reste en AUTRES) */
 function buildFamRows(vn: { total: number; familles: Famille[] }, vn1: { total: number; familles: Famille[] }, max = 12): FamRow[] {
@@ -1244,7 +1245,7 @@ async function generatePDF(report: ComputedReport): Promise<Buffer> {
   return renderToBuffer(React.createElement(PiloteReport, { r: report }))
 }
 
-// ─── POST Handler ───────────────────────────────────────────────────────────────────
+// ─── POST Handler ─────────────────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
   try {
