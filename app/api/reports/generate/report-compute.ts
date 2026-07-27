@@ -66,17 +66,32 @@ export function buildMargeRead(e: WeekEconomics | null, week: number): { alerts:
     alerts.push(`Masse salariale à ${ms.toFixed(0)} % du CA, au-dessus du seuil de vigilance de 40 %. Si cela se répète une deuxième semaine, c'est le signe d'un sureffectif ou d'une sous-activité.`)
   }
 
-  if (tm !== null && tm < 30) {
+  // Symétrique du garde-fou masse salariale : un taux ANORMALEMENT HAUT ne récompense
+  // pas une bonne gestion, il signale des achats non saisis. Une boucherie tourne entre
+  // 35 et 45 % de marge matière ; au-delà de 55 %, c'est la facture qui manque, pas le
+  // client qui paie plus cher. Sans ce test, le rapport félicitait le gérant sur une
+  // semaine à 61,6 % — « la structure de coûts est saine » — alors qu'il lui manquait
+  // les deux tiers de ses achats.
+  if (tm !== null && tm > 55) {
+    alerts.push(`Marge brute à ${tm.toFixed(1)} % : ce niveau n'existe pas en boucherie artisanale (repère 35-45 %) et signale presque toujours des factures d'achat non saisies sur la semaine ${week}. Complétez la facturation avant de lire ces taux — ils sont surévalués tant qu'il manque des achats.`)
+  } else if (tm !== null && tm < 30) {
     alerts.push(`Marge brute à ${tm.toFixed(1)} %, sous le plancher sectoriel de 30 %. Regardez d'abord vos prix d'achat de la semaine, puis la valorisation carcasse.`)
   } else if (tm !== null && tm >= 40 && (ms === null || ms <= 40)) {
     alerts.push(`Marge brute à ${tm.toFixed(1)} % et masse salariale maîtrisée : la structure de coûts de la semaine est saine.`)
   }
 
-  // Famille sous son repère métier — on nomme la première concernée, chiffres à l'appui
+  // Famille HORS de son repère métier — on nomme la première concernée, chiffres à
+  // l'appui. Au-dessus comme en dessous : un rayon 15 points au-dessus de son repère
+  // n'est pas un exploit, c'est un rayon dont les achats ne sont pas ventilés.
   for (const f of e.familles) {
     const b = benchOf(f.key, f.label)
-    if (b && f.taux !== null && f.ca > 0 && f.taux < b[0]) {
+    if (!b || f.taux === null || f.ca <= 0) continue
+    if (f.taux < b[0]) {
       alerts.push(`${f.label} ressort à ${f.taux.toFixed(1)} % de marge matière, contre ${b[0]}-${b[1]} % attendu sur ce rayon, soit ${(b[0] - f.taux).toFixed(1)} points d'écart.`)
+      break
+    }
+    if (f.taux > b[1] + 15) {
+      alerts.push(`${f.label} affiche ${f.taux.toFixed(1)} % de marge matière pour un repère de ${b[0]}-${b[1]} % : l'écart est trop large pour être réel, il manque probablement des achats ventilés sur ce rayon.`)
       break
     }
   }
