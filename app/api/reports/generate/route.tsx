@@ -32,7 +32,7 @@ async function generatePDF(report: ComputedReport): Promise<Buffer> {
   return renderToBuffer(React.createElement(PiloteReport, { r: report }) as any)
 }
 
-// ─── POST Handler ────────────────────────────────────────────────────────────────────
+// ─── POST Handler ───────────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
   try {

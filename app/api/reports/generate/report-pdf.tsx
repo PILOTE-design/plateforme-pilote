@@ -10,7 +10,7 @@ import { hasEconomics } from './report-compute'
 import { benchOf } from '@/lib/postes'
 import type { ComputedReport } from './report-types'
 
-// ─── PDF Document ───────────────────────────────────────────────────────────────
+// ─── PDF Document ──────────────────────────────────────────────────────────────
 
 export const PiloteReport = ({ r }: { r: ComputedReport }) => {
   const { data, clientName, insights, pieBuffer, tops, flops, famRows, caVar, status, execSummary, economics, margeRead } = r
