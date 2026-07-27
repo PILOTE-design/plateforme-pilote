@@ -37,7 +37,7 @@ export const PiloteReport = ({ r }: { r: ComputedReport }) => {
             <View style={S.coverTagDot} />
             <Text style={S.coverTagText}>PILOTE</Text>
           </View>
-          <Text style={S.coverTitle}>Rapport{'\\n'}Hebdomadaire</Text>
+          <Text style={S.coverTitle}>Rapport{'\n'}Hebdomadaire</Text>
           <Text style={S.coverSub}>Analyse comparative des ventes et pilotage de la performance</Text>
           <View style={S.coverDivider} />
           <Text style={S.coverWeek}>Semaine {data.week_number} - {data.year}</Text>
@@ -264,8 +264,8 @@ export const PiloteReport = ({ r }: { r: ComputedReport }) => {
             </View>
             <View style={S.insightBlock}>
               {[
-                'Saisissez ou synchronisez vos factures d\\'achat de la semaine dans Facturation.',
-                'Renseignez le planning de vos employés, en précisant le poste de chaque journée : c\\'est ce qui permet d\\'affecter le bon salaire au bon rayon.',
+                'Saisissez ou synchronisez vos factures d\'achat de la semaine dans Facturation.',
+                'Renseignez le planning de vos employés, en précisant le poste de chaque journée : c\'est ce qui permet d\'affecter le bon salaire au bon rayon.',
                 'Déclarez vos charges fixes (loyer, énergie, assurance, crédit) une seule fois : elles seront ensuite étalées automatiquement sur chaque semaine.',
               ].map((t, i) => (
                 <View key={i} style={S.insightRow}>
