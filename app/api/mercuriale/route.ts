@@ -34,10 +34,15 @@ export async function GET() {
       .not('unit_price_ht', 'is', null)
       .order('created_at', { ascending: false })
       .limit(2000),
-    // File d'attente : PDF présent, lignes jamais extraites (ou en échec à retenter)
+    // File d'attente : PDF présent, lignes jamais extraites (ou en échec à retenter).
+    // Les CHARGES FIXES (loyer, logiciels type Wiismile, leasing, assurance…) sont
+    // exclues d'office : elles ne contiennent pas de matière première. Le reste passe
+    // par la reconnaissance de nature à l'extraction — la CATÉGORIE n'est pas un
+    // filtre fiable : en prod, des factures de viande arrivent en « frais_divers ».
     service.from('invoices')
       .select('id, supplier_name, invoice_date, amount_ht, lines_status')
       .eq('client_id', clientId)
+      .eq('is_fixed_charge', false)
       .not('file_path', 'is', null)
       .or('lines_status.is.null,lines_status.eq.error')
       .order('invoice_date', { ascending: false })
