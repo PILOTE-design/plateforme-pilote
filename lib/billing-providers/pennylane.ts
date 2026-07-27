@@ -97,6 +97,12 @@ function mapInvoice(inv: any, fallbackDate: string): ProviderInvoice {
   const periodDays   = isFixed ? detectPeriodDays(detectText) : undefined
   const prorataHt    = isFixed && periodDays && ht !== 0 ? Math.round((ht * 7 / periodDays) * 100) / 100 : undefined
 
+  // Échéance, statut de paiement et PDF — schéma v2 documenté (deadline,
+  // payment_status, public_file_url). L'URL du fichier expire en 30 minutes :
+  // la sync doit télécharger le PDF immédiatement, pas conserver le lien.
+  const dueDate = typeof inv.deadline === 'string' && /^\d{4}-\d{2}-\d{2}/.test(inv.deadline)
+    ? inv.deadline.split('T')[0] : undefined
+
   return {
     supplier_name:  supplierName,
     invoice_number: inv.invoice_number ?? inv.number ?? inv.reference ?? undefined,
@@ -106,6 +112,9 @@ function mapInvoice(inv: any, fallbackDate: string): ProviderInvoice {
     amount_ttc:     ttc || +(ht * 1.2).toFixed(2),
     category,
     external_id:    String(inv.id ?? ''),
+    due_date:       dueDate,
+    payment_status: typeof inv.payment_status === 'string' ? inv.payment_status : undefined,
+    file_url:       typeof inv.public_file_url === 'string' && inv.public_file_url ? inv.public_file_url : undefined,
     is_fixed_charge: isFixed,
     period_days:     periodDays,
     prorata_ht:      prorataHt,
