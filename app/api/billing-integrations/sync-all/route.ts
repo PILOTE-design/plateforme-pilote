@@ -8,6 +8,7 @@ import { createServiceClient } from '@/lib/supabase/server'
 import { PROVIDERS } from '@/lib/billing-providers'
 import { classifyFixedCharges } from '@/lib/billing-providers/classify'
 import { loadSupplierCategories, rememberedCategory } from '@/lib/supplier-memory'
+import { enrichInvoicesAfterSync } from '@/lib/billing-providers/enrich'
 
 function getWeekBounds(weekNumber: number, year: number): [Date, Date] {
   const jan4 = new Date(Date.UTC(year, 0, 4))
@@ -115,6 +116,11 @@ async function runSyncAll(req: NextRequest) {
       } else {
         imported = rows.length
         totalImported += imported
+        // Échéance, statut de paiement, PDF stocké — mêmes updates ciblés que la
+        // sync manuelle (cf. lib/billing-providers/enrich). Non bloquant.
+        try {
+          await enrichInvoicesAfterSync(service, integ.client_id, enriched)
+        } catch (e) { console.error('Enrichissement factures:', e) }
       }
     }
 
