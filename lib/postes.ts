@@ -27,12 +27,33 @@ export const BUILTIN_POSTES: Poste[] = [
 
 export const DEFAULT_MARGIN_FAMILIES = ['boucherie', 'charcuterie', 'traiteur']
 
-/** Racines historiques de rattachement du CA (familles de vente des rapports) */
+// Racines de rattachement du CA aux 4 rayons classiques. Les familles de vente des
+// rapports (CRISALID) ne portent JAMAIS le nom du rayon : un boucher vend « VIANDE DE
+// BOEUF », « VIANDE DE VOLAILLE », « VIANDE DE PORC »… et jamais « BOUCHERIE ». Sans
+// ce vocabulaire, la famille boucherie recevait 0 € de CA alors qu'elle porte le gros
+// du chiffre. L'ORDRE COMPTE : la première racine qui reconnaît le libellé l'emporte,
+// et « CHARCUTERIE RACHAT » doit rester en charcuterie, pas basculer en boucherie.
 export const CLASSIC_CA_STEMS: Record<string, string[]> = {
-  boucherie:         ['bouch'],
-  charcuterie:       ['charcut'],
-  traiteur:          ['traiteur'],
+  charcuterie:       ['charcut', 'salaison', 'saucis', 'jambon', 'terrine', 'rillette', 'boudin', 'andouill'],
+  boucherie:         ['bouch', 'viande', 'boeuf', 'veau', 'agneau', 'mouton', 'porc', 'volaille', 'poulet', 'gibier', 'abat', 'triperie'],
+  traiteur:          ['traiteur', 'rotisserie', 'snack', 'sandwich', 'plat'],
   fruits_et_legumes: ['fruit', 'legume', 'primeur'],
+}
+
+/** Une racine reconnaît-elle ce texte ? Test au MOT, pas en sous-chaîne : « NOUVEAUTÉS »
+ *  ne doit pas être rattaché à la boucherie parce qu'il contient « veau ». */
+function stemInText(stem: string, normalized: string): boolean {
+  return normalized.split(' ').some(w => w.startsWith(stem))
+}
+
+/** Rayon classique d'une famille de vente (« VIANDE DE BOEUF » → boucherie), sinon null */
+export function classicRayonOfLabel(nom: unknown): string | null {
+  const n = normText(nom)
+  if (!n) return null
+  for (const [rayon, stems] of Object.entries(CLASSIC_CA_STEMS)) {
+    if (stems.some(st => stemInText(st, n))) return rayon
+  }
+  return null
 }
 
 /** minuscules + accents retirés + caractères non alphanumériques → espaces */
@@ -102,8 +123,9 @@ export function familleMatchesText(familleKey: string, familleLabel: string, tex
   if (familleKey === textKey) return true
   const t = textLabel ?? textKey
   if (labelsMatch(familleLabel, t)) return true
-  const stems = CLASSIC_CA_STEMS[familleKey]
-  if (stems) { const n = normText(t); if (stems.some(st => n.includes(st))) return true }
+  // Racines du rayon classique — mais une famille ne prend un libellé que si AUCUN
+  // rayon prioritaire ne le revendique (« CHARCUTERIE RACHAT » reste en charcuterie).
+  if (CLASSIC_CA_STEMS[familleKey]) return classicRayonOfLabel(t) === familleKey
   return false
 }
 
