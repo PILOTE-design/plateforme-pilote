@@ -1,0 +1,4 @@
+ONE=[€]
+TWO=[\\u20AC]
+THREE=[\\€]
+FOUR=[\\\\u20AC]
