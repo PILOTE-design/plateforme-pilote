@@ -3,6 +3,7 @@ import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { PROVIDERS } from '@/lib/billing-providers'
 import { classifyFixedCharges } from '@/lib/billing-providers/classify'
 import { loadSupplierCategories, rememberedCategory } from '@/lib/supplier-memory'
+import { enrichInvoicesAfterSync } from '@/lib/billing-providers/enrich'
 
 export const maxDuration = 60 // Vercel Pro: 60s max, Hobby: 10s (mieux que défaut)
 
@@ -101,6 +102,11 @@ export async function POST(req: NextRequest) {
         syncError = `Upsert invoices a échoué: ${upsertError.message}`
       } else {
         imported = rows.length
+        // Échéance, statut de paiement, PDF stocké — updates ciblés post-upsert
+        // (cf. lib/billing-providers/enrich). Non bloquant : les montants sont déjà là.
+        try {
+          await enrichInvoicesAfterSync(service, clientRow.id, enriched)
+        } catch (e) { console.error('Enrichissement factures:', e) }
       }
     }
 
