@@ -7,6 +7,15 @@
 //     weekly_ca n'étant écrit qu'APRÈS la génération du rapport.
 // Le CA est donc une ENTRÉE du calcul, jamais une lecture cachée : c'est la seule
 // façon d'obtenir les mêmes chiffres à l'écran et dans le PDF.
+//
+// UNITÉS — le CA transmis est le CA CAISSE, donc TTC ; les achats, les salaires et
+// les charges sont HT. Le moteur ramène le CA en HT dès l'entrée (clients.tva_rate,
+// 5,5 % par défaut) : sans ça la marge brute était surévaluée d'environ 3 points
+// (21 000 € TTC et 12 300 € d'achats donnaient 41,4 % au lieu de 38,2 %) — assez pour
+// faire passer un KPI au vert alors qu'il devait rester orange, et pour sous-évaluer
+// le ratio de masse salariale d'autant. Tout ce que renvoie ce module est HT ;
+// `ca_ttc` reste exposé pour l'affichage du chiffre de caisse tel que le gérant le
+// connaît.
 
 import { normalizeSupplierName, sameSupplierFamily, supplierSociete } from '@/lib/supplier-memory'
 import { weekRecurringCost } from '@/lib/recurring-charges'
@@ -20,7 +29,8 @@ import type { createServiceClient } from '@/lib/supabase/server'
 
 type ServiceClient = ReturnType<typeof createServiceClient>
 
-/** CA de la semaine, fourni par l'appelant (rapport hebdo ou weekly_ca) */
+/** CA de la semaine, fourni par l'appelant (rapport hebdo ou weekly_ca). TTC : c'est
+ *  le chiffre de caisse. Le moteur le ramène en HT avant tout calcul de marge. */
 export type CaInput = {
   ca_total: number
   /** Familles de vente telles qu'elles sortent du rapport (nom libre, montant) */
@@ -62,7 +72,12 @@ export type WeekEconomics = {
   salaires_non_affectes: number
   charges_fixes: number
   charges_fixes_lines: ReturnType<typeof weekRecurringCost>['lines']
+  /** CA HT — base de TOUS les taux de ce module (achats et salaires sont HT) */
   ca_total: number
+  /** CA caisse tel que saisi / extrait du rapport, TVA comprise */
+  ca_ttc: number
+  /** Taux de TVA utilisé pour la conversion (clients.tva_rate) */
+  tva_rate: number
   marge_brute: number
   taux_marge: number | null
   marge_apres_salaires: number
@@ -90,6 +105,18 @@ function weekBoundsISO(week: number, year: number): [string, string] {
 const round2 = (n: number) => Math.round(n * 100) / 100
 const round1 = (n: number) => Math.round(n * 10) / 10
 
+/** Taux réduit alimentaire — boucherie, charcuterie et traiteur à emporter */
+export const DEFAULT_TVA_RATE = 5.5
+
+/** Convertisseur TTC → HT. Un taux absent, nul ou aberrant laisse le montant tel quel
+ *  plutôt que de produire un CA fantaisiste : mieux vaut une marge inchangée qu'une
+ *  marge divisée par deux à cause d'une saisie à 550 au lieu de 5,5. */
+export function htConverter(tvaRate: number): (n: number) => number {
+  const t = Number(tvaRate)
+  if (!Number.isFinite(t) || t <= 0 || t > 30) return (n: number) => n
+  return (n: number) => n / (1 + t / 100)
+}
+
 /**
  * Économie complète d'une semaine pour un client : achats, salaires, charges
  * fixes et marge par famille. Le CA vient de l'appelant (cf. CaInput).
@@ -103,7 +130,7 @@ export async function computeWeekEconomics(
 ): Promise<WeekEconomics> {
   // 0. Configuration du client : postes personnalisés + les 3 familles de marge choisies.
   const { data: clientRow } = await supabase
-    .from('clients').select('custom_postes, margin_families').eq('id', clientId).maybeSingle()
+    .from('clients').select('custom_postes, margin_families, tva_rate').eq('id', clientId).maybeSingle()
   const customPostes = parseCustomPostes(clientRow?.custom_postes)
   const familleKeys = parseMarginFamilies(clientRow?.margin_families)
   const familles = familleKeys.map(key => ({ key, label: posteLabel(key, customPostes) }))
@@ -229,8 +256,13 @@ export async function computeWeekEconomics(
   const recur = weekRecurringCost((recCharges || []) as any, (recActuals || []) as any, monISO, sunISO)
   const charges_fixes = recur.total
 
-  // 4. CA — fourni par l'appelant
-  const ca_total = Number(ca.ca_total) || 0
+  // 4. CA — fourni par l'appelant, TTC (chiffre de caisse), ramené en HT ici.
+  // C'est le seul endroit où la conversion a lieu : tout ce qui suit est HT, et les
+  // taux se comparent donc à des achats et des salaires eux aussi HT.
+  const tva_rate = Number(clientRow?.tva_rate ?? DEFAULT_TVA_RATE)
+  const toHT = htConverter(tva_rate)
+  const ca_ttc = Number(ca.ca_total) || 0
+  const ca_total = round2(toHT(ca_ttc))
   const marge_brute = ca_total - achats_ht
   const taux_marge = ca_total > 0 ? (marge_brute / ca_total) * 100 : null
   // Marge après salaires = la « marge brute d'exploitation » que vient chercher le
@@ -243,13 +275,14 @@ export async function computeWeekEconomics(
 
   // CA par rayon MÉTIER — lu depuis les familles de vente du rapport, repli sur les
   // montants saisis à la main. Sert de repli de CA aux familles de marge classiques.
+  // Comme ca_total, ces montants arrivent TTC et sont ramenés en HT à la lecture.
   const caByRayon: Record<string, number> = { boucherie: 0, charcuterie: 0, traiteur: 0 }
   const RAYON_KEYS = VENT_RAYONS.map(r => r.key)
   const fams: { nom: string; montant: number }[] = Array.isArray(ca.familles) ? ca.familles : []
-  for (const f of fams) { const rr = classicRayonOfLabel(f?.nom); if (rr && rr in caByRayon) caByRayon[rr] += Number(f?.montant) || 0 }
+  for (const f of fams) { const rr = classicRayonOfLabel(f?.nom); if (rr && rr in caByRayon) caByRayon[rr] += toHT(Number(f?.montant) || 0) }
   const caRayonSum = RAYON_KEYS.reduce((s, r) => s + caByRayon[r], 0)
   if (caRayonSum === 0) {
-    for (const r of RAYON_KEYS) caByRayon[r] = Number(ca.by_rayon?.[r]) || 0
+    for (const r of RAYON_KEYS) caByRayon[r] = toHT(Number(ca.by_rayon?.[r]) || 0)
   }
 
   // CA par FAMILLE de marge : chaque famille de vente est rattachée à la première
@@ -258,7 +291,7 @@ export async function computeWeekEconomics(
   const caByFamille = [0, 0, 0]
   for (const f of fams) {
     const fi = familleFor('', String(f?.nom ?? ''))
-    if (fi >= 0) caByFamille[fi] += Number(f?.montant) || 0
+    if (fi >= 0) caByFamille[fi] += toHT(Number(f?.montant) || 0)
   }
   const rayonClaimedByFamille: number[] = VENT_RAYONS.map(r => familleFor(r.key, r.label))
   for (let i = 0; i < familles.length; i++) {
@@ -348,6 +381,8 @@ export async function computeWeekEconomics(
     charges_fixes: round2(charges_fixes),
     charges_fixes_lines: recur.lines,
     ca_total,
+    ca_ttc: round2(ca_ttc),
+    tva_rate,
     marge_brute: round2(marge_brute),
     taux_marge: taux_marge !== null ? round1(taux_marge) : null,
     marge_apres_salaires: round2(marge_apres_salaires),
