@@ -18,9 +18,9 @@ import {
   costForWindow, weekRecurringCost, provisionForWindow, enumeratePeriods,
   type RecurringCharge, type RecurringActual, type Periodicity,
 } from '@/lib/recurring-charges'
-import { labelsMatch, DEFAULT_MARGIN_FAMILIES, MATIERE_BENCH, DIVERS_POSTE, type Poste } from '@/lib/postes'
+import { labelsMatch, DEFAULT_MARGIN_FAMILIES, DEFAULT_TVA_RATE, MATIERE_BENCH, DIVERS_POSTE, type Poste } from '@/lib/postes'
 
-// ─── Types ──────────────────
+// ─── Types ─────────────────
 
 type Invoice = {
   id: string; supplier_name: string; invoice_number?: string; invoice_date: string
@@ -46,10 +46,11 @@ type FamilleMargin = {
 type Summary = {
   achats_ht: number; achats_by_category: Record<string, number>; masse_salariale: number
   salaires_affectes?: number
+  salaires_repartis?: number
   salaires_non_affectes?: number
   achats_a_verifier?: number
   charges_fixes?: number; charges_fixes_lines?: { id: string; label: string; category: string; cost: number; hasActual: boolean }[]
-  ca_total: number; ca_detail: WeeklyCA | null; marge_brute: number
+  ca_total: number; ca_ttc?: number; tva_rate?: number; ca_detail: WeeklyCA | null; marge_brute: number
   taux_marge: number | null; resultat_net: number; ratio_ms: number | null
   marge_apres_salaires?: number
   taux_apres_salaires?: number | null
@@ -197,7 +198,7 @@ const PROVIDERS_META: ProviderMeta[] = [
   { id: 'ebp',       name: 'EBP',       logo: 'EBP', color: 'bg-orange-500', tokenLabel: 'Token API EBP en ligne', tokenPlaceholder: 'Token depuis EBP → Paramètres → API', needsCompanyId: true, companyIdLabel: 'Identifiant dossier EBP', helpUrl: 'https://developer.ebp.com', description: 'EBP en ligne — import factures fournisseurs automatique' },
 ]
 
-// ─── Helpers ────────────────────────────────────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────────────────────
 
 function getISOWeek(date: Date) {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
@@ -321,6 +322,9 @@ export default function FacturationPage() {
   const [memoTouched, setMemoTouched] = useState(false)
   const [caForm,    setCaForm]    = useState({ ca_total: '', ca_boucherie: '', ca_charcuterie: '', ca_traiteur: '', ca_divers: '' })
   const [settForm,  setSettForm]  = useState({ company_name: '', siret: '' })
+  // Taux de TVA : saisi ici mais porte par `clients` (API /api/postes), pas par
+  // billing-settings — c'est une donnee de CALCUL, pas une mention legale.
+  const [tvaDraft,  setTvaDraft]  = useState('')
 
   const [integrations,     setIntegrations]     = useState<BillingIntegration[]>([])
   const [showConnect,      setShowConnect]      = useState(false)
@@ -684,9 +688,18 @@ export default function FacturationPage() {
 
   async function saveSettings() {
     setSaving(true)
-    const res = await fetch('/api/billing-settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(settForm) }).catch(() => null)
+    const tva = parseFloat(tvaDraft.replace(',', '.'))
+    if (!Number.isFinite(tva) || tva <= 0 || tva > 20) {
+      setSaving(false)
+      toast({ variant: 'error', title: 'Taux de TVA invalide', description: 'Saisissez un taux entre 0 et 20 % (5,5 % pour l\'alimentaire à emporter).' })
+      return
+    }
+    const [res, tvaRes] = await Promise.all([
+      fetch('/api/billing-settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(settForm) }).catch(() => null),
+      fetch('/api/postes', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tva_rate: tva }) }).catch(() => null),
+    ])
     setSaving(false)
-    if (res?.ok) { setShowSettings(false); toast({ variant: 'success', title: 'Paramètres enregistrés' }) }
+    if (res?.ok && tvaRes?.ok) { setShowSettings(false); toast({ variant: 'success', title: 'Paramètres enregistrés' }); load() }
     else toast({ variant: 'error', title: 'Erreur', description: 'Les paramètres n\'ont pas été enregistrés.' })
   }
 
@@ -891,7 +904,7 @@ export default function FacturationPage() {
             className="h-9 text-sm px-3 rounded-md border border-gray-100 text-gray-600 shadow-card hover:text-pilote transition-colors flex items-center gap-1.5">
             <PieChart className="w-3.5 h-3.5" />Répartition
           </button>
-          <button onClick={() => setShowSettings(true)} className="p-2 rounded-md hover:bg-gray-100 text-gray-400 hover:text-gray-700 transition-colors">
+          <button onClick={() => { setTvaDraft(String(summary?.tva_rate ?? DEFAULT_TVA_RATE).replace('.', ',')); setShowSettings(true) }} className="p-2 rounded-md hover:bg-gray-100 text-gray-400 hover:text-gray-700 transition-colors">
             <Settings className="w-4 h-4" />
           </button>
         </div>
@@ -969,14 +982,14 @@ export default function FacturationPage() {
         {summary !== null && (
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             {[
-              { icon: Euro,         label: 'CA semaine',      value: summary.ca_total > 0 ? fmtEuro(summary.ca_total) : '—',
-                sub: summary.ca_total === 0 ? 'Cliquer sur « Saisir le CA »' : `${fmtDate(mon)} – ${fmtDate(sun)}`,
+              { icon: Euro,         label: 'CA HT semaine',   value: summary.ca_total > 0 ? fmtEuro(summary.ca_total) : '—',
+                sub: summary.ca_total === 0 ? 'Cliquer sur « Saisir le CA »' : `${fmtEuro(summary.ca_ttc ?? summary.ca_total)} TTC · ${fmtDate(mon)} – ${fmtDate(sun)}`,
                 chip: 'bg-pilote-50 text-pilote' },
               { icon: ShoppingCart, label: 'Achats HT',       value: fmtEuro(summary.achats_ht + recurringWeekly),
                 sub: `${variableInvoices.length} facture${variableInvoices.length > 1 ? 's' : ''} + charges ≈ ${fmtEuro(recurringWeekly)}/sem${(summary.achats_a_verifier ?? 0) > 0 ? ` · ${fmtEuro(summary.achats_a_verifier!)} à vérifier exclus` : ''}`,
                 chip: 'bg-pilote-50 text-pilote' },
               { icon: Users,        label: 'Masse salariale', value: fmtEuro(summary.masse_salariale),
-                sub: summary.ratio_ms !== null ? `${summary.ratio_ms} % du CA · chargée (CCN 992)` : 'Depuis le planning · chargée (CCN 992)',
+                sub: summary.ratio_ms !== null ? `${summary.ratio_ms.toFixed(1)} % du CA HT · chargée (CCN 992)` : 'Depuis le planning · chargée (CCN 992)',
                 chip: 'bg-pilote-50 text-pilote' },
               { icon: summary.marge_brute >= 0 ? TrendingUp : TrendingDown, label: 'Marge brute',
                 value: summary.ca_total > 0 ? fmtEuro(summary.marge_brute) : '—',
@@ -1002,7 +1015,7 @@ export default function FacturationPage() {
               <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-pilote-200">Résultat net estimé de la semaine</p>
               <p className={`text-4xl font-extrabold tracking-tight mt-1.5 tabular ${summary.resultat_net >= 0 ? 'text-green-300' : 'text-red-300'}`}>{fmtEuro(summary.resultat_net)}</p>
               <div className="flex flex-wrap items-center gap-1.5 mt-2.5 text-[11px] tabular">
-                <span className="bg-white/10 rounded-md px-2 py-0.5 text-pilote-200">CA <strong className="text-white">{fmtEuro(summary.ca_total)}</strong></span>
+                <span className="bg-white/10 rounded-md px-2 py-0.5 text-pilote-200">CA HT <strong className="text-white">{fmtEuro(summary.ca_total)}</strong></span>
                 <span className="text-pilote-200">−</span>
                 <span className="bg-white/10 rounded-md px-2 py-0.5 text-pilote-200">Achats <strong className="text-white">{fmtEuro(summary.achats_ht)}</strong></span>
                 <span className="text-pilote-200">−</span>
@@ -1056,7 +1069,7 @@ export default function FacturationPage() {
                     <p className={`text-xs font-semibold tabular ${(summary.marge_apres_salaires ?? 0) >= 0 ? 'text-gray-600' : 'text-red-500'}`}>{fmtEuro(summary.marge_apres_salaires ?? 0)} après salaires</p>
                     <div className="mt-auto pt-2.5 space-y-0.5 text-[11px] text-gray-500 tabular">
                       <p>Marge matière <strong className={summary.taux_marge !== null ? (summary.taux_marge >= 40 ? 'text-green-600' : summary.taux_marge >= 30 ? 'text-orange-500' : 'text-red-500') : 'text-gray-400'}>{summary.taux_marge !== null ? `${summary.taux_marge.toFixed(1)} %` : '—'}</strong></p>
-                      <p>Salaires <strong className="text-gray-700">{summary.ratio_ms !== null ? `${summary.ratio_ms.toFixed(0)} % du CA` : '—'}</strong></p>
+                      <p>Salaires <strong className="text-gray-700">{summary.ratio_ms !== null ? `${summary.ratio_ms.toFixed(1)} % du CA` : '—'}</strong></p>
                     </div>
                   </div>
 
@@ -1125,26 +1138,39 @@ export default function FacturationPage() {
                       <div className="space-y-1 text-[11px] tabular">
                         <div className="flex justify-between gap-2"><span className="text-gray-400">CA</span><span className="font-semibold text-gray-700">{fmtEuro(summary.divers.ca)}</span></div>
                         <div className="flex justify-between gap-2"><span className="text-gray-400">Achats</span><span className="font-semibold text-gray-700">− {fmtEuro(summary.divers.achats)}</span></div>
+                        <div className="flex justify-between gap-2"><span className="text-gray-400">Salaires</span><span className="font-semibold text-gray-700">− {fmtEuro(summary.divers.salaires ?? 0)}</span></div>
                       </div>
                       <div className="mt-2.5 pt-2.5 border-t border-gray-200">
-                        <p className={`text-xl font-extrabold tracking-tight tabular ${summary.divers.marge >= 0 ? 'text-gray-900' : 'text-red-600'}`}>
-                          {summary.divers.taux !== null && summary.divers.taux !== undefined ? `${summary.divers.taux.toFixed(1)} %` : '—'}
+                        <p className={`text-xl font-extrabold tracking-tight tabular ${(summary.divers.marge_totale ?? summary.divers.marge) >= 0 ? 'text-gray-900' : 'text-red-600'}`}>
+                          {summary.divers.taux_totale !== null && summary.divers.taux_totale !== undefined ? `${summary.divers.taux_totale.toFixed(1)} %` : '—'}
                         </p>
-                        <p className="text-xs text-gray-500 tabular">{fmtEuro(summary.divers.marge)} de marge</p>
+                        <p className="text-xs text-gray-500 tabular">{fmtEuro(summary.divers.marge_totale ?? summary.divers.marge)} de marge</p>
+                        {summary.divers.taux !== null && summary.divers.taux !== undefined && (
+                          <p className="text-[11px] font-semibold tabular mt-1 text-gray-500">matière {summary.divers.taux.toFixed(1)} %</p>
+                        )}
                         <p className="text-[11px] text-gray-400 mt-1 leading-snug">rachat, épicerie, boissons, fruits &amp; légumes, prestations</p>
                       </div>
                     </div>
                   )}
                 </div>
 
-                {/* Salaires sans poste : hors familles (transverses), comptés dans le global.
-                    On guide le gérant vers le pointage des postes pour des taux exacts. */}
-                {(summary.salaires_non_affectes ?? 0) > 0 && (
-                  <p className={`text-[11px] mt-3 ${(summary.salaires_affectes ?? 0) > 0 ? 'text-gray-400' : 'text-amber-600'}`}>
-                    {(summary.salaires_affectes ?? 0) > 0
-                      ? <>{fmtEuro(summary.salaires_affectes!)} de salaires suivent les postes du planning · {fmtEuro(summary.salaires_non_affectes!)} sans poste (vente, administratif, non renseigné) comptés dans le taux global uniquement.</>
-                      : <>Aucune heure pointée sur un poste — les taux par famille n&apos;incluent aucun salaire pour l&apos;instant ({fmtEuro(summary.salaires_non_affectes!)} comptés dans le global).</>}
-                    {' '}Renseignez le poste ({(summary.familles ?? []).map(f => f.label).join(', ') || 'Boucherie, Charcuterie, Traiteur'}) sur les journées du <Link href="/dashboard/planning" className="text-pilote font-medium hover:underline">planning</Link>.
+                {/* Heures sans poste métier : réparties au prorata du CA sur les familles et
+                    Divers. On guide quand même vers le pointage — une heure pointée vaut
+                    mieux qu'une heure répartie à la louche. */}
+                {((summary.salaires_repartis ?? 0) > 0 || (summary.salaires_non_affectes ?? 0) > 0) && (
+                  <p className={`text-[11px] mt-3 ${(summary.salaires_non_affectes ?? 0) > 0 ? 'text-amber-600' : 'text-gray-400'}`}>
+                    {(summary.salaires_repartis ?? 0) > 0 && (
+                      <>
+                        {(summary.salaires_affectes ?? 0) > 0
+                          ? <>{fmtEuro(summary.salaires_affectes!)} de salaires suivent les postes pointés au planning · </>
+                          : <>Aucune heure pointée sur un poste · </>}
+                        {fmtEuro(summary.salaires_repartis!)} sans poste (vente, administratif, non renseigné) <strong>répartis au prorata du CA</strong> sur les familles et Divers — chaque bloc en prend sa part.
+                        {' '}Pointez le poste ({(summary.familles ?? []).map(f => f.label).join(', ') || 'Boucherie, Charcuterie, Traiteur'}) sur les journées du <Link href="/dashboard/planning" className="text-pilote font-medium hover:underline">planning</Link> pour affiner.
+                      </>
+                    )}
+                    {(summary.salaires_non_affectes ?? 0) > 0 && (
+                      <> {fmtEuro(summary.salaires_non_affectes!)} de salaires ne sont rattachés à rien : sans CA sur la semaine, il n&apos;y a pas de clé de répartition.</>
+                    )}
                   </p>
                 )}
 
@@ -1156,7 +1182,7 @@ export default function FacturationPage() {
                 {(summary.achats_divers ?? 0) > 0 && (
                   <p className="text-[11px] text-gray-400 mt-2 flex items-center gap-1.5">
                     <span className="w-1.5 h-1.5 rounded-full bg-gray-300 flex-shrink-0" />
-                    {fmtEuro(summary.achats_divers!)} de « divers » redistribués sur les familles au prorata de leur part de CA.
+                    {fmtEuro(summary.achats_divers!)} d&apos;achats « divers » isolés dans le bloc Divers ci-dessus — ils ne pèsent sur aucune famille métier.
                   </p>
                 )}
                 {(summary.achats_non_ventiles ?? 0) > 0 && (
@@ -1649,7 +1675,7 @@ export default function FacturationPage() {
                   const t = VENT_FIELDS.reduce((s, f) => s + (parseFloat((newSplit as any)[f.key]) || 0), 0)
                   if (!t) return null
                   const ok = Math.abs(t - 100) < 0.5
-                  return <p className={`text-[11px] mt-1.5 ${ok ? 'text-gray-400' : 'text-orange-500'}`}>Total {Math.round(t)} %{ok ? '' : ' — devrait faire 100 %'} · le « divers » sera réparti au prorata du CA</p>
+                  return <p className={`text-[11px] mt-1.5 ${ok ? 'text-gray-400' : 'text-orange-500'}`}>Total {Math.round(t)} %{ok ? '' : ' — devrait faire 100 %'} · le « divers » alimente son propre bloc de marge</p>
                 })()}
               </div>
               <div className="flex gap-3 pt-1">
@@ -1849,6 +1875,14 @@ export default function FacturationPage() {
               <div>
                 <label className="block text-xs font-semibold text-gray-700 mb-1">SIRET</label>
                 <Input value={settForm.siret} onChange={e => setSettForm(p => ({ ...p, siret: e.target.value }))} placeholder="123 456 789 00012" />
+              </div>
+              <div>
+                <label htmlFor="tva-rate" className="block text-xs font-semibold text-gray-700 mb-1">Taux de TVA sur le CA</label>
+                <Input id="tva-rate" inputMode="decimal" value={tvaDraft} onChange={e => setTvaDraft(e.target.value)} placeholder="5,5" />
+                <p className="text-[11px] text-gray-500 mt-1 leading-snug">
+                  Sert à ramener votre CA de caisse en HT avant le calcul des marges — vos achats et vos salaires sont HT.
+                  5,5 % pour la vente à emporter, 10 % si vous servez sur place.
+                </p>
               </div>
               <div className="flex gap-3 pt-1">
                 <Button variant="outline" className="flex-1" onClick={() => setShowSettings(false)}>Annuler</Button>
