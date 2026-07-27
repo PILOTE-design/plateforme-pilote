@@ -1,10 +1,11 @@
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { resolveClientId } from '@/lib/resolve-client-id'
 import {
-  computeWeekPayroll, computeLegalAlerts, getWeekDates,
+  computeLegalAlerts, getWeekDates,
   PAYROLL_EMPLOYEE_COLUMNS, PAYROLL_ENTRY_COLUMNS,
   type PayrollEmployee, type PayrollEntry,
 } from '@/lib/payroll'
+import { computeWeekEconomics, type WeekEconomics } from '@/lib/week-economics'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { FileText, TrendingUp, TrendingDown, Users, Receipt, Euro, AlertTriangle, CalendarDays, Calculator, ArrowRight, Repeat, CheckCircle2, Circle } from 'lucide-react'
 import { formatDate } from '@/lib/utils'
@@ -25,8 +26,13 @@ function getISOWeek(date: Date): { week: number; year: number } {
   }
 }
 
-// getWeekDates, jours fériés, masse salariale et alertes légales viennent de
-// lib/payroll — moteur UNIQUE partagé avec le résumé facturation (ne pas re-dupliquer).
+// getWeekDates, jours fériés et alertes légales viennent de lib/payroll ; achats,
+// masse salariale, charges récurrentes et marges viennent de lib/week-economics —
+// le MÊME moteur que la page Facturation, la page Marges et le rapport PDF.
+// Cette page n'a plus aucun calcul économique à elle : elle en avait un, et il
+// divergeait (factures « à vérifier » comptées, charges récurrentes ignorées,
+// charges fixes soustraites de la marge brute), si bien que l'accueil et la
+// facturation annonçaient deux taux différents pour la même semaine.
 
 function weekPeriodLabel(week: number, year: number): string {
   const d = getWeekDates(week, year)
@@ -60,10 +66,9 @@ export default async function DashboardPage() {
 
   type FamilyRow = { nom: string; montant: number }
   let familiesDetail: FamilyRow[] = []
-  let ca_total = 0
-  let achatsVariables = 0
-  let chargesFixesSem = 0
-  let payrollRef = 0
+  let ca_ttc = 0
+  let caByRayonSaisi: Record<string, number> = {}
+  let eco: WeekEconomics | null = null
   let caTrend: { week: number; year: number; ca: number }[] = []
   let legalAlerts: string[] = []
   let cddAlerts: string[] = []
@@ -76,33 +81,40 @@ export default async function DashboardPage() {
 
   if (clientId) {
     // ── CA de la semaine écoulée (fallback : dernier CA connu) ──
+    const CA_COLS = 'week_number, year, ca_total, families_detail, ca_boucherie, ca_charcuterie, ca_traiteur'
     const { data: caRow } = await serviceSupabase
-      .from('weekly_ca').select('week_number, year, ca_total, families_detail')
+      .from('weekly_ca').select(CA_COLS)
       .eq('client_id', clientId).eq('week_number', refWeek).eq('year', refYear)
       .maybeSingle()
 
     let caData = caRow
     if (!caData) {
       const { data: latestCa } = await serviceSupabase
-        .from('weekly_ca').select('week_number, year, ca_total, families_detail')
+        .from('weekly_ca').select(CA_COLS)
         .eq('client_id', clientId)
         .order('year', { ascending: false }).order('week_number', { ascending: false })
         .limit(1).maybeSingle()
       if (latestCa) { caData = latestCa; refWeek = latestCa.week_number; refYear = latestCa.year; refIsFallback = true }
     }
     if (caData) {
-      ca_total = parseFloat(String(caData.ca_total || 0))
+      ca_ttc = parseFloat(String(caData.ca_total || 0))
       familiesDetail = Array.isArray(caData.families_detail) ? (caData.families_detail as FamilyRow[]) : []
+      caByRayonSaisi = {
+        boucherie:   parseFloat(String((caData as any).ca_boucherie || 0)) || 0,
+        charcuterie: parseFloat(String((caData as any).ca_charcuterie || 0)) || 0,
+        traiteur:    parseFloat(String((caData as any).ca_traiteur || 0)) || 0,
+      }
     }
 
-    // ── Achats de la semaine de référence : variables + charges fixes en prorata hebdo ──
-    const { data: invoices } = await serviceSupabase
-      .from('invoices').select('amount_ht, is_fixed_charge, prorata_ht')
-      .eq('client_id', clientId).eq('week_number', refWeek).eq('year', refYear)
-    for (const inv of invoices || []) {
-      if (inv.is_fixed_charge) chargesFixesSem += parseFloat(String(inv.prorata_ht || 0))
-      else achatsVariables += parseFloat(String(inv.amount_ht || 0))
-    }
+    // ── Économie de la semaine de référence : LE moteur, pas un calcul maison ──
+    // Achats variables (hors factures « à vérifier »), masse salariale chargée depuis
+    // le planning, charges récurrentes proratisées, CA ramené en HT. Exactement les
+    // mêmes chiffres qu'en page Facturation pour la même semaine.
+    eco = await computeWeekEconomics(serviceSupabase, clientId, refWeek, refYear, {
+      ca_total: ca_ttc,
+      familles: familiesDetail.length > 0 ? familiesDetail : null,
+      by_rayon: caByRayonSaisi,
+    })
 
     // ── Fiabilité des marges : factures importées « à vérifier » + fournisseurs non ventilés ──
     // Un fournisseur sans règle de ventilation pèse sur la marge globale mais sur aucune
@@ -141,13 +153,13 @@ export default async function DashboardPage() {
     if (employees.length > 0) {
       const empIds = employees.map(e => e.id)
 
-      const [{ data: refPlanning }, { data: curPlanning }, { data: anyPlan }] = await Promise.all([
-        serviceSupabase.from('planning_entries').select(PAYROLL_ENTRY_COLUMNS).in('employee_id', empIds).eq('week_number', refWeek).eq('year', refYear),
+      // La masse salariale de la semaine de référence vient du moteur (eco) ; ici on ne
+      // lit que la semaine COURANTE, pour les alertes légales du planning en cours.
+      const [{ data: curPlanning }, { data: anyPlan }] = await Promise.all([
         serviceSupabase.from('planning_entries').select(PAYROLL_ENTRY_COLUMNS).in('employee_id', empIds).eq('week_number', currentWeek).eq('year', currentYear),
         serviceSupabase.from('planning_entries').select('id').in('employee_id', empIds).limit(1),
       ])
 
-      payrollRef  = computeWeekPayroll((refPlanning || []) as unknown as PayrollEntry[], employees, refWeek, refYear)
       legalAlerts = computeLegalAlerts((curPlanning || []) as unknown as PayrollEntry[], employees)
       anyPlanning = (anyPlan || []).length > 0
 
@@ -183,12 +195,17 @@ export default async function DashboardPage() {
     reports = reps || []
   }
 
-  // ── Agrégats ──
-  const achatsTotal   = achatsVariables + chargesFixesSem
-  const marge_brute   = ca_total > 0 ? ca_total - achatsTotal : 0
-  const taux_marge    = ca_total > 0 ? (marge_brute / ca_total) * 100 : null
-  const resultat      = ca_total > 0 ? ca_total - achatsTotal - payrollRef : null
-  const ratioMS       = ca_total > 0 && payrollRef > 0 ? (payrollRef / ca_total) * 100 : null
+  // ── Agrégats — tous lus dans le moteur, aucun recalcul ici ──
+  // ca_ttc = chiffre de caisse (ce que le gérant connaît) ; caHT = base des taux.
+  const caHT          = eco?.ca_total ?? 0
+  const achatsHT      = eco?.achats_ht ?? 0
+  const chargesFixesSem = eco?.charges_fixes ?? 0
+  const payrollRef    = eco?.masse_salariale ?? 0
+  const marge_brute   = eco?.marge_brute ?? 0
+  const taux_marge    = caHT > 0 ? (eco?.taux_marge ?? null) : null
+  const resultat      = caHT > 0 ? (eco?.resultat_net ?? null) : null
+  const ratioMS       = payrollRef > 0 ? (eco?.ratio_ms ?? null) : null
+  const tvaRate       = eco?.tva_rate ?? 5.5
 
   const margeColor =
     taux_marge === null ? 'text-gray-400'
@@ -205,7 +222,7 @@ export default async function DashboardPage() {
     ...top4.map((f, i) => ({ label: f.nom, value: f.montant, color: FAMILY_COLORS[i] })),
     ...(autresTotal > 0 ? [{ label: 'Autres', value: autresTotal, color: '#CBD5E1' }] : []),
   ]
-  const segTotal = segments.reduce((s, seg) => s + seg.value, 0) || ca_total
+  const segTotal = segments.reduce((s, seg) => s + seg.value, 0) || ca_ttc
 
   // Tendance
   const maxTrend = caTrend.length > 0 ? Math.max(...caTrend.map(t => t.ca), 1) : 1
@@ -216,7 +233,7 @@ export default async function DashboardPage() {
   const attention: { color: string; text: string; href?: string; cta?: string }[] = [
     ...legalAlerts.map(t => ({ color: 'bg-red-500', text: `Planning S${currentWeek} · ${t}` })),
     ...cddAlerts.map(t => ({ color: 'bg-amber-500', text: t })),
-    ...(ratioMS !== null && ratioMS > 40 ? [{ color: 'bg-amber-500', text: `Masse salariale à ${ratioMS.toFixed(0)} % du CA (cible < 35 %)` }] : []),
+    ...(ratioMS !== null && ratioMS > 40 ? [{ color: 'bg-amber-500', text: `Masse salariale à ${ratioMS.toFixed(1)} % du CA HT (cible < 35 %)` }] : []),
     ...(aVerifierCount > 0 ? [{ color: 'bg-amber-500', text: `${aVerifierCount} facture${aVerifierCount > 1 ? 's' : ''} importée${aVerifierCount > 1 ? 's' : ''} « à vérifier » — exclue${aVerifierCount > 1 ? 's' : ''} des marges tant que non validée${aVerifierCount > 1 ? 's' : ''}`, href: '/dashboard/facturation', cta: 'Valider' }] : []),
     ...(fournisseursNonVentiles > 0 ? [{ color: 'bg-pilote', text: `${fournisseursNonVentiles} fournisseur${fournisseursNonVentiles > 1 ? 's' : ''} sans ventilation — leurs achats pèsent sur la marge globale, sur aucune famille`, href: '/dashboard/facturation', cta: 'Ventiler' }] : []),
   ]
@@ -232,7 +249,7 @@ export default async function DashboardPage() {
   const showOnboarding = clientId !== null && stepsDone < onboardingSteps.length
 
   const weekLabel = `S${refWeek}`
-  const hasAnyData = ca_total > 0 || achatsTotal > 0 || payrollRef > 0 || reports.length > 0
+  const hasAnyData = ca_ttc > 0 || achatsHT > 0 || payrollRef > 0 || reports.length > 0
 
   return (
     <div className="p-6 md:p-8 max-w-6xl mx-auto">
@@ -340,10 +357,12 @@ export default async function DashboardPage() {
                   <div className="w-6 h-6 rounded-lg bg-pilote-50 flex items-center justify-center flex-shrink-0">
                     <Euro className="w-3.5 h-3.5 text-pilote" />
                   </div>
-                  <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">CA · {weekLabel}</p>
+                  <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">CA TTC · {weekLabel}</p>
                 </div>
-                <p className="text-2xl font-extrabold tracking-tight text-gray-900 tabular">{ca_total > 0 ? `${fmt(ca_total)} €` : '—'}</p>
-                {ca_total === 0 && <p className="text-xs text-gray-400 mt-1">Saisir le CA ou générer le rapport</p>}
+                <p className="text-2xl font-extrabold tracking-tight text-gray-900 tabular">{ca_ttc > 0 ? `${fmt(ca_ttc)} €` : '—'}</p>
+                {ca_ttc > 0
+                  ? <p className="text-xs text-gray-400 mt-1 tabular">soit {fmt(caHT)} € HT · TVA {tvaRate.toString().replace('.', ',')} %</p>
+                  : <p className="text-xs text-gray-400 mt-1">Saisir le CA ou générer le rapport</p>}
               </CardContent>
             </Card>
 
@@ -355,9 +374,9 @@ export default async function DashboardPage() {
                   </div>
                   <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Achats HT · {weekLabel}</p>
                 </div>
-                <p className="text-2xl font-extrabold tracking-tight text-gray-900 tabular">{achatsTotal > 0 ? `${fmt(achatsTotal)} €` : '—'}</p>
+                <p className="text-2xl font-extrabold tracking-tight text-gray-900 tabular">{achatsHT > 0 ? `${fmt(achatsHT)} €` : '—'}</p>
                 {chargesFixesSem > 0 && (
-                  <p className="text-xs text-gray-500 mt-1 flex items-center gap-1 tabular"><Repeat className="w-3 h-3 text-gray-400" />dont fixes ≈ {fmt(chargesFixesSem)} €/sem</p>
+                  <p className="text-xs text-gray-500 mt-1 flex items-center gap-1 tabular"><Repeat className="w-3 h-3 text-gray-400" />+ charges récurrentes ≈ {fmt(chargesFixesSem)} €/sem</p>
                 )}
               </CardContent>
             </Card>
@@ -371,7 +390,7 @@ export default async function DashboardPage() {
                   <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Masse salariale · {weekLabel}</p>
                 </div>
                 <p className="text-2xl font-extrabold tracking-tight text-gray-900 tabular">{payrollRef > 0 ? `${fmt(payrollRef)} €` : '—'}</p>
-                <p className="text-xs text-gray-400 mt-1 tabular">{payrollRef > 0 ? (ratioMS !== null ? `${ratioMS.toFixed(0)} % du CA · chargée (CCN 992)` : 'chargée (CCN 992)') : 'Remplir le planning'}</p>
+                <p className="text-xs text-gray-400 mt-1 tabular">{payrollRef > 0 ? (ratioMS !== null ? `${ratioMS.toFixed(1)} % du CA HT · chargée (CCN 992)` : 'chargée (CCN 992)') : 'Remplir le planning'}</p>
               </CardContent>
             </Card>
 
@@ -384,7 +403,7 @@ export default async function DashboardPage() {
                   <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Marge brute · {weekLabel}</p>
                 </div>
                 <p className={`text-2xl font-extrabold tracking-tight tabular ${margeColor}`}>{taux_marge !== null ? `${taux_marge.toFixed(1)} %` : '—'}</p>
-                {taux_marge !== null && <p className="text-xs text-gray-400 mt-1 tabular">{fmt(marge_brute)} € · CA − achats (fixes inclus)</p>}
+                {taux_marge !== null && <p className="text-xs text-gray-400 mt-1 tabular">{fmt(marge_brute)} € · CA HT − achats HT</p>}
               </CardContent>
             </Card>
           </div>
@@ -396,7 +415,7 @@ export default async function DashboardPage() {
                 <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-pilote-200">Résultat estimé · semaine {refWeek}</p>
                 <p className={`text-4xl font-extrabold tracking-tight mt-1.5 tabular ${resultat >= 0 ? 'text-green-300' : 'text-red-300'}`}>{resultat >= 0 ? '+' : ''}{fmt(resultat)} €</p>
                 <p className="text-xs text-pilote-200 mt-2 tabular">
-                  CA {fmt(ca_total)} € − Achats {fmt(achatsTotal)} € (dont fixes {fmt(chargesFixesSem)} €) − Masse salariale chargée {fmt(payrollRef)} €
+                  CA HT {fmt(caHT)} € − Achats HT {fmt(achatsHT)} € − Masse salariale chargée {fmt(payrollRef)} € − Charges récurrentes {fmt(chargesFixesSem)} €
                 </p>
               </div>
               <div className="w-14 h-14 rounded-2xl bg-white/10 flex items-center justify-center flex-shrink-0">
@@ -450,7 +469,7 @@ export default async function DashboardPage() {
                   <CardDescription>Top 4 + Autres · {weekLabel}</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <DonutChart segments={segments} total={segTotal} centerTotal={ca_total} />
+                  <DonutChart segments={segments} total={segTotal} centerTotal={ca_ttc} />
                 </CardContent>
               </Card>
 
