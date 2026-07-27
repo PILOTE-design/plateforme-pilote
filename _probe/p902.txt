@@ -1,0 +1,1 @@
+  // ── Garde-fous deterministes anti-aberrations (ex. epicerie a 6 chiffres sur une petite semaine) ──
