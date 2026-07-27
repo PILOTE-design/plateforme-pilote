@@ -19,7 +19,7 @@ if (typeof globalThis.DOMMatrix === 'undefined') {
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { resolveClientId } from '@/lib/resolve-client-id'
-import { normalizeSupplierName, supplierSociete } from '@/lib/supplier-memory'
+import { normalizeSupplierName, supplierSociete, societeKey } from '@/lib/supplier-memory'
 import { normText } from '@/lib/postes'
 import Anthropic from '@anthropic-ai/sdk'
 
@@ -52,13 +52,19 @@ function parseDate(s: string): string | null {
  *  aux JSON mal fermés). L'IA n'effectue AUCUN calcul : les montants sont relus
  *  tels quels et vérifiés en code contre le total connu de la facture. */
 async function extractLines(pdfText: string, totalHT: number): Promise<{
-  lines: ExtractedLine[]; delivery_date: string | null; due_date: string | null
+  lines: ExtractedLine[]; delivery_date: string | null; due_date: string | null; nature: 'matiere' | 'hors_matiere'
 }> {
   const r = await anthropic.messages.create({
     model: 'claude-haiku-4-5-20251001', max_tokens: 3000,
     messages: [{ role: 'user', content: `Voici le texte d'une facture fournisseur de boucherie. Total HT connu : ${totalHT.toFixed(2)} EUR.
-Extrais CHAQUE ligne d'article facturé. Retourne UNIQUEMENT des lignes aux formats suivants, sans autre texte :
+COMMENCE par qualifier la facture :
+NATURE|matiere      si elle facture des ingrédients alimentaires ou des consommables de production (viande, charcuterie, épicerie, boissons, emballages, barquettes…)
+NATURE|hors_matiere si elle facture autre chose : matériel, équipement, entretien, services, logiciels, abonnements, avantages salariés, énergie, transport seul, honoraires.
+Si NATURE est hors_matiere, n'écris AUCUNE ligne L| — la facture ne nourrit pas la mercuriale.
 
+Sinon, extrais CHAQUE ligne d'article facturé. Retourne UNIQUEMENT des lignes aux formats suivants, sans autre texte :
+
+NATURE|matiere
 LIVRAISON|2026-07-21
 ECHEANCE|2026-08-20
 L|DESIGNATION|CODE|QUANTITE|UNITE|PRIX_UNITAIRE_HT|MONTANT_HT|TAUX_TVA
@@ -84,8 +90,10 @@ ${pdfText.slice(0, 15000)}` }],
   const lines: ExtractedLine[] = []
   let delivery_date: string | null = null
   let due_date: string | null = null
+  let nature: 'matiere' | 'hors_matiere' = 'matiere'
   for (const l of raw.split('\n')) {
     const t = l.trim()
+    if (t.startsWith('NATURE|')) { if (t.slice(7).trim() === 'hors_matiere') nature = 'hors_matiere'; continue }
     if (t.startsWith('LIVRAISON|')) { delivery_date = parseDate(t.slice(10)); continue }
     if (t.startsWith('ECHEANCE|')) { due_date = parseDate(t.slice(9)); continue }
     if (!t.startsWith('L|')) continue
@@ -104,7 +112,7 @@ ${pdfText.slice(0, 15000)}` }],
       tva_rate: parseNum(p[6] ?? ''),
     })
   }
-  return { lines: lines.slice(0, 120), delivery_date, due_date }
+  return { lines: lines.slice(0, 120), delivery_date, due_date, nature }
 }
 
 export async function POST(request: NextRequest) {
@@ -120,9 +128,39 @@ export async function POST(request: NextRequest) {
   if (!invoice_id) return NextResponse.json({ error: 'invoice_id requis' }, { status: 400 })
 
   const { data: invoice } = await service.from('invoices')
-    .select('id, supplier_name, invoice_date, amount_ht, tva_rate, file_path, delivery_date, due_date')
+    .select('id, supplier_name, invoice_date, amount_ht, tva_rate, file_path, delivery_date, due_date, is_fixed_charge')
     .eq('id', invoice_id).eq('client_id', clientId).maybeSingle()
   if (!invoice) return NextResponse.json({ error: 'Facture introuvable' }, { status: 404 })
+
+  // ── Reconnaissance en trois étages : seules les factures de MATIÈRE (ingrédients,
+  // consommables de production) nourrissent la mercuriale. ──
+  // Étage 1 — déterministe : une charge fixe (loyer, logiciel, leasing, assurance…)
+  // n'est jamais de la matière. Zéro appel IA.
+  if (invoice.is_fixed_charge) {
+    await service.from('invoices').update({ lines_status: 'hors_matiere' }).eq('id', invoice.id)
+    return NextResponse.json({ success: true, status: 'hors_matiere', reason: 'charge fixe' })
+  }
+
+  // Étage 2 — mémoire fournisseur : si ce fournisseur a déjà été reconnu hors
+  // matière et n'a JAMAIS produit de lignes, inutile de relire chaque nouvelle
+  // facture (Wiismile revient tous les mois). Un seul appel IA par fournisseur.
+  const supKey = societeKey(invoice.supplier_name || '')
+  if (supKey) {
+    const { data: histo } = await service.from('invoices')
+      .select('supplier_name, lines_status')
+      .eq('client_id', clientId)
+      .in('lines_status', ['done', 'partial', 'hors_matiere'])
+    let dejaHors = false, dejaMatiere = false
+    for (const h of histo || []) {
+      if (societeKey(h.supplier_name || '') !== supKey) continue
+      if (h.lines_status === 'hors_matiere') dejaHors = true
+      else dejaMatiere = true
+    }
+    if (dejaHors && !dejaMatiere) {
+      await service.from('invoices').update({ lines_status: 'hors_matiere' }).eq('id', invoice.id)
+      return NextResponse.json({ success: true, status: 'hors_matiere', reason: 'fournisseur déjà reconnu hors matière' })
+    }
+  }
 
   if (!invoice.file_path) {
     await service.from('invoices').update({ lines_status: 'no_file' }).eq('id', invoice.id)
@@ -140,7 +178,19 @@ export async function POST(request: NextRequest) {
 
     // 2. Extraction des lignes
     const totalHT = parseFloat(String(invoice.amount_ht || 0)) || 0
-    const { lines, delivery_date, due_date } = await extractLines(pdfText, totalHT)
+    const { lines, delivery_date, due_date, nature } = await extractLines(pdfText, totalHT)
+
+    // Étage 3 — la nature lue sur le PDF lui-même. C'est lui qui rattrape les
+    // catégories fausses du connecteur (des factures de viande arrivent en
+    // « frais_divers ») : le document tranche, pas l'étiquette.
+    if (nature === 'hors_matiere') {
+      await service.from('invoice_lines').delete().eq('invoice_id', invoice.id).eq('client_id', clientId)
+      const patch: Record<string, unknown> = { lines_status: 'hors_matiere' }
+      if (due_date && !invoice.due_date) patch.due_date = due_date
+      await service.from('invoices').update(patch).eq('id', invoice.id)
+      return NextResponse.json({ success: true, status: 'hors_matiere', reason: 'facture sans matière première (matériel, service, abonnement…)' })
+    }
+
     if (lines.length === 0) {
       await service.from('invoices').update({ lines_status: 'error' }).eq('id', invoice.id)
       return NextResponse.json({ error: 'Aucune ligne reconnue sur ce PDF.' }, { status: 422 })

@@ -66,7 +66,7 @@ export default function MercurialePage() {
     if (processing || pending.length === 0) return
     setProcessing(true)
     stopRef.current = false
-    let done = 0, errors = 0
+    let done = 0, ecartees = 0, errors = 0
     const total = pending.length
     setProgress({ done: 0, total, errors: 0 })
     for (const inv of pending) {
@@ -75,14 +75,19 @@ export default function MercurialePage() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ invoice_id: inv.id }),
       }).catch(() => null)
-      if (res?.ok) done++
+      const data = res ? await res.json().catch(() => null) : null
+      if (res?.ok && data?.status === 'hors_matiere') ecartees++
+      else if (res?.ok) done++
       else errors++
-      setProgress({ done: done + errors, total, errors })
+      setProgress({ done: done + ecartees + errors, total, errors })
     }
     setProcessing(false)
+    const detail = [`${done} lue${done > 1 ? 's' : ''}`]
+    if (ecartees > 0) detail.push(`${ecartees} hors matière (écartée${ecartees > 1 ? 's' : ''})`)
+    if (errors > 0) detail.push(`${errors} en échec`)
     toast(errors === 0
-      ? { variant: 'success', title: `${done} facture${done > 1 ? 's' : ''} lue${done > 1 ? 's' : ''}`, description: 'La mercuriale est à jour.' }
-      : { variant: 'error', title: `${done} lue${done > 1 ? 's' : ''}, ${errors} en échec`, description: 'Les factures en échec peuvent être relancées.' })
+      ? { variant: 'success', title: detail.join(' · '), description: 'Seules les factures de matière première nourrissent la mercuriale.' }
+      : { variant: 'error', title: detail.join(' · '), description: 'Les factures en échec peuvent être relancées.' })
     load()
   }
 
@@ -122,8 +127,9 @@ export default function MercurialePage() {
         <div className="mb-6 bg-pilote-50 border border-pilote-200 rounded-xl px-4 py-3 flex items-center gap-3 flex-wrap">
           <FileSearch className="w-4 h-4 text-pilote flex-shrink-0" />
           <p className="text-sm text-pilote-800 flex-1 min-w-[200px]">
-            <strong>{pending.length} facture{pending.length > 1 ? 's' : ''}</strong> avec PDF en attente de lecture —
-            chaque lecture ajoute ses lignes d&apos;articles à la mercuriale.
+            <strong>{pending.length} facture{pending.length > 1 ? 's' : ''}</strong> avec PDF en attente de lecture.
+            Seule la matière première entre dans la mercuriale : les charges fixes sont déjà écartées, et une facture de
+            matériel ou de service sera reconnue à la lecture et mise de côté.
           </p>
           {processing ? (
             <div className="flex items-center gap-3">
