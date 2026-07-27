@@ -46,6 +46,7 @@ type FamilleMargin = {
 type Summary = {
   achats_ht: number; achats_by_category: Record<string, number>; masse_salariale: number
   salaires_affectes?: number
+  salaires_repartis?: number
   salaires_non_affectes?: number
   achats_a_verifier?: number
   charges_fixes?: number; charges_fixes_lines?: { id: string; label: string; category: string; cost: number; hasActual: boolean }[]
@@ -1125,12 +1126,16 @@ export default function FacturationPage() {
                       <div className="space-y-1 text-[11px] tabular">
                         <div className="flex justify-between gap-2"><span className="text-gray-400">CA</span><span className="font-semibold text-gray-700">{fmtEuro(summary.divers.ca)}</span></div>
                         <div className="flex justify-between gap-2"><span className="text-gray-400">Achats</span><span className="font-semibold text-gray-700">− {fmtEuro(summary.divers.achats)}</span></div>
+                        <div className="flex justify-between gap-2"><span className="text-gray-400">Salaires</span><span className="font-semibold text-gray-700">− {fmtEuro(summary.divers.salaires ?? 0)}</span></div>
                       </div>
                       <div className="mt-2.5 pt-2.5 border-t border-gray-200">
-                        <p className={`text-xl font-extrabold tracking-tight tabular ${summary.divers.marge >= 0 ? 'text-gray-900' : 'text-red-600'}`}>
-                          {summary.divers.taux !== null && summary.divers.taux !== undefined ? `${summary.divers.taux.toFixed(1)} %` : '—'}
+                        <p className={`text-xl font-extrabold tracking-tight tabular ${(summary.divers.marge_totale ?? summary.divers.marge) >= 0 ? 'text-gray-900' : 'text-red-600'}`}>
+                          {summary.divers.taux_totale !== null && summary.divers.taux_totale !== undefined ? `${summary.divers.taux_totale.toFixed(1)} %` : '—'}
                         </p>
-                        <p className="text-xs text-gray-500 tabular">{fmtEuro(summary.divers.marge)} de marge</p>
+                        <p className="text-xs text-gray-500 tabular">{fmtEuro(summary.divers.marge_totale ?? summary.divers.marge)} de marge</p>
+                        {summary.divers.taux !== null && summary.divers.taux !== undefined && (
+                          <p className="text-[11px] font-semibold tabular mt-1 text-gray-500">matière {summary.divers.taux.toFixed(1)} %</p>
+                        )}
                         <p className="text-[11px] text-gray-400 mt-1 leading-snug">rachat, épicerie, boissons, fruits &amp; légumes, prestations</p>
                       </div>
                     </div>
@@ -1139,12 +1144,20 @@ export default function FacturationPage() {
 
                 {/* Salaires sans poste : hors familles (transverses), comptés dans le global.
                     On guide le gérant vers le pointage des postes pour des taux exacts. */}
-                {(summary.salaires_non_affectes ?? 0) > 0 && (
-                  <p className={`text-[11px] mt-3 ${(summary.salaires_affectes ?? 0) > 0 ? 'text-gray-400' : 'text-amber-600'}`}>
-                    {(summary.salaires_affectes ?? 0) > 0
-                      ? <>{fmtEuro(summary.salaires_affectes!)} de salaires suivent les postes du planning · {fmtEuro(summary.salaires_non_affectes!)} sans poste (vente, administratif, non renseigné) comptés dans le taux global uniquement.</>
-                      : <>Aucune heure pointée sur un poste — les taux par famille n&apos;incluent aucun salaire pour l&apos;instant ({fmtEuro(summary.salaires_non_affectes!)} comptés dans le global).</>}
-                    {' '}Renseignez le poste ({(summary.familles ?? []).map(f => f.label).join(', ') || 'Boucherie, Charcuterie, Traiteur'}) sur les journées du <Link href="/dashboard/planning" className="text-pilote font-medium hover:underline">planning</Link>.
+                {((summary.salaires_repartis ?? 0) > 0 || (summary.salaires_non_affectes ?? 0) > 0) && (
+                  <p className={`text-[11px] mt-3 ${(summary.salaires_non_affectes ?? 0) > 0 ? 'text-amber-600' : 'text-gray-400'}`}>
+                    {(summary.salaires_repartis ?? 0) > 0 && (
+                      <>
+                        {(summary.salaires_affectes ?? 0) > 0
+                          ? <>{fmtEuro(summary.salaires_affectes!)} de salaires suivent les postes pointés au planning · </>
+                          : <>Aucune heure pointée sur un poste · </>}
+                        {fmtEuro(summary.salaires_repartis!)} sans poste (vente, administratif, non renseigné) <strong>répartis au prorata du CA</strong> sur les familles et Divers — chaque bloc en prend sa part.
+                        {' '}Pointez le poste ({(summary.familles ?? []).map(f => f.label).join(', ') || 'Boucherie, Charcuterie, Traiteur'}) sur les journées du <Link href="/dashboard/planning" className="text-pilote font-medium hover:underline">planning</Link> pour affiner.
+                      </>
+                    )}
+                    {(summary.salaires_non_affectes ?? 0) > 0 && (
+                      <> {fmtEuro(summary.salaires_non_affectes!)} de salaires ne sont rattachés à rien : sans CA sur la semaine, il n&apos;y a pas de clé de répartition.</>
+                    )}
                   </p>
                 )}
 
