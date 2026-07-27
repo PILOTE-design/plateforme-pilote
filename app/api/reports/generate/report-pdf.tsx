@@ -37,7 +37,7 @@ export const PiloteReport = ({ r }: { r: ComputedReport }) => {
             <View style={S.coverTagDot} />
             <Text style={S.coverTagText}>PILOTE</Text>
           </View>
-          <Text style={S.coverTitle}>Rapport{'\n'}Hebdomadaire</Text>
+          <Text style={S.coverTitle}>Rapport{'\\n'}Hebdomadaire</Text>
           <Text style={S.coverSub}>Analyse comparative des ventes et pilotage de la performance</Text>
           <View style={S.coverDivider} />
           <Text style={S.coverWeek}>Semaine {data.week_number} - {data.year}</Text>
@@ -122,14 +122,27 @@ export const PiloteReport = ({ r }: { r: ComputedReport }) => {
               </View>
             )
           })}
-          <View style={S.tTotal}>
-            <Text style={[S.tTotalCellL, { flex: 3 }]}>TOTAL GENERAL</Text>
-            <Text style={[S.tTotalCell, { flex: 2 }]}>{eur(vn.total)}</Text>
-            <Text style={[S.tTotalCell, { flex: 2 }]}>{eur(vn1.total)}</Text>
-            <Text style={[S.tTotalCell, { flex: 2 }]}>{signEur(vn.total - vn1.total)}</Text>
-            <Text style={[S.tTotalCell, { flex: 1.2 }]}>100%</Text>
-            <Text style={[S.tTotalCell, { flex: 1, textAlign: 'center' }]}>{vn.total >= vn1.total ? '▲' : '▼'}</Text>
-          </View>
+          {/* La ligne de total additionne les familles AFFICHÉES juste au-dessus — c'est
+              ce que le lecteur peut vérifier lui-même. Elle ne reprend plus le « total »
+              extrait du fichier de ventes : sur un rapport réel, ce total valait 11 584 €
+              là où le KPI « CA SEMAINE N-1 » affichait 15 843 €, et le tableau annonçait
+              donc une variation de +4 619 € sous un KPI qui disait +361 €. Le libellé dit
+              maintenant ce que la ligne est vraiment : le total des familles, distinct du
+              CA de caisse du relevé financier. */}
+          {(() => {
+            const totN  = famRows.reduce((s, f) => s + f.caN, 0)
+            const totN1 = famRows.reduce((s, f) => s + (f.caN1 ?? 0), 0)
+            return (
+              <View style={S.tTotal}>
+                <Text style={[S.tTotalCellL, { flex: 3 }]}>TOTAL FAMILLES</Text>
+                <Text style={[S.tTotalCell, { flex: 2 }]}>{eur(totN)}</Text>
+                <Text style={[S.tTotalCell, { flex: 2 }]}>{totN1 > 0 ? eur(totN1) : '-'}</Text>
+                <Text style={[S.tTotalCell, { flex: 2 }]}>{totN1 > 0 ? signEur(totN - totN1) : '-'}</Text>
+                <Text style={[S.tTotalCell, { flex: 1.2 }]}>100%</Text>
+                <Text style={[S.tTotalCell, { flex: 1, textAlign: 'center' }]}>{totN >= totN1 ? '▲' : '▼'}</Text>
+              </View>
+            )
+          })()}
         </View>
         <Footer week={data.week_number} year={data.year} />
       </Page>
@@ -251,8 +264,8 @@ export const PiloteReport = ({ r }: { r: ComputedReport }) => {
             </View>
             <View style={S.insightBlock}>
               {[
-                'Saisissez ou synchronisez vos factures d\'achat de la semaine dans Facturation.',
-                'Renseignez le planning de vos employés, en précisant le poste de chaque journée : c\'est ce qui permet d\'affecter le bon salaire au bon rayon.',
+                'Saisissez ou synchronisez vos factures d\\'achat de la semaine dans Facturation.',
+                'Renseignez le planning de vos employés, en précisant le poste de chaque journée : c\\'est ce qui permet d\\'affecter le bon salaire au bon rayon.',
                 'Déclarez vos charges fixes (loyer, énergie, assurance, crédit) une seule fois : elles seront ensuite étalées automatiquement sur chaque semaine.',
               ].map((t, i) => (
                 <View key={i} style={S.insightRow}>
