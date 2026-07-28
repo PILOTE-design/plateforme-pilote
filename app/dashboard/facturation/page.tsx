@@ -871,7 +871,7 @@ export default function FacturationPage() {
       <tr key={inv.id} className="border-t border-gray-50 hover:bg-gray-50 group transition-colors">
         <td className="px-4 py-2.5">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-md bg-pilote-50 text-pilote flex items-center justify-center text-[11px] font-extrabold flex-shrink-0">{initials(inv.supplier_name)}</div>
+            <div className="w-8 h-8 rounded-lg bg-pilote-50 text-pilote flex items-center justify-center text-[11px] font-extrabold flex-shrink-0">{initials(inv.supplier_name)}</div>
             <div>
               <div className="font-semibold text-sm text-gray-900">{inv.supplier_name}</div>
               {inv.invoice_number && <div className="text-xs text-gray-400">{inv.invoice_number}</div>}
@@ -953,21 +953,21 @@ export default function FacturationPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Button onClick={() => setShowCA(true)} variant="outline" className="h-9 text-sm px-3.5 rounded-md border-pilote text-pilote hover:bg-pilote-50 transition-colors">
+          <Button onClick={() => setShowCA(true)} variant="outline" className="h-9 text-sm px-3.5 rounded-xl border-pilote text-pilote hover:bg-pilote-50 transition-colors">
             <Euro className="w-3.5 h-3.5 mr-1.5" />Saisir le CA
           </Button>
-          <Button onClick={openAdd} className="bg-pilote hover:bg-pilote-hover text-white h-9 text-sm px-3.5 rounded-md shadow-card active:scale-95 transition-all">
+          <Button onClick={openAdd} className="bg-pilote hover:bg-pilote-hover text-white h-9 text-sm px-3.5 rounded-xl shadow-card active:scale-95 transition-all">
             <Plus className="w-3.5 h-3.5 mr-1.5" />Ajouter une facture
           </Button>
           <button onClick={openSplits} title="Répartir les achats par rayon, fournisseur par fournisseur"
-            className="h-9 text-sm px-3 rounded-md border border-gray-100 text-gray-600 shadow-card hover:text-pilote transition-colors flex items-center gap-1.5">
+            className="h-9 text-sm px-3 rounded-xl border border-gray-100 text-gray-600 shadow-card hover:text-pilote transition-colors flex items-center gap-1.5">
             <PieChart className="w-3.5 h-3.5" />Répartition
           </button>
           <button onClick={openFamilles} title="Choisir les 3 familles de marge"
-            className="h-9 text-sm px-3 rounded-md border border-gray-100 text-gray-600 shadow-card hover:text-pilote transition-colors">
+            className="h-9 text-sm px-3 rounded-xl border border-gray-100 text-gray-600 shadow-card hover:text-pilote transition-colors">
             Familles
           </button>
-          <button onClick={() => { setTvaDraft(String(summary?.tva_rate ?? DEFAULT_TVA_RATE).replace('.', ',')); setShowSettings(true) }} className="p-2 rounded-md hover:bg-gray-100 text-gray-400 hover:text-gray-700 transition-colors">
+          <button onClick={() => { setTvaDraft(String(summary?.tva_rate ?? DEFAULT_TVA_RATE).replace('.', ',')); setShowSettings(true) }} className="p-2 rounded-xl hover:bg-gray-100 text-gray-400 hover:text-gray-700 transition-colors">
             <Settings className="w-4 h-4" />
           </button>
         </div>
@@ -975,16 +975,16 @@ export default function FacturationPage() {
 
       {/* Week nav */}
       <div className="bg-white border-b border-gray-100 px-6 py-2.5 flex items-center gap-2">
-        <div className="flex items-center gap-1 bg-gray-50 border border-gray-100 rounded-md px-1 py-0.5">
-          <button onClick={prevWeek} className="p-1.5 rounded-md hover:bg-white hover:shadow-sm transition-all"><ChevronLeft className="w-4 h-4 text-gray-500" /></button>
+        <div className="flex items-center gap-1 bg-gray-50 border border-gray-100 rounded-lg px-1 py-0.5">
+          <button onClick={prevWeek} className="p-1.5 rounded-xl hover:bg-white hover:shadow-sm transition-all"><ChevronLeft className="w-4 h-4 text-gray-500" /></button>
           <div className="flex items-center gap-2 px-2">
             <span className="font-bold text-gray-900 text-sm">Semaine {week}</span>
             <span className="text-gray-300 text-sm">·</span>
             <span className="text-xs text-gray-500 tabular">{fmtDate(mon)} – {fmtDate(sun)}</span>
-            {isCurrentWeek && <span className="text-[10px] bg-pilote text-white px-1.5 py-0.5 rounded-md font-semibold">En cours</span>}
-            {isLastWeek && !isCurrentWeek && <span className="text-[10px] bg-amber-500 text-white px-1.5 py-0.5 rounded-md font-semibold">Semaine écoulée</span>}
+            {isCurrentWeek && <span className="text-[10px] bg-pilote text-white px-1.5 py-0.5 rounded-lg font-semibold">En cours</span>}
+            {isLastWeek && !isCurrentWeek && <span className="text-[10px] bg-amber-500 text-white px-1.5 py-0.5 rounded-lg font-semibold">Semaine écoulée</span>}
           </div>
-          <button onClick={nextWeek} className="p-1.5 rounded-md hover:bg-white hover:shadow-sm transition-all"><ChevronRight className="w-4 h-4 text-gray-500" /></button>
+          <button onClick={nextWeek} className="p-1.5 rounded-xl hover:bg-white hover:shadow-sm transition-all"><ChevronRight className="w-4 h-4 text-gray-500" /></button>
         </div>
         {!isLastWeek && <button onClick={() => { setWeek(lastWeek.week); setYear(lastWeek.year) }} className="text-xs text-pilote font-medium hover:underline">← Semaine écoulée</button>}
         {!isCurrentWeek && <button onClick={() => { setWeek(cw); setYear(cy) }} className="text-xs text-gray-400 hover:text-gray-600 hover:underline transition-colors">Semaine en cours →</button>}
@@ -996,7 +996,7 @@ export default function FacturationPage() {
             if (!meta) return null
             const isSyncing = syncing === integ.provider
             return (
-              <div key={integ.provider} className="flex items-center gap-1.5 bg-green-50 border border-green-200 rounded-md pl-2 pr-1 py-1">
+              <div key={integ.provider} className="flex items-center gap-1.5 bg-green-50 border border-green-200 rounded-lg pl-2 pr-1 py-1">
                 <div className={`w-5 h-5 rounded ${meta.color} flex items-center justify-center text-white text-[8px] font-extrabold`}>{meta.logo}</div>
                 <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
                 {integ.last_sync_status === 'error' && <span className="text-[9px] text-red-500 font-semibold">erreur</span>}
@@ -1012,7 +1012,7 @@ export default function FacturationPage() {
             )
           })}
           <button onClick={() => setShowProviders(v => !v)}
-            className="flex items-center gap-1 text-xs font-semibold text-pilote border border-dashed border-gray-300 rounded-md px-2.5 py-1.5 hover:border-pilote transition-colors">
+            className="flex items-center gap-1 text-xs font-semibold text-pilote border border-dashed border-gray-300 rounded-xl px-2.5 py-1.5 hover:border-pilote transition-colors">
             <Link2 className="w-3 h-3" />{integrations.length === 0 ? 'Connecter un logiciel' : 'Ajouter'}
           </button>
         </div>
@@ -1023,14 +1023,14 @@ export default function FacturationPage() {
         <div className="bg-white border-b border-gray-100 px-6 py-4">
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             {PROVIDERS_META.filter(p => !integrations.find(i => i.provider === p.id)).map(prov => (
-              <div key={prov.id} className="rounded-md border-2 border-dashed border-gray-200 hover:border-gray-300 bg-gray-50/30 p-4 transition-all">
+              <div key={prov.id} className="rounded-lg border-2 border-dashed border-gray-200 hover:border-gray-300 bg-gray-50/30 p-4 transition-all">
                 <div className="flex items-center gap-2 mb-2">
-                  <div className={`w-8 h-8 rounded-md ${prov.color} flex items-center justify-center text-white text-[10px] font-extrabold flex-shrink-0`}>{prov.logo}</div>
+                  <div className={`w-8 h-8 rounded-lg ${prov.color} flex items-center justify-center text-white text-[10px] font-extrabold flex-shrink-0`}>{prov.logo}</div>
                   <span className="font-bold text-sm text-gray-900">{prov.name}</span>
                 </div>
                 <p className="text-[10px] text-gray-400 mb-3 leading-relaxed">{prov.description}</p>
                 <button onClick={() => { setConnectProvider(prov); setConnectToken(''); setConnectCompanyId(''); setConnectError(''); setShowConnect(true) }}
-                  className="w-full flex items-center justify-center gap-1.5 text-xs font-semibold bg-pilote text-white rounded-md py-1.5 hover:bg-pilote-hover transition-colors">
+                  className="w-full flex items-center justify-center gap-1.5 text-xs font-semibold bg-pilote text-white rounded-xl py-1.5 hover:bg-pilote-hover transition-colors">
                   <Link2 className="w-3 h-3" />Connecter
                 </button>
               </div>
@@ -1046,16 +1046,16 @@ export default function FacturationPage() {
           <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 flex items-center gap-2.5">
             <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0" />
             <p className="text-sm text-amber-800"><strong>{pendingCount} facture{pendingCount > 1 ? 's' : ''} à vérifier</strong> — importée{pendingCount > 1 ? 's' : ''} automatiquement, exclue{pendingCount > 1 ? 's' : ''} du calcul des marges tant que non validée{pendingCount > 1 ? 's' : ''}.</p>
-            <button onClick={validateAllPending} className="ml-auto text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-md px-3 py-1.5 transition-colors flex-shrink-0">Tout valider</button>
+            <button onClick={validateAllPending} className="ml-auto text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-xl px-3 py-1.5 transition-colors flex-shrink-0">Tout valider</button>
           </div>
         )}
 
         {/* ── Achats de la semaine — triables par catégorie (sous-totaux) ou par date ── */}
-        <div className="bg-white rounded-lg border border-gray-100 shadow-card overflow-hidden">
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-card overflow-hidden">
           <div className="px-5 py-3.5 border-b border-gray-100 flex flex-wrap items-center justify-between gap-2">
             <h2 className="font-bold text-gray-900">Achats de la semaine {week}</h2>
             <div className="flex items-center gap-3">
-              <div className="flex items-center gap-0.5 bg-gray-50 border border-gray-100 rounded-md p-0.5">
+              <div className="flex items-center gap-0.5 bg-gray-50 border border-gray-100 rounded-lg p-0.5">
                 {([['categorie', 'Par catégorie'], ['date', 'Par date']] as const).map(([key, label]) => (
                   <button key={key} onClick={() => setInvoiceView(key)}
                     className={`px-2.5 py-1 rounded text-[11px] font-semibold transition-all ${invoiceView === key ? 'bg-white text-pilote shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>
@@ -1068,9 +1068,9 @@ export default function FacturationPage() {
           </div>
           {loading ? (
             <div className="p-6 animate-pulse space-y-3">
-              <div className="h-10 bg-gray-100 rounded-md" />
-              <div className="h-10 bg-gray-100 rounded-md" />
-              <div className="h-10 bg-gray-100 rounded-md" />
+              <div className="h-10 bg-gray-100 rounded-lg" />
+              <div className="h-10 bg-gray-100 rounded-lg" />
+              <div className="h-10 bg-gray-100 rounded-lg" />
             </div>
           ) : variableInvoices.length === 0 ? (
             <div className="py-14 flex flex-col items-center justify-center text-center bg-gradient-to-b from-pilote-50/30 to-white">
@@ -1079,7 +1079,7 @@ export default function FacturationPage() {
               </div>
               <p className="text-sm font-bold text-gray-900">Aucun achat sur la semaine {week}</p>
               <p className="text-xs text-gray-400 mt-1 max-w-xs">Lancez un sync pour importer les factures, ou ajoutez-les à la main.</p>
-              <button onClick={openAdd} className="mt-4 inline-flex items-center gap-1.5 text-sm font-semibold text-white bg-pilote hover:bg-pilote-hover rounded-md px-4 py-2 shadow-card active:scale-95 transition-all">
+              <button onClick={openAdd} className="mt-4 inline-flex items-center gap-1.5 text-sm font-semibold text-white bg-pilote hover:bg-pilote-hover rounded-xl px-4 py-2 shadow-card active:scale-95 transition-all">
                 <Plus className="w-3.5 h-3.5" />Ajouter une facture
               </button>
             </div>
@@ -1139,7 +1139,7 @@ export default function FacturationPage() {
         {/* ── Factures déplacées en charges fixes cette semaine : hors marges
             matière, classées dans une famille de charge PERSONNALISABLE ── */}
         {invoices.filter(i => i.is_fixed_charge).length > 0 && (
-          <div className="bg-white rounded-lg border border-gray-100 shadow-card overflow-hidden">
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-card overflow-hidden">
             <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between gap-2">
               <div>
                 <h2 className="font-bold text-gray-900 text-sm">En charges fixes cette semaine</h2>
@@ -1155,7 +1155,7 @@ export default function FacturationPage() {
                   </div>
                   <span className="text-sm font-semibold text-gray-700 tabular">{fmtEuro(inv.amount_ht)}</span>
                   <select value={(inv as any).charge_family_id ?? ''} onChange={e => setChargeFam(inv, e.target.value)}
-                    className="border border-gray-200 rounded-md px-2 py-1.5 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200">
+                    className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200">
                     <option value="">Famille de charge…</option>
                     {chargeFamilies.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
                   </select>
@@ -1168,10 +1168,10 @@ export default function FacturationPage() {
         )}
 
         {/* ── Charges fixes & récurrentes (provision au jour près) ── */}
-        <div className="bg-white rounded-lg border border-pilote-100 shadow-card overflow-hidden">
+        <div className="bg-white rounded-2xl border border-pilote-100 shadow-card overflow-hidden">
           <div className="px-5 py-3.5 border-b border-pilote-100 bg-pilote-50/60 flex items-center justify-between gap-3">
             <div className="flex items-center gap-2.5 min-w-0">
-              <div className="w-8 h-8 rounded-md bg-white ring-1 ring-pilote-200/60 flex items-center justify-center flex-shrink-0"><Repeat className="w-4 h-4 text-pilote" /></div>
+              <div className="w-8 h-8 rounded-lg bg-white ring-1 ring-pilote-200/60 flex items-center justify-center flex-shrink-0"><Repeat className="w-4 h-4 text-pilote" /></div>
               <div className="min-w-0">
                 <h2 className="font-bold text-gray-900">Charges fixes &amp; récurrentes</h2>
                 <p className="text-[11px] text-gray-400">Loyer, énergie, assurance, crédit… étalées au jour près sur chaque semaine. Le réel remplace la provision sur sa période.</p>
@@ -1184,17 +1184,17 @@ export default function FacturationPage() {
               </div>
               <button onClick={() => { setReconYear(year); setReconChargeId(activeRecurring[0]?.id || ''); setActualDraft({}); setShowReconcile(true) }}
                 disabled={activeRecurring.length === 0}
-                className="inline-flex items-center gap-1.5 rounded-md border border-pilote-200 text-pilote bg-white hover:bg-pilote-50 px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-40">
+                className="inline-flex items-center gap-1.5 rounded-xl border border-pilote-200 text-pilote bg-white hover:bg-pilote-50 px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-40">
                 <Scale className="w-3.5 h-3.5" />Réconcilier
               </button>
               <button onClick={openNewRecurring}
-                className="inline-flex items-center gap-1.5 rounded-md bg-pilote hover:bg-pilote-hover text-white px-3 py-1.5 text-xs font-semibold shadow-card active:scale-[0.98] transition-all">
+                className="inline-flex items-center gap-1.5 rounded-xl bg-pilote hover:bg-pilote-hover text-white px-3 py-1.5 text-xs font-semibold shadow-card active:scale-[0.98] transition-all">
                 <Plus className="w-3.5 h-3.5" />Ajouter
               </button>
             </div>
           </div>
           {loading ? (
-            <div className="p-6 animate-pulse"><div className="h-10 bg-gray-100 rounded-md" /></div>
+            <div className="p-6 animate-pulse"><div className="h-10 bg-gray-100 rounded-lg" /></div>
           ) : activeRecurring.length === 0 ? (
             <div className="py-10 flex flex-col items-center justify-center text-center">
               <div className="w-12 h-12 rounded-lg bg-gray-50 ring-1 ring-gray-200/70 flex items-center justify-center mb-3">
@@ -1202,7 +1202,7 @@ export default function FacturationPage() {
               </div>
               <p className="text-sm font-semibold text-gray-700">Aucune charge récurrente</p>
               <p className="text-xs text-gray-400 mt-1 max-w-sm">Ajoutez vos charges fixes (loyer, énergie, assurance, crédit, abonnements). Elles pèseront automatiquement, au jour près, sur chaque semaine.</p>
-              <button onClick={openNewRecurring} className="mt-4 inline-flex items-center gap-1.5 rounded-md bg-pilote hover:bg-pilote-hover text-white px-3.5 py-2 text-xs font-semibold shadow-card active:scale-[0.98] transition-all"><Plus className="w-3.5 h-3.5" />Ajouter une charge</button>
+              <button onClick={openNewRecurring} className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-pilote hover:bg-pilote-hover text-white px-3.5 py-2 text-xs font-semibold shadow-card active:scale-[0.98] transition-all"><Plus className="w-3.5 h-3.5" />Ajouter une charge</button>
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -1228,7 +1228,7 @@ export default function FacturationPage() {
                     <tr key={c.id} className={`border-t border-gray-100 hover:bg-pilote-50/40 group transition-colors ${i % 2 === 0 ? '' : 'bg-gray-50/50'} ${c.active ? '' : 'opacity-60'}`}>
                       <td className="px-4 py-2.5">
                         <div className="flex items-center gap-2.5">
-                          <div className="w-8 h-8 rounded-md bg-gray-100 text-gray-500 flex items-center justify-center flex-shrink-0"><CalendarClock className="w-4 h-4" /></div>
+                          <div className="w-8 h-8 rounded-lg bg-gray-100 text-gray-500 flex items-center justify-center flex-shrink-0"><CalendarClock className="w-4 h-4" /></div>
                           <div>
                             <div className="font-semibold text-sm text-gray-900">{c.label}</div>
                             {!c.active && <div className="text-[10px] font-semibold text-gray-400">clôturée</div>}
@@ -1283,10 +1283,10 @@ export default function FacturationPage() {
       {/* Modal : Charge récurrente (création / édition) */}
       {showRecurring && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 backdrop-blur-sm p-4" onClick={() => setShowRecurring(false)}>
-          <div className="bg-white rounded-lg w-full max-w-md shadow-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between p-5 border-b border-gray-100">
               <h2 className="text-base font-bold text-gray-900">{recForm.id ? 'Modifier la charge' : 'Nouvelle charge récurrente'}</h2>
-              <button onClick={() => setShowRecurring(false)} className="p-1.5 rounded-md hover:bg-gray-100"><X className="w-4 h-4 text-gray-500" /></button>
+              <button onClick={() => setShowRecurring(false)} className="p-1.5 rounded-xl hover:bg-gray-100"><X className="w-4 h-4 text-gray-500" /></button>
             </div>
             <div className="p-5 space-y-3">
               <div>
@@ -1300,7 +1300,7 @@ export default function FacturationPage() {
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-gray-600 mb-1">Périodicité</label>
-                  <select value={recForm.periodicity} onChange={e => setRecForm(p => ({ ...p, periodicity: e.target.value as Periodicity }))} className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200">
+                  <select value={recForm.periodicity} onChange={e => setRecForm(p => ({ ...p, periodicity: e.target.value as Periodicity }))} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200">
                     {PERIODICITY_OPTIONS.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
                   </select>
                 </div>
@@ -1308,13 +1308,13 @@ export default function FacturationPage() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-gray-600 mb-1">Catégorie</label>
-                  <select value={recForm.category} onChange={e => setRecForm(p => ({ ...p, category: e.target.value }))} className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200">
+                  <select value={recForm.category} onChange={e => setRecForm(p => ({ ...p, category: e.target.value }))} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200">
                     {CATEGORIES.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
                   </select>
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-gray-600 mb-1">TVA (%)</label>
-                  <select value={recForm.tva_rate} onChange={e => setRecForm(p => ({ ...p, tva_rate: e.target.value }))} className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200">
+                  <select value={recForm.tva_rate} onChange={e => setRecForm(p => ({ ...p, tva_rate: e.target.value }))} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200">
                     {TVA_RATES.map(t => <option key={t} value={String(t)}>{t} %</option>)}
                   </select>
                 </div>
@@ -1348,22 +1348,22 @@ export default function FacturationPage() {
       {/* Modal : Réconciliation provisionné vs réel */}
       {showReconcile && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 backdrop-blur-sm p-4" onClick={() => setShowReconcile(false)}>
-          <div className="bg-white rounded-lg w-full max-w-2xl shadow-2xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
+          <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
             <div className="flex items-start justify-between p-5 border-b border-gray-100">
               <div>
                 <h2 className="text-base font-bold text-gray-900">Réconciliation — provisionné vs réel</h2>
                 <p className="text-xs text-gray-500 mt-0.5 max-w-md">Saisissez le montant réel facturé pour une période. Il remplace la provision sur sa fenêtre — le résultat net des semaines concernées est recalculé.</p>
               </div>
-              <button onClick={() => setShowReconcile(false)} className="p-1.5 rounded-md hover:bg-gray-100"><X className="w-4 h-4 text-gray-500" /></button>
+              <button onClick={() => setShowReconcile(false)} className="p-1.5 rounded-xl hover:bg-gray-100"><X className="w-4 h-4 text-gray-500" /></button>
             </div>
             <div className="flex items-center gap-2 px-5 pt-3">
-              <select value={reconChargeId} onChange={e => { setReconChargeId(e.target.value); setActualDraft({}) }} className="flex-1 border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200">
+              <select value={reconChargeId} onChange={e => { setReconChargeId(e.target.value); setActualDraft({}) }} className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200">
                 {activeRecurring.map(c => <option key={c.id} value={c.id}>{c.label} · {periodicityLabel(c.periodicity)}</option>)}
               </select>
               <div className="flex items-center gap-1 flex-shrink-0">
-                <button onClick={() => setReconYear(y => y - 1)} className="p-1.5 rounded-md hover:bg-gray-100"><ChevronLeft className="w-4 h-4 text-gray-500" /></button>
+                <button onClick={() => setReconYear(y => y - 1)} className="p-1.5 rounded-xl hover:bg-gray-100"><ChevronLeft className="w-4 h-4 text-gray-500" /></button>
                 <span className="text-sm font-bold text-gray-900 tabular w-12 text-center">{reconYear}</span>
-                <button onClick={() => setReconYear(y => y + 1)} className="p-1.5 rounded-md hover:bg-gray-100"><ChevronRight className="w-4 h-4 text-gray-500" /></button>
+                <button onClick={() => setReconYear(y => y + 1)} className="p-1.5 rounded-xl hover:bg-gray-100"><ChevronRight className="w-4 h-4 text-gray-500" /></button>
               </div>
             </div>
             <div className="p-5 pt-3 overflow-y-auto">
@@ -1390,7 +1390,7 @@ export default function FacturationPage() {
                         const draft = actualDraft[occ.key] ?? ''
                         const ecart = act ? Number(act.amount_ht) - prov : 0
                         return (
-                          <div key={occ.key} className="flex flex-col md:flex-row md:items-center gap-2 p-2 rounded-md hover:bg-gray-50">
+                          <div key={occ.key} className="flex flex-col md:flex-row md:items-center gap-2 p-2 rounded-lg hover:bg-gray-50">
                             <span className="w-28 text-sm font-semibold text-gray-800">{occ.label}</span>
                             <span className="flex-1 text-right text-sm text-gray-600 tabular">{fmtEuro(prov)}</span>
                             {act ? (
@@ -1402,7 +1402,7 @@ export default function FacturationPage() {
                             ) : (
                               <>
                                 <div className="flex-1 flex justify-end">
-                                  <input type="number" step="0.01" min="0" value={draft} onChange={e => setActualDraft(p => ({ ...p, [occ.key]: e.target.value }))} placeholder="réel €" className="w-24 border border-gray-300 rounded-md px-2 py-1 text-sm text-right tabular focus:outline-none focus:ring-2 focus:ring-pilote-200" />
+                                  <input type="number" step="0.01" min="0" value={draft} onChange={e => setActualDraft(p => ({ ...p, [occ.key]: e.target.value }))} placeholder="réel €" className="w-24 border border-gray-300 rounded-lg px-2 py-1 text-sm text-right tabular focus:outline-none focus:ring-2 focus:ring-pilote-200" />
                                 </div>
                                 <span className="flex-1 text-right text-xs text-gray-300">—</span>
                                 <span className="w-24 flex justify-end">
@@ -1429,13 +1429,13 @@ export default function FacturationPage() {
       {/* Modal : Connecter intégration */}
       {showConnect && connectProvider && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 backdrop-blur-sm" onClick={() => setShowConnect(false)}>
-          <div className="bg-white rounded-lg p-6 w-full max-w-md shadow-2xl" onClick={e => e.stopPropagation()}>
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-5">
               <div className="flex items-center gap-3">
-                <div className={`w-10 h-10 rounded-md ${connectProvider.color} flex items-center justify-center text-white text-xs font-extrabold`}>{connectProvider.logo}</div>
+                <div className={`w-10 h-10 rounded-lg ${connectProvider.color} flex items-center justify-center text-white text-xs font-extrabold`}>{connectProvider.logo}</div>
                 <div><h2 className="text-base font-bold text-gray-900">Connecter {connectProvider.name}</h2><p className="text-xs text-gray-400">{connectProvider.description}</p></div>
               </div>
-              <button onClick={() => setShowConnect(false)} className="p-1.5 rounded-md hover:bg-gray-100"><X className="w-4 h-4 text-gray-500" /></button>
+              <button onClick={() => setShowConnect(false)} className="p-1.5 rounded-xl hover:bg-gray-100"><X className="w-4 h-4 text-gray-500" /></button>
             </div>
             <div className="space-y-4">
               <div>
@@ -1449,7 +1449,7 @@ export default function FacturationPage() {
                 </div>
               )}
               <p className="text-[10px] text-gray-400">Votre token est chiffré et stocké de manière sécurisée. <a href={connectProvider.helpUrl} target="_blank" rel="noreferrer" className="text-pilote underline">Comment trouver mon token ?</a></p>
-              {connectError && <div className="flex items-center gap-1.5 text-xs text-red-600 bg-red-50 border border-red-200 rounded-md px-3 py-2"><AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />{connectError}</div>}
+              {connectError && <div className="flex items-center gap-1.5 text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2"><AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />{connectError}</div>}
               <div className="flex gap-3 pt-1">
                 <Button variant="outline" className="flex-1" onClick={() => setShowConnect(false)}>Annuler</Button>
                 <Button className="flex-1 bg-pilote hover:bg-pilote-hover text-white" onClick={connectIntegration} disabled={!connectToken || connecting || (connectProvider.needsCompanyId && !connectCompanyId)}>
@@ -1464,10 +1464,10 @@ export default function FacturationPage() {
       {/* Modal : Ajouter facture */}
       {showAdd && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 backdrop-blur-sm p-4" onClick={() => setShowAdd(false)}>
-          <div className="bg-white rounded-lg p-6 w-full max-w-md shadow-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-5">
               <h2 className="text-base font-bold text-gray-900">Nouvelle facture</h2>
-              <button onClick={() => setShowAdd(false)} className="p-1.5 rounded-md hover:bg-gray-100"><X className="w-4 h-4 text-gray-500" /></button>
+              <button onClick={() => setShowAdd(false)} className="p-1.5 rounded-xl hover:bg-gray-100"><X className="w-4 h-4 text-gray-500" /></button>
             </div>
             <div className="space-y-4">
               <div className="col-span-2">
@@ -1496,7 +1496,7 @@ export default function FacturationPage() {
                 </div>
               </div>
               {newInvoice.invoice_date && (newInvoice.invoice_date < monISO || newInvoice.invoice_date > sunISO) && (
-                <p className="text-[11px] text-amber-600 bg-amber-50 border border-amber-200 rounded-md px-2.5 py-1.5 -mt-1.5">
+                <p className="text-[11px] text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 -mt-1.5">
                   Cette date est hors de la semaine {week} affichée — la facture sera tout de même comptée sur la semaine {week}.
                 </p>
               )}
@@ -1505,7 +1505,7 @@ export default function FacturationPage() {
                 <div className="grid grid-cols-3 gap-1.5">
                   {CATEGORIES.map(cat => (
                     <button key={cat.key} onClick={() => { setMemoTouched(true); setCategoryTouched(true); setNewInvoice((p: any) => ({ ...p, category: cat.key })) }}
-                      className={`py-1.5 px-2 rounded-md text-xs font-semibold border-2 transition-all ${
+                      className={`py-1.5 px-2 rounded-xl text-xs font-semibold border-2 transition-all ${
                         newInvoice.category === cat.key ? 'border-pilote bg-pilote text-white' : 'border-gray-200 text-gray-600 hover:border-gray-300'
                       }`}>{cat.label}
                     </button>
@@ -1524,12 +1524,12 @@ export default function FacturationPage() {
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-gray-600 mb-1">Taux TVA (%)</label>
-                  <select value={newInvoice.tva_rate} onChange={e => { setMemoTouched(true); setNewInvoice((p: any) => ({ ...p, tva_rate: e.target.value })) }} className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-pilote">
+                  <select value={newInvoice.tva_rate} onChange={e => { setMemoTouched(true); setNewInvoice((p: any) => ({ ...p, tva_rate: e.target.value })) }} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-pilote">
                     {TVA_RATES.map(r => <option key={r} value={r}>{r === 0 ? '0 % (exonéré)' : `${r} %`}</option>)}
                   </select>
                 </div>
               </div>
-              {newInvoice.amount_ht && <div className="bg-gray-50 rounded-md px-3 py-2 flex items-center justify-between"><span className="text-xs text-gray-500">Montant TTC calculé</span><span className="font-bold text-gray-900">{fmtEuro(ttcAmount)}</span></div>}
+              {newInvoice.amount_ht && <div className="bg-gray-50 rounded-lg px-3 py-2 flex items-center justify-between"><span className="text-xs text-gray-500">Montant TTC calculé</span><span className="font-bold text-gray-900">{fmtEuro(ttcAmount)}</span></div>}
               <div>
                 <label className="block text-xs font-semibold text-gray-600 mb-1">Notes</label>
                 <Input value={newInvoice.notes} onChange={e => setNewInvoice((p: any) => ({ ...p, notes: e.target.value }))} placeholder="Livraison lundi matin..." />
@@ -1569,13 +1569,13 @@ export default function FacturationPage() {
       {/* Modal : Répartition des achats par rayon (par fournisseur) */}
       {showSplits && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 backdrop-blur-sm p-4" onClick={() => setShowSplits(false)}>
-          <div className="bg-white rounded-lg w-full max-w-2xl shadow-2xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
+          <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
             <div className="flex items-start justify-between p-5 pb-3 border-b border-gray-100">
               <div>
                 <h2 className="text-base font-bold text-gray-900">Répartition des achats par rayon</h2>
                 <p className="text-xs text-gray-500 mt-0.5 max-w-md">Pour chaque société, indiquez la part (%) de ses achats affectée à chaque rayon. Appliqué automatiquement à toutes ses factures.</p>
               </div>
-              <button onClick={() => setShowSplits(false)} className="p-1.5 rounded-md hover:bg-gray-100"><X className="w-4 h-4 text-gray-500" /></button>
+              <button onClick={() => setShowSplits(false)} className="p-1.5 rounded-xl hover:bg-gray-100"><X className="w-4 h-4 text-gray-500" /></button>
             </div>
             {/* Onglets : à répartir (sociétés sans ventilation) / toutes les répartitions déjà faites */}
             <div className="flex items-center gap-1.5 px-5 pt-3 pb-1">
@@ -1629,19 +1629,19 @@ export default function FacturationPage() {
                         const clearRow = () =>
                           setSplitDraft(prev => ({ ...prev, [key]: { ...prev[key], ...emptyVent() } }))
                         return (
-                          <div key={key} className="group flex flex-col md:flex-row md:items-center gap-2 p-2 rounded-md hover:bg-gray-50">
+                          <div key={key} className="group flex flex-col md:flex-row md:items-center gap-2 p-2 rounded-lg hover:bg-gray-50">
                             <span className="flex-1 text-sm font-medium text-gray-800 truncate" title={v.label}>{v.label}</span>
                             <div className="flex items-center gap-2">
                               {VENT_FIELDS.map(f => (
                                 <input key={f.key} type="number" min="0" max="100" value={(v as any)[f.key]} onChange={e => upd(f.key, e.target.value)}
-                                  placeholder="0" className="w-16 border border-gray-200 rounded-md px-1.5 py-1 text-sm text-right tabular focus:outline-none focus:ring-2 focus:ring-pilote-200" />
+                                  placeholder="0" className="w-16 border border-gray-200 rounded-lg px-1.5 py-1 text-sm text-right tabular focus:outline-none focus:ring-2 focus:ring-pilote-200" />
                               ))}
                               <span className={`w-16 text-center text-xs font-bold tabular ${totOk ? 'text-gray-400' : 'text-orange-500'}`}>{tot ? `${Math.round(tot)}%` : '—'}</span>
                             </div>
                             <div className="w-8 flex-shrink-0 flex justify-center self-end md:self-auto">
                               {splitsTab === 'all' && (
                                 <button onClick={clearRow} title="Retirer cette répartition"
-                                  className="md:opacity-0 md:group-hover:opacity-100 transition-all p-1.5 rounded-md text-gray-400 hover:text-red-500 hover:bg-red-50">
+                                  className="md:opacity-0 md:group-hover:opacity-100 transition-all p-1.5 rounded-xl text-gray-400 hover:text-red-500 hover:bg-red-50">
                                   <Trash2 className="w-4 h-4" />
                                 </button>
                               )}
@@ -1668,10 +1668,10 @@ export default function FacturationPage() {
       {/* Modal : Choix des 3 familles de marge (liste = postes du planning) */}
       {showFamilles && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 backdrop-blur-sm p-4" onClick={() => setShowFamilles(false)}>
-          <div className="bg-white rounded-lg p-6 w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
+          <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-1.5">
               <h2 className="text-base font-bold text-gray-900">Mes 3 familles de marge</h2>
-              <button onClick={() => setShowFamilles(false)} className="p-1.5 rounded-md hover:bg-gray-100"><X className="w-4 h-4 text-gray-500" /></button>
+              <button onClick={() => setShowFamilles(false)} className="p-1.5 rounded-xl hover:bg-gray-100"><X className="w-4 h-4 text-gray-500" /></button>
             </div>
             <p className="text-xs text-gray-500 mb-4">La liste vient des postes du planning. Les heures pointées sur un poste, le CA et les achats qui lui ressemblent (« boucher » ≈ « boucherie ») alimentent automatiquement sa marge.</p>
             <div className="space-y-3">
@@ -1679,7 +1679,7 @@ export default function FacturationPage() {
                 <div key={i}>
                   <label className="block text-xs font-semibold text-gray-600 mb-1">Famille {i + 1}</label>
                   <select value={familleDraft[i] ?? ''} onChange={e => setFamilleDraft(prev => { const n = [...prev]; n[i] = e.target.value; return n })}
-                    className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200">
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200">
                     {postesList.length === 0 && <option value={familleDraft[i] ?? ''}>{familleDraft[i] ?? ''}</option>}
                     {postesList.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}
                   </select>
@@ -1713,10 +1713,10 @@ export default function FacturationPage() {
 
       {showCA && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 backdrop-blur-sm" onClick={() => setShowCA(false)}>
-          <div className="bg-white rounded-lg p-6 w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
+          <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-5">
               <div><h2 className="text-base font-bold text-gray-900">CA de la semaine {week}</h2><p className="text-xs text-gray-400 mt-0.5">{fmtDate(mon)} – {fmtDate(sun)}</p></div>
-              <button onClick={() => setShowCA(false)} className="p-1.5 rounded-md hover:bg-gray-100"><X className="w-4 h-4 text-gray-500" /></button>
+              <button onClick={() => setShowCA(false)} className="p-1.5 rounded-xl hover:bg-gray-100"><X className="w-4 h-4 text-gray-500" /></button>
             </div>
             <div className="space-y-3">
               <div>
@@ -1725,7 +1725,7 @@ export default function FacturationPage() {
               </div>
               <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider pt-1">Détail par rayon (optionnel)</p>
               {Array.isArray(summary?.ca_detail?.families_detail) && summary!.ca_detail!.families_detail!.length > 0 && (
-                <p className="text-[11px] text-pilote bg-pilote-50 rounded-md px-2.5 py-1.5">
+                <p className="text-[11px] text-pilote bg-pilote-50 rounded-lg px-2.5 py-1.5">
                   Le détail par rayon est lu automatiquement depuis votre rapport hebdo — cette saisie ne sert que de secours.
                 </p>
               )}
@@ -1749,10 +1749,10 @@ export default function FacturationPage() {
       {/* Modal : Paramètres */}
       {showSettings && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 backdrop-blur-sm" onClick={() => setShowSettings(false)}>
-          <div className="bg-white rounded-lg p-6 w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
+          <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-5">
               <h2 className="text-base font-bold text-gray-900">Paramètres entreprise</h2>
-              <button onClick={() => setShowSettings(false)} className="p-1.5 rounded-md hover:bg-gray-100"><X className="w-4 h-4 text-gray-500" /></button>
+              <button onClick={() => setShowSettings(false)} className="p-1.5 rounded-xl hover:bg-gray-100"><X className="w-4 h-4 text-gray-500" /></button>
             </div>
             <div className="space-y-4">
               <div>

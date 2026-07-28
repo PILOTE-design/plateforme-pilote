@@ -227,7 +227,7 @@ export default async function MargesPage() {
   const msColor = ratioMs === null ? 'text-gray-400' : ratioMs > 50 ? 'text-gray-500' : ratioMs < 30 ? 'text-green-600' : ratioMs <= 40 ? 'text-orange-500' : 'text-red-600'
 
   return (
-    <div className="p-6 md:p-8 max-w-5xl mx-auto">
+    <div className="p-6 md:p-8 max-w-6xl mx-auto">
       <div className="mb-8 flex items-start justify-between gap-3 flex-wrap">
         <div className="flex items-start gap-3">
           <div className="w-12 h-12 bg-gradient-to-br from-pilote to-pilote-hover rounded-2xl flex items-center justify-center flex-shrink-0 shadow-card">

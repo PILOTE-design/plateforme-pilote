@@ -43,7 +43,7 @@ export default async function ReportsPage() {
   }
 
   return (
-    <div className="p-6 md:p-8 max-w-5xl mx-auto">
+    <div className="p-6 md:p-8 max-w-6xl mx-auto">
       <div className="flex flex-wrap items-end justify-between gap-4 mb-8">
         <div className="flex items-start gap-3">
           <div className="w-10 h-10 rounded-xl bg-pilote-50 flex items-center justify-center flex-shrink-0 mt-0.5">

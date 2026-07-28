@@ -142,14 +142,14 @@ export default function ProductionPage() {
       {/* Ajout */}
       <div className="mb-6 bg-white rounded-2xl border border-gray-100 shadow-card p-4 flex items-center gap-2 flex-wrap">
         <select value={addRecipe} onChange={e => setAddRecipe(e.target.value)}
-          className="flex-1 min-w-[180px] h-10 border border-gray-200 rounded-md px-3 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200">
+          className="flex-1 min-w-[180px] h-10 border border-gray-200 rounded-lg px-3 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200">
           <option value="">Choisir une recette…</option>
           {recipes.map(r => <option key={r.id} value={r.id}>{r.name}{r.yield_qty ? ` (${r.yield_qty} ${r.yield_unit || ''}/batch)` : ''}</option>)}
         </select>
         <input inputMode="decimal" value={addBatches} onChange={e => setAddBatches(e.target.value)} placeholder="Batchs"
-          className="w-20 h-10 border border-gray-200 rounded-md px-3 text-sm text-right tabular focus:outline-none focus:ring-2 focus:ring-pilote-200" />
+          className="w-20 h-10 border border-gray-200 rounded-lg px-3 text-sm text-right tabular focus:outline-none focus:ring-2 focus:ring-pilote-200" />
         <select value={addEmployee} onChange={e => setAddEmployee(e.target.value)}
-          className="w-40 h-10 border border-gray-200 rounded-md px-3 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200">
+          className="w-40 h-10 border border-gray-200 rounded-lg px-3 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200">
           <option value="">Non affecté</option>
           {employees.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
         </select>
@@ -193,11 +193,11 @@ export default function ProductionPage() {
                     </p>
                   </div>
                   <select value={o.employee_id || ''} onChange={e => patchOrder(o.id, { employee_id: e.target.value || null })}
-                    className="h-9 border border-gray-200 rounded-md px-2 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200">
+                    className="h-9 border border-gray-200 rounded-lg px-2 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200">
                     <option value="">Non affecté</option>
                     {employees.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
                   </select>
-                  <button onClick={() => removeOrder(o.id, o.recipe_name)} className="p-1.5 rounded-md hover:bg-gray-100 text-gray-400"><X className="w-4 h-4" /></button>
+                  <button onClick={() => removeOrder(o.id, o.recipe_name)} className="p-1.5 rounded-xl hover:bg-gray-100 text-gray-400"><X className="w-4 h-4" /></button>
                 </div>
               ))}
             </div>
