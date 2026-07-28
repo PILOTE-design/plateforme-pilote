@@ -682,7 +682,7 @@ export default function ValorisationPage() {
               onChange={e => setCutWeights(prev => ({ ...prev, [r.cut.id]: e.target.value }))}
               disabled={isExcluded}
               placeholder="0"
-              className="w-16 border border-gray-200 rounded-md px-2 py-1 text-sm text-right tabular-nums focus:outline-none focus:ring-2 focus:ring-pilote-200 disabled:bg-gray-50 disabled:text-gray-300" />
+              className="w-16 border border-gray-200 rounded-lg px-2 py-1 text-sm text-right tabular-nums focus:outline-none focus:ring-2 focus:ring-pilote-200 disabled:bg-gray-50 disabled:text-gray-300" />
             <span className="text-xs text-gray-400">kg</span>
           </div>
         </td>
@@ -692,7 +692,7 @@ export default function ValorisationPage() {
               value={cutPrices[r.cut.id] ?? ''}
               onChange={e => setCutPrice(r.cut.id, e.target.value)}
               placeholder={String(r.cut.marketPrice)}
-              className="w-14 border border-gray-200 rounded-md px-2 py-1 text-sm text-right tabular-nums text-gray-500 focus:outline-none focus:ring-2 focus:ring-pilote-200" />
+              className="w-14 border border-gray-200 rounded-lg px-2 py-1 text-sm text-right tabular-nums text-gray-500 focus:outline-none focus:ring-2 focus:ring-pilote-200" />
             <span className="text-xs text-gray-400">€</span>
           </div>
         </td>
@@ -703,7 +703,7 @@ export default function ValorisationPage() {
               onChange={e => setSellOverride(r.cut.id, e.target.value)}
               disabled={isExcluded}
               placeholder={r.active ? String(Math.round(priceOf(r.cut) * coefficient * 100) / 100) : '—'}
-              className="w-16 border border-gray-200 rounded-md px-2 py-1 text-sm text-right tabular-nums font-semibold text-gray-900 focus:outline-none focus:ring-2 focus:ring-pilote-200 disabled:bg-gray-50 disabled:text-gray-300" />
+              className="w-16 border border-gray-200 rounded-lg px-2 py-1 text-sm text-right tabular-nums font-semibold text-gray-900 focus:outline-none focus:ring-2 focus:ring-pilote-200 disabled:bg-gray-50 disabled:text-gray-300" />
             <span className="text-xs text-gray-400">€</span>
             {r.active && Math.abs(pctDiff) > 1 && <span className={`text-[10px] ${priceColor}`}>({pctDiff > 0 ? '+' : ''}{pctDiff.toFixed(0)}%)</span>}
           </div>
@@ -1497,7 +1497,7 @@ export default function ValorisationPage() {
                       { label: 'CA conseillé',    value: eur(totalRevenue1),    sub: `coeff. x${coefficient.toFixed(3)}` },
                       { label: 'Marge brute',     value: eur(totalRevenue1 - totalCost1), sub: `${actualMargin1.toFixed(1)}% réel`, highlight: true },
                     ].map(kpi => (
-                      <div key={kpi.label} className={`rounded-2xl p-4 border shadow-card transition-all hover:shadow-md hover:-translate-y-0.5 ${'highlight' in kpi && kpi.highlight ? 'bg-pilote border-transparent' : 'bg-white border-gray-100'}`}>
+                      <div key={kpi.label} className={`rounded-2xl p-4 border shadow-card transition-all hover:shadow-card-hover hover:-translate-y-0.5 ${'highlight' in kpi && kpi.highlight ? 'bg-pilote border-transparent' : 'bg-white border-gray-100'}`}>
                         <p className={`text-[10px] font-semibold uppercase tracking-wider mb-1 ${'highlight' in kpi && kpi.highlight ? 'text-white/70' : 'text-gray-400'}`}>{kpi.label}</p>
                         <p className={`text-xl font-extrabold leading-tight tabular-nums ${'highlight' in kpi && kpi.highlight ? 'text-white' : 'text-gray-900'}`}>{kpi.value}</p>
                         <p className={`text-xs mt-0.5 ${'highlight' in kpi && kpi.highlight ? 'text-white/60' : 'text-gray-400'}`}>{kpi.sub}</p>
@@ -1560,7 +1560,7 @@ export default function ValorisationPage() {
                                           onChange={e => setCutWeights(prev => ({ ...prev, [r.cut.id]: e.target.value }))}
                                           disabled={isExcluded}
                                           placeholder="0"
-                                          className="w-16 border border-gray-200 rounded-md px-2 py-1 text-sm text-right tabular-nums focus:outline-none focus:ring-2 focus:ring-pilote-200 disabled:bg-gray-50 disabled:text-gray-300" />
+                                          className="w-16 border border-gray-200 rounded-lg px-2 py-1 text-sm text-right tabular-nums focus:outline-none focus:ring-2 focus:ring-pilote-200 disabled:bg-gray-50 disabled:text-gray-300" />
                                         <span className="text-xs text-gray-400">kg</span>
                                       </div>
                                     </td>
@@ -1570,7 +1570,7 @@ export default function ValorisationPage() {
                                           value={cutPrices[r.cut.id] ?? ''}
                                           onChange={e => setCutPrice(r.cut.id, e.target.value)}
                                           placeholder={String(r.cut.marketPrice)}
-                                          className="w-14 border border-gray-200 rounded-md px-2 py-1 text-sm text-right tabular-nums text-gray-500 focus:outline-none focus:ring-2 focus:ring-pilote-200" />
+                                          className="w-14 border border-gray-200 rounded-lg px-2 py-1 text-sm text-right tabular-nums text-gray-500 focus:outline-none focus:ring-2 focus:ring-pilote-200" />
                                         <span className="text-xs text-gray-400">€</span>
                                       </div>
                                     </td>
@@ -1581,7 +1581,7 @@ export default function ValorisationPage() {
                                           onChange={e => setSellOverride(r.cut.id, e.target.value)}
                                           disabled={isExcluded}
                                           placeholder={r.active ? String(Math.round(priceOf(r.cut) * coefficient * 100) / 100) : '—'}
-                                          className="w-16 border border-gray-200 rounded-md px-2 py-1 text-sm text-right tabular-nums font-semibold text-gray-900 focus:outline-none focus:ring-2 focus:ring-pilote-200 disabled:bg-gray-50 disabled:text-gray-300" />
+                                          className="w-16 border border-gray-200 rounded-lg px-2 py-1 text-sm text-right tabular-nums font-semibold text-gray-900 focus:outline-none focus:ring-2 focus:ring-pilote-200 disabled:bg-gray-50 disabled:text-gray-300" />
                                         <span className="text-xs text-gray-400">€</span>
                                         {r.active && Math.abs(pctDiff) > 1 && <span className={`text-[10px] ${priceColor}`}>({pctDiff > 0 ? '+' : ''}{pctDiff.toFixed(0)}%)</span>}
                                       </div>
