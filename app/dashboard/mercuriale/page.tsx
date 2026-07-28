@@ -1,29 +1,44 @@
 'use client'
 
-// Mercuriale — le catalogue de prix d'achat du client, alimenté automatiquement
-// par l'extraction ligne à ligne des factures (PDF Pennylane stocké → lignes
-// produits → articles). C'est la fondation des fiches recettes : chaque
-// ingrédient y trouvera son dernier prix connu, mis à jour à chaque facture.
-//
-// La lecture des factures se déclenche ICI (file d'attente, une facture à la
-// fois — chaque extraction est un appel pdf-parse + IA de quelques secondes),
-// pour ne pas alourdir la page Facturation.
+// Mercuriale — le référentiel de prix d'achat, à deux étages :
+//   · les RÉFS FOURNISSEURS, créées automatiquement par la lecture des factures ;
+//   · les ARTICLES GÉNÉRIQUES, créés par l'utilisateur, qui regroupent les réfs
+//     (« FILET DE POULET SV » + « FILET DE POULET LR » → « Filet de poulet »)
+//     et ramènent tout à une unité de base (kg ou pièce).
+// Une réf jamais associée attend dans la file « À associer » — c'est voulu :
+// les fiches recettes ne s'appuieront QUE sur les génériques.
+// La lecture des factures se déclenche ici (une facture à la fois).
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ShoppingBasket, FileSearch, TrendingUp, TrendingDown, Search, RefreshCw } from 'lucide-react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ShoppingBasket, FileSearch, TrendingUp, TrendingDown, Search, RefreshCw, Link2, ChevronDown, ChevronRight, Pencil, Trash2, Unlink } from 'lucide-react'
 import { useToast } from '@/components/ui/toast'
 
-type Article = {
+type Ref = {
   id: string
   name: string
   unit: string | null
   supplier_name: string | null
   article_code: string | null
-  last_price_ht: number | string | null
+  last_price_ht: number | null
   last_price_date: string | null
   price_count: number
-  previous_price: number | null
   variation_pct: number | null
+  conversion_factor: number | string | null
+  price_base: number | null
+}
+
+type Generic = {
+  id: string
+  name: string
+  base_unit: 'kg' | 'piece'
+  category: 'ingredient' | 'emballage'
+  default_loss_pct: number
+  refs_count: number
+  price_ht: number | null
+  price_date: string | null
+  price_supplier: string | null
+  variation_pct: number | null
+  refs: Ref[]
 }
 
 type PendingInvoice = {
@@ -36,10 +51,23 @@ type PendingInvoice = {
 
 const fmtEuro = (n: number) => n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'
 const fmtDate = (s: string | null) => (s ? new Date(s + 'T00:00:00Z').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }) : '—')
+const unitLabel = (u: 'kg' | 'piece') => (u === 'kg' ? 'kg' : 'pièce')
+
+function Variation({ pct }: { pct: number | null }) {
+  if (pct === null) return <span className="text-xs text-gray-300">—</span>
+  const up = pct > 0
+  return (
+    <span className={`inline-flex items-center gap-1 text-xs font-bold tabular ${up ? 'text-red-600' : 'text-green-600'}`}>
+      {up ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+      {pct > 0 ? '+' : ''}{pct.toLocaleString('fr-FR')} %
+    </span>
+  )
+}
 
 export default function MercurialePage() {
   const { toast } = useToast()
-  const [articles, setArticles] = useState<Article[]>([])
+  const [generics, setGenerics] = useState<Generic[]>([])
+  const [queue, setQueue] = useState<Ref[]>([])
   const [pending, setPending] = useState<PendingInvoice[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -47,11 +75,22 @@ export default function MercurialePage() {
   const [progress, setProgress] = useState({ done: 0, total: 0, errors: 0 })
   const stopRef = useRef(false)
 
+  // Association d'une réf : ligne ouverte + formulaire (générique existant ou création)
+  const [assocId, setAssocId] = useState<string | null>(null)
+  const [assoc, setAssoc] = useState({ choice: 'new', newName: '', newUnit: 'kg' as 'kg' | 'piece', newCat: 'ingredient' as 'ingredient' | 'emballage', factor: '' })
+  const [saving, setSaving] = useState(false)
+
+  // Catalogue : générique déplié + édition
+  const [openId, setOpenId] = useState<string | null>(null)
+  const [editId, setEditId] = useState<string | null>(null)
+  const [edit, setEdit] = useState({ name: '', base_unit: 'kg' as 'kg' | 'piece', category: 'ingredient' as 'ingredient' | 'emballage', loss: '0' })
+
   const load = useCallback(async () => {
     setLoading(true)
     const data = await fetch('/api/mercuriale', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).catch(() => null)
     if (data) {
-      setArticles(Array.isArray(data.articles) ? data.articles : [])
+      setGenerics(Array.isArray(data.generics) ? data.generics : [])
+      setQueue(Array.isArray(data.queue) ? data.queue : [])
       setPending(Array.isArray(data.pending) ? data.pending : [])
     }
     setLoading(false)
@@ -59,9 +98,8 @@ export default function MercurialePage() {
 
   useEffect(() => { load() }, [load])
 
-  /** Lit les factures en attente UNE PAR UNE : chaque appel est une extraction
-   *  complète (PDF → lignes → articles), on n'en met jamais deux en parallèle
-   *  pour rester loin du budget serveur. Interruptible, reprend où elle en était. */
+  /** Lit les factures en attente UNE PAR UNE (extraction PDF + IA par appel) ;
+   *  interruptible, reprend où elle en était. */
   async function processQueue() {
     if (processing || pending.length === 0) return
     setProcessing(true)
@@ -86,22 +124,104 @@ export default function MercurialePage() {
     if (ecartees > 0) detail.push(`${ecartees} hors matière (écartée${ecartees > 1 ? 's' : ''})`)
     if (errors > 0) detail.push(`${errors} en échec`)
     toast(errors === 0
-      ? { variant: 'success', title: detail.join(' · '), description: 'Seules les factures de matière première nourrissent la mercuriale.' }
+      ? { variant: 'success', title: detail.join(' · '), description: 'Les nouvelles réfs arrivent dans la file « À associer ».' }
       : { variant: 'error', title: detail.join(' · '), description: 'Les factures en échec peuvent être relancées.' })
     load()
   }
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    if (!q) return articles
-    return articles.filter(a =>
-      a.name.toLowerCase().includes(q)
-      || (a.supplier_name || '').toLowerCase().includes(q)
-      || (a.article_code || '').toLowerCase().includes(q))
-  }, [articles, search])
+  function openAssoc(r: Ref) {
+    setAssocId(r.id)
+    // Pré-remplissage : nom nettoyé de la réf, unité kg si la réf est au kg
+    const unit = (r.unit || '').toLowerCase().includes('kg') ? 'kg' : (r.unit || '').toLowerCase().match(/pi[eè]ce|pce|unit/) ? 'piece' : 'kg'
+    setAssoc({ choice: generics.length > 0 ? '' : 'new', newName: r.name.charAt(0) + r.name.slice(1).toLowerCase(), newUnit: unit as 'kg' | 'piece', newCat: 'ingredient', factor: '' })
+  }
 
-  const suppliers = useMemo(() => new Set(articles.map(a => a.supplier_name || '')).size, [articles])
-  const hausses = useMemo(() => articles.filter(a => (a.variation_pct ?? 0) > 0).length, [articles])
+  async function submitAssoc(r: Ref) {
+    if (saving) return
+    let genericId = assoc.choice
+    if (!genericId) { toast({ variant: 'error', title: 'Choisissez un article générique ou créez-en un' }); return }
+    setSaving(true)
+    if (genericId === 'new') {
+      const name = assoc.newName.trim()
+      if (!name) { toast({ variant: 'error', title: 'Nom du générique requis' }); setSaving(false); return }
+      const res = await fetch('/api/generic-articles', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, base_unit: assoc.newUnit, category: assoc.newCat }),
+      }).catch(() => null)
+      const data = res ? await res.json().catch(() => null) : null
+      if (!res?.ok || !data?.generic?.id) {
+        toast({ variant: 'error', title: data?.error || 'Création du générique impossible' })
+        setSaving(false)
+        return
+      }
+      genericId = data.generic.id
+    }
+    const res2 = await fetch(`/api/articles/${r.id}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ generic_id: genericId, conversion_factor: assoc.factor.trim() === '' ? null : Number(assoc.factor.replace(',', '.')) }),
+    }).catch(() => null)
+    const d2 = res2 ? await res2.json().catch(() => null) : null
+    setSaving(false)
+    if (!res2?.ok) { toast({ variant: 'error', title: d2?.error || 'Association impossible' }); return }
+    toast({ variant: 'success', title: `« ${r.name} » associée` })
+    setAssocId(null)
+    load()
+  }
+
+  async function dissociate(refId: string, refName: string) {
+    const res = await fetch(`/api/articles/${refId}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ generic_id: null }),
+    }).catch(() => null)
+    if (res?.ok) { toast({ variant: 'success', title: `« ${refName} » renvoyée dans la file d'attente` }); load() }
+    else toast({ variant: 'error', title: 'Dissociation impossible' })
+  }
+
+  function startEdit(g: Generic) {
+    setEditId(g.id)
+    setEdit({ name: g.name, base_unit: g.base_unit, category: g.category, loss: String(g.default_loss_pct ?? 0) })
+  }
+
+  async function submitEdit(g: Generic) {
+    if (saving) return
+    setSaving(true)
+    const res = await fetch(`/api/generic-articles/${g.id}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: edit.name, base_unit: edit.base_unit, category: edit.category, default_loss_pct: Number(edit.loss.replace(',', '.')) || 0 }),
+    }).catch(() => null)
+    const data = res ? await res.json().catch(() => null) : null
+    setSaving(false)
+    if (!res?.ok) { toast({ variant: 'error', title: data?.error || 'Modification impossible' }); return }
+    setEditId(null)
+    load()
+  }
+
+  // Suppression en deux temps (jamais de dialogue natif) : premier clic arme,
+  // second clic exécute. Les réfs retournent dans la file d'attente.
+  const [confirmDelId, setConfirmDelId] = useState<string | null>(null)
+  async function removeGeneric(g: Generic) {
+    if (confirmDelId !== g.id) { setConfirmDelId(g.id); return }
+    setConfirmDelId(null)
+    const res = await fetch(`/api/generic-articles/${g.id}`, { method: 'DELETE' }).catch(() => null)
+    if (res?.ok) { toast({ variant: 'success', title: `« ${g.name} » supprimé — ses réfs retournent dans la file d'attente` }); setOpenId(null); load() }
+    else toast({ variant: 'error', title: 'Suppression impossible' })
+  }
+
+  const filteredGenerics = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    if (!q) return generics
+    return generics.filter(g =>
+      g.name.toLowerCase().includes(q)
+      || g.refs.some(r => r.name.toLowerCase().includes(q) || (r.supplier_name || '').toLowerCase().includes(q)))
+  }, [generics, search])
+
+  const filteredQueue = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    if (!q) return queue
+    return queue.filter(r => r.name.toLowerCase().includes(q) || (r.supplier_name || '').toLowerCase().includes(q) || (r.article_code || '').toLowerCase().includes(q))
+  }, [queue, search])
+
+  const hausses = useMemo(() => generics.filter(g => (g.variation_pct ?? 0) > 0).length, [generics])
 
   return (
     <div className="p-6 md:p-8 max-w-6xl mx-auto">
@@ -113,7 +233,7 @@ export default function MercurialePage() {
           </div>
           <div>
             <h1 className="text-2xl font-extrabold tracking-tight text-gray-900">Mercuriale</h1>
-            <p className="text-sm text-gray-500 mt-1">Vos prix d&apos;achat, article par article — mis à jour à chaque facture lue</p>
+            <p className="text-sm text-gray-500 mt-1">Vos articles génériques, au kg ou à la pièce — chaque réf fournisseur s&apos;y rattache</p>
           </div>
         </div>
         <button onClick={load} disabled={loading}
@@ -128,8 +248,7 @@ export default function MercurialePage() {
           <FileSearch className="w-4 h-4 text-pilote flex-shrink-0" />
           <p className="text-sm text-pilote-800 flex-1 min-w-[200px]">
             <strong>{pending.length} facture{pending.length > 1 ? 's' : ''}</strong> avec PDF en attente de lecture.
-            Seule la matière première entre dans la mercuriale : les charges fixes sont déjà écartées, et une facture de
-            matériel ou de service sera reconnue à la lecture et mise de côté.
+            Seule la matière première entre dans la mercuriale ; les nouvelles réfs arrivent ensuite dans la file d&apos;association.
           </p>
           {processing ? (
             <div className="flex items-center gap-3">
@@ -149,12 +268,12 @@ export default function MercurialePage() {
       {/* KPIs */}
       <div className="grid grid-cols-3 gap-4 mb-6">
         <div className="bg-white rounded-2xl border border-gray-100 shadow-card p-5">
-          <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Articles suivis</p>
-          <p className="text-2xl font-extrabold tracking-tight text-gray-900 tabular">{articles.length}</p>
+          <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Articles génériques</p>
+          <p className="text-2xl font-extrabold tracking-tight text-gray-900 tabular">{generics.length}</p>
         </div>
         <div className="bg-white rounded-2xl border border-gray-100 shadow-card p-5">
-          <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Fournisseurs</p>
-          <p className="text-2xl font-extrabold tracking-tight text-gray-900 tabular">{suppliers}</p>
+          <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Réfs à associer</p>
+          <p className={`text-2xl font-extrabold tracking-tight tabular ${queue.length > 0 ? 'text-amber-600' : 'text-gray-900'}`}>{queue.length}</p>
         </div>
         <div className="bg-white rounded-2xl border border-gray-100 shadow-card p-5">
           <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Prix en hausse</p>
@@ -163,76 +282,249 @@ export default function MercurialePage() {
       </div>
 
       {/* Recherche */}
-      <div className="relative mb-4">
+      <div className="relative mb-5">
         <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Rechercher un article, un fournisseur, un code…"
+        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Rechercher un article générique, une réf, un fournisseur…"
           className="w-full border border-gray-200 rounded-xl pl-9 pr-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200" />
       </div>
 
-      {/* Tableau */}
       {loading ? (
         <div className="space-y-2">{[...Array(6)].map((_, i) => <div key={i} className="h-12 bg-gray-100 rounded-xl animate-pulse" />)}</div>
-      ) : filtered.length === 0 ? (
-        <div className="bg-white rounded-2xl border border-dashed border-gray-200 py-16 text-center">
-          <ShoppingBasket className="w-10 h-10 text-gray-300 mx-auto mb-3" />
-          <p className="text-sm font-medium text-gray-500 mb-1">{articles.length === 0 ? 'Aucun article pour l’instant' : 'Aucun article ne correspond à la recherche'}</p>
-          {articles.length === 0 && (
-            <p className="text-xs text-gray-400 max-w-md mx-auto">
-              Synchronisez Pennylane depuis la page Facturation (les PDF des factures sont récupérés au passage),
-              puis revenez ici et cliquez sur « Lire les factures » : chaque ligne d&apos;article viendra remplir la mercuriale.
-            </p>
-          )}
-        </div>
       ) : (
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-card overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[720px]">
-              <thead>
-                <tr className="bg-gray-50 text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
-                  <th className="px-4 py-2.5 text-left">Article</th>
-                  <th className="px-4 py-2.5 text-left">Fournisseur</th>
-                  <th className="px-4 py-2.5 text-left">Code</th>
-                  <th className="px-4 py-2.5 text-right">Dernier prix HT</th>
-                  <th className="px-4 py-2.5 text-left">Unité</th>
-                  <th className="px-4 py-2.5 text-right">Au</th>
-                  <th className="px-4 py-2.5 text-right">Variation</th>
-                  <th className="px-4 py-2.5 text-right">Relevés</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map(a => {
-                  const price = a.last_price_ht !== null ? parseFloat(String(a.last_price_ht)) : null
-                  const up = (a.variation_pct ?? 0) > 0
+        <>
+          {/* File d'association : réfs fournisseurs sans article générique */}
+          {filteredQueue.length > 0 && (
+            <div className="mb-8">
+              <div className="flex items-baseline gap-2 mb-3">
+                <h2 className="text-sm font-extrabold uppercase tracking-wider text-gray-700">À associer</h2>
+                <span className="text-[11px] text-gray-400 tabular">{filteredQueue.length} réf{filteredQueue.length > 1 ? 's' : ''} fournisseur</span>
+              </div>
+              <div className="bg-white rounded-2xl border border-amber-200 shadow-card overflow-hidden divide-y divide-gray-100">
+                {filteredQueue.map(r => {
+                  const isOpen = assocId === r.id
+                  const targetUnit = assoc.choice === 'new' ? assoc.newUnit : (generics.find(g => g.id === assoc.choice)?.base_unit ?? 'kg')
                   return (
-                    <tr key={a.id} className="border-t border-gray-100 hover:bg-gray-50 transition-colors">
-                      <td className="px-4 py-2.5 text-sm font-semibold text-gray-900">{a.name}</td>
-                      <td className="px-4 py-2.5 text-xs text-gray-500">{a.supplier_name || '—'}</td>
-                      <td className="px-4 py-2.5 text-xs text-gray-400 tabular">{a.article_code || '—'}</td>
-                      <td className="px-4 py-2.5 text-right text-sm font-bold text-gray-900 tabular">{price !== null ? fmtEuro(price) : '—'}</td>
-                      <td className="px-4 py-2.5 text-xs text-gray-500">{a.unit ? `/ ${a.unit}` : '—'}</td>
-                      <td className="px-4 py-2.5 text-right text-xs text-gray-500 tabular">{fmtDate(a.last_price_date)}</td>
-                      <td className="px-4 py-2.5 text-right">
-                        {a.variation_pct === null ? (
-                          <span className="text-xs text-gray-300">—</span>
-                        ) : (
-                          <span className={`inline-flex items-center gap-1 text-xs font-bold tabular ${up ? 'text-red-600' : 'text-green-600'}`}>
-                            {up ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-                            {a.variation_pct > 0 ? '+' : ''}{a.variation_pct.toLocaleString('fr-FR')} %
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-4 py-2.5 text-right text-xs text-gray-400 tabular">{a.price_count}</td>
-                    </tr>
+                    <div key={r.id}>
+                      <div className="flex items-center gap-3 px-4 py-2.5 flex-wrap">
+                        <div className="flex-1 min-w-[220px]">
+                          <p className="text-sm font-semibold text-gray-900">{r.name}</p>
+                          <p className="text-[11px] text-gray-400">{r.supplier_name || '—'}{r.article_code ? ` · ${r.article_code}` : ''}</p>
+                        </div>
+                        <span className="text-xs text-gray-500 tabular">{r.last_price_ht !== null ? `${fmtEuro(Number(r.last_price_ht))}${r.unit ? ` / ${r.unit}` : ''}` : '—'}</span>
+                        <button onClick={() => isOpen ? setAssocId(null) : openAssoc(r)}
+                          className={`flex items-center gap-1.5 text-xs font-bold rounded-lg px-3 py-1.5 transition-all ${isOpen ? 'text-gray-500 bg-gray-100' : 'text-white bg-pilote hover:bg-pilote-hover shadow-card active:scale-[0.98]'}`}>
+                          <Link2 className="w-3.5 h-3.5" />{isOpen ? 'Annuler' : 'Associer'}
+                        </button>
+                      </div>
+                      {isOpen && (
+                        <div className="px-4 pb-4 pt-1 bg-pilote-50/40 border-t border-dashed border-pilote-200">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+                            <div>
+                              <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1">Article générique</label>
+                              <select value={assoc.choice} onChange={e => setAssoc(a => ({ ...a, choice: e.target.value }))}
+                                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200">
+                                <option value="">— Choisir —</option>
+                                <option value="new">➕ Créer un nouvel article générique</option>
+                                {generics.map(g => <option key={g.id} value={g.id}>{g.name} (/ {unitLabel(g.base_unit)})</option>)}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1">
+                                Conversion — 1 {r.unit || 'unité facturée'} = combien de {unitLabel(targetUnit)} ?
+                              </label>
+                              <input value={assoc.factor} onChange={e => setAssoc(a => ({ ...a, factor: e.target.value }))} placeholder="1 (mêmes unités)" inputMode="decimal"
+                                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200" />
+                            </div>
+                          </div>
+                          {assoc.choice === 'new' && (
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
+                              <div>
+                                <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1">Nom du générique</label>
+                                <input value={assoc.newName} onChange={e => setAssoc(a => ({ ...a, newName: e.target.value }))} placeholder="Filet de poulet"
+                                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200" />
+                              </div>
+                              <div>
+                                <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1">Unité de base</label>
+                                <select value={assoc.newUnit} onChange={e => setAssoc(a => ({ ...a, newUnit: e.target.value as 'kg' | 'piece' }))}
+                                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200">
+                                  <option value="kg">au kg</option>
+                                  <option value="piece">à la pièce</option>
+                                </select>
+                              </div>
+                              <div>
+                                <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1">Catégorie</label>
+                                <select value={assoc.newCat} onChange={e => setAssoc(a => ({ ...a, newCat: e.target.value as 'ingredient' | 'emballage' }))}
+                                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200">
+                                  <option value="ingredient">Ingrédient</option>
+                                  <option value="emballage">Emballage &amp; conditionnement</option>
+                                </select>
+                              </div>
+                            </div>
+                          )}
+                          <div className="mt-3 flex justify-end">
+                            <button onClick={() => submitAssoc(r)} disabled={saving}
+                              className="text-xs font-bold text-white bg-pilote hover:bg-pilote-hover rounded-lg px-4 py-2 shadow-card active:scale-[0.98] transition-all disabled:opacity-50">
+                              {saving ? 'Association…' : 'Associer cette réf'}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   )
                 })}
-              </tbody>
-            </table>
-          </div>
-          <p className="px-4 py-3 text-[11px] text-gray-400 border-t border-gray-100 leading-snug">
-            Pour un ingrédient acheté, une hausse est en rouge — c&apos;est un coût. La variation compare les deux derniers
-            prix unitaires relevés sur vos factures ; « Relevés » compte les passages en facture de l&apos;article.
-          </p>
-        </div>
+              </div>
+            </div>
+          )}
+
+          {/* Catalogue des articles génériques */}
+          {filteredGenerics.length === 0 && filteredQueue.length === 0 ? (
+            <div className="bg-white rounded-2xl border border-dashed border-gray-200 py-16 text-center">
+              <ShoppingBasket className="w-10 h-10 text-gray-300 mx-auto mb-3" />
+              <p className="text-sm font-medium text-gray-500 mb-1">{generics.length === 0 && queue.length === 0 ? 'Aucun article pour l’instant' : 'Rien ne correspond à la recherche'}</p>
+              {generics.length === 0 && queue.length === 0 && (
+                <p className="text-xs text-gray-400 max-w-md mx-auto">
+                  Synchronisez Pennylane depuis la page Facturation, puis cliquez sur « Lire les factures » :
+                  chaque réf extraite arrivera ici, prête à être associée à vos articles génériques.
+                </p>
+              )}
+            </div>
+          ) : filteredGenerics.length > 0 && (
+            <div>
+              <div className="flex items-baseline gap-2 mb-3">
+                <h2 className="text-sm font-extrabold uppercase tracking-wider text-gray-700">Catalogue</h2>
+                <span className="text-[11px] text-gray-400 tabular">{filteredGenerics.length} article{filteredGenerics.length > 1 ? 's' : ''} générique{filteredGenerics.length > 1 ? 's' : ''}</span>
+              </div>
+              <div className="bg-white rounded-2xl border border-gray-100 shadow-card overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[760px]">
+                    <thead>
+                      <tr className="bg-gray-50 text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
+                        <th className="px-4 py-2.5 text-left">Article générique</th>
+                        <th className="px-4 py-2.5 text-left">Catégorie</th>
+                        <th className="px-4 py-2.5 text-right">Dernier prix HT</th>
+                        <th className="px-4 py-2.5 text-left">Unité</th>
+                        <th className="px-4 py-2.5 text-right">Au</th>
+                        <th className="px-4 py-2.5 text-right">Variation</th>
+                        <th className="px-4 py-2.5 text-right">Réfs</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredGenerics.map(g => {
+                        const isOpen = openId === g.id
+                        const isEdit = editId === g.id
+                        return (
+                          <Fragment key={g.id}>
+                            <tr onClick={() => { setOpenId(isOpen ? null : g.id); setEditId(null); setConfirmDelId(null) }}
+                              className="border-t border-gray-100 hover:bg-gray-50 transition-colors cursor-pointer">
+                              <td className="px-4 py-2.5 text-sm font-semibold text-gray-900">
+                                <span className="inline-flex items-center gap-1.5">
+                                  {isOpen ? <ChevronDown className="w-3.5 h-3.5 text-gray-400" /> : <ChevronRight className="w-3.5 h-3.5 text-gray-400" />}
+                                  {g.name}
+                                </span>
+                              </td>
+                              <td className="px-4 py-2.5">
+                                <span className={`text-[10px] font-semibold uppercase tracking-wider rounded-md px-1.5 py-0.5 ${g.category === 'emballage' ? 'text-blue-700 bg-blue-50' : 'text-pilote bg-pilote-50'}`}>
+                                  {g.category === 'emballage' ? 'Emballage' : 'Ingrédient'}
+                                </span>
+                              </td>
+                              <td className="px-4 py-2.5 text-right text-sm font-bold text-gray-900 tabular">{g.price_ht !== null ? fmtEuro(Number(g.price_ht)) : '—'}</td>
+                              <td className="px-4 py-2.5 text-xs text-gray-500">/ {unitLabel(g.base_unit)}</td>
+                              <td className="px-4 py-2.5 text-right text-xs text-gray-500 tabular">{fmtDate(g.price_date)}</td>
+                              <td className="px-4 py-2.5 text-right"><Variation pct={g.variation_pct} /></td>
+                              <td className="px-4 py-2.5 text-right text-xs text-gray-400 tabular">{g.refs_count}</td>
+                            </tr>
+                            {isOpen && (
+                              <tr className="bg-gray-50/60">
+                                <td colSpan={7} className="px-4 py-3">
+                                  {isEdit ? (
+                                    <div className="grid grid-cols-1 md:grid-cols-5 gap-3 items-end" onClick={e => e.stopPropagation()}>
+                                      <div className="md:col-span-2">
+                                        <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1">Nom</label>
+                                        <input value={edit.name} onChange={e => setEdit(f => ({ ...f, name: e.target.value }))}
+                                          className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200" />
+                                      </div>
+                                      <div>
+                                        <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1">Unité</label>
+                                        <select value={edit.base_unit} onChange={e => setEdit(f => ({ ...f, base_unit: e.target.value as 'kg' | 'piece' }))}
+                                          className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200">
+                                          <option value="kg">au kg</option>
+                                          <option value="piece">à la pièce</option>
+                                        </select>
+                                      </div>
+                                      <div>
+                                        <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1">Catégorie</label>
+                                        <select value={edit.category} onChange={e => setEdit(f => ({ ...f, category: e.target.value as 'ingredient' | 'emballage' }))}
+                                          className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200">
+                                          <option value="ingredient">Ingrédient</option>
+                                          <option value="emballage">Emballage</option>
+                                        </select>
+                                      </div>
+                                      <div>
+                                        <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1">Perte par défaut (%)</label>
+                                        <input value={edit.loss} onChange={e => setEdit(f => ({ ...f, loss: e.target.value }))} inputMode="decimal"
+                                          className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200" />
+                                      </div>
+                                      <div className="md:col-span-5 flex justify-end gap-2">
+                                        <button onClick={() => setEditId(null)} className="text-xs font-semibold text-gray-500 rounded-lg px-3 py-2 hover:bg-gray-100">Annuler</button>
+                                        <button onClick={() => submitEdit(g)} disabled={saving}
+                                          className="text-xs font-bold text-white bg-pilote hover:bg-pilote-hover rounded-lg px-4 py-2 shadow-card disabled:opacity-50">Enregistrer</button>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div onClick={e => e.stopPropagation()}>
+                                      <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+                                        <p className="text-[11px] text-gray-500">
+                                          Perte par défaut : <strong className="tabular">{g.default_loss_pct.toLocaleString('fr-FR')} %</strong>
+                                          {g.price_supplier ? <> · dernier prix chez <strong>{g.price_supplier}</strong></> : null}
+                                        </p>
+                                        <div className="flex items-center gap-2">
+                                          <button onClick={() => startEdit(g)} className="flex items-center gap-1 text-xs font-semibold text-pilote rounded-lg px-2.5 py-1.5 hover:bg-pilote-50"><Pencil className="w-3 h-3" />Modifier</button>
+                                          <button onClick={() => removeGeneric(g)}
+                                            className={`flex items-center gap-1 text-xs font-semibold rounded-lg px-2.5 py-1.5 transition-colors ${confirmDelId === g.id ? 'text-white bg-red-600 hover:bg-red-700' : 'text-red-600 hover:bg-red-50'}`}>
+                                            <Trash2 className="w-3 h-3" />{confirmDelId === g.id ? 'Confirmer la suppression ?' : 'Supprimer'}
+                                          </button>
+                                        </div>
+                                      </div>
+                                      {g.refs.length === 0 ? (
+                                        <p className="text-xs text-gray-400">Aucune réf fournisseur rattachée.</p>
+                                      ) : (
+                                        <div className="space-y-1">
+                                          {g.refs.map(r => (
+                                            <div key={r.id} className="flex items-center gap-3 text-xs bg-white border border-gray-100 rounded-lg px-3 py-2 flex-wrap">
+                                              <span className="font-semibold text-gray-800 flex-1 min-w-[180px]">{r.name}</span>
+                                              <span className="text-gray-400">{r.supplier_name || '—'}</span>
+                                              <span className="text-gray-500 tabular">
+                                                {r.last_price_ht !== null ? `${fmtEuro(Number(r.last_price_ht))}${r.unit ? ` / ${r.unit}` : ''}` : '—'}
+                                              </span>
+                                              <span className="font-bold text-gray-900 tabular">
+                                                {r.price_base !== null ? `${fmtEuro(r.price_base)} / ${unitLabel(g.base_unit)}` : '—'}
+                                              </span>
+                                              <button onClick={() => dissociate(r.id, r.name)} title="Renvoyer dans la file d'attente"
+                                                className="flex items-center gap-1 font-semibold text-gray-400 hover:text-red-600 transition-colors"><Unlink className="w-3 h-3" />Dissocier</button>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                </td>
+                              </tr>
+                            )}
+                          </Fragment>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="px-4 py-3 text-[11px] text-gray-400 border-t border-gray-100 leading-snug">
+                  Le prix d&apos;un article générique est le dernier prix relevé parmi ses réfs fournisseurs, ramené à son unité
+                  de base par le facteur de conversion (« 1 rouleau = 4,5 kg »). Une hausse est en rouge — c&apos;est un coût d&apos;achat.
+                  Les fiches recettes s&apos;appuieront uniquement sur ces articles génériques.
+                </p>
+              </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   )

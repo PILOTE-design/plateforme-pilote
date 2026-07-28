@@ -1,10 +1,12 @@
-// Mercuriale — catalogue d'articles du client avec dernier prix et variation.
-//
-// L'historique de prix n'est PAS une table à part : chaque ligne de facture
-// extraite (invoice_lines) est un point de prix daté. La variation affichée
-// compare les deux derniers prix unitaires connus d'un article, toutes factures
-// confondues. La route renvoie aussi la file d'attente d'extraction : les
-// factures dont le PDF est stocké mais dont les lignes n'ont pas encore été lues.
+// Mercuriale — le référentiel de prix d'achat, à deux étages :
+//   1. les RÉFS FOURNISSEURS (articles), créées automatiquement par la lecture
+//      des factures — chaque ligne extraite est un point de prix daté ;
+//   2. les ARTICLES GÉNÉRIQUES, créés par l'utilisateur, qui regroupent les
+//      réfs (« FILET DE POULET SV » + « FILET DE POULET LR » → « Filet de
+//      poulet ») et ramènent tout à une unité de base (kg ou pièce) via le
+//      facteur de conversion de chaque réf.
+// Une réf sans générique est « à associer » : elle attend dans la file.
+// Le prix d'un générique = dernier prix connu parmi ses réfs, converti.
 import { NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { resolveClientId } from '@/lib/resolve-client-id'
@@ -18,11 +20,15 @@ export async function GET() {
 
   const service = createServiceClient()
   const clientId = await resolveClientId(service, user.id, user.email)
-  if (!clientId) return NextResponse.json({ articles: [], pending: [] })
+  if (!clientId) return NextResponse.json({ generics: [], queue: [], pending: [] })
 
-  const [{ data: articles }, { data: pricePoints }, { data: pending }] = await Promise.all([
+  const [{ data: generics }, { data: articles }, { data: pricePoints }, { data: pending }] = await Promise.all([
+    service.from('generic_articles')
+      .select('id, name, base_unit, category, default_loss_pct')
+      .eq('client_id', clientId).eq('active', true)
+      .order('name'),
     service.from('articles')
-      .select('id, name, unit, supplier_name, article_code, last_price_ht, last_price_date, price_count')
+      .select('id, name, unit, supplier_name, article_code, last_price_ht, last_price_date, price_count, generic_id, conversion_factor')
       .eq('client_id', clientId)
       .order('updated_at', { ascending: false })
       .limit(1000),
@@ -34,11 +40,9 @@ export async function GET() {
       .not('unit_price_ht', 'is', null)
       .order('created_at', { ascending: false })
       .limit(2000),
-    // File d'attente : PDF présent, lignes jamais extraites (ou en échec à retenter).
-    // Les CHARGES FIXES (loyer, logiciels type Wiismile, leasing, assurance…) sont
-    // exclues d'office : elles ne contiennent pas de matière première. Le reste passe
-    // par la reconnaissance de nature à l'extraction — la CATÉGORIE n'est pas un
-    // filtre fiable : en prod, des factures de viande arrivent en « frais_divers ».
+    // File d'attente d'extraction : PDF présent, lignes jamais lues (ou échec à
+    // retenter). Les CHARGES FIXES sont exclues d'office ; le reste passe par la
+    // reconnaissance de nature à l'extraction — la CATÉGORIE n'est pas fiable.
     service.from('invoices')
       .select('id, supplier_name, invoice_date, amount_ht, lines_status')
       .eq('client_id', clientId)
@@ -49,7 +53,7 @@ export async function GET() {
       .limit(200),
   ])
 
-  // Variation : deux derniers prix unitaires distincts par article, triés par date de facture
+  // Variation : deux derniers prix unitaires distincts par réf, datés par la facture
   const pointsByArticle = new Map<string, { date: string; price: number }[]>()
   for (const p of (pricePoints || []) as any[]) {
     const date = p.invoices?.invoice_date
@@ -70,8 +74,41 @@ export async function GET() {
     if (last !== null && previous_price !== null && previous_price !== 0) {
       variation_pct = Math.round(((last - previous_price) / previous_price) * 1000) / 10
     }
-    return { ...a, previous_price, variation_pct }
+    const conv = a.conversion_factor !== null && Number(a.conversion_factor) > 0 ? Number(a.conversion_factor) : 1
+    const price_base = last !== null ? last / conv : null
+    return { ...a, last_price_ht: last, previous_price, variation_pct, price_base }
   })
 
-  return NextResponse.json({ articles: enriched, pending: pending || [] })
+  // Regroupement sous les génériques ; le prix du générique = la réf au dernier
+  // prix le plus récent, ramené à l'unité de base (la variation % est celle de
+  // cette réf : diviser par un facteur constant ne change pas le pourcentage).
+  const refsByGeneric = new Map<string, any[]>()
+  const queue: any[] = []
+  for (const a of enriched) {
+    if (a.generic_id) {
+      const arr = refsByGeneric.get(a.generic_id) || []
+      arr.push(a)
+      refsByGeneric.set(a.generic_id, arr)
+    } else {
+      queue.push(a)
+    }
+  }
+
+  const genericsOut = (generics || []).map((g: any) => {
+    const refs = (refsByGeneric.get(g.id) || [])
+      .sort((x, y) => String(y.last_price_date || '').localeCompare(String(x.last_price_date || '')))
+    const best = refs.find(r => r.price_base !== null) || null
+    return {
+      ...g,
+      default_loss_pct: Number(g.default_loss_pct) || 0,
+      refs_count: refs.length,
+      price_ht: best ? best.price_base : null,
+      price_date: best ? best.last_price_date : null,
+      price_supplier: best ? best.supplier_name : null,
+      variation_pct: best ? best.variation_pct : null,
+      refs,
+    }
+  })
+
+  return NextResponse.json({ generics: genericsOut, queue, pending: pending || [] })
 }
