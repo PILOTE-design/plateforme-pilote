@@ -142,7 +142,7 @@ export async function computeWeekEconomics(
   // 1. Achats HT de la semaine
   const { data: invoicesData } = await supabase
     .from('invoices')
-    .select('amount_ht, category, supplier_name, is_fixed_charge, status')
+    .select('id, amount_ht, category, supplier_name, is_fixed_charge, status')
     .eq('client_id', clientId)
     .eq('week_number', week)
     .eq('year', year)
@@ -182,6 +182,40 @@ export async function computeWeekEconomics(
     return best
   }
 
+  // 1 ter. Ventilation PROPRE À UNE FACTURE (référentiel margin_families) : elle
+  // PRIME sur la répartition fournisseur, sans toucher les autres factures du
+  // même fournisseur. Chaque famille visée est ramenée à son rayon moteur : sa
+  // RACINE si c'est une sous-famille, puis boucherie/charcuterie/traiteur si la
+  // racine correspond à un rayon métier, divers sinon (rachat compris).
+  const invIds = varInv.map((i: any) => i.id).filter(Boolean)
+  const { data: ifsRows } = invIds.length > 0
+    ? await supabase.from('invoice_family_splits')
+        .select('invoice_id, family_id, pct').eq('client_id', clientId).in('invoice_id', invIds)
+    : { data: [] as any[] }
+  let bucketOfFamily = new Map<string, string>()
+  if ((ifsRows || []).length > 0) {
+    const { data: mfRows } = await supabase.from('margin_families')
+      .select('id, parent_id, name, name_key, is_rachat')
+      .eq('client_id', clientId).eq('active', true)
+    const byId = new Map<string, any>((mfRows || []).map((m: any) => [m.id, m]))
+    bucketOfFamily = new Map((mfRows || []).map((m: any) => {
+      const root = m.parent_id ? (byId.get(m.parent_id) ?? m) : m
+      let bucket = 'divers'
+      if (!root.is_rachat && !m.is_rachat) {
+        for (const r of VENT_RAYONS) {
+          if (familleMatchesText(r.key, r.label, String(root.name_key || ''), String(root.name || ''))) { bucket = r.key; break }
+        }
+      }
+      return [String(m.id), bucket]
+    }))
+  }
+  const overridesByInvoice = new Map<string, { bucket: string; pct: number }[]>()
+  for (const s of (ifsRows || []) as any[]) {
+    const arr = overridesByInvoice.get(s.invoice_id) || []
+    arr.push({ bucket: bucketOfFamily.get(String(s.family_id)) ?? 'divers', pct: Number(s.pct) || 0 })
+    overridesByInvoice.set(s.invoice_id, arr)
+  }
+
   // 3 rayons métier + divers. pct_fruits_et_legumes (colonne historique) est replié
   // dans divers : les fruits & légumes ne sont plus un rayon, c'est de l'achat-revente.
   const achats_by_rayon: Record<string, number> = { boucherie: 0, charcuterie: 0, traiteur: 0, divers: 0 }
@@ -189,6 +223,14 @@ export async function computeWeekEconomics(
   for (const inv of varInv) {
     const amt = parseFloat(inv.amount_ht || 0)
     if (!amt) continue
+    const ov = inv.id ? overridesByInvoice.get(inv.id) : undefined
+    if (ov && ov.length > 0) {
+      const totOv = ov.reduce((s, o) => s + o.pct, 0)
+      if (totOv > 0) {
+        for (const o of ov) achats_by_rayon[o.bucket] = (achats_by_rayon[o.bucket] || 0) + amt * (o.pct / totOv)
+        continue
+      }
+    }
     const sp = splitFor(inv.supplier_name)
     const pDivers = Number(sp?.pct_divers || 0) + Number(sp?.pct_fruits_et_legumes || 0)
     const tot = sp ? (Number(sp.pct_boucherie) + Number(sp.pct_charcuterie) + Number(sp.pct_traiteur) + pDivers) : 0
