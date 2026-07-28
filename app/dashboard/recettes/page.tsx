@@ -9,11 +9,11 @@
 // ou une embauche, et toutes les fiches se recalculent.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useRouter } from 'next/navigation'
 import { ChefHat, Plus, X, Search, AlertTriangle, Clock, ShoppingBasket, Package } from 'lucide-react'
 import Link from 'next/link'
 import { useToast } from '@/components/ui/toast'
 import { useConfirm } from '@/components/ui/confirm-dialog'
+import FichePanel, { type FicheRecipe } from './fiche-panel'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 
@@ -65,7 +65,6 @@ const catLabel = (c: string | null) => (c && c.trim() ? c.trim().toLowerCase() :
 
 export default function RecettesPage() {
   const { toast } = useToast()
-  const router = useRouter()
   const { confirm: confirmAction } = useConfirm()
   const [recipes, setRecipes] = useState<Recipe[]>([])
   const [generics, setGenerics] = useState<Generic[]>([])
@@ -78,6 +77,9 @@ export default function RecettesPage() {
   const [search, setSearch] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
   const [catFilter, setCatFilter] = useState<string | null>(null)
+  // Fiche ouverte EN ENCADRÉ sur la page (zéro navigation) — re-clic = fermeture
+  const [openId, setOpenId] = useState<string | null>(null)
+  const panelRef = useRef<HTMLDivElement | null>(null)
   const [show, setShow] = useState(false)
   const [editId, setEditId] = useState<string | null>(null)
   const [form, setForm] = useState({ name: '', category: '', yield_qty: '', yield_unit: 'pièces', labor_minutes: '', selling_price_ttc: '', tva_rate: '5.5', employee_id: '' })
@@ -190,6 +192,15 @@ export default function RecettesPage() {
     for (const r of recipes) set.add(catLabel(r.category))
     return [...set].sort((a, b) => a.localeCompare(b, 'fr'))
   }, [recipes])
+
+  /** Ouvre la fiche en encadré sur la page (ou la ferme si déjà ouverte) */
+  function openFiche(id: string) {
+    setOpenId(prev => {
+      const next = prev === id ? null : id
+      if (next) setTimeout(() => panelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60)
+      return next
+    })
+  }
 
   function openNew() {
     setEditId(null)
@@ -330,7 +341,7 @@ export default function RecettesPage() {
                 ) : suggestions.map(r => (
                   <button key={r.id} type="button"
                     onMouseDown={e => e.preventDefault()}
-                    onClick={() => { setSearchOpen(false); router.push(`/dashboard/recettes/${r.id}`) }}
+                    onClick={() => { setSearchOpen(false); openFiche(r.id) }}
                     className="w-full flex items-center justify-between gap-3 px-3.5 py-2.5 text-left hover:bg-pilote-50/60 transition-colors border-b border-gray-50 last:border-b-0">
                     <span className="text-sm font-semibold text-gray-900 truncate">{r.name}</span>
                     <span className={`text-[10px] font-semibold uppercase tracking-wider rounded-lg px-1.5 py-0.5 flex-shrink-0 capitalize ${r.category && r.category.trim() ? 'text-pilote bg-pilote-50' : 'text-gray-400 bg-gray-50'}`}>
@@ -361,6 +372,24 @@ export default function RecettesPage() {
         </div>
       )}
 
+      {/* Fiche ouverte en encadré — directement sur la page, sans navigation */}
+      {openId && (() => {
+        const r = recipes.find(x => x.id === openId)
+        if (!r) return null
+        return (
+          <div ref={panelRef} className="mb-6 scroll-mt-6">
+            <FichePanel
+              key={r.id}
+              recipe={r as unknown as FicheRecipe}
+              employees={employees}
+              onEditFull={() => openEdit(r)}
+              onSaved={load}
+              onClose={() => setOpenId(null)}
+            />
+          </div>
+        )
+      })()}
+
       {/* Liste */}
       {loading ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">{[...Array(6)].map((_, i) => <div key={i} className="h-44 bg-gray-100 rounded-2xl animate-pulse" />)}</div>
@@ -390,7 +419,7 @@ export default function RecettesPage() {
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {list.map(r => (
-            <button key={r.id} onClick={() => router.push(`/dashboard/recettes/${r.id}`)}
+            <button key={r.id} onClick={() => openFiche(r.id)}
               className="text-left bg-white rounded-2xl border border-gray-100 shadow-card p-5 hover:shadow-card-hover hover:-translate-y-0.5 transition-all">
               <div className="flex items-start justify-between gap-2 mb-3">
                 <p className="text-sm font-bold text-gray-900 leading-snug">{r.name}</p>
