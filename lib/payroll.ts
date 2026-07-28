@@ -237,12 +237,26 @@ export function entryPosteHours(entry: PayrollEntry): { hours: Record<string, nu
   const hoursByPoste: Record<string, number> = {}
   const sdAll = (entry.schedule_details ?? {}) as Record<string, {
     categorie?: string; categorie_matin?: string; categorie_apmidi?: string
+    postes_matin?: string[]; postes_apmidi?: string[]
     matin_debut?: string; matin_fin?: string; apmidi_debut?: string; apmidi_fin?: string
   }>
   const add = (cat: string | undefined, hours: number) => {
     if (hours <= 0) return
     const key = String(cat ?? '').trim() || NO_POSTE
     hoursByPoste[key] = (hoursByPoste[key] || 0) + hours
+  }
+  // Heures d'un créneau : PLUSIEURS postes possibles (postes_matin/postes_apmidi,
+  // 28/07) — partagées à PARTS ÉGALES entre les postes cochés. À défaut, le poste
+  // unique du créneau (categorie_matin/apmidi) prend tout, comme avant.
+  const addSlot = (list: string[] | undefined, single: string, hours: number) => {
+    if (hours <= 0) return
+    const postes = Array.isArray(list) ? list.map(k => String(k).trim()).filter(Boolean) : []
+    if (postes.length > 0) {
+      const part = hours / postes.length
+      for (const k of postes) add(k, part)
+    } else {
+      add(single, hours)
+    }
   }
   let worked = 0
   for (const j of JOURS) {
@@ -253,15 +267,17 @@ export function entryPosteHours(entry: PayrollEntry): { hours: Record<string, nu
     const sd = sdAll[j] || {}
     const catM = sd.categorie_matin || ''
     const catA = sd.categorie_apmidi || ''
-    if (!catM && !catA) { add(sd.categorie, h); continue }
+    const multiM = Array.isArray(sd.postes_matin) && sd.postes_matin.length > 0
+    const multiA = Array.isArray(sd.postes_apmidi) && sd.postes_apmidi.length > 0
+    if (!catM && !catA && !multiM && !multiA) { add(sd.categorie, h); continue }
     const durM = slotMinutes(sd.matin_debut, sd.matin_fin)
     const durA = slotMinutes(sd.apmidi_debut, sd.apmidi_fin)
     let wM: number
     if (durM + durA > 0) wM = durM / (durM + durA)
-    else if (catM && catA) wM = 0.5
-    else wM = catM ? 1 : 0
-    add(catM, h * wM)
-    add(catA, h * (1 - wM))
+    else if ((catM || multiM) && (catA || multiA)) wM = 0.5
+    else wM = (catM || multiM) ? 1 : 0
+    addSlot(sd.postes_matin, catM, h * wM)
+    addSlot(sd.postes_apmidi, catA, h * (1 - wM))
   }
   return { hours: hoursByPoste, worked }
 }
