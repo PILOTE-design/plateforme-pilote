@@ -244,8 +244,8 @@ export default async function TendancesPage() {
   return (
     <div className="p-6 md:p-8 max-w-6xl mx-auto">
       <div className="mb-8 flex items-start gap-3">
-        <div className="w-10 h-10 rounded-xl bg-pilote-50 flex items-center justify-center flex-shrink-0 mt-0.5">
-          <LineChart className="w-5 h-5 text-pilote" />
+        <div className="w-12 h-12 bg-gradient-to-br from-pilote to-pilote-hover rounded-2xl flex items-center justify-center flex-shrink-0 shadow-card">
+          <LineChart className="w-6 h-6 text-white" />
         </div>
         <div>
           <h1 className="text-2xl font-extrabold tracking-tight text-gray-900">Tendances produits</h1>
@@ -278,7 +278,7 @@ export default async function TendancesPage() {
                 <Card key={i} className="hover:shadow-card-hover transition-shadow">
                   <CardContent className="p-5">
                     <div className="flex items-center gap-2 mb-2.5">
-                      <div className="w-6 h-6 rounded-md bg-pilote-50 flex items-center justify-center flex-shrink-0">
+                      <div className="w-6 h-6 rounded-lg bg-pilote-50 flex items-center justify-center flex-shrink-0">
                         <kpi.icon className="w-3.5 h-3.5 text-pilote" />
                       </div>
                       <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">{kpi.label} · {labelOf(lastKey)}</p>
