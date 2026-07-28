@@ -33,6 +33,8 @@ export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({} as Record<string, unknown>))
   const name = typeof body.name === 'string' ? body.name.trim() : ''
   if (!name || name.length > 60) return NextResponse.json({ error: 'Nom invalide' }, { status: 400 })
+  // 'vente' (marges/ventilation) par défaut ; 'charge' = famille de charges fixes
+  const kind = body.kind === 'charge' ? 'charge' : 'vente'
 
   let parent_id: string | null = null
   if (typeof body.parent_id === 'string' && body.parent_id) {
@@ -55,7 +57,7 @@ export async function POST(request: NextRequest) {
   const { data, error } = await service.from('margin_families')
     .insert({
       client_id: clientId, parent_id, name, name_key: normText(name),
-      match_stems: stemsFromName(name), is_rachat: false,
+      match_stems: stemsFromName(name), is_rachat: false, kind,
       benchmark_lo: lo, benchmark_hi: hi,
       position: (Number(maxRow?.position) || 0) + 1,
     })
