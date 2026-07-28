@@ -251,6 +251,14 @@ export function parseRecipeFields(body: Record<string, unknown>): { error?: stri
       tva_rate: Number.isFinite(tva) && tva > 0 && tva <= 20 ? tva : 5.5,
       notes: typeof body?.notes === 'string' && body.notes ? String(body.notes).slice(0, 500) : null,
       employee_id: typeof body?.employee_id === 'string' && body.employee_id ? body.employee_id : null,
+      // Fiche façon OTAMI : procédé de fabrication (étapes ordonnées) et
+      // argumentaire de vente (jusqu'à 6 arguments). Absents du corps = inchangés.
+      ...(Array.isArray(body?.fabrication_steps)
+        ? { fabrication_steps: (body.fabrication_steps as unknown[]).map(s => String(s ?? '').trim()).filter(Boolean).slice(0, 30).map(s => s.slice(0, 300)) }
+        : {}),
+      ...(Array.isArray(body?.selling_points)
+        ? { selling_points: (body.selling_points as unknown[]).map(s => String(s ?? '').trim()).slice(0, 6).map(s => s.slice(0, 200)) }
+        : {}),
       updated_at: new Date().toISOString(),
     },
   }

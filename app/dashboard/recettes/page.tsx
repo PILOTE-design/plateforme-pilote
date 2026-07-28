@@ -8,7 +8,8 @@
 // moyen d'équipe, CCN 992). Rien n'est figé : une facture lue, une association
 // ou une embauche, et toutes les fiches se recalculent.
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { ChefHat, Plus, X, Search, AlertTriangle, Clock, ShoppingBasket, Package } from 'lucide-react'
 import Link from 'next/link'
 import { useToast } from '@/components/ui/toast'
@@ -64,6 +65,7 @@ const catLabel = (c: string | null) => (c && c.trim() ? c.trim().toLowerCase() :
 
 export default function RecettesPage() {
   const { toast } = useToast()
+  const router = useRouter()
   const { confirm: confirmAction } = useConfirm()
   const [recipes, setRecipes] = useState<Recipe[]>([])
   const [generics, setGenerics] = useState<Generic[]>([])
@@ -94,6 +96,18 @@ export default function RecettesPage() {
     setLoading(false)
   }, [])
   useEffect(() => { load() }, [load])
+
+  // ?edit=<id> (posé par la fiche pleine page) : ouvre la modale d'édition
+  // complète une fois les recettes chargées — une seule fois.
+  const editConsumedRef = useRef(false)
+  useEffect(() => {
+    if (loading || recipes.length === 0 || editConsumedRef.current) return
+    const id = new URLSearchParams(window.location.search).get('edit')
+    if (!id) return
+    const r = recipes.find(x => x.id === id)
+    if (r) { editConsumedRef.current = true; openEdit(r) }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, recipes])
 
   const genericById = useMemo(() => new Map(generics.map(g => [g.id, g])), [generics])
 
@@ -316,7 +330,7 @@ export default function RecettesPage() {
                 ) : suggestions.map(r => (
                   <button key={r.id} type="button"
                     onMouseDown={e => e.preventDefault()}
-                    onClick={() => { setSearchOpen(false); openEdit(r) }}
+                    onClick={() => { setSearchOpen(false); router.push(`/dashboard/recettes/${r.id}`) }}
                     className="w-full flex items-center justify-between gap-3 px-3.5 py-2.5 text-left hover:bg-pilote-50/60 transition-colors border-b border-gray-50 last:border-b-0">
                     <span className="text-sm font-semibold text-gray-900 truncate">{r.name}</span>
                     <span className={`text-[10px] font-semibold uppercase tracking-wider rounded-lg px-1.5 py-0.5 flex-shrink-0 capitalize ${r.category && r.category.trim() ? 'text-pilote bg-pilote-50' : 'text-gray-400 bg-gray-50'}`}>
@@ -376,7 +390,7 @@ export default function RecettesPage() {
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {list.map(r => (
-            <button key={r.id} onClick={() => openEdit(r)}
+            <button key={r.id} onClick={() => router.push(`/dashboard/recettes/${r.id}`)}
               className="text-left bg-white rounded-2xl border border-gray-100 shadow-card p-5 hover:shadow-card-hover hover:-translate-y-0.5 transition-all">
               <div className="flex items-start justify-between gap-2 mb-3">
                 <p className="text-sm font-bold text-gray-900 leading-snug">{r.name}</p>
