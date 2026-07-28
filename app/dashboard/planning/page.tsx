@@ -24,8 +24,10 @@ type ScheduleDetail = {
   apmidi_debut?: string
   apmidi_fin?: string
   categorie?: string        // legacy : poste pour toute la journée
-  categorie_matin?: string  // poste du créneau matin
-  categorie_apmidi?: string // poste du créneau après-midi
+  categorie_matin?: string  // poste PRINCIPAL du matin (impression/envoi le lisent — inchangés)
+  categorie_apmidi?: string // poste PRINCIPAL de l'après-midi
+  postes_matin?: string[]   // MULTI-POSTES du matin — les heures du créneau se partagent à parts égales
+  postes_apmidi?: string[]  // MULTI-POSTES de l'après-midi
   decoupe?: string          // temps de découpe du jour (min) — imputé à la valorisation
 }
 type ScheduleDetails = Partial<Record<JourDB, ScheduleDetail>>
@@ -515,6 +517,34 @@ export default function PlanningPage() {
     const current = getEntry(empId)
     const currentSd = ((current.schedule_details || {}) as ScheduleDetails)
     const newDaySd: ScheduleDetail = { ...(currentSd[jour] || {}), [slot]: value, categorie: '' }
+    const updated: PlanningEntry = {
+      ...current,
+      schedule_details: { ...currentSd, [jour]: newDaySd },
+    }
+    setEntriesSync(prev => ({ ...prev, [empId]: updated }))
+    saveEntryValues(empId, updated)
+  }
+
+  /** PLUSIEURS postes sur un même créneau : le clic AJOUTE ou RETIRE le poste de
+   *  la liste. Les heures du créneau se partagent à parts égales entre les postes
+   *  cochés (paie/marges) ; le PREMIER coché reste le poste principal écrit dans
+   *  categorie_matin/apmidi — l'impression et l'envoi aux employés le lisent et
+   *  ne changent donc PAS. */
+  function toggleSlotPoste(empId: string, jour: JourDB, slot: 'matin' | 'apmidi', key: string) {
+    const current = getEntry(empId)
+    const currentSd = ((current.schedule_details || {}) as ScheduleDetails)
+    const daySd = currentSd[jour] || {}
+    const prevList: string[] = slot === 'matin'
+      ? (Array.isArray(daySd.postes_matin) && daySd.postes_matin.length > 0
+          ? [...daySd.postes_matin]
+          : (daySd.categorie_matin || daySd.categorie ? [(daySd.categorie_matin || daySd.categorie) as string] : []))
+      : (Array.isArray(daySd.postes_apmidi) && daySd.postes_apmidi.length > 0
+          ? [...daySd.postes_apmidi]
+          : (daySd.categorie_apmidi || daySd.categorie ? [(daySd.categorie_apmidi || daySd.categorie) as string] : []))
+    const next = prevList.includes(key) ? prevList.filter(k => k !== key) : [...prevList, key]
+    const newDaySd: ScheduleDetail = slot === 'matin'
+      ? { ...daySd, postes_matin: next, categorie_matin: next[0] || '', categorie: '' }
+      : { ...daySd, postes_apmidi: next, categorie_apmidi: next[0] || '', categorie: '' }
     const updated: PlanningEntry = {
       ...current,
       schedule_details: { ...currentSd, [jour]: newDaySd },
@@ -1344,18 +1374,25 @@ export default function PlanningPage() {
                       </p>
                     )}
 
-                    {/* Poste matin */}
+                    {/* Poste(s) matin — PLUSIEURS possibles : les heures du créneau se
+                        partagent à parts égales ; le premier coché reste le poste
+                        principal (impression et envoi inchangés) */}
                     <div className="flex items-start gap-3">
                       <span className="text-xs text-gray-400 w-20 shrink-0 pt-1">Poste matin</span>
                       <div className="flex flex-wrap gap-1.5">
                         {allPostes.map(cat => {
-                          const isSel = (mSd.categorie_matin || mSd.categorie) === cat.key
+                          const listM = Array.isArray(mSd.postes_matin) && mSd.postes_matin.length > 0
+                            ? mSd.postes_matin
+                            : (mSd.categorie_matin || mSd.categorie ? [(mSd.categorie_matin || mSd.categorie) as string] : [])
+                          const isSel = listM.includes(cat.key)
+                          const isPrimary = listM[0] === cat.key && listM.length > 1
                           return (
                             <button key={cat.key}
-                              onClick={() => setSlotCategory(detailModal.empId, mJour, 'categorie_matin', isSel ? '' : cat.key)}
+                              onClick={() => toggleSlotPoste(detailModal.empId, mJour, 'matin', cat.key)}
+                              title={isPrimary ? 'Poste principal (affiché à l’impression et dans l’envoi)' : 'Cliquer pour ajouter/retirer — plusieurs postes possibles sur le créneau'}
                               className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
                                 isSel ? cat.color : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-                              }`}
+                              }${isPrimary ? ' ring-2 ring-offset-1 ring-gray-300' : ''}`}
                             >
                               {cat.short}
                             </button>
@@ -1364,18 +1401,23 @@ export default function PlanningPage() {
                       </div>
                     </div>
 
-                    {/* Poste après-midi */}
+                    {/* Poste(s) après-midi — même logique multi-postes */}
                     <div className="flex items-start gap-3">
                       <span className="text-xs text-gray-400 w-20 shrink-0 pt-1">Poste a.-midi</span>
                       <div className="flex flex-wrap gap-1.5">
                         {allPostes.map(cat => {
-                          const isSel = (mSd.categorie_apmidi || mSd.categorie) === cat.key
+                          const listA = Array.isArray(mSd.postes_apmidi) && mSd.postes_apmidi.length > 0
+                            ? mSd.postes_apmidi
+                            : (mSd.categorie_apmidi || mSd.categorie ? [(mSd.categorie_apmidi || mSd.categorie) as string] : [])
+                          const isSel = listA.includes(cat.key)
+                          const isPrimary = listA[0] === cat.key && listA.length > 1
                           return (
                             <button key={cat.key}
-                              onClick={() => setSlotCategory(detailModal.empId, mJour, 'categorie_apmidi', isSel ? '' : cat.key)}
+                              onClick={() => toggleSlotPoste(detailModal.empId, mJour, 'apmidi', cat.key)}
+                              title={isPrimary ? 'Poste principal (affiché à l’impression et dans l’envoi)' : 'Cliquer pour ajouter/retirer — plusieurs postes possibles sur le créneau'}
                               className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
                                 isSel ? cat.color : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-                              }`}
+                              }${isPrimary ? ' ring-2 ring-offset-1 ring-gray-300' : ''}`}
                             >
                               {cat.short}
                             </button>
@@ -1383,15 +1425,21 @@ export default function PlanningPage() {
                         })}
                       </div>
                     </div>
+                    {((mSd.postes_matin?.length ?? 0) > 1 || (mSd.postes_apmidi?.length ?? 0) > 1) && (
+                      <p className="text-[11px] text-gray-400 -mt-1">
+                        Plusieurs postes sur un créneau : les heures se partagent à parts égales entre eux (paie et marges).
+                        Le poste entouré reste celui affiché à l&apos;impression et dans l&apos;envoi aux employés.
+                      </p>
+                    )}
 
                     {/* Horaires */}
                     <div className="flex items-start gap-3">
                       <span className="text-xs text-gray-400 w-20 shrink-0 pt-1.5">Horaires</span>
                       <div className="space-y-2">
                         {([
-                          { label: 'Matin',      startF: 'matin_debut'  as keyof ScheduleDetail, endF: 'matin_fin'  as keyof ScheduleDetail },
-                          { label: 'Après-midi', startF: 'apmidi_debut' as keyof ScheduleDetail, endF: 'apmidi_fin' as keyof ScheduleDetail },
-                        ]).map(({ label, startF, endF }) => (
+                          { label: 'Matin',      startF: 'matin_debut'  as const, endF: 'matin_fin'  as const },
+                          { label: 'Après-midi', startF: 'apmidi_debut' as const, endF: 'apmidi_fin' as const },
+                        ] as { label: string; startF: 'matin_debut' | 'apmidi_debut'; endF: 'matin_fin' | 'apmidi_fin' }[]).map(({ label, startF, endF }) => (
                           <div key={label} className="flex items-center gap-1.5">
                             <span className="text-[11px] text-gray-500 font-medium w-16 shrink-0">{label}</span>
                             {/* Début */}
