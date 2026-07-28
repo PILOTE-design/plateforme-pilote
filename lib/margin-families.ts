@@ -109,12 +109,12 @@ export function caByFamily(
   return { byId, nonRattache }
 }
 
-/** Charge le référentiel du client, en le SEMANT à la première lecture.
- *  Serveur uniquement (service role). Idempotent : ne sème que si vide. */
+/** Charge le référentiel de VENTE du client (kind='vente'), en le SEMANT à la
+ *  première lecture. Serveur uniquement (service role). Idempotent. */
 export async function ensureMarginFamilies(service: any, clientId: string): Promise<MarginFamily[]> {
   const sel = 'id, parent_id, name, name_key, match_stems, is_rachat, benchmark_lo, benchmark_hi, position'
   const { data: existing } = await service.from('margin_families')
-    .select(sel).eq('client_id', clientId).eq('active', true)
+    .select(sel).eq('client_id', clientId).eq('active', true).eq('kind', 'vente')
     .order('position').order('name')
   if (existing && existing.length > 0) return normalizeRows(existing)
 
@@ -143,7 +143,36 @@ export async function ensureMarginFamilies(service: any, clientId: string): Prom
   if (childrenPayload.length > 0) await service.from('margin_families').insert(childrenPayload)
 
   const { data: seeded } = await service.from('margin_families')
-    .select(sel).eq('client_id', clientId).eq('active', true)
+    .select(sel).eq('client_id', clientId).eq('active', true).eq('kind', 'vente')
+    .order('position').order('name')
+  return normalizeRows(seeded || [])
+}
+
+/** Familles de CHARGES personnalisables (kind='charge') — classent les factures
+ *  de charges fixes/récurrentes (invoices.charge_family_id). Semées au premier
+ *  passage, modifiables ensuite via /api/margin-families. */
+export const DEFAULT_CHARGE_FAMILY_SEED = [
+  'Loyer & immobilier', 'Énergie', 'Assurances', 'Abonnements & logiciels',
+  'Véhicules & carburant', 'Frais bancaires', 'Emballages & consommables', 'Autres charges',
+]
+
+export async function ensureChargeFamilies(service: any, clientId: string): Promise<MarginFamily[]> {
+  const sel = 'id, parent_id, name, name_key, match_stems, is_rachat, benchmark_lo, benchmark_hi, position'
+  const { data: existing } = await service.from('margin_families')
+    .select(sel).eq('client_id', clientId).eq('active', true).eq('kind', 'charge')
+    .order('position').order('name')
+  if (existing && existing.length > 0) return normalizeRows(existing)
+
+  const payload = DEFAULT_CHARGE_FAMILY_SEED.map((name, i) => ({
+    client_id: clientId, parent_id: null, name, name_key: normText(name),
+    match_stems: stemsFromName(name), is_rachat: false, kind: 'charge',
+    benchmark_lo: null, benchmark_hi: null, position: 100 + i,
+  }))
+  const { error } = await service.from('margin_families').insert(payload)
+  if (error) return [] // best-effort
+
+  const { data: seeded } = await service.from('margin_families')
+    .select(sel).eq('client_id', clientId).eq('active', true).eq('kind', 'charge')
     .order('position').order('name')
   return normalizeRows(seeded || [])
 }
