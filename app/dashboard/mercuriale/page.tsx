@@ -423,7 +423,7 @@ export default function MercurialePage() {
                                 </span>
                               </td>
                               <td className="px-4 py-2.5">
-                                <span className={`text-[10px] font-semibold uppercase tracking-wider rounded-md px-1.5 py-0.5 ${g.category === 'emballage' ? 'text-blue-700 bg-blue-50' : 'text-pilote bg-pilote-50'}`}>
+                                <span className={`text-[10px] font-semibold uppercase tracking-wider rounded-lg px-1.5 py-0.5 ${g.category === 'emballage' ? 'text-blue-700 bg-blue-50' : 'text-pilote bg-pilote-50'}`}>
                                   {g.category === 'emballage' ? 'Emballage' : 'Ingrédient'}
                                 </span>
                               </td>
