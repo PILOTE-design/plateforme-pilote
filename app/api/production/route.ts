@@ -12,7 +12,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { resolveClientId } from '@/lib/resolve-client-id'
 import { PAYROLL_EMPLOYEE_COLUMNS, JOURS, type PayrollEmployee } from '@/lib/payroll'
-import { averageLoadedRate, costIngredients, type IngredientRow } from '@/lib/recipes'
+import { averageLoadedRate, employeeLoadedRate, buildGenericMap, costIngredients, type IngredientRow } from '@/lib/recipes'
 
 export const dynamic = 'force-dynamic'
 
@@ -38,12 +38,13 @@ export async function GET(request: NextRequest) {
   const dateStr = new URL(request.url).searchParams.get('date') || ''
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return NextResponse.json({ error: 'date requise (YYYY-MM-DD)' }, { status: 400 })
 
-  const [{ data: orders }, { data: recipes }, { data: recipeIngs }, { data: employees }, { data: articles }] = await Promise.all([
+  const [{ data: orders }, { data: recipes }, { data: recipeIngs }, { data: employees }, { data: articles }, { data: generics }] = await Promise.all([
     service.from('production_orders').select('*').eq('client_id', clientId).eq('production_date', dateStr).order('created_at'),
-    service.from('recipes').select('id, name, yield_qty, yield_unit, labor_minutes').eq('client_id', clientId),
+    service.from('recipes').select('id, name, yield_qty, yield_unit, labor_minutes, employee_id').eq('client_id', clientId),
     service.from('recipe_ingredients').select('*').eq('client_id', clientId),
     service.from('employees').select(PAYROLL_EMPLOYEE_COLUMNS).eq('client_id', clientId),
-    service.from('articles').select('id, last_price_ht').eq('client_id', clientId).not('last_price_ht', 'is', null),
+    service.from('articles').select('id, last_price_ht, last_price_date, generic_id, conversion_factor').eq('client_id', clientId),
+    service.from('generic_articles').select('id, name, base_unit, category, default_loss_pct').eq('client_id', clientId).eq('active', true),
   ])
 
   const recipeById = new Map((recipes || []).map((r: any) => [r.id, r]))
@@ -54,9 +55,13 @@ export async function GET(request: NextRequest) {
     ingsByRecipe.set(ing.recipe_id, arr)
   }
   const priceByArticle = new Map<string, number>()
-  for (const a of articles || []) priceByArticle.set(a.id, parseFloat(String(a.last_price_ht)))
+  for (const a of articles || []) {
+    if (a.last_price_ht != null) priceByArticle.set(a.id, parseFloat(String(a.last_price_ht)))
+  }
+  const genericById = buildGenericMap((generics || []) as Record<string, unknown>[], (articles || []) as Record<string, unknown>[])
   const empById = new Map((employees || []).map((e: any) => [e.id, e]))
-  const laborRate = averageLoadedRate((employees || []) as unknown as PayrollEmployee[])
+  const emps = (employees || []) as unknown as PayrollEmployee[]
+  const laborRate = averageLoadedRate(emps)
 
   // Heures pointées au planning ce jour-là (pour la jauge de charge par personne)
   const day = new Date(dateStr + 'T00:00:00Z')
@@ -72,7 +77,9 @@ export async function GET(request: NextRequest) {
     plannedHours.set(p.employee_id, parseFloat(String(p[jourCol] || 0)) || 0)
   }
 
-  // Ordres enrichis + agrégats
+  // Ordres enrichis + agrégats. La liste d'ingrédients agrège les quantités
+  // BRUTES (perte comprise — c'est ce qu'on sort du frigo), en unité de base
+  // pour les lignes génériques.
   const needs = new Map<string, { label: string; unit: string | null; article_id: string | null; total_qty: number; unit_price_ht: number | null; total_cost: number; missing_price: boolean }>()
   const workloadByEmp = new Map<string, number>() // '' = non affecté
   let totalMinutes = 0
@@ -82,8 +89,10 @@ export async function GET(request: NextRequest) {
     const recipe = recipeById.get(o.recipe_id)
     const batches = parseFloat(String(o.batches)) || 1
     const minutes = recipe ? (parseFloat(String(recipe.labor_minutes)) || 0) * batches : 0
-    const costed = recipe ? costIngredients(ingsByRecipe.get(o.recipe_id) || [], priceByArticle) : []
+    const costed = recipe ? costIngredients(ingsByRecipe.get(o.recipe_id) || [], priceByArticle, genericById) : []
     const matiere = round2(costed.reduce((s, i) => s + i.line_total_ht, 0) * batches)
+    // Taux MO : l'employé choisi sur la FICHE prime, sinon taux moyen d'équipe
+    const rate = (recipe ? employeeLoadedRate(emps, recipe.employee_id) : null) ?? laborRate
 
     totalMinutes += minutes
     totalMatiere += matiere
@@ -91,9 +100,11 @@ export async function GET(request: NextRequest) {
     workloadByEmp.set(empKey, (workloadByEmp.get(empKey) || 0) + minutes)
 
     for (const ing of costed) {
-      const key = ing.article_id || `libre:${ing.label.toLowerCase()}`
-      const cur = needs.get(key) || { label: ing.label, unit: ing.unit, article_id: ing.article_id, total_qty: 0, unit_price_ht: ing.unit_price_ht, total_cost: 0, missing_price: ing.price_source === 'aucun' }
-      cur.total_qty = round2(cur.total_qty + (Number(ing.quantity) || 0) * batches)
+      const generic = ing.generic_id ? genericById.get(ing.generic_id) : null
+      const key = ing.generic_id || ing.article_id || `libre:${ing.label.toLowerCase()}`
+      const unit = generic ? (generic.base_unit === 'kg' ? 'kg' : 'pièce') : ing.unit
+      const cur = needs.get(key) || { label: generic?.name ?? ing.label, unit, article_id: ing.article_id, total_qty: 0, unit_price_ht: ing.unit_price_ht, total_cost: 0, missing_price: ing.price_source === 'aucun' }
+      cur.total_qty = round2(cur.total_qty + ing.qty_brute * batches)
       cur.total_cost = round2(cur.total_cost + ing.line_total_ht * batches)
       needs.set(key, cur)
     }
@@ -103,7 +114,7 @@ export async function GET(request: NextRequest) {
       recipe_name: recipe?.name ?? 'Recette supprimée',
       yield_qty: recipe?.yield_qty ?? null, yield_unit: recipe?.yield_unit ?? null,
       batches, minutes, matiere,
-      cost_total: round2(matiere + (laborRate !== null ? minutes / 60 * laborRate : 0)),
+      cost_total: round2(matiere + (rate !== null ? minutes / 60 * rate : 0)),
       employee_id: o.employee_id, employee_name: o.employee_id ? (empById.get(o.employee_id)?.name ?? '?') : null,
       status: o.status,
     }
