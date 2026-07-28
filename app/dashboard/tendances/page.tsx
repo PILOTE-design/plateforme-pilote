@@ -1,9 +1,17 @@
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { resolveClientId } from '@/lib/resolve-client-id'
+import { ensureMarginFamilies, matchFamilyId, type MarginFamily } from '@/lib/margin-families'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { TrendingUp, TrendingDown, LineChart, Euro, Ticket, ShoppingBasket } from 'lucide-react'
 import Link from 'next/link'
 import ProduitsParFamille from './ProduitsParFamille'
+
+// Depuis le 28/07 (#114), les familles affichées ici sont celles du RÉFÉRENTIEL
+// personnalisable (margin_families, partagé avec la page Marges) : chaque
+// libellé brut de la caisse (« VIANDE DE BOEUF », « VIANDE BOEUF »…) est
+// rattaché à SA famille canonique — fini les doublons et le « Non classé »
+// massif qui faussaient les chiffres par famille. Un libellé qu'aucune famille
+// ne reconnaît reste affiché tel quel (rien n'est masqué en silence).
 
 const fmt  = (n: number) => n.toLocaleString('fr-FR', { maximumFractionDigits: 0 })
 const fmt2 = (n: number) => n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -24,6 +32,22 @@ export default async function TendancesPage() {
   // Tendances = ANNÉE EN COURS pour la courbe. Les semaines N-1 servent uniquement à la
   // comparaison année précédente (KPIs), pas à la courbe de tendance.
   const currentYear = new Date().getFullYear()
+
+  // Référentiel de familles + rattachement canonique d'un libellé (famille de
+  // caisse OU nom de produit) : racine pour le regroupement, sous-famille pour
+  // l'étiquette de détail (« Viande de bœuf »…).
+  const families: MarginFamily[] = clientId ? await ensureMarginFamilies(serviceSupabase, clientId) : []
+  const famById = new Map(families.map(f => [f.id, f]))
+  const canonical = (label: unknown): { root: string; sous: string | null } | null => {
+    const id = matchFamilyId(label, families)
+    if (!id) return null
+    const f = famById.get(id)!
+    if (f.parent_id) {
+      const root = famById.get(f.parent_id)
+      return { root: root?.name ?? f.name, sous: f.name }
+    }
+    return { root: f.name, sous: null }
+  }
 
   let weekKeys: WeekKey[] = []
   const byProduct = new Map<string, Map<WeekKey, number>>()
@@ -108,22 +132,29 @@ export default async function TendancesPage() {
   const hausses = deltas.filter(d => d.delta > 0).sort((a, b) => b.delta - a.delta).slice(0, 5)
   const baisses = deltas.filter(d => d.delta < 0).sort((a, b) => a.delta - b.delta).slice(0, 5)
 
-  // Données pour le composant produits/familles (tous les produits, avec famille + série)
+  // Données pour le composant produits/familles : la famille CANONIQUE du
+  // référentiel (rattachée d'abord par la famille de caisse du produit, sinon
+  // par son NOM), avec la sous-famille en étiquette.
   const clientProducts = [...byProduct.entries()]
     .map(([name, series]) => {
       const vals = weekKeys.map(k => series.get(k) ?? 0)
       const last = lastKey ? (series.get(lastKey) ?? 0) : 0
       const prev = prevKey ? (series.get(prevKey) ?? 0) : 0
-      return { name, famille: familleOf.get(name) ?? null, vals, last, prevDelta: last - prev }
+      const c = canonical(familleOf.get(name) ?? '') ?? canonical(name)
+      return { name, famille: c?.root ?? familleOf.get(name) ?? null, sousFamille: c?.sous ?? null, vals, last, prevDelta: last - prev }
     })
     .filter(p => p.vals.some(v => v > 0))
 
-  // Tendance familles (depuis weekly_ca.families_detail)
+  // Tendance familles (depuis weekly_ca.families_detail), AGRÉGÉE sur les
+  // familles canoniques : deux libellés bruts d'une même famille s'ADDITIONNENT
+  // au lieu de faire deux lignes — c'était la source des chiffres faux.
   const famSeries = new Map<string, Map<WeekKey, number>>()
   for (const row of caRows) {
     for (const f of row.familles) {
-      if (!famSeries.has(f.nom)) famSeries.set(f.nom, new Map())
-      famSeries.get(f.nom)!.set(row.key, Number(f.montant) || 0)
+      const nom = canonical(f.nom)?.root ?? String(f.nom)
+      if (!famSeries.has(nom)) famSeries.set(nom, new Map())
+      const serie = famSeries.get(nom)!
+      serie.set(row.key, (serie.get(row.key) || 0) + (Number(f.montant) || 0))
     }
   }
   const familles = [...famSeries.entries()]
@@ -137,9 +168,15 @@ export default async function TendancesPage() {
   const lastCa = caRows[caRows.length - 1]
   const prevCa = caRows[caRows.length - 2]
 
-  // Camembert : répartition du CA de la dernière semaine par famille (top 7 + Autres)
-  const donutRaw = (lastCa?.familles ?? [])
-    .map(f => ({ nom: String(f.nom), montant: Number(f.montant) || 0 }))
+  // Camembert : répartition du CA de la dernière semaine par famille CANONIQUE
+  // (agrégée via le référentiel), top 7 + Autres
+  const donutAgg = new Map<string, number>()
+  for (const f of lastCa?.familles ?? []) {
+    const nom = canonical(f.nom)?.root ?? String(f.nom)
+    donutAgg.set(nom, (donutAgg.get(nom) || 0) + (Number(f.montant) || 0))
+  }
+  const donutRaw = [...donutAgg.entries()]
+    .map(([nom, montant]) => ({ nom, montant }))
     .filter(f => f.montant > 0)
     .sort((a, b) => b.montant - a.montant)
   let donut = donutRaw
@@ -346,6 +383,7 @@ export default async function TendancesPage() {
             <CardContent className="p-0">
               <ProduitsParFamille
                 products={clientProducts}
+                allFamilles={families.filter(f => f.parent_id === null).map(f => f.name)}
                 lastLabel={lastKey ? labelOf(lastKey) : ''}
                 prevLabel={prevKey ? labelOf(prevKey) : ''}
                 hasComparison={hasComparison}

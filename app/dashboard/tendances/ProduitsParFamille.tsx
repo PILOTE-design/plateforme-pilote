@@ -5,7 +5,7 @@ import { useMemo, useState } from 'react'
 const fmt  = (n: number) => n.toLocaleString('fr-FR', { maximumFractionDigits: 0 })
 const fmt2 = (n: number) => n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
-export type ProdRow = { name: string; famille: string | null; vals: number[]; last: number; prevDelta: number }
+export type ProdRow = { name: string; famille: string | null; sousFamille?: string | null; vals: number[]; last: number; prevDelta: number }
 
 const NON_CLASSE = 'Non classé'
 
@@ -23,26 +23,37 @@ function MiniSpark({ vals }: { vals: number[] }) {
 }
 
 export default function ProduitsParFamille({
-  products, lastLabel, prevLabel, hasComparison,
+  products, allFamilles, lastLabel, prevLabel, hasComparison,
 }: {
   products: ProdRow[]
+  /** TOUTES les familles du référentiel (ordre du réglage), même sans produit */
+  allFamilles?: string[]
   lastLabel: string
   prevLabel: string
   hasComparison: boolean
 }) {
-  // Familles présentes, triées par CA décroissant
-  const familles = useMemo(() => {
+  // Onglets : toutes les familles du référentiel dans leur ordre, puis les
+  // regroupements hors référentiel (libellés non reconnus, « Non classé »)
+  // triés par CA — rien n'est masqué.
+  const { familles, top } = useMemo(() => {
     const tot = new Map<string, number>()
     for (const p of products) {
       const f = p.famille || NON_CLASSE
       tot.set(f, (tot.get(f) ?? 0) + p.last)
     }
-    return [...tot.entries()].sort((a, b) => b[1] - a[1]).map(([f]) => f)
-  }, [products])
+    const base = allFamilles ?? []
+    const extras = [...tot.entries()]
+      .filter(([f]) => !base.includes(f))
+      .sort((a, b) => b[1] - a[1])
+      .map(([f]) => f)
+    const list = [...base, ...extras]
+    const top = [...tot.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? list[0] ?? NON_CLASSE
+    return { familles: list, top }
+  }, [products, allFamilles])
 
   const hasFamilles = familles.some(f => f !== NON_CLASSE)
-  const [selected, setSelected] = useState<string>(() => familles[0] ?? NON_CLASSE)
-  const active = familles.includes(selected) ? selected : (familles[0] ?? NON_CLASSE)
+  const [selected, setSelected] = useState<string>('')
+  const active = selected && familles.includes(selected) ? selected : top
 
   // Produits de la famille choisie, tri CA décroissant, puis coupe au 20/80
   // (cumul sur le CA DE LA FAMILLE). Seuls les produits « vitaux » — ceux qui
@@ -134,7 +145,10 @@ export default function ProduitsParFamille({
                 return (
                   <tr key={p.name} className="border-t border-gray-100 hover:bg-gray-50 transition-colors">
                     <td className="px-4 py-2 text-xs text-gray-400 tabular">{i + 1}</td>
-                    <td className="px-4 py-2 text-sm font-medium text-gray-900">{p.name}</td>
+                    <td className="px-4 py-2 text-sm font-medium text-gray-900">
+                      {p.name}
+                      {p.sousFamille && <span className="ml-1.5 text-[10px] font-semibold text-gray-400 bg-gray-50 rounded px-1.5 py-0.5 whitespace-nowrap">{p.sousFamille}</span>}
+                    </td>
                     <td className="px-4 py-2"><div className="flex justify-center"><MiniSpark vals={p.vals} /></div></td>
                     <td className="px-4 py-2 text-right text-sm font-semibold text-gray-900 tabular">{fmt2(p.last)} €</td>
                     <td className="px-4 py-2 text-right text-xs text-gray-500 tabular">{share.toFixed(1)} %</td>
