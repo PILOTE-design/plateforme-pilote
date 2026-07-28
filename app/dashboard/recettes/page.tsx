@@ -1,44 +1,61 @@
 'use client'
 
 // Fiches recettes — coût de revient au prix du jour, façon Otami mais branché sur
-// les données PILOTE : la matière lit la mercuriale (dernier prix facturé de
-// chaque article), la main-d'œuvre lit le taux horaire chargé moyen de l'équipe
-// (CCN 992, planning). Rien n'est figé : une facture lue ou une embauche, et
-// toutes les fiches se recalculent.
+// les données PILOTE : chaque ingrédient est un ARTICLE GÉNÉRIQUE de la
+// mercuriale (prix par unité de base kg/pièce, dernier prix facturé de ses réfs
+// fournisseurs), la quantité se saisit en kg, g ou pièce, une perte % gonfle le
+// brut, et la main-d'œuvre lit le taux chargé de l'employé choisi (repli : taux
+// moyen d'équipe, CCN 992). Rien n'est figé : une facture lue, une association
+// ou une embauche, et toutes les fiches se recalculent.
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { ChefHat, Plus, X, Search, AlertTriangle, Clock, ShoppingBasket } from 'lucide-react'
+import { ChefHat, Plus, X, Search, AlertTriangle, Clock, ShoppingBasket, Package } from 'lucide-react'
 import Link from 'next/link'
 import { useToast } from '@/components/ui/toast'
 import { useConfirm } from '@/components/ui/confirm-dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 
-type Article = { id: string; name: string; unit: string | null; supplier_name: string | null; last_price_ht: number | string | null }
+type Generic = {
+  id: string; name: string
+  base_unit: 'kg' | 'piece'
+  category: 'ingredient' | 'emballage'
+  default_loss_pct: number
+  price_ht: number | null
+}
+
+type Employee = { id: string; name: string; loaded_rate: number | null }
 
 type IngredientDraft = {
-  article_id: string | null
+  generic_id: string | null
+  article_id: string | null      // héritage (ancienne réf directe)
   label: string
   quantity: string
-  unit: string | null
+  qty_unit: 'kg' | 'g' | 'piece' | null
+  unit: string | null            // héritage
+  loss_pct: string
   manual_price_ht: string
+  legacy_price: number | null    // prix serveur d'une ligne héritée (aperçu seulement)
 }
 
 type RecipeCost = {
-  matiere_ht: number; main_oeuvre_ht: number; total_ht: number; par_unite_ht: number | null
-  prix_manquants: number; pv_unitaire_ht: number | null; marge_pct: number | null; coefficient: number | null
+  matiere_ht: number; emballage_ht: number; main_oeuvre_ht: number; total_ht: number; par_unite_ht: number | null
+  prix_manquants: number; labor_rate_ht: number | null
+  pv_unitaire_ht: number | null; marge_pct: number | null; coefficient: number | null
 }
 
 type Recipe = {
   id: string; name: string; category: string | null
   yield_qty: number | null; yield_unit: string | null
   labor_minutes: number; selling_price_ttc: number | null; tva_rate: number; notes: string | null
-  ingredients: { article_id: string | null; label: string; quantity: number; unit: string | null; manual_price_ht: number | null; unit_price_ht: number | null; price_source: string; line_total_ht: number }[]
+  employee_id: string | null
+  ingredients: { generic_id: string | null; article_id: string | null; label: string; quantity: number; qty_unit: string | null; unit: string | null; loss_pct: number | null; manual_price_ht: number | null; unit_price_ht: number | null; price_source: string; line_total_ht: number }[]
   cost: RecipeCost
 }
 
 const fmtEuro = (n: number) => n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'
-const EMPTY_ING = (): IngredientDraft => ({ article_id: null, label: '', quantity: '', unit: null, manual_price_ht: '' })
+const unitFr = (u: string | null) => (u === 'piece' ? 'pièce' : u || '')
+const EMPTY_ING = (): IngredientDraft => ({ generic_id: null, article_id: null, label: '', quantity: '', qty_unit: null, unit: null, loss_pct: '0', manual_price_ht: '', legacy_price: null })
 
 // Catégories proposées — les trois métiers de la maison. Le champ reste libre :
 // une catégorie inconnue crée simplement sa propre section.
@@ -49,7 +66,8 @@ export default function RecettesPage() {
   const { toast } = useToast()
   const { confirm: confirmAction } = useConfirm()
   const [recipes, setRecipes] = useState<Recipe[]>([])
-  const [articles, setArticles] = useState<Article[]>([])
+  const [generics, setGenerics] = useState<Generic[]>([])
+  const [employees, setEmployees] = useState<Employee[]>([])
   const [laborRate, setLaborRate] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -60,43 +78,54 @@ export default function RecettesPage() {
   const [catFilter, setCatFilter] = useState<string | null>(null)
   const [show, setShow] = useState(false)
   const [editId, setEditId] = useState<string | null>(null)
-  const [form, setForm] = useState({ name: '', category: '', yield_qty: '', yield_unit: 'pièces', labor_minutes: '', selling_price_ttc: '', tva_rate: '5.5' })
+  const [form, setForm] = useState({ name: '', category: '', yield_qty: '', yield_unit: 'pièces', labor_minutes: '', selling_price_ttc: '', tva_rate: '5.5', employee_id: '' })
   const [ings, setIngs] = useState<IngredientDraft[]>([EMPTY_ING()])
   const [pickerRow, setPickerRow] = useState<number | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
-    const [rec, merc] = await Promise.all([
-      fetch('/api/recipes', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).catch(() => null),
-      fetch('/api/mercuriale', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).catch(() => null),
-    ])
-    if (rec) { setRecipes(Array.isArray(rec.recipes) ? rec.recipes : []); setLaborRate(rec.labor_rate_ht ?? null) }
-    if (merc) setArticles(Array.isArray(merc.articles) ? merc.articles : [])
+    const rec = await fetch('/api/recipes', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).catch(() => null)
+    if (rec) {
+      setRecipes(Array.isArray(rec.recipes) ? rec.recipes : [])
+      setLaborRate(rec.labor_rate_ht ?? null)
+      setGenerics(Array.isArray(rec.generics) ? rec.generics : [])
+      setEmployees(Array.isArray(rec.employees) ? rec.employees : [])
+    }
     setLoading(false)
   }, [])
   useEffect(() => { load() }, [load])
 
-  const priceOf = useCallback((articleId: string | null): number | null => {
-    if (!articleId) return null
-    const a = articles.find(x => x.id === articleId)
-    return a?.last_price_ht != null ? parseFloat(String(a.last_price_ht)) : null
-  }, [articles])
+  const genericById = useMemo(() => new Map(generics.map(g => [g.id, g])), [generics])
 
-  // Aperçu du coût dans la modale — même logique que le serveur, en lecture seule
+  // Taux MO de l'aperçu : l'employé choisi (s'il a un taux), sinon le taux moyen
+  const previewRate = useMemo(() => {
+    if (!form.employee_id) return laborRate
+    return employees.find(e => e.id === form.employee_id)?.loaded_rate ?? laborRate
+  }, [form.employee_id, employees, laborRate])
+
+  // Aperçu du coût dans la modale — même logique que le serveur, en lecture seule :
+  // conversion g→kg, perte sur le brut, matière et emballage séparés.
   const preview = useMemo(() => {
-    let matiere = 0, manquants = 0
+    let matiere = 0, emballage = 0, manquants = 0
     for (const ing of ings) {
       const qty = parseFloat(ing.quantity.replace(',', '.')) || 0
       if (qty <= 0) continue
-      const price = priceOf(ing.article_id) ?? (parseFloat(ing.manual_price_ht.replace(',', '.')) || null)
+      const g = ing.generic_id ? genericById.get(ing.generic_id) ?? null : null
+      const manual = parseFloat(ing.manual_price_ht.replace(',', '.')) || null
+      const price = g ? (g.price_ht ?? manual) : (ing.legacy_price ?? manual)
       if (price === null) { manquants++; continue }
-      matiere += qty * price
+      const loss = Math.min(99, Math.max(0, parseFloat(ing.loss_pct.replace(',', '.')) || 0))
+      const qtyBase = g && g.base_unit === 'kg' && ing.qty_unit === 'g' ? qty / 1000 : qty
+      const cout = price * (qtyBase / (1 - loss / 100))
+      if (g?.category === 'emballage') emballage += cout
+      else matiere += cout
     }
     const minutes = parseFloat(form.labor_minutes.replace(',', '.')) || 0
-    const mo = laborRate !== null ? minutes / 60 * laborRate : 0
+    const mo = previewRate !== null ? minutes / 60 * previewRate : 0
+    const total = matiere + emballage + mo
     const yieldQty = parseFloat(form.yield_qty.replace(',', '.')) || 0
-    return { matiere, mo, total: matiere + mo, parUnite: yieldQty > 0 ? (matiere + mo) / yieldQty : null, manquants }
-  }, [ings, form.labor_minutes, form.yield_qty, laborRate, priceOf])
+    return { matiere, emballage, mo, total, parUnite: yieldQty > 0 ? total / yieldQty : null, manquants }
+  }, [ings, form.labor_minutes, form.yield_qty, previewRate, genericById])
 
   // Recherche : par nom de recette, par catégorie, et par INGRÉDIENT — taper
   // « chipolata » amène aussi sur les fiches qui en contiennent.
@@ -150,7 +179,7 @@ export default function RecettesPage() {
 
   function openNew() {
     setEditId(null)
-    setForm({ name: '', category: '', yield_qty: '', yield_unit: 'pièces', labor_minutes: '', selling_price_ttc: '', tva_rate: '5.5' })
+    setForm({ name: '', category: '', yield_qty: '', yield_unit: 'pièces', labor_minutes: '', selling_price_ttc: '', tva_rate: '5.5', employee_id: '' })
     setIngs([EMPTY_ING()])
     setShow(true)
   }
@@ -161,15 +190,34 @@ export default function RecettesPage() {
       name: r.name, category: r.category ?? '',
       yield_qty: r.yield_qty != null ? String(r.yield_qty) : '', yield_unit: r.yield_unit ?? 'pièces',
       labor_minutes: String(r.labor_minutes ?? ''), selling_price_ttc: r.selling_price_ttc != null ? String(r.selling_price_ttc) : '',
-      tva_rate: String(r.tva_rate ?? '5.5'),
+      tva_rate: String(r.tva_rate ?? '5.5'), employee_id: r.employee_id ?? '',
     })
     setIngs(r.ingredients.length > 0
-      ? r.ingredients.map(i => ({ article_id: i.article_id, label: i.label, quantity: String(i.quantity), unit: i.unit, manual_price_ht: i.manual_price_ht != null ? String(i.manual_price_ht) : '' }))
+      ? r.ingredients.map(i => ({
+          generic_id: i.generic_id, article_id: i.article_id, label: i.label,
+          quantity: String(i.quantity),
+          qty_unit: (i.qty_unit === 'kg' || i.qty_unit === 'g' || i.qty_unit === 'piece') ? i.qty_unit : null,
+          unit: i.unit,
+          loss_pct: String(i.loss_pct ?? 0),
+          manual_price_ht: i.manual_price_ht != null ? String(i.manual_price_ht) : '',
+          legacy_price: !i.generic_id ? i.unit_price_ht : null,
+        }))
       : [EMPTY_ING()])
     setShow(true)
   }
 
   async function save() {
+    const kept = ings.filter(i => i.label.trim() && parseFloat(i.quantity.replace(',', '.')) > 0)
+    // Obligation d'associer : une ligne neuve doit viser un article générique.
+    // Seules les lignes héritées (ancienne réf directe) échappent à la règle.
+    const libres = kept.filter(i => !i.generic_id && !i.article_id)
+    if (libres.length > 0) {
+      toast({
+        variant: 'error', title: 'Ingrédient hors mercuriale',
+        description: `« ${libres[0].label.slice(0, 40)} » : choisissez un article générique dans la liste (créez-le depuis la page Mercuriale s'il n'existe pas encore).`,
+      })
+      return
+    }
     setSaving(true)
     const payload = {
       name: form.name, category: form.category || null,
@@ -178,13 +226,14 @@ export default function RecettesPage() {
       labor_minutes: parseFloat(form.labor_minutes.replace(',', '.')) || 0,
       selling_price_ttc: form.selling_price_ttc ? parseFloat(form.selling_price_ttc.replace(',', '.')) : null,
       tva_rate: parseFloat(form.tva_rate.replace(',', '.')) || 5.5,
-      ingredients: ings
-        .filter(i => i.label.trim() && parseFloat(i.quantity.replace(',', '.')) > 0)
-        .map(i => ({
-          article_id: i.article_id, label: i.label, unit: i.unit,
-          quantity: parseFloat(i.quantity.replace(',', '.')),
-          manual_price_ht: i.manual_price_ht ? parseFloat(i.manual_price_ht.replace(',', '.')) : null,
-        })),
+      employee_id: form.employee_id || null,
+      ingredients: kept.map(i => ({
+        generic_id: i.generic_id, article_id: i.article_id, label: i.label, unit: i.unit,
+        quantity: parseFloat(i.quantity.replace(',', '.')),
+        qty_unit: i.qty_unit,
+        loss_pct: parseFloat(i.loss_pct.replace(',', '.')) || 0,
+        manual_price_ht: i.manual_price_ht ? parseFloat(i.manual_price_ht.replace(',', '.')) : null,
+      })),
     }
     const res = await fetch(editId ? `/api/recipes/${editId}` : '/api/recipes', {
       method: editId ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
@@ -208,9 +257,14 @@ export default function RecettesPage() {
     else toast({ variant: 'error', title: 'Suppression impossible' })
   }
 
-  function pickArticle(row: number, a: Article) {
+  function pickGeneric(row: number, g: Generic) {
     setIngs(prev => prev.map((ing, i) => i === row
-      ? { ...ing, article_id: a.id, label: a.name, unit: a.unit, manual_price_ht: '' }
+      ? {
+          ...ing, generic_id: g.id, article_id: null, label: g.name, unit: null,
+          qty_unit: g.base_unit === 'kg' ? 'kg' : 'piece',
+          loss_pct: String(g.default_loss_pct || 0),
+          manual_price_ht: '', legacy_price: null,
+        }
       : ing))
     setPickerRow(null)
   }
@@ -336,7 +390,8 @@ export default function RecettesPage() {
               </p>
               <div className="mt-2 space-y-0.5 text-[11px] text-gray-500 tabular">
                 <p><ShoppingBasket className="w-3 h-3 inline mr-1 text-gray-400" />Matière {fmtEuro(r.cost.matiere_ht)}</p>
-                <p><Clock className="w-3 h-3 inline mr-1 text-gray-400" />Main-d&apos;œuvre {fmtEuro(r.cost.main_oeuvre_ht)} ({r.labor_minutes} min)</p>
+                {r.cost.emballage_ht > 0 && <p><Package className="w-3 h-3 inline mr-1 text-gray-400" />Emballage {fmtEuro(r.cost.emballage_ht)}</p>}
+                <p><Clock className="w-3 h-3 inline mr-1 text-gray-400" />Main-d&apos;œuvre {fmtEuro(r.cost.main_oeuvre_ht)} ({r.labor_minutes} min{r.employee_id && employees.find(e => e.id === r.employee_id) ? ` · ${employees.find(e => e.id === r.employee_id)!.name}` : ''})</p>
               </div>
               <div className="mt-3 pt-3 border-t border-gray-100 flex items-center gap-2 flex-wrap">
                 {r.cost.marge_pct !== null && (
@@ -407,51 +462,97 @@ export default function RecettesPage() {
                     <option value="20">20 %</option>
                   </select>
                 </div>
+                <div className="sm:col-span-2">
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">Qui fabrique ? <span className="font-normal text-gray-400">— le coût main-d&apos;œuvre prend son taux chargé</span></label>
+                  <select value={form.employee_id} onChange={e => setForm(p => ({ ...p, employee_id: e.target.value }))}
+                    className="w-full h-10 border border-gray-200 rounded-md px-3 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200 bg-white">
+                    <option value="">Taux moyen de l&apos;équipe{laborRate !== null ? ` (${fmtEuro(laborRate)}/h)` : ''}</option>
+                    {employees.map(e => (
+                      <option key={e.id} value={e.id}>
+                        {e.name}{e.loaded_rate !== null ? ` (${fmtEuro(e.loaded_rate)}/h chargé)` : ' (sans taux — repli taux moyen)'}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
 
-              {/* Ingrédients */}
+              {/* Ingrédients — uniquement des articles génériques de la mercuriale */}
               <div>
-                <p className="text-xs font-semibold text-gray-700 mb-2">Ingrédients <span className="font-normal text-gray-400">— quantité dans l&apos;unité de facturation de l&apos;article (kg le plus souvent)</span></p>
+                <p className="text-xs font-semibold text-gray-700 mb-2">Ingrédients <span className="font-normal text-gray-400">— choisis parmi vos articles génériques ; la perte gonfle la quantité brute à sortir</span></p>
+                {generics.length === 0 && (
+                  <p className="text-[11px] text-amber-600 mb-2">
+                    Aucun article générique : associez d&apos;abord vos réfs dans la <Link href="/dashboard/mercuriale" className="font-bold underline">Mercuriale</Link>.
+                  </p>
+                )}
                 <div className="space-y-2">
                   {ings.map((ing, i) => {
-                    const price = priceOf(ing.article_id)
+                    const g = ing.generic_id ? genericById.get(ing.generic_id) ?? null : null
                     const q = ing.label.trim().toLowerCase()
-                    const suggestions = pickerRow === i && q.length >= 2 && !ing.article_id
-                      ? articles.filter(a => a.name.toLowerCase().includes(q)).slice(0, 6)
+                    const sugg = pickerRow === i && q.length >= 2 && !ing.generic_id
+                      ? generics.filter(x => x.name.toLowerCase().includes(q)).slice(0, 6)
                       : []
+                    const isLegacy = !ing.generic_id && !!ing.article_id
                     return (
                       <div key={i} className="relative">
                         <div className="flex items-center gap-2">
-                          <div className="flex-1 relative">
+                          <div className="flex-1 relative min-w-[140px]">
                             <Search className="w-3.5 h-3.5 text-gray-300 absolute left-2.5 top-1/2 -translate-y-1/2" />
                             <input value={ing.label}
-                              onChange={e => { setIngs(prev => prev.map((x, j) => j === i ? { ...x, label: e.target.value, article_id: null } : x)); setPickerRow(i) }}
+                              onChange={e => { setIngs(prev => prev.map((x, j) => j === i ? { ...x, label: e.target.value, generic_id: null, article_id: null, legacy_price: null } : x)); setPickerRow(i) }}
                               onFocus={() => setPickerRow(i)}
-                              placeholder="Chercher un article de la mercuriale, ou saisir librement"
-                              className={`w-full border rounded-md pl-8 pr-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200 ${ing.article_id ? 'border-pilote-200 bg-pilote-50/50 font-medium' : 'border-gray-200'}`} />
+                              placeholder="Chercher un article générique…"
+                              className={`w-full border rounded-md pl-8 pr-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200 ${ing.generic_id ? 'border-pilote-200 bg-pilote-50/50 font-medium' : isLegacy ? 'border-amber-200 bg-amber-50/50' : 'border-gray-200'}`} />
                           </div>
                           <input inputMode="decimal" value={ing.quantity}
                             onChange={e => setIngs(prev => prev.map((x, j) => j === i ? { ...x, quantity: e.target.value } : x))}
-                            placeholder="Qté" className="w-16 border border-gray-200 rounded-md px-2 py-2 text-sm text-right tabular focus:outline-none focus:ring-2 focus:ring-pilote-200" />
-                          <span className="text-[11px] text-gray-400 w-10 flex-shrink-0">{ing.unit || '—'}</span>
-                          {ing.article_id ? (
-                            <span className="text-xs text-gray-500 tabular w-20 text-right flex-shrink-0">{price !== null ? fmtEuro(price) : 'prix ?'}</span>
+                            placeholder="Qté" className="w-14 border border-gray-200 rounded-md px-2 py-2 text-sm text-right tabular focus:outline-none focus:ring-2 focus:ring-pilote-200" />
+                          {g ? (
+                            g.base_unit === 'kg' ? (
+                              <select value={ing.qty_unit ?? 'kg'}
+                                onChange={e => setIngs(prev => prev.map((x, j) => j === i ? { ...x, qty_unit: e.target.value as 'kg' | 'g' } : x))}
+                                className="w-14 border border-gray-200 rounded-md px-1 py-2 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200 flex-shrink-0">
+                                <option value="kg">kg</option>
+                                <option value="g">g</option>
+                              </select>
+                            ) : (
+                              <span className="text-[11px] text-gray-400 w-14 flex-shrink-0 text-center">pièce</span>
+                            )
                           ) : (
-                            <input inputMode="decimal" value={ing.manual_price_ht}
-                              onChange={e => setIngs(prev => prev.map((x, j) => j === i ? { ...x, manual_price_ht: e.target.value } : x))}
-                              placeholder="€ HT/u" className="w-20 border border-gray-200 rounded-md px-2 py-2 text-xs text-right tabular focus:outline-none focus:ring-2 focus:ring-pilote-200" />
+                            <span className="text-[11px] text-gray-400 w-14 flex-shrink-0 text-center">{ing.unit || '—'}</span>
+                          )}
+                          <div className="relative flex-shrink-0">
+                            <input inputMode="decimal" value={ing.loss_pct} title="Perte / rendement (%)"
+                              onChange={e => setIngs(prev => prev.map((x, j) => j === i ? { ...x, loss_pct: e.target.value } : x))}
+                              className="w-14 border border-gray-200 rounded-md pl-2 pr-5 py-2 text-xs text-right tabular focus:outline-none focus:ring-2 focus:ring-pilote-200" />
+                            <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] text-gray-400">%</span>
+                          </div>
+                          {g ? (
+                            g.price_ht !== null ? (
+                              <span className="text-xs text-gray-500 tabular w-24 text-right flex-shrink-0">{fmtEuro(g.price_ht)} / {unitFr(g.base_unit)}</span>
+                            ) : (
+                              <input inputMode="decimal" value={ing.manual_price_ht} title={`Aucun prix facturé — saisissez un prix HT par ${unitFr(g.base_unit)}`}
+                                onChange={e => setIngs(prev => prev.map((x, j) => j === i ? { ...x, manual_price_ht: e.target.value } : x))}
+                                placeholder={`€/${unitFr(g.base_unit)}`} className="w-24 border border-amber-200 rounded-md px-2 py-2 text-xs text-right tabular focus:outline-none focus:ring-2 focus:ring-pilote-200" />
+                            )
+                          ) : (
+                            <span className="text-xs text-gray-500 tabular w-24 text-right flex-shrink-0">{ing.legacy_price !== null ? fmtEuro(ing.legacy_price) : '—'}</span>
                           )}
                           <button onClick={() => setIngs(prev => prev.length > 1 ? prev.filter((_, j) => j !== i) : prev)}
                             className="p-1.5 rounded-md hover:bg-gray-100 text-gray-400 flex-shrink-0"><X className="w-3.5 h-3.5" /></button>
                         </div>
-                        {suggestions.length > 0 && (
+                        {isLegacy && (
+                          <p className="text-[10px] text-amber-600 mt-0.5 ml-1">Ancienne réf directe — re-choisissez un article générique pour profiter des prix à jour.</p>
+                        )}
+                        {sugg.length > 0 && (
                           <div className="absolute z-10 left-0 right-24 mt-1 bg-white border border-gray-200 rounded-lg shadow-card-hover overflow-hidden">
-                            {suggestions.map(a => (
-                              <button key={a.id} onClick={() => pickArticle(i, a)}
+                            {sugg.map(x => (
+                              <button key={x.id} onClick={() => pickGeneric(i, x)}
                                 className="w-full text-left px-3 py-2 text-sm hover:bg-pilote-50 flex items-center justify-between gap-2">
-                                <span className="truncate">{a.name} <span className="text-[11px] text-gray-400">· {a.supplier_name || '—'}</span></span>
+                                <span className="truncate">{x.name}
+                                  {x.category === 'emballage' && <span className="ml-1.5 text-[10px] font-semibold uppercase tracking-wider text-blue-700 bg-blue-50 rounded px-1 py-0.5">Emballage</span>}
+                                </span>
                                 <span className="text-xs text-gray-500 tabular flex-shrink-0">
-                                  {a.last_price_ht != null ? `${fmtEuro(parseFloat(String(a.last_price_ht)))}${a.unit ? ` / ${a.unit}` : ''}` : '—'}
+                                  {x.price_ht !== null ? `${fmtEuro(x.price_ht)} / ${unitFr(x.base_unit)}` : 'pas encore de prix'}
                                 </span>
                               </button>
                             ))}
@@ -467,13 +568,19 @@ export default function RecettesPage() {
 
               {/* Aperçu du coût */}
               <div className="bg-pilote-50/70 ring-1 ring-pilote-100 rounded-lg p-4 text-sm tabular">
-                <div className="flex justify-between text-gray-600"><span>Matière</span><span className="font-semibold">{fmtEuro(preview.matiere)}</span></div>
-                <div className="flex justify-between text-gray-600"><span>Main-d&apos;œuvre</span><span className="font-semibold">{fmtEuro(preview.mo)}</span></div>
+                <div className="flex justify-between text-gray-600"><span>Matière (brut, perte comprise)</span><span className="font-semibold">{fmtEuro(preview.matiere)}</span></div>
+                {preview.emballage > 0 && (
+                  <div className="flex justify-between text-gray-600"><span>Emballage &amp; conditionnement</span><span className="font-semibold">{fmtEuro(preview.emballage)}</span></div>
+                )}
+                <div className="flex justify-between text-gray-600">
+                  <span>Main-d&apos;œuvre{previewRate !== null ? ` (${fmtEuro(previewRate)}/h)` : ''}</span>
+                  <span className="font-semibold">{fmtEuro(preview.mo)}</span>
+                </div>
                 <div className="flex justify-between font-extrabold text-pilote-800 mt-1.5 pt-1.5 border-t border-pilote-100">
                   <span>Coût de revient{preview.parUnite !== null ? ` (${fmtEuro(preview.parUnite)} / ${form.yield_unit || 'unité'})` : ''}</span>
                   <span>{fmtEuro(preview.total)}</span>
                 </div>
-                {preview.manquants > 0 && <p className="text-[11px] text-amber-600 mt-1.5">{preview.manquants} ingrédient{preview.manquants > 1 ? 's' : ''} sans prix — rattachez un article ou saisissez un prix manuel.</p>}
+                {preview.manquants > 0 && <p className="text-[11px] text-amber-600 mt-1.5">{preview.manquants} ingrédient{preview.manquants > 1 ? 's' : ''} sans prix — le prix arrivera avec la prochaine facture lue, ou saisissez un prix de repli.</p>}
               </div>
 
               <div className="flex gap-3 pt-1">
