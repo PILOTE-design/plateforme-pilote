@@ -877,7 +877,7 @@ export default function PlanningPage() {
         <button
           onClick={copyPrevWeek}
           disabled={copying}
-          className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-800 border border-gray-200 rounded-md px-2.5 py-1 hover:bg-gray-50 transition-colors disabled:opacity-40"
+          className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-800 border border-gray-200 rounded-xl px-2.5 py-1 hover:bg-gray-50 transition-colors disabled:opacity-40"
         >
           <Copy className="w-3 h-3" />
           {copying ? 'Copie...' : `Copier S${week === 1 ? isoWeeksInYear(year - 1) : week - 1}`}
@@ -1172,7 +1172,7 @@ export default function PlanningPage() {
                                   )}
 
                                   {/* Matin row — horaires + poste du créneau */}
-                                  <div className={`flex items-center gap-1 rounded-md px-1 py-[3px] ${
+                                  <div className={`flex items-center gap-1 rounded-lg px-1 py-[3px] ${
                                     sd.matin_debut || catM ? 'bg-gray-50 border border-gray-200/70' : 'bg-gray-50/50'
                                   }`}>
                                     <span className="text-[8px] font-bold text-gray-400 w-3 shrink-0">M</span>
@@ -1185,7 +1185,7 @@ export default function PlanningPage() {
                                   </div>
 
                                   {/* Après-midi row — horaires + poste du créneau */}
-                                  <div className={`flex items-center gap-1 rounded-md px-1 py-[3px] ${
+                                  <div className={`flex items-center gap-1 rounded-lg px-1 py-[3px] ${
                                     sd.apmidi_debut || catA ? 'bg-gray-50 border border-gray-200/70' : 'bg-gray-50/50'
                                   }`}>
                                     <span className="text-[8px] font-bold text-gray-400 w-3 shrink-0">AM</span>
