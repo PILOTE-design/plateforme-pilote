@@ -1,10 +1,13 @@
 // lib/recipes.ts — moteur de coût des fiches recettes. Module PUR : les données
 // (recette, ingrédients, prix mercuriale, taux horaire) viennent de l'appelant.
 //
-// Principe hérité du moteur hebdo : AUCUN coût figé. Le coût matière lit le
-// dernier prix mercuriale de chaque article au moment du calcul, la main-d'œuvre
-// lit le taux horaire chargé courant des employés — une facture lue ou une
-// embauche, et toutes les fiches sont à jour sans qu'on touche à rien.
+// Principe hérité du moteur hebdo : AUCUN coût figé. Depuis le passage aux
+// ARTICLES GÉNÉRIQUES (28/07), chaque ligne d'ingrédient référence un générique
+// de la mercuriale (prix ramené à l'unité de base kg ou pièce) ; la quantité se
+// saisit en kg, g ou pièce, et un % de perte gonfle la quantité brute à acheter
+// (brut = net ÷ (1 − perte)). Les lignes héritées (article_id / prix manuel)
+// restent calculées comme avant. La main-d'œuvre lit le taux horaire chargé de
+// l'EMPLOYÉ choisi sur la fiche (repli : taux moyen de l'équipe, CCN 992).
 
 import { chargeMultiplier, type PayrollEmployee } from '@/lib/payroll'
 
@@ -18,30 +21,50 @@ export type RecipeRow = {
   selling_price_ttc: number | null
   tva_rate: number
   notes: string | null
+  employee_id?: string | null
 }
 
 export type IngredientRow = {
   id?: string
+  generic_id: string | null
   article_id: string | null
   label: string
   quantity: number
-  unit: string | null
-  manual_price_ht: number | null
+  unit: string | null              // héritage : unité libre des anciennes lignes
+  qty_unit: string | null          // 'kg' | 'g' | 'piece' — lignes génériques
+  loss_pct: number | null          // % de perte de la ligne (0-99)
+  manual_price_ht: number | null   // repli de prix (par unité de base pour un générique)
   position?: number
 }
 
+/** Un article générique vu du moteur : prix du jour PAR UNITÉ DE BASE (déjà
+ *  converti depuis la dernière réf facturée), null si aucune réf n'a de prix. */
+export type GenericInfo = {
+  id: string
+  name: string
+  base_unit: 'kg' | 'piece'
+  category: 'ingredient' | 'emballage'
+  default_loss_pct: number
+  price_ht: number | null
+}
+
 export type IngredientCost = IngredientRow & {
-  unit_price_ht: number | null   // prix mercuriale du jour, sinon prix manuel
+  unit_price_ht: number | null   // prix retenu, par unité de base (générique) ou d'achat (hérité)
   price_source: 'mercuriale' | 'manuel' | 'aucun'
-  line_total_ht: number          // quantity × prix (0 si aucun prix connu)
+  categorie: 'ingredient' | 'emballage'
+  qty_base: number               // quantité NETTE convertie en unité de base (kg/pièce)
+  qty_brute: number              // quantité BRUTE à sortir (net ÷ (1 − perte))
+  line_total_ht: number          // qty_brute × prix (0 si aucun prix connu)
 }
 
 export type RecipeCost = {
   matiere_ht: number
+  emballage_ht: number
   main_oeuvre_ht: number
   total_ht: number
   par_unite_ht: number | null    // total ÷ yield_qty
-  prix_manquants: number         // ingrédients sans prix mercuriale ni manuel
+  prix_manquants: number         // lignes sans prix mercuriale ni manuel
+  labor_rate_ht: number | null   // taux €/h chargé réellement utilisé
   // Si un prix de vente est renseigné (TTC, PAR UNITÉ produite) :
   pv_unitaire_ht: number | null
   marge_pct: number | null       // (PV HT − coût/unité) / PV HT
@@ -49,6 +72,7 @@ export type RecipeCost = {
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100
+const round4 = (n: number) => Math.round(n * 10000) / 10000
 
 /** Taux horaire chargé moyen de l'équipe (€/h) — même base que le planning :
  *  taux horaire × multiplicateur de charges patronales (CCN 992). Le gérant sans
@@ -64,35 +88,85 @@ export function averageLoadedRate(employees: PayrollEmployee[]): number | null {
   return round2(rates.reduce((a, b) => a + b, 0) / rates.length)
 }
 
-/** Coût détaillé des ingrédients — le prix mercuriale du jour PRIME sur le prix
- *  manuel dès qu'un article est rattaché (le manuel n'est qu'un repli de saisie). */
+/** Taux horaire chargé d'UN employé (€/h), null si introuvable ou sans taux —
+ *  l'appelant replie alors sur averageLoadedRate. */
+export function employeeLoadedRate(employees: PayrollEmployee[], employeeId: string | null | undefined): number | null {
+  if (!employeeId) return null
+  const e = employees.find(x => (x as Record<string, unknown>).id === employeeId)
+  if (!e) return null
+  const h = Number((e as Record<string, unknown>).hourly_rate) || 0
+  return h > 0 ? round2(h * chargeMultiplier(e)) : null
+}
+
+/** Quantité nette convertie vers l'unité de base du générique.
+ *  g → kg (÷1000) ; kg → kg ; pièce → pièce. Une unité incohérente avec la base
+ *  (validée en amont) est traitée telle quelle plutôt que de casser le calcul. */
+function toBaseQty(quantity: number, qtyUnit: string | null, baseUnit: 'kg' | 'piece'): number {
+  if (baseUnit === 'kg' && qtyUnit === 'g') return quantity / 1000
+  return quantity
+}
+
+/** Coût détaillé des ingrédients.
+ *  Ligne GÉNÉRIQUE : prix mercuriale par unité de base (PRIME sur le manuel),
+ *  conversion g/kg/pièce, perte appliquée sur la quantité (coût sur le BRUT).
+ *  Ligne HÉRITÉE (article_id / libre) : comportement historique inchangé. */
 export function costIngredients(
   ingredients: IngredientRow[],
   priceByArticle: Map<string, number>,
+  genericById?: Map<string, GenericInfo>,
 ): IngredientCost[] {
   return ingredients.map(ing => {
+    const qty = Number(ing.quantity) || 0
+    const loss = Math.min(99, Math.max(0, Number(ing.loss_pct) || 0))
+    const generic = ing.generic_id != null ? genericById?.get(ing.generic_id) ?? null : null
+
+    if (generic) {
+      const manual = ing.manual_price_ht != null && ing.manual_price_ht > 0 ? ing.manual_price_ht : null
+      const price = generic.price_ht ?? manual
+      const source: IngredientCost['price_source'] = generic.price_ht !== null ? 'mercuriale' : price !== null ? 'manuel' : 'aucun'
+      const qtyBase = round4(toBaseQty(qty, ing.qty_unit, generic.base_unit))
+      const qtyBrute = round4(qtyBase / (1 - loss / 100))
+      return {
+        ...ing,
+        unit_price_ht: price,
+        price_source: source,
+        categorie: generic.category,
+        qty_base: qtyBase,
+        qty_brute: qtyBrute,
+        line_total_ht: round2((price ?? 0) * qtyBrute),
+      }
+    }
+
+    // Héritage : article de la mercuriale (prix par unité d'achat) ou saisie libre
     const mercuriale = ing.article_id != null ? priceByArticle.get(ing.article_id) ?? null : null
     const price = mercuriale ?? (ing.manual_price_ht != null && ing.manual_price_ht > 0 ? ing.manual_price_ht : null)
     const source: IngredientCost['price_source'] = mercuriale !== null ? 'mercuriale' : price !== null ? 'manuel' : 'aucun'
+    const qtyBrute = round4(qty / (1 - loss / 100))
     return {
       ...ing,
       unit_price_ht: price,
       price_source: source,
-      line_total_ht: round2((price ?? 0) * (Number(ing.quantity) || 0)),
+      categorie: 'ingredient',
+      qty_base: qty,
+      qty_brute: qtyBrute,
+      line_total_ht: round2((price ?? 0) * qtyBrute),
     }
   })
 }
 
-/** Coût complet d'une recette. laborRate en €/h chargé ; null = main-d'œuvre à 0
- *  (le front signale alors qu'il manque des employés au planning). */
+/** Coût complet d'une recette. laborRate en €/h chargé (celui de l'employé
+ *  choisi, sinon le taux moyen) ; null = main-d'œuvre à 0 (le front signale
+ *  alors qu'il manque des employés au planning). Matière et emballage sont
+ *  séparés — les deux entrent dans le coût de revient. */
 export function computeRecipeCost(
   recipe: RecipeRow,
   ingredients: IngredientCost[],
   laborRate: number | null,
 ): RecipeCost {
-  const matiere = round2(ingredients.reduce((s, i) => s + i.line_total_ht, 0))
+  const matiere = round2(ingredients.filter(i => i.categorie !== 'emballage').reduce((s, i) => s + i.line_total_ht, 0))
+  const emballage = round2(ingredients.filter(i => i.categorie === 'emballage').reduce((s, i) => s + i.line_total_ht, 0))
   const mo = round2(laborRate !== null ? (Number(recipe.labor_minutes) || 0) / 60 * laborRate : 0)
-  const total = round2(matiere + mo)
+  const total = round2(matiere + emballage + mo)
   const yieldQty = Number(recipe.yield_qty) || 0
   const parUnite = yieldQty > 0 ? round2(total / yieldQty) : null
 
@@ -112,10 +186,12 @@ export function computeRecipeCost(
 
   return {
     matiere_ht: matiere,
+    emballage_ht: emballage,
     main_oeuvre_ht: mo,
     total_ht: total,
     par_unite_ht: parUnite,
     prix_manquants: ingredients.filter(i => i.price_source === 'aucun').length,
+    labor_rate_ht: laborRate,
     pv_unitaire_ht: pvHT,
     marge_pct: marge,
     coefficient: coef,
@@ -124,7 +200,9 @@ export function computeRecipeCost(
 
 // ─── Validation des entrées (partagée entre POST /api/recipes et PUT /api/recipes/[id]) ───
 
-/** Ingrédients : validation commune création/édition. Renvoie une erreur lisible ou les lignes propres. */
+/** Ingrédients : validation commune création/édition. Renvoie une erreur lisible ou les lignes propres.
+ *  Une ligne NEUVE doit viser un article générique ; les lignes héritées
+ *  (article_id ou libre) restent acceptées pour ne pas casser les fiches existantes. */
 export function parseIngredients(raw: unknown): { error?: string; rows?: IngredientRow[] } {
   if (!Array.isArray(raw)) return { error: 'ingredients doit être une liste' }
   if (raw.length === 0) return { error: 'Une recette a au moins un ingrédient' }
@@ -136,11 +214,16 @@ export function parseIngredients(raw: unknown): { error?: string; rows?: Ingredi
     if (!label) return { error: `Ingrédient ${i + 1} : libellé manquant` }
     if (!Number.isFinite(quantity) || quantity <= 0) return { error: `« ${label.slice(0, 40)} » : quantité invalide` }
     const manual = Number(r?.manual_price_ht)
+    const loss = Number(r?.loss_pct)
+    const qtyUnit = typeof r?.qty_unit === 'string' && ['kg', 'g', 'piece'].includes(r.qty_unit) ? r.qty_unit : null
     rows.push({
+      generic_id: typeof r?.generic_id === 'string' && r.generic_id ? r.generic_id : null,
       article_id: typeof r?.article_id === 'string' && r.article_id ? r.article_id : null,
       label: label.slice(0, 120),
       quantity,
       unit: typeof r?.unit === 'string' && r.unit ? String(r.unit).slice(0, 12) : null,
+      qty_unit: qtyUnit,
+      loss_pct: Number.isFinite(loss) && loss >= 0 && loss < 100 ? loss : 0,
       manual_price_ht: Number.isFinite(manual) && manual > 0 ? manual : null,
       position: i,
     })
@@ -148,7 +231,8 @@ export function parseIngredients(raw: unknown): { error?: string; rows?: Ingredi
   return { rows }
 }
 
-/** Champs de la recette elle-même — partagé entre POST (création) et PUT (édition). */
+/** Champs de la recette elle-même — partagé entre POST (création) et PUT (édition).
+ *  employee_id est transmis tel quel ; la route vérifie qu'il appartient au client. */
 export function parseRecipeFields(body: Record<string, unknown>): { error?: string; fields?: Record<string, unknown> } {
   const name = String(body?.name ?? '').trim()
   if (!name || name.length > 80) return { error: 'Nom de recette requis (80 caractères max)' }
@@ -166,7 +250,41 @@ export function parseRecipeFields(body: Record<string, unknown>): { error?: stri
       selling_price_ttc: Number.isFinite(pv) && pv > 0 ? pv : null,
       tva_rate: Number.isFinite(tva) && tva > 0 && tva <= 20 ? tva : 5.5,
       notes: typeof body?.notes === 'string' && body.notes ? String(body.notes).slice(0, 500) : null,
+      employee_id: typeof body?.employee_id === 'string' && body.employee_id ? body.employee_id : null,
       updated_at: new Date().toISOString(),
     },
   }
+}
+
+/** Construit la carte des génériques avec leur prix du jour PAR UNITÉ DE BASE,
+ *  à partir des lignes brutes de generic_articles et articles (mêmes règles que
+ *  GET /api/mercuriale : dernière réf datée, ÷ facteur de conversion). */
+export function buildGenericMap(
+  generics: Array<Record<string, unknown>>,
+  articles: Array<Record<string, unknown>>,
+): Map<string, GenericInfo> {
+  const bestByGeneric = new Map<string, { date: string; price: number }>()
+  for (const a of articles) {
+    const gid = a.generic_id as string | null
+    if (!gid || a.last_price_ht == null) continue
+    const raw = parseFloat(String(a.last_price_ht))
+    if (!Number.isFinite(raw)) continue
+    const conv = a.conversion_factor != null && Number(a.conversion_factor) > 0 ? Number(a.conversion_factor) : 1
+    const date = String(a.last_price_date || '')
+    const cur = bestByGeneric.get(gid)
+    if (!cur || date.localeCompare(cur.date) > 0) bestByGeneric.set(gid, { date, price: raw / conv })
+  }
+  const map = new Map<string, GenericInfo>()
+  for (const g of generics) {
+    const id = String(g.id)
+    map.set(id, {
+      id,
+      name: String(g.name ?? ''),
+      base_unit: g.base_unit === 'piece' ? 'piece' : 'kg',
+      category: g.category === 'emballage' ? 'emballage' : 'ingredient',
+      default_loss_pct: Number(g.default_loss_pct) || 0,
+      price_ht: bestByGeneric.has(id) ? round4(bestByGeneric.get(id)!.price) : null,
+    })
+  }
+  return map
 }
