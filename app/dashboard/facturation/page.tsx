@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useToast } from '@/components/ui/toast'
 import { useConfirm } from '@/components/ui/confirm-dialog'
+import VentilationFacture from './ventilation-facture'
 import {
   Receipt, ChevronLeft, ChevronRight, Plus, Trash2,
   TrendingUp, TrendingDown, ShoppingCart, Users, Euro,
@@ -67,6 +68,9 @@ type SupplierMemo = { name: string; category: string; tva_rate: number | null }
 
 /** Répartition d'un fournisseur sur les rayons (en %) */
 type RayonSplit = { supplier_key: string; supplier_label: string | null; pct_boucherie: number; pct_charcuterie: number; pct_traiteur: number; pct_divers: number }
+
+/** Famille du référentiel margin_families (ventilation par facture + charges) */
+type VentFamily = { id: string; parent_id: string | null; name: string; is_rachat: boolean }
 // Champs de ventilation d'un fournisseur : les 3 métiers + « divers ». Le divers n'est
 // plus redistribué au prorata du CA — il alimente son propre bloc de marge, en face du
 // CA de rachat, d'épicerie, de boissons et de fruits & légumes. Code couleur ALIGNÉ sur
@@ -297,6 +301,11 @@ export default function FacturationPage() {
   const [showSettings, setShowSettings] = useState(false)
   const [showProviders, setShowProviders] = useState(false)
   const [showSplits,     setShowSplits]     = useState(false)
+  // Ventilation PAR FACTURE (référentiel de familles/sous-familles) + familles de charges
+  const [ventFamilies,   setVentFamilies]   = useState<VentFamily[]>([])
+  const [chargeFamilies, setChargeFamilies] = useState<VentFamily[]>([])
+  const [invSplits,      setInvSplits]      = useState<Record<string, { family_id: string; pct: number }[]>>({})
+  const [ventInvoice,    setVentInvoice]    = useState<Invoice | null>(null)
   const [splits,         setSplits]         = useState<RayonSplit[]>([])
   const [splitSuppliers, setSplitSuppliers] = useState<{ key: string; name: string }[]>([])
   const [splitDraft,     setSplitDraft]     = useState<Record<string, VentDraft & { label: string }>>({})
@@ -350,15 +359,25 @@ export default function FacturationPage() {
     const reqId = ++reqIdRef.current
     setLoading(true)
     const noStore: RequestInit = { cache: 'no-store' }
-    const [invRes, recRes, sumRes, caRes, settRes] = await Promise.all([
+    const [invRes, recRes, sumRes, caRes, settRes, ventRes] = await Promise.all([
       fetch(`/api/invoices?week=${week}&year=${year}`, noStore).then(r => r.json()).catch(() => []),
       fetch(`/api/recurring-charges`, noStore).then(r => r.json()).catch(() => ({ charges: [], actuals: [] })),
       fetch(`/api/facturation/summary?week=${week}&year=${year}`, noStore).then(r => r.json()).catch(() => null),
       fetch(`/api/weekly-ca?week=${week}&year=${year}`, noStore).then(r => r.json()).catch(() => null),
       fetch('/api/billing-settings', noStore).then(r => r.json()).catch(() => ({})),
+      fetch(`/api/invoice-splits?week=${week}&year=${year}`, noStore).then(r => r.json()).catch(() => null),
     ])
     if (reqId !== reqIdRef.current) return // une navigation plus récente a eu lieu — on jette cette réponse
     setInvoices(Array.isArray(invRes) ? invRes : [])
+    if (ventRes && !ventRes.error) {
+      setVentFamilies(Array.isArray(ventRes.families) ? ventRes.families : [])
+      setChargeFamilies(Array.isArray(ventRes.chargeFamilies) ? ventRes.chargeFamilies : [])
+      const bySplit: Record<string, { family_id: string; pct: number }[]> = {}
+      for (const s of (Array.isArray(ventRes.splits) ? ventRes.splits : []) as { invoice_id: string; family_id: string; pct: number }[]) {
+        (bySplit[s.invoice_id] ||= []).push({ family_id: s.family_id, pct: Number(s.pct) || 0 })
+      }
+      setInvSplits(bySplit)
+    }
     setRecurringCharges(Array.isArray(recRes?.charges) ? recRes.charges : [])
     setRecurringActuals(Array.isArray(recRes?.actuals) ? recRes.actuals : [])
     setSummary(sumRes)
@@ -555,6 +574,27 @@ export default function FacturationPage() {
     const res = await fetch(`/api/invoices/${inv.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'validee' }) })
     if (res.ok) { toast({ variant: 'success', title: 'Facture validée' }); load() }
     else { toast({ variant: 'error', title: 'Erreur', description: 'La validation a échoué.' }); load() }
+  }
+
+  /** Déplace une facture vers les charges fixes : elle sort des achats matière
+   *  (marges) et rejoint le bloc « En charges fixes » ci-dessous, où on lui
+   *  choisit sa famille de charge. Réversible. */
+  async function moveToFixed(inv: Invoice) {
+    const res = await fetch(`/api/invoices/${inv.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ is_fixed_charge: true }) }).catch(() => null)
+    if (res?.ok) { toast({ variant: 'success', title: `« ${inv.supplier_name} » déplacée en charges fixes`, description: 'Elle ne pèse plus sur les marges matière. Choisissez sa famille de charge ci-dessous.' }); load() }
+    else toast({ variant: 'error', title: 'Déplacement impossible' })
+  }
+
+  async function moveBackToVariable(inv: Invoice) {
+    const res = await fetch(`/api/invoices/${inv.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ is_fixed_charge: false, charge_family_id: null }) }).catch(() => null)
+    if (res?.ok) { toast({ variant: 'success', title: `« ${inv.supplier_name} » repassée en achats` }); load() }
+    else toast({ variant: 'error', title: 'Opération impossible' })
+  }
+
+  async function setChargeFam(inv: Invoice, familyId: string) {
+    const res = await fetch(`/api/invoices/${inv.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ charge_family_id: familyId || null }) }).catch(() => null)
+    if (res?.ok) load()
+    else toast({ variant: 'error', title: 'Enregistrement impossible' })
   }
 
   /** Valide d'un coup toutes les factures « à vérifier » */
@@ -824,9 +864,9 @@ export default function FacturationPage() {
   /** Ligne du tableau d'achats — partagée entre la vue « par date » et la vue « par catégorie » */
   const renderInvoiceRow = (inv: Invoice) => {
     const cat = catInfo(inv.category)
-    const isViande = cat.key === 'boucherie'
     const sp = matchSplit(inv.supplier_name, splits)
     const ventil = sp ? VENT_FIELDS.map(r => ({ label: r.label, dot: r.dot, pct: Number((sp as any)[`pct_${r.key}`]) || 0 })).filter(p => p.pct > 0) : []
+    const ownSplits = invSplits[inv.id] ?? []
     return (
       <tr key={inv.id} className="border-t border-gray-50 hover:bg-gray-50 group transition-colors">
         <td className="px-4 py-2.5">
@@ -845,9 +885,26 @@ export default function FacturationPage() {
           </div>
         </td>
         <td className="px-4 py-2.5">
-          {ventil.length === 0 ? (
-            <button onClick={openSplits} title="Définir la répartition par rayon de cette société"
-              className="text-xs text-gray-400 hover:text-pilote hover:underline">Non réparti</button>
+          {ownSplits.length > 0 ? (
+            // Ventilation PROPRE À CETTE FACTURE (référentiel) — prime sur celle du fournisseur
+            <button onClick={() => setVentInvoice(inv)} title="Ventilation propre à cette facture — cliquer pour modifier"
+              className="flex flex-wrap items-center gap-1 text-left">
+              {ownSplits.map(s => {
+                const fam = ventFamilies.find(f => f.id === s.family_id)
+                return (
+                  <span key={s.family_id} className="inline-flex items-center gap-1 text-[11px] font-semibold text-pilote bg-pilote-50 ring-1 ring-pilote-100 rounded-full px-2 py-0.5">
+                    {fam?.name ?? '?'} {Math.round(s.pct)} %
+                  </span>
+                )
+              })}
+            </button>
+          ) : ventil.length === 0 ? (
+            <div className="flex items-center gap-1.5">
+              <button onClick={openSplits} title="Définir la répartition par rayon de cette société"
+                className="text-xs text-gray-400 hover:text-pilote hover:underline">Non réparti</button>
+              <button onClick={() => setVentInvoice(inv)} title="Ventiler uniquement cette facture (familles et sous-familles)"
+                className="text-[10px] text-gray-300 hover:text-pilote hover:underline">· cette facture</button>
+            </div>
           ) : (
             <div className="flex flex-wrap items-center gap-1">
               {ventil.map(p => (
@@ -856,6 +913,10 @@ export default function FacturationPage() {
                   {p.label} {Math.round(p.pct)} %
                 </span>
               ))}
+              <button onClick={() => setVentInvoice(inv)} title="Ventiler uniquement cette facture, sans toucher les autres factures de ce fournisseur"
+                className="p-1 rounded text-gray-300 hover:text-pilote hover:bg-pilote-50 transition-colors opacity-0 group-hover:opacity-100">
+                <PieChart className="w-3 h-3" />
+              </button>
             </div>
           )}
         </td>
@@ -865,11 +926,9 @@ export default function FacturationPage() {
         <td className="px-4 py-2.5 text-right text-sm text-gray-600">{fmtEuro(inv.amount_ttc)}</td>
         <td className="px-4 py-2.5 text-center">
           <div className="flex items-center justify-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
-            {isViande && (
-              <button onClick={() => openValorisation(inv)} className="p-1.5 rounded hover:bg-pilote-50 text-gray-300 hover:text-pilote transition-colors" title="Valoriser cet animal">
-                <ArrowUpRight className="w-3.5 h-3.5" />
-              </button>
-            )}
+            <button onClick={() => moveToFixed(inv)} className="p-1.5 rounded hover:bg-pilote-50 text-gray-300 hover:text-pilote transition-colors" title="Déplacer vers les charges fixes (sort des achats matière)">
+              <Repeat className="w-3.5 h-3.5" />
+            </button>
             <button onClick={() => deleteInvoice(inv.id)} className="p-1.5 rounded hover:bg-red-50 text-gray-300 hover:text-red-400 transition-colors" title="Supprimer">
               <Trash2 className="w-3.5 h-3.5" />
             </button>
@@ -903,6 +962,10 @@ export default function FacturationPage() {
           <button onClick={openSplits} title="Répartir les achats par rayon, fournisseur par fournisseur"
             className="h-9 text-sm px-3 rounded-md border border-gray-100 text-gray-600 shadow-card hover:text-pilote transition-colors flex items-center gap-1.5">
             <PieChart className="w-3.5 h-3.5" />Répartition
+          </button>
+          <button onClick={openFamilles} title="Choisir les 3 familles de marge"
+            className="h-9 text-sm px-3 rounded-md border border-gray-100 text-gray-600 shadow-card hover:text-pilote transition-colors">
+            Familles
           </button>
           <button onClick={() => { setTvaDraft(String(summary?.tva_rate ?? DEFAULT_TVA_RATE).replace('.', ',')); setShowSettings(true) }} className="p-2 rounded-md hover:bg-gray-100 text-gray-400 hover:text-gray-700 transition-colors">
             <Settings className="w-4 h-4" />
@@ -977,224 +1040,6 @@ export default function FacturationPage() {
       )}
 
       <div className="flex-1 px-6 py-6 space-y-6">
-
-        {/* KPIs */}
-        {summary !== null && (
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            {[
-              { icon: Euro,         label: 'CA HT semaine',   value: summary.ca_total > 0 ? fmtEuro(summary.ca_total) : '—',
-                sub: summary.ca_total === 0 ? 'Cliquer sur « Saisir le CA »' : `${fmtEuro(summary.ca_ttc ?? summary.ca_total)} TTC · ${fmtDate(mon)} – ${fmtDate(sun)}`,
-                chip: 'bg-pilote-50 text-pilote' },
-              { icon: ShoppingCart, label: 'Achats HT',       value: fmtEuro(summary.achats_ht + recurringWeekly),
-                sub: `${variableInvoices.length} facture${variableInvoices.length > 1 ? 's' : ''} + charges ≈ ${fmtEuro(recurringWeekly)}/sem${(summary.achats_a_verifier ?? 0) > 0 ? ` · ${fmtEuro(summary.achats_a_verifier!)} à vérifier exclus` : ''}`,
-                chip: 'bg-pilote-50 text-pilote' },
-              { icon: Users,        label: 'Masse salariale', value: fmtEuro(summary.masse_salariale),
-                sub: summary.ratio_ms !== null ? `${summary.ratio_ms.toFixed(1)} % du CA HT · chargée (CCN 992)` : 'Depuis le planning · chargée (CCN 992)',
-                chip: 'bg-pilote-50 text-pilote' },
-              { icon: summary.marge_brute >= 0 ? TrendingUp : TrendingDown, label: 'Marge brute',
-                value: summary.ca_total > 0 ? fmtEuro(summary.marge_brute) : '—',
-                sub: summary.taux_marge !== null ? `Taux : ${summary.taux_marge} %` : 'Saisir le CA pour calculer',
-                chip: summary.marge_brute >= 0 ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-500' },
-            ].map(k => (
-              <div key={k.label} className="bg-white rounded-lg border border-gray-100 shadow-card p-4 transition-all hover:shadow-card-hover hover:-translate-y-0.5">
-                <div className="flex items-center gap-2 mb-2.5">
-                  <div className={`w-8 h-8 rounded-md flex items-center justify-center ${k.chip}`}><k.icon className="w-4 h-4" /></div>
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">{k.label}</p>
-                </div>
-                <p className="text-xl font-extrabold leading-tight text-gray-900 tabular">{k.value}</p>
-                <p className="text-xs text-gray-400 mt-0.5 truncate" title={k.sub}>{k.sub}</p>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Résultat net */}
-        {summary !== null && summary.ca_total > 0 && (
-          <div className="rounded-lg bg-pilote text-white shadow-card-hover p-6 flex items-center justify-between gap-4">
-            <div>
-              <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-pilote-200">Résultat net estimé de la semaine</p>
-              <p className={`text-4xl font-extrabold tracking-tight mt-1.5 tabular ${summary.resultat_net >= 0 ? 'text-green-300' : 'text-red-300'}`}>{fmtEuro(summary.resultat_net)}</p>
-              <div className="flex flex-wrap items-center gap-1.5 mt-2.5 text-[11px] tabular">
-                <span className="bg-white/10 rounded-md px-2 py-0.5 text-pilote-200">CA HT <strong className="text-white">{fmtEuro(summary.ca_total)}</strong></span>
-                <span className="text-pilote-200">−</span>
-                <span className="bg-white/10 rounded-md px-2 py-0.5 text-pilote-200">Achats <strong className="text-white">{fmtEuro(summary.achats_ht)}</strong></span>
-                <span className="text-pilote-200">−</span>
-                <span className="bg-white/10 rounded-md px-2 py-0.5 text-pilote-200">Salaires <strong className="text-white">{fmtEuro(summary.masse_salariale)}</strong></span>
-                {(summary.charges_fixes ?? 0) > 0 && <>
-                  <span className="text-pilote-200">−</span>
-                  <span className="bg-white/10 rounded-md px-2 py-0.5 text-pilote-200">Charges fixes <strong className="text-white">{fmtEuro(summary.charges_fixes || 0)}</strong></span>
-                </>}
-              </div>
-            </div>
-            <div className="w-14 h-14 rounded-lg bg-white/10 flex items-center justify-center flex-shrink-0">
-              {summary.resultat_net >= 0 ? <TrendingUp className="w-7 h-7 text-green-300" /> : <TrendingDown className="w-7 h-7 text-red-300" />}
-            </div>
-          </div>
-        )}
-
-        {/* ── Marge par famille — CA − achats ventilés − salaires POINTÉS AU PLANNING, hors charges fixes ──
-            Le chiffre exact que le gérant vient chercher : les heures pointées « boucherie »
-            au planning pèsent sur la marge boucherie, rien d'autre. Les salaires sans poste
-            (vente, administratif, non renseigné) restent dans le taux global uniquement. */}
-        {summary !== null && (summary.ca_total > 0 || variableInvoices.length > 0) && (
-          <div className="bg-white rounded-lg border border-gray-100 shadow-card p-5">
-            <div className="flex flex-wrap items-start justify-between gap-2 mb-4">
-              <div>
-                <h3 className="text-xs font-bold uppercase tracking-wider text-gray-400">Marge par famille</h3>
-                <p className="text-[11px] text-gray-400 mt-0.5">CA − achats ventilés − salaires des heures pointées sur le poste dans le planning · hors charges fixes (voir résultat net)</p>
-              </div>
-              <div className="flex items-center gap-3 flex-shrink-0">
-                <button onClick={openFamilles} className="text-xs font-medium text-pilote hover:underline">Choisir mes familles</button>
-                <button onClick={openSplits} className="text-xs font-medium text-pilote hover:underline">Régler la répartition des achats</button>
-              </div>
-            </div>
-
-            {summary.ca_total === 0 ? (
-              <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50/50 px-4 py-6 text-center">
-                <p className="text-sm font-semibold text-gray-700">Saisissez le CA de la semaine pour calculer vos marges</p>
-                <p className="text-xs text-gray-400 mt-1">Vos achats sont déjà comptés — il ne manque que le chiffre d&apos;affaires.</p>
-                <button onClick={() => setShowCA(true)} className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-white bg-pilote hover:bg-pilote-hover rounded-md px-3.5 py-2 shadow-card active:scale-[0.98] transition-all">
-                  <Euro className="w-3.5 h-3.5" />Saisir le CA
-                </button>
-              </div>
-            ) : (
-              <>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
-                  {/* Tuile globale — taux de marge boutique après achats + salaires */}
-                  <div className="rounded-lg bg-pilote-50/70 ring-1 ring-pilote-100 p-4 flex flex-col">
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-pilote">Global · boutique</p>
-                    <p className={`text-2xl font-extrabold tracking-tight tabular mt-1.5 ${(summary.marge_apres_salaires ?? 0) >= 0 ? 'text-pilote-800' : 'text-red-600'}`}>
-                      {summary.taux_apres_salaires !== null && summary.taux_apres_salaires !== undefined ? `${summary.taux_apres_salaires.toFixed(1)} %` : '—'}
-                    </p>
-                    <p className={`text-xs font-semibold tabular ${(summary.marge_apres_salaires ?? 0) >= 0 ? 'text-gray-600' : 'text-red-500'}`}>{fmtEuro(summary.marge_apres_salaires ?? 0)} après salaires</p>
-                    <div className="mt-auto pt-2.5 space-y-0.5 text-[11px] text-gray-500 tabular">
-                      <p>Marge matière <strong className={summary.taux_marge !== null ? (summary.taux_marge >= 40 ? 'text-green-600' : summary.taux_marge >= 30 ? 'text-orange-500' : 'text-red-500') : 'text-gray-400'}>{summary.taux_marge !== null ? `${summary.taux_marge.toFixed(1)} %` : '—'}</strong></p>
-                      <p>Salaires <strong className="text-gray-700">{summary.ratio_ms !== null ? `${summary.ratio_ms.toFixed(1)} % du CA` : '—'}</strong></p>
-                    </div>
-                  </div>
-
-                  {/* Les 3 familles CHOISIES PAR LE CLIENT (postes du planning, personnalisés compris) —
-                      salaires = heures pointées sur le poste (reconnaissance floue), rien d'autre */}
-                  {(summary.familles ?? []).map(f => {
-                    const dot = familleDot(f.key, f.label)
-                    const bench = familleBench(f.key, f.label)
-                    const caPart = summary.ca_total > 0 && f.ca > 0 ? (f.ca / summary.ca_total) * 100 : null
-                    return (
-                      <div key={f.key} className="rounded-lg border border-gray-100 p-4 flex flex-col">
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="flex items-center gap-1.5 min-w-0">
-                            <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: dot }} />
-                            <span className="text-xs font-bold text-gray-700 truncate">{f.label}</span>
-                          </span>
-                          {caPart !== null && <span className="text-[10px] font-semibold text-gray-400 tabular flex-shrink-0">{Math.round(caPart)} % du CA</span>}
-                        </div>
-                        {f.ca <= 0 ? (
-                          <p className="text-xs text-gray-400 py-2 leading-relaxed">
-                            CA de la famille inconnu — aucune famille de vente du rapport ne ressemble à « {f.label} », et rien n&apos;est saisi.
-                            <button onClick={() => setShowCA(true)} className="ml-1 text-pilote font-medium hover:underline">Saisir le détail</button>
-                          </p>
-                        ) : (
-                          <>
-                            <div className="space-y-1 text-[11px] tabular">
-                              <div className="flex justify-between gap-2"><span className="text-gray-400">CA</span><span className="font-semibold text-gray-700">{fmtEuro(f.ca)}</span></div>
-                              <div className="flex justify-between gap-2"><span className="text-gray-400">Achats</span><span className="font-semibold text-gray-700">− {fmtEuro(f.achats)}</span></div>
-                              <div className="flex justify-between gap-2"><span className="text-gray-400">Salaires pointés</span><span className="font-semibold text-gray-700">− {fmtEuro(f.salaires ?? 0)}</span></div>
-                            </div>
-                            <div className="mt-2.5 pt-2.5 border-t border-gray-100">
-                              <p className={`text-xl font-extrabold tracking-tight tabular ${(f.marge_totale ?? 0) >= 0 ? 'text-gray-900' : 'text-red-600'}`}>
-                                {f.taux_totale !== null && f.taux_totale !== undefined ? `${f.taux_totale.toFixed(1)} %` : '—'}
-                              </p>
-                              <p className="text-xs text-gray-500 tabular">{fmtEuro(f.marge_totale ?? 0)} de marge</p>
-                              {f.taux !== null && (
-                                <p className={`text-[11px] font-semibold tabular mt-1 ${matiereColorFor(bench, f.taux)}`}>
-                                  matière {f.taux.toFixed(1)} %{bench && <span className="text-gray-300 font-normal"> (repère {bench[0]}–{bench[1]} %)</span>}
-                                </p>
-                              )}
-                              {f.achats_ventiles === false && (
-                                <p className="text-[11px] text-gray-400 mt-1">aucun achat ventilable sur ce poste</p>
-                              )}
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    )
-                  })}
-
-                  {/* Divers — le 4e bloc : rachat, épicerie, boissons, fruits & légumes,
-                      prestations. Ni matière travaillée ni main-d'œuvre : pas de repère de
-                      marge, pas de salaires. Il existe pour que les 3 familles restent
-                      propres — sans lui, ses achats retomberaient sur elles. */}
-                  {summary.divers && (summary.divers.ca > 0 || summary.divers.achats > 0) && (
-                    <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50/50 p-4 flex flex-col">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="flex items-center gap-1.5 min-w-0">
-                          <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: DIVERS_DOT }} />
-                          <span className="text-xs font-bold text-gray-700 truncate">{summary.divers.label}</span>
-                        </span>
-                        {summary.ca_total > 0 && summary.divers.ca > 0 && (
-                          <span className="text-[10px] font-semibold text-gray-400 tabular flex-shrink-0">{Math.round((summary.divers.ca / summary.ca_total) * 100)} % du CA</span>
-                        )}
-                      </div>
-                      <div className="space-y-1 text-[11px] tabular">
-                        <div className="flex justify-between gap-2"><span className="text-gray-400">CA</span><span className="font-semibold text-gray-700">{fmtEuro(summary.divers.ca)}</span></div>
-                        <div className="flex justify-between gap-2"><span className="text-gray-400">Achats</span><span className="font-semibold text-gray-700">− {fmtEuro(summary.divers.achats)}</span></div>
-                        <div className="flex justify-between gap-2"><span className="text-gray-400">Salaires</span><span className="font-semibold text-gray-700">− {fmtEuro(summary.divers.salaires ?? 0)}</span></div>
-                      </div>
-                      <div className="mt-2.5 pt-2.5 border-t border-gray-200">
-                        <p className={`text-xl font-extrabold tracking-tight tabular ${(summary.divers.marge_totale ?? summary.divers.marge) >= 0 ? 'text-gray-900' : 'text-red-600'}`}>
-                          {summary.divers.taux_totale !== null && summary.divers.taux_totale !== undefined ? `${summary.divers.taux_totale.toFixed(1)} %` : '—'}
-                        </p>
-                        <p className="text-xs text-gray-500 tabular">{fmtEuro(summary.divers.marge_totale ?? summary.divers.marge)} de marge</p>
-                        {summary.divers.taux !== null && summary.divers.taux !== undefined && (
-                          <p className="text-[11px] font-semibold tabular mt-1 text-gray-500">matière {summary.divers.taux.toFixed(1)} %</p>
-                        )}
-                        <p className="text-[11px] text-gray-400 mt-1 leading-snug">rachat, épicerie, boissons, fruits &amp; légumes, prestations</p>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Heures sans poste métier : réparties au prorata du CA sur les familles et
-                    Divers. On guide quand même vers le pointage — une heure pointée vaut
-                    mieux qu'une heure répartie à la louche. */}
-                {((summary.salaires_repartis ?? 0) > 0 || (summary.salaires_non_affectes ?? 0) > 0) && (
-                  <p className={`text-[11px] mt-3 ${(summary.salaires_non_affectes ?? 0) > 0 ? 'text-amber-600' : 'text-gray-400'}`}>
-                    {(summary.salaires_repartis ?? 0) > 0 && (
-                      <>
-                        {(summary.salaires_affectes ?? 0) > 0
-                          ? <>{fmtEuro(summary.salaires_affectes!)} de salaires suivent les postes pointés au planning · </>
-                          : <>Aucune heure pointée sur un poste · </>}
-                        {fmtEuro(summary.salaires_repartis!)} sans poste (vente, administratif, non renseigné) <strong>répartis au prorata du CA</strong> sur les familles et Divers — chaque bloc en prend sa part.
-                        {' '}Pointez le poste ({(summary.familles ?? []).map(f => f.label).join(', ') || 'Boucherie, Charcuterie, Traiteur'}) sur les journées du <Link href="/dashboard/planning" className="text-pilote font-medium hover:underline">planning</Link> pour affiner.
-                      </>
-                    )}
-                    {(summary.salaires_non_affectes ?? 0) > 0 && (
-                      <> {fmtEuro(summary.salaires_non_affectes!)} de salaires ne sont rattachés à rien : sans CA sur la semaine, il n&apos;y a pas de clé de répartition.</>
-                    )}
-                  </p>
-                )}
-
-                {(summary.achats_a_verifier ?? 0) > 0 && (
-                  <p className="text-[11px] text-amber-600 mt-3">
-                    {fmtEuro(summary.achats_a_verifier!)} de factures « à vérifier » ne comptent pas encore dans ces marges — validez-les ci-dessous.
-                  </p>
-                )}
-                {(summary.achats_divers ?? 0) > 0 && (
-                  <p className="text-[11px] text-gray-400 mt-2 flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-gray-300 flex-shrink-0" />
-                    {fmtEuro(summary.achats_divers!)} d&apos;achats « divers » isolés dans le bloc Divers ci-dessus — ils ne pèsent sur aucune famille métier.
-                  </p>
-                )}
-                {(summary.achats_non_ventiles ?? 0) > 0 && (
-                  <p className="text-[11px] text-gray-400 mt-2">
-                    {fmtEuro(summary.achats_non_ventiles!)} d&apos;achats non répartis — fournisseurs sans répartition définie.
-                    <button onClick={openSplits} className="ml-1 text-pilote hover:underline">Compléter</button>
-                  </p>
-                )}
-              </>
-            )}
-          </div>
-        )}
 
         {/* Factures à vérifier — importées automatiquement, exclues des marges tant que non validées */}
         {pendingCount > 0 && (
@@ -1290,6 +1135,37 @@ export default function FacturationPage() {
             </div>
           )}
         </div>
+
+        {/* ── Factures déplacées en charges fixes cette semaine : hors marges
+            matière, classées dans une famille de charge PERSONNALISABLE ── */}
+        {invoices.filter(i => i.is_fixed_charge).length > 0 && (
+          <div className="bg-white rounded-lg border border-gray-100 shadow-card overflow-hidden">
+            <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between gap-2">
+              <div>
+                <h2 className="font-bold text-gray-900 text-sm">En charges fixes cette semaine</h2>
+                <p className="text-[11px] text-gray-400">Sorties des achats matière — elles ne pèsent sur aucune marge. Classez-les dans une famille de charge.</p>
+              </div>
+            </div>
+            <div className="divide-y divide-gray-50">
+              {invoices.filter(i => i.is_fixed_charge).map(inv => (
+                <div key={inv.id} className="px-5 py-2.5 flex items-center gap-3 flex-wrap">
+                  <div className="flex-1 min-w-[180px]">
+                    <p className="text-sm font-semibold text-gray-900">{inv.supplier_name}</p>
+                    <p className="text-[11px] text-gray-400 tabular">{new Date(inv.invoice_date).toLocaleDateString('fr-FR')}{inv.invoice_number ? ` · ${inv.invoice_number}` : ''}</p>
+                  </div>
+                  <span className="text-sm font-semibold text-gray-700 tabular">{fmtEuro(inv.amount_ht)}</span>
+                  <select value={(inv as any).charge_family_id ?? ''} onChange={e => setChargeFam(inv, e.target.value)}
+                    className="border border-gray-200 rounded-md px-2 py-1.5 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200">
+                    <option value="">Famille de charge…</option>
+                    {chargeFamilies.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+                  </select>
+                  <button onClick={() => moveBackToVariable(inv)}
+                    className="text-[11px] font-semibold text-gray-400 hover:text-pilote hover:underline">Repasser en achats</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* ── Charges fixes & récurrentes (provision au jour près) ── */}
         <div className="bg-white rounded-lg border border-pilote-100 shadow-card overflow-hidden">
@@ -1822,6 +1698,17 @@ export default function FacturationPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Ventilation propre à UNE facture (référentiel familles/sous-familles) */}
+      {ventInvoice && (
+        <VentilationFacture
+          invoice={{ id: ventInvoice.id, supplier_name: ventInvoice.supplier_name, amount_ht: ventInvoice.amount_ht }}
+          families={ventFamilies}
+          current={invSplits[ventInvoice.id] ?? []}
+          onClose={() => setVentInvoice(null)}
+          onSaved={() => { setVentInvoice(null); load() }}
+        />
       )}
 
       {showCA && (
