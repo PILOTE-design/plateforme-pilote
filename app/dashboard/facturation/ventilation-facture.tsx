@@ -59,10 +59,10 @@ export default function VentilationFacture({
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 backdrop-blur-sm p-4" onClick={onClose}>
-      <div className="bg-white rounded-lg p-6 w-full max-w-md shadow-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+      <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-1">
           <h2 className="text-base font-bold text-gray-900">Ventiler cette facture</h2>
-          <button onClick={onClose} className="p-1.5 rounded-md hover:bg-gray-100"><X className="w-4 h-4 text-gray-500" /></button>
+          <button onClick={onClose} className="p-1.5 rounded-xl hover:bg-gray-100"><X className="w-4 h-4 text-gray-500" /></button>
         </div>
         <p className="text-xs text-gray-400 mb-4">
           {invoice.supplier_name} · {fmtEuro(invoice.amount_ht)} HT — cette répartition ne vaut que pour CETTE facture ;
@@ -83,7 +83,7 @@ export default function VentilationFacture({
                   <input inputMode="decimal" value={v}
                     onChange={e => setDraft(prev => ({ ...prev, [f.id]: e.target.value }))}
                     placeholder="—"
-                    className="w-16 border border-gray-200 rounded-md pl-2 pr-6 py-1.5 text-sm text-right tabular focus:outline-none focus:ring-2 focus:ring-pilote-200" />
+                    className="w-16 border border-gray-200 rounded-lg pl-2 pr-6 py-1.5 text-sm text-right tabular focus:outline-none focus:ring-2 focus:ring-pilote-200" />
                   <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-gray-400">%</span>
                 </div>
               </div>
@@ -99,13 +99,13 @@ export default function VentilationFacture({
         <div className="flex gap-2">
           {current.length > 0 && (
             <button onClick={() => save(true)} disabled={saving}
-              className="text-xs font-semibold text-red-600 border border-red-200 rounded-md px-3 py-2 hover:bg-red-50 transition-colors disabled:opacity-50">
+              className="text-xs font-semibold text-red-600 border border-red-200 rounded-xl px-3 py-2 hover:bg-red-50 transition-colors disabled:opacity-50">
               Retirer
             </button>
           )}
-          <button onClick={onClose} className="flex-1 text-sm font-semibold text-gray-600 border border-gray-200 rounded-md px-3 py-2 hover:bg-gray-50 transition-colors">Annuler</button>
+          <button onClick={onClose} className="flex-1 text-sm font-semibold text-gray-600 border border-gray-200 rounded-xl px-3 py-2 hover:bg-gray-50 transition-colors">Annuler</button>
           <button onClick={() => save(false)} disabled={saving || total === 0}
-            className="flex-1 text-sm font-bold text-white bg-pilote hover:bg-pilote-hover rounded-md px-3 py-2 shadow-card transition-all disabled:opacity-50">
+            className="flex-1 text-sm font-bold text-white bg-pilote hover:bg-pilote-hover rounded-xl px-3 py-2 shadow-card transition-all disabled:opacity-50">
             {saving ? 'Enregistrement…' : 'Enregistrer'}
           </button>
         </div>
