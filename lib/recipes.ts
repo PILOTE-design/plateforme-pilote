@@ -10,6 +10,7 @@
 // l'EMPLOYÉ choisi sur la fiche (repli : taux moyen de l'équipe, CCN 992).
 
 import { chargeMultiplier, type PayrollEmployee } from '@/lib/payroll'
+import { unitKind } from '@/lib/mercuriale-auto'
 
 export type RecipeRow = {
   id: string
@@ -346,18 +347,33 @@ export function parseRecipeFields(body: Record<string, unknown>): { error?: stri
 
 /** Construit la carte des génériques avec leur prix du jour PAR UNITÉ DE BASE,
  *  à partir des lignes brutes de generic_articles et articles (mêmes règles que
- *  GET /api/mercuriale : dernière réf datée, ÷ facteur de conversion). */
+ *  GET /api/mercuriale : dernière réf datée, ÷ facteur de conversion).
+ *
+ *  GARDE-FOU UNITÉS : une réf dont l'unité facturée est INCOMPATIBLE avec
+ *  l'unité de base du générique (facturée à la pièce sur un générique au kg, ou
+ *  l'inverse) et SANS facteur de conversion est IGNORÉE pour le prix — un prix
+ *  à la pièce lu comme un prix au kg fausserait toutes les fiches. La ligne
+ *  ressort alors « prix manquant » (visible), jamais un prix faux (silencieux).
+ *  Une unité illisible (champ vide, valeur parasite) ne bloque pas : on garde
+ *  le comportement historique. */
 export function buildGenericMap(
   generics: Array<Record<string, unknown>>,
   articles: Array<Record<string, unknown>>,
 ): Map<string, GenericInfo> {
+  const baseById = new Map<string, 'kg' | 'piece'>(
+    generics.map(g => [String(g.id), g.base_unit === 'piece' ? 'piece' : 'kg']),
+  )
   const bestByGeneric = new Map<string, { date: string; price: number }>()
   for (const a of articles) {
     const gid = a.generic_id as string | null
     if (!gid || a.last_price_ht == null) continue
     const raw = parseFloat(String(a.last_price_ht))
     if (!Number.isFinite(raw)) continue
-    const conv = a.conversion_factor != null && Number(a.conversion_factor) > 0 ? Number(a.conversion_factor) : 1
+    const hasConv = a.conversion_factor != null && Number(a.conversion_factor) > 0
+    const base = baseById.get(gid)
+    const kind = unitKind(a.unit as string | null | undefined)
+    if (base && kind !== null && kind !== base && !hasConv) continue
+    const conv = hasConv ? Number(a.conversion_factor) : 1
     const date = String(a.last_price_date || '')
     const cur = bestByGeneric.get(gid)
     if (!cur || date.localeCompare(cur.date) > 0) bestByGeneric.set(gid, { date, price: raw / conv })
