@@ -1,17 +1,21 @@
 // Mercuriale — le référentiel de prix d'achat, à deux étages :
 //   1. les RÉFS FOURNISSEURS (articles), créées automatiquement par la lecture
 //      des factures — chaque ligne extraite est un point de prix daté ;
-//   2. les ARTICLES GÉNÉRIQUES, créés par l'utilisateur, qui regroupent les
-//      réfs (« FILET DE POULET SV » + « FILET DE POULET LR » → « Filet de
-//      poulet ») et ramènent tout à une unité de base (kg ou pièce) via le
-//      facteur de conversion de chaque réf.
-// Une réf sans générique est « à associer » : elle attend dans la file.
+//   2. les ARTICLES GÉNÉRIQUES qui regroupent les réfs (« FILET DE POULET SV »
+//      + « FILET DE POULET LR » → « Filet de poulet ») et ramènent tout à une
+//      unité de base (kg ou pièce) via le facteur de conversion de chaque réf.
+// Depuis le 29/07 (demande client) : une réf qui ne RESSEMBLE à rien devient
+// automatiquement son propre générique (ensureAutoGenerics, rattrapage paresseux
+// en tête de GET). Ne restent en file que les réfs qui se ressemblent — même
+// tronc de libellé entre elles ou avec un générique existant (suggestion).
 // Le prix d'un générique = dernier prix connu parmi ses réfs, converti.
 import { NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { resolveClientId } from '@/lib/resolve-client-id'
+import { ensureAutoGenerics, articleStem } from '@/lib/mercuriale-auto'
 
 export const dynamic = 'force-dynamic'
+export const maxDuration = 60
 
 export async function GET() {
   const supabase = createClient()
@@ -21,6 +25,10 @@ export async function GET() {
   const service = createServiceClient()
   const clientId = await resolveClientId(service, user.id, user.email)
   if (!clientId) return NextResponse.json({ generics: [], queue: [], pending: [] })
+
+  // Association automatique des réfs sans ressemblance — AVANT les lectures,
+  // pour que la réponse reflète l'état à jour. Idempotent, silencieux à vide.
+  await ensureAutoGenerics(service, clientId)
 
   const [{ data: generics }, { data: articles }, { data: pricePoints }, { data: pending }] = await Promise.all([
     service.from('generic_articles')
@@ -110,5 +118,17 @@ export async function GET() {
     }
   })
 
-  return NextResponse.json({ generics: genericsOut, queue, pending: pending || [] })
+  // File « À rapprocher » : chaque réf restante porte son tronc de libellé et,
+  // si un générique existant partage ce tronc, une suggestion d'association.
+  const genericIdByStem = new Map<string, string>()
+  for (const g of generics || []) {
+    const s = articleStem(String((g as any).name))
+    if (!genericIdByStem.has(s)) genericIdByStem.set(s, String((g as any).id))
+  }
+  const queueOut = queue.map((a: any) => {
+    const stem = articleStem(String(a.name))
+    return { ...a, stem, suggested_generic_id: genericIdByStem.get(stem) ?? null }
+  })
+
+  return NextResponse.json({ generics: genericsOut, queue: queueOut, pending: pending || [] })
 }

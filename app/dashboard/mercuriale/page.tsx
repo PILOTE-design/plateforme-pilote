@@ -2,11 +2,13 @@
 
 // Mercuriale — le référentiel de prix d'achat, à deux étages :
 //   · les RÉFS FOURNISSEURS, créées automatiquement par la lecture des factures ;
-//   · les ARTICLES GÉNÉRIQUES, créés par l'utilisateur, qui regroupent les réfs
-//     (« FILET DE POULET SV » + « FILET DE POULET LR » → « Filet de poulet »)
-//     et ramènent tout à une unité de base (kg ou pièce).
-// Une réf jamais associée attend dans la file « À associer » — c'est voulu :
-// les fiches recettes ne s'appuieront QUE sur les génériques.
+//   · les ARTICLES GÉNÉRIQUES, qui regroupent les réfs (« FILET DE POULET SV »
+//     + « FILET DE POULET LR » → « Filet de poulet ») et ramènent tout à une
+//     unité de base (kg ou pièce).
+// Depuis le 29/07 : une réf qui ne ressemble à rien est associée TOUTE SEULE
+// (son propre générique, côté API). La file « À rapprocher » ne montre que les
+// appellations proches, groupées — regroupement du groupe en un clic, ou réf
+// par réf pour régler un facteur de conversion.
 // La lecture des factures se déclenche ici (une facture à la fois).
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -25,6 +27,10 @@ type Ref = {
   variation_pct: number | null
   conversion_factor: number | string | null
   price_base: number | null
+  /** Tronc du libellé (calculé serveur) — les réfs au même tronc se ressemblent */
+  stem: string
+  /** Générique existant au même tronc, s'il y en a un : association suggérée */
+  suggested_generic_id: string | null
 }
 
 type Generic = {
@@ -52,6 +58,25 @@ type PendingInvoice = {
 const fmtEuro = (n: number) => n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'
 const fmtDate = (s: string | null) => (s ? new Date(s + 'T00:00:00Z').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }) : '—')
 const unitLabel = (u: 'kg' | 'piece') => (u === 'kg' ? 'kg' : 'pièce')
+const titleize = (s: string) => { const t = s.trim().replace(/\s+/g, ' '); return t ? t.charAt(0).toUpperCase() + t.slice(1).toLowerCase() : t }
+const guessUnitClient = (u: string | null): 'kg' | 'piece' =>
+  (u || '').toLowerCase().includes('kg') ? 'kg' : (u || '').toLowerCase().match(/pi[eè]ce|pce|pcs|unit/) ? 'piece' : 'kg'
+
+/** Nom proposé pour un groupe de réfs qui se ressemblent : le début COMMUN de
+ *  leurs libellés (« FILET DE POULET LR 3,2 » + « FILET DE POULET ML 2,5KG »
+ *  → « Filet de poulet »), repli sur le premier libellé. */
+function commonLabel(names: string[]): string {
+  if (names.length === 1) return titleize(names[0])
+  const words = names.map(n => n.trim().split(/\s+/))
+  const first = words[0]
+  const out: string[] = []
+  for (let i = 0; i < first.length; i++) {
+    if (words.every(w => (w[i] || '').toLowerCase() === first[i].toLowerCase())) out.push(first[i])
+    else break
+  }
+  const label = out.join(' ').replace(/[\s\-–·,]+$/, '')
+  return titleize(label || names[0])
+}
 
 function Variation({ pct }: { pct: number | null }) {
   if (pct === null) return <span className="text-xs text-gray-300">—</span>
@@ -79,6 +104,11 @@ export default function MercurialePage() {
   const [assocId, setAssocId] = useState<string | null>(null)
   const [assoc, setAssoc] = useState({ choice: 'new', newName: '', newUnit: 'kg' as 'kg' | 'piece', newCat: 'ingredient' as 'ingredient' | 'emballage', factor: '' })
   const [saving, setSaving] = useState(false)
+
+  // Regroupement d'un GROUPE de réfs qui se ressemblent (formulaire par tronc)
+  const [groupOpen, setGroupOpen] = useState<string | null>(null)
+  const [groupForm, setGroupForm] = useState({ name: '', unit: 'kg' as 'kg' | 'piece', cat: 'ingredient' as 'ingredient' | 'emballage' })
+  const [groupSaving, setGroupSaving] = useState(false)
 
   // Catalogue : générique déplié + édition
   const [openId, setOpenId] = useState<string | null>(null)
@@ -131,9 +161,54 @@ export default function MercurialePage() {
 
   function openAssoc(r: Ref) {
     setAssocId(r.id)
-    // Pré-remplissage : nom nettoyé de la réf, unité kg si la réf est au kg
-    const unit = (r.unit || '').toLowerCase().includes('kg') ? 'kg' : (r.unit || '').toLowerCase().match(/pi[eè]ce|pce|unit/) ? 'piece' : 'kg'
-    setAssoc({ choice: generics.length > 0 ? '' : 'new', newName: r.name.charAt(0) + r.name.slice(1).toLowerCase(), newUnit: unit as 'kg' | 'piece', newCat: 'ingredient', factor: '' })
+    // Pré-remplissage : suggestion de générique si son tronc correspond, sinon
+    // nom nettoyé de la réf ; unité devinée depuis l'unité facturée.
+    const suggested = r.suggested_generic_id && generics.some(g => g.id === r.suggested_generic_id) ? r.suggested_generic_id : null
+    setAssoc({
+      choice: suggested ?? (generics.length > 0 ? '' : 'new'),
+      newName: titleize(r.name), newUnit: guessUnitClient(r.unit), newCat: 'ingredient', factor: '',
+    })
+  }
+
+  /** Associe toutes les réfs d'un groupe au même générique (facteur de
+   *  conversion laissé à 1 — réglable réf par réf via « Associer » individuel). */
+  async function assocRefs(refs: Ref[], genericId: string, genericName: string) {
+    if (groupSaving) return
+    setGroupSaving(true)
+    let ok = 0, ko = 0
+    for (const r of refs) {
+      const res = await fetch(`/api/articles/${r.id}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ generic_id: genericId }),
+      }).catch(() => null)
+      if (res?.ok) ok++
+      else ko++
+    }
+    setGroupSaving(false)
+    setGroupOpen(null)
+    toast(ko === 0
+      ? { variant: 'success', title: `${ok} réf${ok > 1 ? 's' : ''} associée${ok > 1 ? 's' : ''} à « ${genericName} »` }
+      : { variant: 'error', title: `${ok} associée${ok > 1 ? 's' : ''}, ${ko} en échec`, description: 'Relancez sur les réfs restantes.' })
+    load()
+  }
+
+  /** Crée le générique du groupe (nom pré-rempli = tronc commun) puis y associe toutes les réfs */
+  async function createGroupGeneric(refs: Ref[]) {
+    if (groupSaving) return
+    const name = groupForm.name.trim()
+    if (!name) { toast({ variant: 'error', title: 'Nom du générique requis' }); return }
+    setGroupSaving(true)
+    const res = await fetch('/api/generic-articles', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, base_unit: groupForm.unit, category: groupForm.cat }),
+    }).catch(() => null)
+    const data = res ? await res.json().catch(() => null) : null
+    setGroupSaving(false)
+    if (!res?.ok || !data?.generic?.id) {
+      toast({ variant: 'error', title: data?.error || 'Création du générique impossible' })
+      return
+    }
+    await assocRefs(refs, data.generic.id, name)
   }
 
   async function submitAssoc(r: Ref) {
@@ -221,6 +296,26 @@ export default function MercurialePage() {
     return queue.filter(r => r.name.toLowerCase().includes(q) || (r.supplier_name || '').toLowerCase().includes(q) || (r.article_code || '').toLowerCase().includes(q))
   }, [queue, search])
 
+  // Groupes de ressemblance : les réfs au même tronc de libellé, avec le
+  // générique suggéré s'il existe et un nom proposé (début commun des libellés).
+  const queueGroups = useMemo(() => {
+    const m = new Map<string, Ref[]>()
+    for (const r of filteredQueue) {
+      const key = r.stem || r.name.toLowerCase()
+      const arr = m.get(key) || []
+      arr.push(r)
+      m.set(key, arr)
+    }
+    return [...m.entries()]
+      .map(([stem, refs]) => ({
+        stem,
+        refs,
+        label: commonLabel(refs.map(r => r.name)),
+        suggested: refs[0].suggested_generic_id ? generics.find(g => g.id === refs[0].suggested_generic_id) ?? null : null,
+      }))
+      .sort((a, b) => b.refs.length - a.refs.length || a.label.localeCompare(b.label, 'fr'))
+  }, [filteredQueue, generics])
+
   const hausses = useMemo(() => generics.filter(g => (g.variation_pct ?? 0) > 0).length, [generics])
 
   return (
@@ -272,7 +367,7 @@ export default function MercurialePage() {
           <p className="text-2xl font-extrabold tracking-tight text-gray-900 tabular">{generics.length}</p>
         </div>
         <div className="bg-white rounded-2xl border border-gray-100 shadow-card p-5">
-          <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Réfs à associer</p>
+          <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Réfs à rapprocher</p>
           <p className={`text-2xl font-extrabold tracking-tight tabular ${queue.length > 0 ? 'text-amber-600' : 'text-gray-900'}`}>{queue.length}</p>
         </div>
         <div className="bg-white rounded-2xl border border-gray-100 shadow-card p-5">
@@ -292,15 +387,74 @@ export default function MercurialePage() {
         <div className="space-y-2">{[...Array(6)].map((_, i) => <div key={i} className="h-12 bg-gray-100 rounded-xl animate-pulse" />)}</div>
       ) : (
         <>
-          {/* File d'association : réfs fournisseurs sans article générique */}
-          {filteredQueue.length > 0 && (
+          {/* File de RAPPROCHEMENT : uniquement les réfs qui se ressemblent — entre
+              elles (même tronc de libellé) ou avec un générique existant. Les réfs
+              sans ressemblance sont associées automatiquement, il n'y a rien à faire. */}
+          {queueGroups.length > 0 && (
             <div className="mb-8">
-              <div className="flex items-baseline gap-2 mb-3">
-                <h2 className="text-sm font-extrabold uppercase tracking-wider text-gray-700">À associer</h2>
-                <span className="text-[11px] text-gray-400 tabular">{filteredQueue.length} réf{filteredQueue.length > 1 ? 's' : ''} fournisseur</span>
+              <div className="flex items-baseline gap-2 mb-1">
+                <h2 className="text-sm font-extrabold uppercase tracking-wider text-gray-700">À rapprocher</h2>
+                <span className="text-[11px] text-gray-400 tabular">{filteredQueue.length} réf{filteredQueue.length > 1 ? 's' : ''} · {queueGroups.length} produit{queueGroups.length > 1 ? 's' : ''}</span>
               </div>
-              <div className="bg-white rounded-2xl border border-amber-200 shadow-card overflow-hidden divide-y divide-gray-100">
-                {filteredQueue.map(r => {
+              <p className="text-[11px] text-gray-400 mb-3">
+                Les réfs qui ne ressemblent à rien deviennent automatiquement leur propre article générique.
+                Ne restent ici que les appellations proches à regrouper — d&apos;un clic pour tout le groupe, ou réf par réf (utile pour régler un facteur de conversion).
+              </p>
+              <div className="space-y-3">
+                {queueGroups.map(grp => (
+                  <div key={grp.stem} className="bg-white rounded-2xl border border-amber-200 shadow-card overflow-hidden">
+                    <div className="px-4 py-2.5 bg-amber-50/60 flex items-center gap-3 flex-wrap">
+                      <p className="text-sm font-bold text-gray-900 flex-1 min-w-[180px]">
+                        {grp.label}
+                        <span className="ml-2 text-[11px] font-semibold text-amber-700 tabular">{grp.refs.length} réf{grp.refs.length > 1 ? 's' : ''}{grp.refs.length > 1 ? ' qui se ressemblent' : ''}</span>
+                      </p>
+                      {grp.suggested ? (
+                        <button onClick={() => assocRefs(grp.refs, grp.suggested!.id, grp.suggested!.name)} disabled={groupSaving}
+                          className="text-xs font-bold text-white bg-pilote hover:bg-pilote-hover rounded-lg px-3.5 py-2 shadow-card active:scale-[0.98] transition-all disabled:opacity-50">
+                          {groupSaving ? 'Association…' : `${grp.refs.length > 1 ? 'Tout associer' : 'Associer'} à « ${grp.suggested.name} »`}
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => {
+                            setGroupOpen(prev => prev === grp.stem ? null : grp.stem)
+                            setGroupForm({ name: grp.label, unit: guessUnitClient(grp.refs[0]?.unit ?? null), cat: 'ingredient' })
+                          }}
+                          className={`text-xs font-bold rounded-lg px-3.5 py-2 transition-all ${groupOpen === grp.stem ? 'text-gray-500 bg-gray-100' : 'text-white bg-pilote hover:bg-pilote-hover shadow-card active:scale-[0.98]'}`}>
+                          {groupOpen === grp.stem ? 'Annuler' : grp.refs.length > 1 ? `Regrouper les ${grp.refs.length} réfs` : 'Créer son générique'}
+                        </button>
+                      )}
+                    </div>
+                    {groupOpen === grp.stem && !grp.suggested && (
+                      <div className="px-4 py-3 bg-pilote-50/40 border-b border-dashed border-pilote-200 grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
+                        <div className="md:col-span-2">
+                          <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1">Nom de l&apos;article générique</label>
+                          <input value={groupForm.name} onChange={e => setGroupForm(f => ({ ...f, name: e.target.value }))}
+                            className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200" />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1">Unité de base</label>
+                          <select value={groupForm.unit} onChange={e => setGroupForm(f => ({ ...f, unit: e.target.value as 'kg' | 'piece' }))}
+                            className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200">
+                            <option value="kg">au kg</option>
+                            <option value="piece">à la pièce</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1">Catégorie</label>
+                          <select value={groupForm.cat} onChange={e => setGroupForm(f => ({ ...f, cat: e.target.value as 'ingredient' | 'emballage' }))}
+                            className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200">
+                            <option value="ingredient">Ingrédient</option>
+                            <option value="emballage">Emballage</option>
+                          </select>
+                        </div>
+                        <button onClick={() => createGroupGeneric(grp.refs)} disabled={groupSaving}
+                          className="text-xs font-bold text-white bg-pilote hover:bg-pilote-hover rounded-lg px-4 py-2.5 shadow-card active:scale-[0.98] transition-all disabled:opacity-50">
+                          {groupSaving ? 'Création…' : `Créer et associer${grp.refs.length > 1 ? ` les ${grp.refs.length} réfs` : ''}`}
+                        </button>
+                      </div>
+                    )}
+                    <div className="divide-y divide-gray-100">
+                      {grp.refs.map(r => {
                   const isOpen = assocId === r.id
                   const targetUnit = assoc.choice === 'new' ? assoc.newUnit : (generics.find(g => g.id === assoc.choice)?.base_unit ?? 'kg')
                   return (
@@ -372,6 +526,9 @@ export default function MercurialePage() {
                     </div>
                   )
                 })}
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           )}
@@ -384,7 +541,8 @@ export default function MercurialePage() {
               {generics.length === 0 && queue.length === 0 && (
                 <p className="text-xs text-gray-400 max-w-md mx-auto">
                   Synchronisez Pennylane depuis la page Facturation, puis cliquez sur « Lire les factures » :
-                  chaque réf extraite arrivera ici, prête à être associée à vos articles génériques.
+                  les réfs sans ressemblance deviennent automatiquement des articles génériques,
+                  et seuls les produits aux appellations proches vous attendront ici pour être regroupés.
                 </p>
               )}
             </div>
