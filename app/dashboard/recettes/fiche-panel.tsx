@@ -23,8 +23,19 @@ import { parseStoredSteps, parseStoredTiers } from '@/lib/recipes'
 export type FicheIngredient = {
   generic_id: string | null; article_id: string | null; label: string
   quantity: number; qty_unit: string | null; unit: string | null; loss_pct: number | null
+  manual_price_ht?: number | null
   unit_price_ht: number | null; price_source: string; categorie: 'ingredient' | 'emballage'
   qty_base: number; qty_brute: number; line_total_ht: number
+}
+
+/** Article générique de la mercuriale, tel que renvoyé par GET /api/recipes —
+ *  nécessaire pour AJOUTER un ingrédient directement depuis la fiche. */
+export type FicheGeneric = {
+  id: string; name: string
+  base_unit: 'kg' | 'piece'
+  category: 'ingredient' | 'emballage'
+  default_loss_pct: number
+  price_ht: number | null
 }
 
 export type FicheCost = {
@@ -64,13 +75,15 @@ function fmtMin(m: number): string {
 }
 
 export default function FichePanel({
-  recipe, employees, onEditFull, onSaved, onClose,
+  recipe, employees, generics, onEditFull, onSaved, onClose,
 }: {
   recipe: FicheRecipe
   employees: FicheEmployee[]
+  /** Articles génériques de la mercuriale — pour l'ajout d'ingrédient sur place */
+  generics: FicheGeneric[]
   /** Ouvre l'édition complète (modale sur la liste, ?edit= en pleine page) */
   onEditFull: () => void
-  /** Appelé après un enregistrement réussi (étapes, paliers, prix) */
+  /** Appelé après un enregistrement réussi (étapes, paliers, prix, ingrédients) */
   onSaved: () => void
   /** Absent en pleine page ; présent dans l'encadré de la liste */
   onClose?: () => void
@@ -87,6 +100,10 @@ export default function FichePanel({
   // Édition sur place du PV TTC / du coefficient (un seul champ à la fois)
   const [editKpi, setEditKpi] = useState<{ field: 'pv' | 'coef'; value: string } | null>(null)
   const kpiCancelRef = useRef(false)
+  // Ajout d'ingrédient directement depuis le tableau (comme les étapes)
+  const [newIng, setNewIng] = useState<{ query: string; generic: FicheGeneric | null; qty: string; unit: 'kg' | 'g' | 'piece'; loss: string } | null>(null)
+  // Retrait d'ingrédient en deux clics (jamais de confirm() natif)
+  const [confirmIng, setConfirmIng] = useState<number | null>(null)
 
   const c = recipe.cost
   const employeeName = useMemo(() =>
@@ -119,7 +136,14 @@ export default function FichePanel({
   const moScaled = c?.labor_rate_ht != null ? round2(scaledMinutes / 60 * c.labor_rate_ht) : 0
   const coutScaled = round2(coutMatiere * ratio + moScaled)
 
-  async function saveAll(extra?: { selling_price_ttc?: number | null }) {
+  /** Lignes d'ingrédients ACTUELLES au format d'écriture de l'API (PUT = remplacement complet) */
+  const ingPayload = () => recipe.ingredients.map(i => ({
+    generic_id: i.generic_id, article_id: i.article_id, label: i.label,
+    quantity: i.quantity, qty_unit: i.qty_unit, unit: i.unit,
+    loss_pct: i.loss_pct, manual_price_ht: i.manual_price_ht ?? null,
+  }))
+
+  async function saveAll(extra?: { selling_price_ttc?: number | null; ingredients?: ReturnType<typeof ingPayload> }) {
     if (saving) return
     setSaving(true)
     const res = await fetch(`/api/recipes/${recipe.id}`, {
@@ -136,12 +160,39 @@ export default function FichePanel({
         time_tiers: tiers
           .map(t => ({ qty: num(t.qty), mult: num(t.mult) }))
           .filter(t => t.qty > 0 && t.mult > 0),
+        ...(extra?.ingredients ? { ingredients: extra.ingredients } : {}),
       }),
     }).catch(() => null)
     const data = res ? await res.json().catch(() => null) : null
     setSaving(false)
     if (res?.ok) { toast({ variant: 'success', title: 'Fiche enregistrée' }); setDirty(false); onSaved() }
     else toast({ variant: 'error', title: 'Enregistrement impossible', description: data?.error || 'Réessayez.' })
+  }
+
+  /** Ajoute l'ingrédient choisi et enregistre aussitôt (la liste est REMPLACÉE côté API) */
+  function addIngredient() {
+    if (!newIng?.generic || num(newIng.qty) <= 0) return
+    const g = newIng.generic
+    saveAll({
+      ingredients: [...ingPayload(), {
+        generic_id: g.id, article_id: null, label: g.name,
+        quantity: num(newIng.qty),
+        qty_unit: g.base_unit === 'kg' ? (newIng.unit === 'g' ? 'g' : 'kg') : 'piece',
+        unit: null, loss_pct: num(newIng.loss), manual_price_ht: null,
+      }],
+    })
+    setNewIng(null)
+  }
+
+  /** Retire une ligne (2e clic) — au moins un ingrédient doit rester */
+  function removeIngredient(idx: number) {
+    if (confirmIng !== idx) { setConfirmIng(idx); return }
+    setConfirmIng(null)
+    if (recipe.ingredients.length <= 1) {
+      toast({ variant: 'error', title: 'Une recette garde au moins un ingrédient' })
+      return
+    }
+    saveAll({ ingredients: ingPayload().filter((_, i) => i !== idx) })
   }
 
   /** Valide l'édition sur place du PV ou du coef → recalcule et enregistre le PV TTC */
@@ -389,6 +440,7 @@ export default function FichePanel({
                     <th className="px-3.5 py-2.5 text-right">Qté{active ? ` (×${(Math.round(ratio * 100) / 100).toLocaleString('fr-FR')})` : ''}</th>
                     <th className="px-3.5 py-2.5 text-right">Coût (€)</th>
                     <th className="px-3.5 py-2.5 text-right">%</th>
+                    <th className="w-8" />
                   </tr>
                 </thead>
                 <tbody>
@@ -397,7 +449,7 @@ export default function FichePanel({
                     const loss = Number(ing.loss_pct) || 0
                     const uniteAffichee = ing.generic_id ? (ing.qty_unit === 'piece' ? 'pièce' : ing.qty_unit || '') : (ing.unit || '')
                     return (
-                      <tr key={i} className="border-t border-gray-100 hover:bg-gray-50 transition-colors">
+                      <tr key={i} className="group border-t border-gray-100 hover:bg-gray-50 transition-colors">
                         <td className="px-3.5 py-2.5">
                           <span className="text-sm font-semibold text-gray-900">{ing.label}</span>
                           {ing.categorie === 'emballage' && <span className="ml-1.5 text-[10px] font-semibold uppercase tracking-wider text-blue-700 bg-blue-50 rounded px-1.5 py-0.5">Emballage</span>}
@@ -410,6 +462,19 @@ export default function FichePanel({
                         </td>
                         <td className="px-3.5 py-2.5 text-right text-sm font-semibold text-gray-900 tabular">{ing.unit_price_ht !== null ? fmtEuro(ing.line_total_ht * ratio) : '—'}</td>
                         <td className="px-3.5 py-2.5 text-right text-sm text-gray-600 tabular">{coutPct !== null && ing.unit_price_ht !== null ? `${Math.round(coutPct)} %` : '—'}</td>
+                        <td className="pr-2 text-right">
+                          {confirmIng === i ? (
+                            <button onClick={() => removeIngredient(i)} onBlur={() => setConfirmIng(null)}
+                              className="text-[10px] font-bold text-white bg-red-600 hover:bg-red-700 rounded-lg px-1.5 py-1 whitespace-nowrap" title="Confirmer le retrait">
+                              OK ?
+                            </button>
+                          ) : (
+                            <button onClick={() => removeIngredient(i)} disabled={saving}
+                              className="p-1 rounded-lg text-gray-300 hover:text-red-600 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all" title="Retirer cet ingrédient">
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </td>
                       </tr>
                     )
                   })}
@@ -420,9 +485,81 @@ export default function FichePanel({
                     <td className="px-3.5 py-2.5 text-right font-bold tabular text-sm">{poidsTotalKg > 0 ? `${fmtQty(poidsTotalKg * ratio)} kg` : ''}</td>
                     <td className="px-3.5 py-2.5 text-right font-bold tabular text-sm">{fmtEuro(coutMatiere * ratio)}</td>
                     <td className="px-3.5 py-2.5 text-right font-bold tabular text-white/70 text-sm">100 %</td>
+                    <td />
                   </tr>
                 </tfoot>
               </table>
+            </div>
+
+            {/* Ajout d'ingrédient sur place — comme les étapes, enregistré aussitôt */}
+            <div className="px-3 py-2 border-t border-gray-100">
+              {newIng ? (
+                <div className="relative">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {newIng.generic ? (
+                      <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-pilote bg-pilote-50 ring-1 ring-pilote-100 rounded-full pl-3 pr-1.5 py-1.5">
+                        {newIng.generic.name}
+                        <button onClick={() => setNewIng(p => (p ? { ...p, generic: null, query: '' } : p))}
+                          className="w-4 h-4 rounded-full hover:bg-white/70 flex items-center justify-center"><X className="w-3 h-3" /></button>
+                      </span>
+                    ) : (
+                      <input autoFocus value={newIng.query}
+                        onChange={e => setNewIng(p => (p ? { ...p, query: e.target.value } : p))}
+                        placeholder="Chercher un article générique…"
+                        className="flex-1 min-w-[160px] border border-gray-200 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200" />
+                    )}
+                    <input inputMode="decimal" value={newIng.qty} placeholder="Qté"
+                      onChange={e => setNewIng(p => (p ? { ...p, qty: e.target.value } : p))}
+                      onKeyDown={e => { if (e.key === 'Enter') addIngredient() }}
+                      className="w-16 border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-right tabular focus:outline-none focus:ring-2 focus:ring-pilote-200" />
+                    {newIng.generic?.base_unit === 'kg' ? (
+                      <select value={newIng.unit === 'g' ? 'g' : 'kg'}
+                        onChange={e => setNewIng(p => (p ? { ...p, unit: e.target.value as 'kg' | 'g' } : p))}
+                        className="border border-gray-200 rounded-lg px-1.5 py-1.5 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200">
+                        <option value="kg">kg</option>
+                        <option value="g">g</option>
+                      </select>
+                    ) : (
+                      <span className="text-[11px] text-gray-400">{newIng.generic ? 'pièce' : ''}</span>
+                    )}
+                    <div className="relative">
+                      <input inputMode="decimal" value={newIng.loss} title="Perte / rendement (%)"
+                        onChange={e => setNewIng(p => (p ? { ...p, loss: e.target.value } : p))}
+                        className="w-14 border border-gray-200 rounded-lg pl-2 pr-5 py-1.5 text-xs text-right tabular focus:outline-none focus:ring-2 focus:ring-pilote-200" />
+                      <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] text-gray-400">%</span>
+                    </div>
+                    <button onClick={addIngredient} disabled={saving || !newIng.generic || num(newIng.qty) <= 0}
+                      className="text-xs font-bold text-white bg-pilote hover:bg-pilote-hover rounded-lg px-3 py-1.5 shadow-card active:scale-[0.98] transition-all disabled:opacity-40">
+                      Ajouter
+                    </button>
+                    <button onClick={() => setNewIng(null)} className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100"><X className="w-3.5 h-3.5" /></button>
+                  </div>
+                  {!newIng.generic && newIng.query.trim().length >= 2 && (
+                    <div className="absolute z-20 left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-card-hover overflow-hidden">
+                      {generics.filter(g => g.name.toLowerCase().includes(newIng.query.trim().toLowerCase())).slice(0, 6).map(g => (
+                        <button key={g.id}
+                          onClick={() => setNewIng(p => (p ? { ...p, generic: g, query: g.name, unit: g.base_unit === 'kg' ? 'kg' : 'piece', loss: String(g.default_loss_pct || 0) } : p))}
+                          className="w-full text-left px-3 py-2 text-sm hover:bg-pilote-50 flex items-center justify-between gap-2">
+                          <span className="truncate">{g.name}
+                            {g.category === 'emballage' && <span className="ml-1.5 text-[10px] font-semibold uppercase tracking-wider text-blue-700 bg-blue-50 rounded px-1 py-0.5">Emballage</span>}
+                          </span>
+                          <span className="text-xs text-gray-500 tabular flex-shrink-0">
+                            {g.price_ht !== null ? `${fmtEuro(g.price_ht)} / ${unitFr(g.base_unit)}` : 'pas encore de prix'}
+                          </span>
+                        </button>
+                      ))}
+                      {generics.filter(g => g.name.toLowerCase().includes(newIng.query.trim().toLowerCase())).length === 0 && (
+                        <p className="px-3 py-2 text-xs text-gray-400">Aucun article générique — créez-le d&apos;abord dans la Mercuriale.</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <button onClick={() => setNewIng({ query: '', generic: null, qty: '', unit: 'kg', loss: '0' })}
+                  className="w-full flex items-center justify-center gap-1.5 text-xs font-semibold text-gray-500 border-2 border-dashed border-gray-200 rounded-xl py-2 hover:border-pilote-200 hover:text-pilote transition-colors">
+                  <Plus className="w-3.5 h-3.5" />Ajouter un ingrédient
+                </button>
+              )}
             </div>
             <div className="px-3.5 py-2.5 border-t border-gray-100 flex flex-wrap gap-x-5 gap-y-1 text-[11px] text-gray-500 tabular">
               <span><ShoppingBasket className="w-3 h-3 inline mr-1 text-gray-400" />Matière {c ? fmtEuro(c.matiere_ht * ratio) : '—'}</span>
