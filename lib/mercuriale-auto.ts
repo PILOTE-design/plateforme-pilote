@@ -115,7 +115,7 @@ export function titleize(name: string): string {
 export async function ensureAutoGenerics(service: ServiceClient, clientId: string): Promise<void> {
   const [{ data: generics, error: gErr }, { data: freeRefs, error: aErr }] = await Promise.all([
     service.from('generic_articles').select('id, name').eq('client_id', clientId).eq('active', true),
-    service.from('articles').select('id, name, unit').eq('client_id', clientId).is('generic_id', null).eq('no_auto', false),
+    service.from('articles').select('id, name, unit').eq('client_id', clientId).is('generic_id', null).eq('no_auto', false).eq('ignored', false),
   ])
   if (gErr || aErr) { console.error('[mercuriale auto] lecture', gErr?.message || aErr?.message); return }
   if (!freeRefs || freeRefs.length === 0) return

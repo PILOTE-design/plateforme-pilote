@@ -42,6 +42,8 @@ type Ref = {
   stem: string
   /** Ligne non-produit (taxe, remise, licence…) : jamais associée d'office */
   non_product: boolean
+  /** Écartée par le gérant : hors file, restaurable depuis la section dédiée */
+  ignored: boolean
   /** Générique existant à la même clé, s'il y en a un : association suggérée */
   suggested_generic_id: string | null
 }
@@ -138,6 +140,7 @@ export default function MercurialePage() {
   const [edit, setEdit] = useState({ name: '', base_unit: 'kg' as 'kg' | 'piece', category: 'ingredient' as 'ingredient' | 'emballage', loss: '0' })
   const [confirmDelId, setConfirmDelId] = useState<string | null>(null)
   const [showNonProduct, setShowNonProduct] = useState(false)
+  const [showIgnored, setShowIgnored] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -415,6 +418,36 @@ export default function MercurialePage() {
     if (ok) setSmartSuggestions(prev => prev ? prev.filter(x => x.ids.join(',') !== key) : prev)
   }
 
+  /** Écarte une réf de la file (le gérant ne veut pas la rapprocher) ou la restaure */
+  async function setIgnored(r: Ref, ignored: boolean) {
+    const res = await fetch(`/api/articles/${r.id}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ignored }),
+    }).catch(() => null)
+    if (res?.ok) {
+      toast(ignored
+        ? { variant: 'info', title: `« ${r.name} » écartée`, description: 'Restaurable depuis « Réfs écartées » en bas de file.' }
+        : { variant: 'success', title: `« ${r.name} » remise dans la file` })
+      if (ignored) setSelIds(prev => prev.filter(x => x !== r.id))
+      load()
+    } else toast({ variant: 'error', title: 'Action impossible' })
+  }
+
+  /** Écarte tout un groupe de réfs d'un coup */
+  async function ignoreGroup(refs: Ref[]) {
+    let ok = 0
+    for (const r of refs) {
+      const res = await fetch(`/api/articles/${r.id}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ignored: true }),
+      }).catch(() => null)
+      if (res?.ok) ok++
+    }
+    setSelIds(prev => prev.filter(id => !refs.some(r => r.id === id)))
+    toast({ variant: 'info', title: `${ok} réf${ok > 1 ? 's' : ''} écartée${ok > 1 ? 's' : ''}`, description: 'Restaurables depuis « Réfs écartées » en bas de file.' })
+    load()
+  }
+
   /** Déplace une réf vers un autre générique (conversion remise à zéro) */
   async function moveRef(r: Ref, genericId: string) {
     const g = generics.find(x => x.id === genericId)
@@ -475,9 +508,12 @@ export default function MercurialePage() {
 
   // Groupes de ressemblance : les réfs à la même clé de rapprochement, avec le
   // générique suggéré s'il existe et un nom proposé (début commun des libellés).
+  // Les lignes non-produit et les réfs ÉCARTÉES par le gérant vivent à part.
+  const visibleQueue = useMemo(() => filteredQueue.filter(r => !r.ignored), [filteredQueue])
+  const ignoredRefs = useMemo(() => filteredQueue.filter(r => r.ignored), [filteredQueue])
   const queueGroups = useMemo(() => {
     const m = new Map<string, Ref[]>()
-    for (const r of filteredQueue) {
+    for (const r of visibleQueue) {
       if (r.non_product) continue
       const key = r.stem || r.name.toLowerCase()
       const arr = m.get(key) || []
@@ -492,12 +528,20 @@ export default function MercurialePage() {
         suggested: refs[0].suggested_generic_id ? generics.find(g => g.id === refs[0].suggested_generic_id) ?? null : null,
       }))
       .sort((a, b) => b.refs.length - a.refs.length || a.label.localeCompare(b.label, 'fr'))
-  }, [filteredQueue, generics])
+  }, [visibleQueue, generics])
 
-  const nonProductRefs = useMemo(() => filteredQueue.filter(r => r.non_product), [filteredQueue])
-  const productRefCount = filteredQueue.length - nonProductRefs.length
+  const nonProductRefs = useMemo(() => visibleQueue.filter(r => r.non_product), [visibleQueue])
+  const productRefCount = visibleQueue.length - nonProductRefs.length
   const hausses = useMemo(() => generics.filter(g => (g.variation_pct ?? 0) > 0).length, [generics])
   const conversionsManquantes = useMemo(() => generics.reduce((s, g) => s + g.refs.filter(r => r.needs_conversion).length, 0), [generics])
+  // Dossier des associations : les génériques à conversion manquante d'abord —
+  // c'est ce que le gérant vient régler.
+  const assocGenerics = useMemo(() =>
+    [...filteredGenerics].sort((a, b) =>
+      (b.refs.some(r => r.needs_conversion) ? 1 : 0) - (a.refs.some(r => r.needs_conversion) ? 1 : 0)),
+  [filteredGenerics])
+  /** Âge du dernier prix en jours — au-delà de 30 j, le catalogue le signale */
+  const priceAge = (d: string | null) => (d ? Math.floor((Date.now() - new Date(d + 'T00:00:00Z').getTime()) / 86400000) : null)
   const refsAssociees = useMemo(() => generics.reduce((s, g) => s + g.refs.length, 0), [generics])
 
   /** Ligne d'une réf en file : « Associer » l'ajoute à l'association en cours */
@@ -513,6 +557,10 @@ export default function MercurialePage() {
         <button onClick={() => toggleSel(r)}
           className={`flex items-center gap-1.5 text-xs font-bold rounded-lg px-3 py-1.5 transition-all ${isSel ? 'text-white bg-green-600 hover:bg-green-700 shadow-card' : 'text-white bg-pilote hover:bg-pilote-hover shadow-card active:scale-[0.98]'}`}>
           {isSel ? <><Check className="w-3.5 h-3.5" />Sélectionnée</> : <><Link2 className="w-3.5 h-3.5" />Associer</>}
+        </button>
+        <button onClick={() => setIgnored(r, true)} title="Écarter — ne pas rapprocher cette réf"
+          className="p-1.5 rounded-lg text-gray-300 hover:text-red-600 hover:bg-red-50 transition-colors flex-shrink-0">
+          <X className="w-3.5 h-3.5" />
         </button>
       </div>
     )
@@ -721,6 +769,10 @@ export default function MercurialePage() {
                           {grp.refs.length > 1 ? `Regrouper les ${grp.refs.length} réfs` : 'Créer son générique'}
                         </button>
                       )}
+                      <button onClick={() => ignoreGroup(grp.refs)} title="Ne pas rapprocher — écarter tout le groupe"
+                        className="text-[11px] font-semibold text-gray-400 hover:text-red-600 rounded-lg px-2 py-1.5 transition-colors">
+                        Écarter
+                      </button>
                     </div>
                     <div className="divide-y divide-gray-100">
                       {grp.refs.map(renderRef)}
@@ -745,6 +797,40 @@ export default function MercurialePage() {
                     </button>
                     {showNonProduct && (
                       <div className="divide-y divide-gray-100 border-t border-gray-100">{nonProductRefs.map(renderRef)}</div>
+                    )}
+                  </div>
+                )}
+
+                {/* Réfs écartées par le gérant — restaurables */}
+                {ignoredRefs.length > 0 && (
+                  <div className="bg-white rounded-2xl border border-gray-100 shadow-card overflow-hidden">
+                    <button onClick={() => setShowIgnored(v => !v)}
+                      className="w-full px-4 py-2.5 flex items-center justify-between gap-3 hover:bg-gray-50 transition-colors">
+                      <p className="text-xs font-semibold text-gray-500 text-left">
+                        Réfs écartées
+                        <span className="text-gray-400 font-normal"> — vous avez choisi de ne pas les rapprocher ; restaurables à tout moment</span>
+                      </p>
+                      <span className="text-[11px] font-bold text-gray-400 tabular flex items-center gap-1 flex-shrink-0">
+                        {ignoredRefs.length}
+                        {showIgnored ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                      </span>
+                    </button>
+                    {showIgnored && (
+                      <div className="divide-y divide-gray-100 border-t border-gray-100">
+                        {ignoredRefs.map(r => (
+                          <div key={r.id} className="flex items-center gap-3 px-4 py-2.5 flex-wrap">
+                            <div className="flex-1 min-w-[220px]">
+                              <p className="text-sm font-semibold text-gray-500">{r.name}</p>
+                              <p className="text-[11px] text-gray-400">{r.supplier_name || '—'}{r.article_code ? ` · ${r.article_code}` : ''}</p>
+                            </div>
+                            <span className="text-xs text-gray-400 tabular">{r.last_price_ht !== null ? `${fmtEuro(Number(r.last_price_ht))}${r.unit ? ` / ${r.unit}` : ''}` : '—'}</span>
+                            <button onClick={() => setIgnored(r, false)}
+                              className="text-xs font-bold text-pilote border border-pilote-200 bg-white rounded-lg px-3 py-1.5 hover:bg-pilote-50 transition-colors">
+                              Restaurer
+                            </button>
+                          </div>
+                        ))}
+                      </div>
                     )}
                   </div>
                 )}
@@ -819,7 +905,7 @@ export default function MercurialePage() {
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {filteredGenerics.map(g => (
+                  {assocGenerics.map(g => (
                     <div key={g.id} className="bg-white rounded-2xl border border-gray-100 shadow-card overflow-hidden">
                       <div className="px-4 py-2.5 bg-gray-50/80 flex items-center gap-2 flex-wrap">
                         <p className="text-sm font-bold text-gray-900">{g.name}</p>
@@ -850,7 +936,7 @@ export default function MercurialePage() {
                         <p className="px-4 py-3 text-xs text-gray-400">Aucune réf fournisseur rattachée.</p>
                       ) : (
                         <div className="divide-y divide-gray-50">
-                          {g.refs.map(r => (
+                          {[...g.refs].sort((a, b) => (b.needs_conversion ? 1 : 0) - (a.needs_conversion ? 1 : 0)).map(r => (
                             <div key={r.id} className="px-4 py-2 flex items-center gap-3 flex-wrap text-xs">
                               <span className="font-semibold text-gray-800 flex-1 min-w-[170px]">{r.name}</span>
                               <span className="text-gray-400">{r.supplier_name || '—'}</span>
@@ -941,7 +1027,13 @@ export default function MercurialePage() {
                                 </td>
                                 <td className="px-4 py-2.5 text-right text-sm font-bold text-gray-900 tabular">{g.price_ht !== null ? fmtEuro(Number(g.price_ht)) : '—'}</td>
                                 <td className="px-4 py-2.5 text-xs text-gray-500">/ {unitLabel(g.base_unit)}</td>
-                                <td className="px-4 py-2.5 text-right text-xs text-gray-500 tabular">{fmtDate(g.price_date)}</td>
+                                <td className="px-4 py-2.5 text-right text-xs tabular">
+                                  {(() => { const age = priceAge(g.price_date); const vieux = age !== null && age > 30; return (
+                                    <span className={vieux ? 'text-amber-600 font-semibold' : 'text-gray-500'} title={vieux ? `Dernier prix il y a ${age} jours — pas de facture récente pour ce produit` : undefined}>
+                                      {fmtDate(g.price_date)}{vieux ? ` (${age} j)` : ''}
+                                    </span>
+                                  ) })()}
+                                </td>
                                 <td className="px-4 py-2.5 text-right"><Variation pct={g.variation_pct} /></td>
                                 <td className="px-4 py-2.5 text-right text-xs text-gray-400 tabular">
                                   {g.refs_count}

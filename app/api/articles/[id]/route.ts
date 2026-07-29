@@ -23,6 +23,18 @@ export async function PUT(request: NextRequest, { params }: { params: { id: stri
   const { service, clientId } = auth
 
   const body = await request.json().catch(() => ({} as Record<string, unknown>))
+
+  // Écarter / restaurer une réf de la file « À rapprocher » sans l'associer.
+  // no_auto accompagne dans les deux sens : une réf écartée puis restaurée se
+  // traite à la main, l'association automatique ne la reprend jamais.
+  if ('ignored' in body && !('generic_id' in body)) {
+    const { error } = await service.from('articles')
+      .update({ ignored: body.ignored === true, no_auto: true })
+      .eq('id', params.id).eq('client_id', clientId)
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ success: true })
+  }
+
   if (!('generic_id' in body)) return NextResponse.json({ error: 'generic_id requis (null pour dissocier)' }, { status: 400 })
 
   // Dissociation : la réf retourne dans la file d'attente. no_auto empêche
