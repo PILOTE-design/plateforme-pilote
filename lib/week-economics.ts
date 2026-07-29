@@ -72,6 +72,14 @@ export type WeekEconomics = {
   salaires_non_affectes: number
   charges_fixes: number
   charges_fixes_lines: ReturnType<typeof weekRecurringCost>['lines']
+  /** Factures classées « charges fixes » DATÉES de la semaine (hors à-vérifier) :
+   *  EDF, entretien, honoraires… — le ponctuel, par opposition à la provision
+   *  récurrente (charges_fixes) qui lisse loyer et abonnements au jour près. */
+  charges_semaine: number
+  /** EBE de la semaine = marge sur coût direct − charges semaine − charges de
+   *  structure (récurrentes proratisées). resultat_net reste l'ancien agrégat
+   *  (sans les factures de charges) pour les écrans qui le lisent déjà. */
+  ebe: number
   /** CA HT — base de TOUS les taux de ce module (achats et salaires sont HT) */
   ca_total: number
   /** CA caisse tel que saisi / extrait du rapport, TVA comprise */
@@ -154,6 +162,12 @@ export async function computeWeekEconomics(
   const varInv = allVariable.filter((inv: any) => inv.status !== 'a_verifier')
   const achats_a_verifier = allVariable
     .filter((inv: any) => inv.status === 'a_verifier')
+    .reduce((s: number, inv: any) => s + parseFloat(inv.amount_ht || 0), 0)
+
+  // Factures déplacées en charges fixes, datées de la semaine : exclues des
+  // achats matière, mais comptées dans l'EBE comme « charges de la semaine ».
+  const charges_semaine = (invoicesData || [])
+    .filter((inv: any) => inv.is_fixed_charge && inv.status !== 'a_verifier')
     .reduce((s: number, inv: any) => s + parseFloat(inv.amount_ht || 0), 0)
 
   const achats_ht = varInv.reduce((s: number, inv: any) => s + parseFloat(inv.amount_ht || 0), 0)
@@ -311,6 +325,7 @@ export async function computeWeekEconomics(
   const marge_apres_salaires = ca_total - achats_ht - masse_salariale
   const taux_apres_salaires = ca_total > 0 ? (marge_apres_salaires / ca_total) * 100 : null
   const resultat_net = marge_brute - masse_salariale - charges_fixes
+  const ebe = marge_apres_salaires - charges_semaine - charges_fixes
   const ratio_ms = ca_total > 0 ? (masse_salariale / ca_total) * 100 : null
 
   // CA par rayon MÉTIER — lu depuis les familles de vente du rapport, repli sur les
@@ -441,6 +456,8 @@ export async function computeWeekEconomics(
     salaires_non_affectes: round2(salaires_non_affectes),
     charges_fixes: round2(charges_fixes),
     charges_fixes_lines: recur.lines,
+    charges_semaine: round2(charges_semaine),
+    ebe: round2(ebe),
     ca_total,
     ca_ttc: round2(ca_ttc),
     tva_rate,

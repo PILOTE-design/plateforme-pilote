@@ -197,13 +197,18 @@ export default async function DashboardPage() {
 
   // ── Agrégats — tous lus dans le moteur, aucun recalcul ici ──
   // ca_ttc = chiffre de caisse (ce que le gérant connaît) ; caHT = base des taux.
+  // Cascade affichée : CA TTC → CA HT → achats (= MB) → masse salariale → marge
+  // sur coût direct → charges semaine → charges de structure → résultat EBE.
   const caHT          = eco?.ca_total ?? 0
   const achatsHT      = eco?.achats_ht ?? 0
-  const chargesFixesSem = eco?.charges_fixes ?? 0
+  const chargesStruct = eco?.charges_fixes ?? 0
+  const chargesSem    = eco?.charges_semaine ?? 0
   const payrollRef    = eco?.masse_salariale ?? 0
   const marge_brute   = eco?.marge_brute ?? 0
   const taux_marge    = caHT > 0 ? (eco?.taux_marge ?? null) : null
-  const resultat      = caHT > 0 ? (eco?.resultat_net ?? null) : null
+  const margeCoutDirect = eco?.marge_apres_salaires ?? 0
+  const tauxCoutDirect  = caHT > 0 ? (eco?.taux_apres_salaires ?? null) : null
+  const ebe           = caHT > 0 ? (eco?.ebe ?? null) : null
   const ratioMS       = payrollRef > 0 ? (eco?.ratio_ms ?? null) : null
   const tvaRate       = eco?.tva_rate ?? 5.5
 
@@ -349,7 +354,7 @@ export default async function DashboardPage() {
         </Card>
       ) : (
         <>
-          {/* ── KPIs semaine écoulée ── */}
+          {/* ── Cascade semaine écoulée · 1er étage : CA TTC → CA HT → achats (= MB) ── */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
             <Card className="hover:shadow-card-hover transition-shadow">
               <CardContent className="p-5">
@@ -361,8 +366,21 @@ export default async function DashboardPage() {
                 </div>
                 <p className="text-2xl font-extrabold tracking-tight text-gray-900 tabular">{ca_ttc > 0 ? `${fmt(ca_ttc)} €` : '—'}</p>
                 {ca_ttc > 0
-                  ? <p className="text-xs text-gray-400 mt-1 tabular">soit {fmt(caHT)} € HT · TVA {tvaRate.toString().replace('.', ',')} %</p>
+                  ? <p className="text-xs text-gray-400 mt-1 tabular">chiffre de caisse · TVA {tvaRate.toString().replace('.', ',')} %</p>
                   : <p className="text-xs text-gray-400 mt-1">Saisir le CA ou générer le rapport</p>}
+              </CardContent>
+            </Card>
+
+            <Card className="hover:shadow-card-hover transition-shadow">
+              <CardContent className="p-5">
+                <div className="flex items-center gap-2 mb-2.5">
+                  <div className="w-6 h-6 rounded-lg bg-pilote-50 flex items-center justify-center flex-shrink-0">
+                    <Calculator className="w-3.5 h-3.5 text-pilote" />
+                  </div>
+                  <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">CA HT · {weekLabel}</p>
+                </div>
+                <p className="text-2xl font-extrabold tracking-tight text-gray-900 tabular">{caHT > 0 ? `${fmt(caHT)} €` : '—'}</p>
+                <p className="text-xs text-gray-400 mt-1 tabular">base de tous les taux</p>
               </CardContent>
             </Card>
 
@@ -375,22 +393,7 @@ export default async function DashboardPage() {
                   <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Achats HT · {weekLabel}</p>
                 </div>
                 <p className="text-2xl font-extrabold tracking-tight text-gray-900 tabular">{achatsHT > 0 ? `${fmt(achatsHT)} €` : '—'}</p>
-                {chargesFixesSem > 0 && (
-                  <p className="text-xs text-gray-500 mt-1 flex items-center gap-1 tabular"><Repeat className="w-3 h-3 text-gray-400" />+ charges récurrentes ≈ {fmt(chargesFixesSem)} €/sem</p>
-                )}
-              </CardContent>
-            </Card>
-
-            <Card className="hover:shadow-card-hover transition-shadow">
-              <CardContent className="p-5">
-                <div className="flex items-center gap-2 mb-2.5">
-                  <div className="w-6 h-6 rounded-lg bg-pilote-50 flex items-center justify-center flex-shrink-0">
-                    <Users className="w-3.5 h-3.5 text-pilote" />
-                  </div>
-                  <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Masse salariale · {weekLabel}</p>
-                </div>
-                <p className="text-2xl font-extrabold tracking-tight text-gray-900 tabular">{payrollRef > 0 ? `${fmt(payrollRef)} €` : '—'}</p>
-                <p className="text-xs text-gray-400 mt-1 tabular">{payrollRef > 0 ? (ratioMS !== null ? `${ratioMS.toFixed(1)} % du CA HT · chargée (CCN 992)` : 'chargée (CCN 992)') : 'Remplir le planning'}</p>
+                <p className="text-xs text-gray-400 mt-1">matière · factures validées</p>
               </CardContent>
             </Card>
 
@@ -400,29 +403,69 @@ export default async function DashboardPage() {
                   <div className={`w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0 ${taux_marge !== null && taux_marge < 30 ? 'bg-red-50' : 'bg-green-50'}`}>
                     {taux_marge !== null && taux_marge < 30 ? <TrendingDown className="w-3.5 h-3.5 text-red-500" /> : <TrendingUp className="w-3.5 h-3.5 text-green-600" />}
                   </div>
-                  <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Marge brute · {weekLabel}</p>
+                  <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Marge brute (MB)</p>
                 </div>
-                <p className={`text-2xl font-extrabold tracking-tight tabular ${margeColor}`}>{taux_marge !== null ? `${taux_marge.toFixed(1)} %` : '—'}</p>
-                {taux_marge !== null && <p className="text-xs text-gray-400 mt-1 tabular">{fmt(marge_brute)} € · CA HT − achats HT</p>}
+                <p className={`text-2xl font-extrabold tracking-tight tabular ${margeColor}`}>{caHT > 0 ? `${fmt(marge_brute)} €` : '—'}</p>
+                <p className="text-xs text-gray-400 mt-1 tabular">CA HT − achats HT{taux_marge !== null ? ` · ${taux_marge.toFixed(1)} %` : ''}</p>
               </CardContent>
             </Card>
           </div>
 
-          {/* ── Résultat estimé ── */}
-          {resultat !== null && (
-            <div className="mb-8 rounded-2xl bg-pilote text-white shadow-card-hover p-6 flex items-center justify-between gap-4">
-              <div>
-                <p className="text-[11px] font-bold uppercase tracking-[0.16em] text-pilote-200">Résultat estimé · semaine {refWeek}</p>
-                <p className={`text-4xl font-extrabold tracking-tight mt-1.5 tabular ${resultat >= 0 ? 'text-green-300' : 'text-red-300'}`}>{resultat >= 0 ? '+' : ''}{fmt(resultat)} €</p>
-                <p className="text-xs text-pilote-200 mt-2 tabular">
-                  CA HT {fmt(caHT)} € − Achats HT {fmt(achatsHT)} € − Masse salariale chargée {fmt(payrollRef)} € − Charges récurrentes {fmt(chargesFixesSem)} €
-                </p>
+          {/* ── 2e étage : masse salariale → marge sur coût direct → charges → RÉSULTAT EBE ── */}
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-8">
+            <Card className="hover:shadow-card-hover transition-shadow">
+              <CardContent className="p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <Users className="w-3.5 h-3.5 text-pilote flex-shrink-0" />
+                  <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Masse salariale</p>
+                </div>
+                <p className="text-xl font-extrabold tracking-tight text-gray-900 tabular">{payrollRef > 0 ? `${fmt(payrollRef)} €` : '—'}</p>
+                <p className="text-xs text-gray-400 mt-1 tabular">{payrollRef > 0 ? (ratioMS !== null ? `${ratioMS.toFixed(1)} % du CA HT · CCN 992` : 'chargée (CCN 992)') : 'Remplir le planning'}</p>
+              </CardContent>
+            </Card>
+
+            <Card className="hover:shadow-card-hover transition-shadow">
+              <CardContent className="p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <TrendingUp className="w-3.5 h-3.5 text-pilote flex-shrink-0" />
+                  <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Marge sur coût direct</p>
+                </div>
+                <p className={`text-xl font-extrabold tracking-tight tabular ${caHT > 0 && margeCoutDirect < 0 ? 'text-red-600' : 'text-gray-900'}`}>{caHT > 0 ? `${fmt(margeCoutDirect)} €` : '—'}</p>
+                <p className="text-xs text-gray-400 mt-1 tabular">MB − masse salariale{tauxCoutDirect !== null ? ` · ${tauxCoutDirect.toFixed(1)} %` : ''}</p>
+              </CardContent>
+            </Card>
+
+            <Card className="hover:shadow-card-hover transition-shadow">
+              <CardContent className="p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <Receipt className="w-3.5 h-3.5 text-pilote flex-shrink-0" />
+                  <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Charges semaine</p>
+                </div>
+                <p className="text-xl font-extrabold tracking-tight text-gray-900 tabular">{fmt(chargesSem)} €</p>
+                <p className="text-xs text-gray-400 mt-1">factures classées en charges</p>
+              </CardContent>
+            </Card>
+
+            <Card className="hover:shadow-card-hover transition-shadow">
+              <CardContent className="p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <Repeat className="w-3.5 h-3.5 text-pilote flex-shrink-0" />
+                  <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Charges de structure</p>
+                </div>
+                <p className="text-xl font-extrabold tracking-tight text-gray-900 tabular">{fmt(chargesStruct)} €</p>
+                <p className="text-xs text-gray-400 mt-1">récurrentes, étalées / semaine</p>
+              </CardContent>
+            </Card>
+
+            <div className="rounded-2xl bg-pilote text-white shadow-card-hover p-4 col-span-2 md:col-span-1">
+              <div className="flex items-center gap-2 mb-2">
+                {ebe !== null && ebe < 0 ? <TrendingDown className="w-3.5 h-3.5 text-red-300 flex-shrink-0" /> : <TrendingUp className="w-3.5 h-3.5 text-green-300 flex-shrink-0" />}
+                <p className="text-[11px] font-bold uppercase tracking-wider text-pilote-200">Résultat EBE · {weekLabel}</p>
               </div>
-              <div className="w-14 h-14 rounded-2xl bg-white/10 flex items-center justify-center flex-shrink-0">
-                {resultat >= 0 ? <TrendingUp className="w-7 h-7 text-green-300" /> : <TrendingDown className="w-7 h-7 text-red-300" />}
-              </div>
+              <p className={`text-xl font-extrabold tracking-tight tabular ${ebe === null ? 'text-white' : ebe >= 0 ? 'text-green-300' : 'text-red-300'}`}>{ebe !== null ? `${ebe >= 0 ? '+' : ''}${fmt(ebe)} €` : '—'}</p>
+              <p className="text-xs text-pilote-200 mt-1">marge coût direct − charges</p>
             </div>
-          )}
+          </div>
 
           {/* ── Tendance CA ── */}
           {caTrend.length >= 2 && (
