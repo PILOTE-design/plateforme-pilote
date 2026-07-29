@@ -36,7 +36,7 @@ export async function GET() {
       .eq('client_id', clientId).eq('active', true)
       .order('name'),
     service.from('articles')
-      .select('id, name, unit, supplier_name, article_code, last_price_ht, last_price_date, price_count, generic_id, conversion_factor')
+      .select('id, name, unit, supplier_name, article_code, last_price_ht, last_price_date, price_count, generic_id, conversion_factor, ignored')
       .eq('client_id', clientId)
       .order('updated_at', { ascending: false })
       .limit(1000),
