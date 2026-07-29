@@ -22,6 +22,54 @@ export type RecipeRow = {
   tva_rate: number
   notes: string | null
   employee_id?: string | null
+  /** jsonb : anciennes fiches = tableau de textes, nouvelles = { text, minutes } */
+  fabrication_steps?: unknown
+  /** jsonb : paliers de production [{ qty, mult }] — « pour 20, temps ×1,8 » */
+  time_tiers?: unknown
+}
+
+/** Étape de fabrication : texte + durée en minutes (null = non chronométrée) */
+export type FabricationStep = { text: string; minutes: number | null }
+
+/** Palier de production : pour `qty` unités produites, le temps de base est
+ *  multiplié par `mult` (saisi par le boucher : doubler ne double pas le temps). */
+export type TimeTier = { qty: number; mult: number }
+
+/** Lit fabrication_steps tel que stocké (jsonb) en tolérant les DEUX formats :
+ *  tableau de chaînes (fiches d'avant les durées) et tableau { text, minutes }. */
+export function parseStoredSteps(raw: unknown): FabricationStep[] {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .map((s): FabricationStep => {
+      if (typeof s === 'string') return { text: s, minutes: null }
+      const o = (s ?? {}) as Record<string, unknown>
+      const m = Number(o.minutes)
+      return { text: String(o.text ?? ''), minutes: Number.isFinite(m) && m > 0 ? m : null }
+    })
+    .filter(s => s.text.trim() !== '')
+}
+
+/** Lit time_tiers tel que stocké (jsonb), trié par quantité croissante. */
+export function parseStoredTiers(raw: unknown): TimeTier[] {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .map((t): TimeTier | null => {
+      const o = (t ?? {}) as Record<string, unknown>
+      const qty = Number(o.qty)
+      const mult = Number(o.mult)
+      return Number.isFinite(qty) && qty > 0 && Number.isFinite(mult) && mult > 0 ? { qty, mult } : null
+    })
+    .filter((t): t is TimeTier => t !== null)
+    .sort((a, b) => a.qty - b.qty)
+}
+
+/** Temps total du batch de base : la SOMME des durées d'étapes dès qu'au moins
+ *  une étape est chronométrée, sinon le champ labor_minutes historique. C'est la
+ *  seule définition du temps d'une fiche — coût MO et production la partagent. */
+export function recipeTotalMinutes(recipe: Pick<RecipeRow, 'labor_minutes' | 'fabrication_steps'>): number {
+  const timed = parseStoredSteps(recipe.fabrication_steps).filter(s => s.minutes !== null)
+  if (timed.length > 0) return Math.round(timed.reduce((s, x) => s + (x.minutes as number), 0) * 10) / 10
+  return Number(recipe.labor_minutes) || 0
 }
 
 export type IngredientRow = {
@@ -65,6 +113,7 @@ export type RecipeCost = {
   par_unite_ht: number | null    // total ÷ yield_qty
   prix_manquants: number         // lignes sans prix mercuriale ni manuel
   labor_rate_ht: number | null   // taux €/h chargé réellement utilisé
+  total_minutes: number          // temps du batch : somme des étapes chronométrées, repli labor_minutes
   // Si un prix de vente est renseigné (TTC, PAR UNITÉ produite) :
   pv_unitaire_ht: number | null
   marge_pct: number | null       // (PV HT − coût/unité) / PV HT
@@ -165,7 +214,8 @@ export function computeRecipeCost(
 ): RecipeCost {
   const matiere = round2(ingredients.filter(i => i.categorie !== 'emballage').reduce((s, i) => s + i.line_total_ht, 0))
   const emballage = round2(ingredients.filter(i => i.categorie === 'emballage').reduce((s, i) => s + i.line_total_ht, 0))
-  const mo = round2(laborRate !== null ? (Number(recipe.labor_minutes) || 0) / 60 * laborRate : 0)
+  const totalMinutes = recipeTotalMinutes(recipe)
+  const mo = round2(laborRate !== null ? totalMinutes / 60 * laborRate : 0)
   const total = round2(matiere + emballage + mo)
   const yieldQty = Number(recipe.yield_qty) || 0
   const parUnite = yieldQty > 0 ? round2(total / yieldQty) : null
@@ -192,6 +242,7 @@ export function computeRecipeCost(
     par_unite_ht: parUnite,
     prix_manquants: ingredients.filter(i => i.price_source === 'aucun').length,
     labor_rate_ht: laborRate,
+    total_minutes: totalMinutes,
     pv_unitaire_ht: pvHT,
     marge_pct: marge,
     coefficient: coef,
@@ -251,13 +302,42 @@ export function parseRecipeFields(body: Record<string, unknown>): { error?: stri
       tva_rate: Number.isFinite(tva) && tva > 0 && tva <= 20 ? tva : 5.5,
       notes: typeof body?.notes === 'string' && body.notes ? String(body.notes).slice(0, 500) : null,
       employee_id: typeof body?.employee_id === 'string' && body.employee_id ? body.employee_id : null,
-      // Fiche façon OTAMI : procédé de fabrication (étapes ordonnées) et
-      // argumentaire de vente (jusqu'à 6 arguments). Absents du corps = inchangés.
+      // Procédé de fabrication : étapes ordonnées AVEC durée (minutes, null si non
+      // chronométrée). Les anciens clients envoient encore des chaînes — tolérées.
+      // Absent du corps = inchangé.
       ...(Array.isArray(body?.fabrication_steps)
-        ? { fabrication_steps: (body.fabrication_steps as unknown[]).map(s => String(s ?? '').trim()).filter(Boolean).slice(0, 30).map(s => s.slice(0, 300)) }
+        ? {
+            fabrication_steps: (body.fabrication_steps as unknown[])
+              .map((s): FabricationStep => {
+                if (typeof s === 'string') return { text: s.trim(), minutes: null }
+                const o = (s ?? {}) as Record<string, unknown>
+                const m = Number(o.minutes)
+                return {
+                  text: String(o.text ?? '').trim(),
+                  minutes: Number.isFinite(m) && m > 0 && m <= 6000 ? Math.round(m * 10) / 10 : null,
+                }
+              })
+              .filter(st => st.text !== '')
+              .slice(0, 30)
+              .map(st => ({ text: st.text.slice(0, 300), minutes: st.minutes })),
+          }
         : {}),
-      ...(Array.isArray(body?.selling_points)
-        ? { selling_points: (body.selling_points as unknown[]).map(s => String(s ?? '').trim()).slice(0, 6).map(s => s.slice(0, 200)) }
+      // Paliers de temps : « pour 20 produits, temps ×1,8 ». Absent = inchangé.
+      ...(Array.isArray(body?.time_tiers)
+        ? {
+            time_tiers: (body.time_tiers as unknown[])
+              .map((t): TimeTier | null => {
+                const o = (t ?? {}) as Record<string, unknown>
+                const qty = Number(o.qty)
+                const mult = Number(o.mult)
+                return Number.isFinite(qty) && qty > 0 && Number.isFinite(mult) && mult > 0 && mult <= 50
+                  ? { qty: Math.round(qty * 100) / 100, mult: Math.round(mult * 100) / 100 }
+                  : null
+              })
+              .filter((t): t is TimeTier => t !== null)
+              .slice(0, 12)
+              .sort((a, b) => a.qty - b.qty),
+          }
         : {}),
       updated_at: new Date().toISOString(),
     },
