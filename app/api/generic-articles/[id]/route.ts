@@ -62,9 +62,10 @@ export async function DELETE(_request: NextRequest, { params }: { params: { id: 
   if ('error' in auth) return auth.error
   const { service, clientId } = auth
 
-  // Les réfs repartent en file d'attente…
+  // Les réfs repartent en file d'attente — no_auto pour que l'association
+  // automatique ne recrée pas aussitôt le générique qu'on vient de supprimer.
   const { error: e1 } = await service.from('articles')
-    .update({ generic_id: null, conversion_factor: null })
+    .update({ generic_id: null, conversion_factor: null, no_auto: true })
     .eq('generic_id', params.id).eq('client_id', clientId)
   if (e1) return NextResponse.json({ error: e1.message }, { status: 500 })
 
