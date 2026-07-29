@@ -16,7 +16,7 @@
 
 import { useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import { Pencil, Plus, X, Clock, ShoppingBasket, Package, AlertTriangle, Users } from 'lucide-react'
+import { Pencil, Plus, X, Clock, ShoppingBasket, Package, AlertTriangle, Users, Printer } from 'lucide-react'
 import { useToast } from '@/components/ui/toast'
 import { parseStoredSteps, parseStoredTiers } from '@/lib/recipes'
 
@@ -257,6 +257,11 @@ export default function FichePanel({
               {saving ? 'Enregistrement…' : 'Enregistrer'}
             </button>
           )}
+          <button onClick={() => window.open(`/api/recipes/${recipe.id}/pdf`, '_blank')}
+            title="Fiche atelier à imprimer pour le classeur — sans coûts, prix ni marges"
+            className="flex items-center gap-1.5 text-xs font-bold text-pilote border border-pilote-200 bg-white rounded-xl px-3.5 py-2 hover:bg-pilote-50 transition-colors">
+            <Printer className="w-3.5 h-3.5" />Imprimer
+          </button>
           <button onClick={onEditFull}
             className="flex items-center gap-1.5 text-xs font-bold text-pilote border border-pilote-200 bg-white rounded-xl px-3.5 py-2 hover:bg-pilote-50 transition-colors">
             <Pencil className="w-3.5 h-3.5" />Modifier la fiche
