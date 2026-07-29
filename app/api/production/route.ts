@@ -12,7 +12,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { resolveClientId } from '@/lib/resolve-client-id'
 import { PAYROLL_EMPLOYEE_COLUMNS, JOURS, type PayrollEmployee } from '@/lib/payroll'
-import { averageLoadedRate, employeeLoadedRate, buildGenericMap, costIngredients, type IngredientRow } from '@/lib/recipes'
+import { averageLoadedRate, employeeLoadedRate, buildGenericMap, costIngredients, recipeTotalMinutes, type IngredientRow } from '@/lib/recipes'
 
 export const dynamic = 'force-dynamic'
 
@@ -40,7 +40,7 @@ export async function GET(request: NextRequest) {
 
   const [{ data: orders }, { data: recipes }, { data: recipeIngs }, { data: employees }, { data: articles }, { data: generics }] = await Promise.all([
     service.from('production_orders').select('*').eq('client_id', clientId).eq('production_date', dateStr).order('created_at'),
-    service.from('recipes').select('id, name, yield_qty, yield_unit, labor_minutes, employee_id').eq('client_id', clientId),
+    service.from('recipes').select('id, name, yield_qty, yield_unit, labor_minutes, fabrication_steps, employee_id').eq('client_id', clientId),
     service.from('recipe_ingredients').select('*').eq('client_id', clientId),
     service.from('employees').select(PAYROLL_EMPLOYEE_COLUMNS).eq('client_id', clientId),
     service.from('articles').select('id, last_price_ht, last_price_date, generic_id, conversion_factor').eq('client_id', clientId),
@@ -88,7 +88,10 @@ export async function GET(request: NextRequest) {
   const outOrders = (orders || []).map((o: any) => {
     const recipe = recipeById.get(o.recipe_id)
     const batches = parseFloat(String(o.batches)) || 1
-    const minutes = recipe ? (parseFloat(String(recipe.labor_minutes)) || 0) * batches : 0
+    // Temps de la fiche = somme des étapes chronométrées (repli labor_minutes),
+    // même définition que le coût MO des recettes. Multiplication linéaire par
+    // batch — les paliers de temps (time_tiers) sont un outil de LECTURE de la fiche.
+    const minutes = recipe ? recipeTotalMinutes(recipe) * batches : 0
     const costed = recipe ? costIngredients(ingsByRecipe.get(o.recipe_id) || [], priceByArticle, genericById) : []
     const matiere = round2(costed.reduce((s, i) => s + i.line_total_ht, 0) * batches)
     // Taux MO : l'employé choisi sur la FICHE prime, sinon taux moyen d'équipe
