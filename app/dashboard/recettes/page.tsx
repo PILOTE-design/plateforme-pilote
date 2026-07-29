@@ -407,6 +407,7 @@ export default function RecettesPage() {
               key={r.id}
               recipe={r as unknown as FicheRecipe}
               employees={employees}
+              generics={generics}
               onEditFull={() => openEdit(r)}
               onSaved={load}
               onClose={() => setOpenId(null)}
