@@ -12,7 +12,7 @@
 import { NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { resolveClientId } from '@/lib/resolve-client-id'
-import { ensureAutoGenerics, stemKey, isNonProduct } from '@/lib/mercuriale-auto'
+import { ensureAutoGenerics, stemKey, isNonProduct, unitKind } from '@/lib/mercuriale-auto'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -32,7 +32,7 @@ export async function GET() {
 
   const [{ data: generics }, { data: articles }, { data: pricePoints }, { data: pending }] = await Promise.all([
     service.from('generic_articles')
-      .select('id, name, base_unit, category, default_loss_pct')
+      .select('id, name, base_unit, category, default_loss_pct, auto_created')
       .eq('client_id', clientId).eq('active', true)
       .order('name'),
     service.from('articles')
@@ -71,6 +71,13 @@ export async function GET() {
     pointsByArticle.set(p.article_id, arr)
   }
 
+  // Garde-fou unités (même règle que lib/recipes.buildGenericMap) : une réf
+  // facturée dans une unité INCOMPATIBLE avec la base de son générique (pièce
+  // vs kg) et SANS facteur de conversion n'a PAS de prix ramené à la base —
+  // mieux vaut un prix manquant signalé qu'un prix pièce lu comme un prix kg.
+  const baseByGenericId = new Map<string, 'kg' | 'piece'>(
+    (generics || []).map((g: any) => [String(g.id), g.base_unit === 'piece' ? 'piece' : 'kg']),
+  )
   const enriched = (articles || []).map((a: any) => {
     const pts = (pointsByArticle.get(a.id) || []).sort((x, y) => y.date.localeCompare(x.date))
     let previous_price: number | null = null
@@ -82,9 +89,13 @@ export async function GET() {
     if (last !== null && previous_price !== null && previous_price !== 0) {
       variation_pct = Math.round(((last - previous_price) / previous_price) * 1000) / 10
     }
-    const conv = a.conversion_factor !== null && Number(a.conversion_factor) > 0 ? Number(a.conversion_factor) : 1
-    const price_base = last !== null ? last / conv : null
-    return { ...a, last_price_ht: last, previous_price, variation_pct, price_base }
+    const hasConv = a.conversion_factor !== null && Number(a.conversion_factor) > 0
+    const base = a.generic_id ? baseByGenericId.get(String(a.generic_id)) ?? null : null
+    const kind = unitKind(a.unit)
+    const needs_conversion = base !== null && kind !== null && kind !== base && !hasConv
+    const conv = hasConv ? Number(a.conversion_factor) : 1
+    const price_base = last !== null && !needs_conversion ? last / conv : null
+    return { ...a, last_price_ht: last, previous_price, variation_pct, price_base, needs_conversion }
   })
 
   // Regroupement sous les génériques ; le prix du générique = la réf au dernier

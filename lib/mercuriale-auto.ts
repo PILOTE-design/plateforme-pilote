@@ -70,13 +70,32 @@ export function isNonProduct(name: string): boolean {
   return articleStem(name).split(' ').some(t => NON_PRODUCT_WORDS.has(t))
 }
 
+const KG_UNITS = new Set(['kg', 'kgs', 'kilo', 'kilos'])
+// Une unité d'achat « contenant » (colis, bidon, barquette…) se compte comme une
+// PIÈCE : le prix facturé est par contenant, jamais par kg.
+const PIECE_UNITS = new Set([
+  'piece', 'pieces', 'pi', 'pce', 'pcs', 'unite', 'unites', 'u', 'uvc',
+  'col', 'colis', 'carton', 'cartons', 'boite', 'boites', 'bte',
+  'bqt', 'barquette', 'barquettes', 'bidon', 'bidons', 'sac', 'sacs',
+  'sachet', 'sachets', 'seau', 'seaux', 'pot', 'pots', 'rouleau', 'rouleaux',
+  'fut', 'futs', 'caisse', 'caisses', 'brique', 'briques', 'bouteille',
+  'bouteilles', 'l', 'litre', 'litres', 'lot', 'lots',
+])
+
+/** Nature de l'unité facturée d'une réf : kg, pièce/contenant, ou null si
+ *  illisible (champ vide, valeur parasite) — null = on ne juge pas. */
+export function unitKind(unit: string | null | undefined): 'kg' | 'piece' | null {
+  const u = normText(unit ?? '')
+  if (!u) return null
+  if (KG_UNITS.has(u)) return 'kg'
+  if (PIECE_UNITS.has(u)) return 'piece'
+  return null
+}
+
 /** Unité de base devinée depuis l'unité facturée d'une réf (repli : kg — la
  *  matière d'une boucherie se pèse). Modifiable ensuite sur le générique. */
 export function guessBaseUnit(unit: string | null): 'kg' | 'piece' {
-  const u = (unit || '').toLowerCase()
-  if (/kg|kilo/.test(u)) return 'kg'
-  if (/pi[eè]ce|pce|pcs|unit|uvc|^u$/.test(u)) return 'piece'
-  return 'kg'
+  return unitKind(unit) ?? 'kg'
 }
 
 /** « FILET DE POULET » → « Filet de poulet » */
@@ -136,6 +155,7 @@ export async function ensureAutoGenerics(service: ServiceClient, clientId: strin
         base_unit: guessBaseUnit(c.unit),
         category: 'ingredient',
         default_loss_pct: 0,
+        auto_created: true,
       })))
       .select('id, name_key')
     if (insErr || !created) {
