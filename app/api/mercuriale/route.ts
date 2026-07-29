@@ -12,7 +12,7 @@
 import { NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { resolveClientId } from '@/lib/resolve-client-id'
-import { ensureAutoGenerics, articleStem } from '@/lib/mercuriale-auto'
+import { ensureAutoGenerics, stemKey, isNonProduct } from '@/lib/mercuriale-auto'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -118,16 +118,22 @@ export async function GET() {
     }
   })
 
-  // File « À rapprocher » : chaque réf restante porte son tronc de libellé et,
-  // si un générique existant partage ce tronc, une suggestion d'association.
-  const genericIdByStem = new Map<string, string>()
+  // File « À rapprocher » : chaque réf restante porte sa clé de rapprochement
+  // (deux premiers mots significatifs), une suggestion si un générique existant
+  // partage cette clé, et un marqueur non-produit (taxes, remises, licences…).
+  const genericIdByKey = new Map<string, string>()
   for (const g of generics || []) {
-    const s = articleStem(String((g as any).name))
-    if (!genericIdByStem.has(s)) genericIdByStem.set(s, String((g as any).id))
+    const k = stemKey(String((g as any).name))
+    if (!genericIdByKey.has(k)) genericIdByKey.set(k, String((g as any).id))
   }
   const queueOut = queue.map((a: any) => {
-    const stem = articleStem(String(a.name))
-    return { ...a, stem, suggested_generic_id: genericIdByStem.get(stem) ?? null }
+    const nonProduct = isNonProduct(String(a.name))
+    const stem = nonProduct ? `np:${String(a.id)}` : stemKey(String(a.name))
+    return {
+      ...a, stem,
+      non_product: nonProduct,
+      suggested_generic_id: nonProduct ? null : genericIdByKey.get(stem) ?? null,
+    }
   })
 
   return NextResponse.json({ generics: genericsOut, queue: queueOut, pending: pending || [] })
