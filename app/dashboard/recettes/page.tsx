@@ -41,7 +41,7 @@ type IngredientDraft = {
 
 type RecipeCost = {
   matiere_ht: number; emballage_ht: number; main_oeuvre_ht: number; total_ht: number; par_unite_ht: number | null
-  prix_manquants: number; labor_rate_ht: number | null
+  prix_manquants: number; labor_rate_ht: number | null; total_minutes: number
   pv_unitaire_ht: number | null; marge_pct: number | null; coefficient: number | null
 }
 
@@ -83,6 +83,9 @@ export default function RecettesPage() {
   const [show, setShow] = useState(false)
   const [editId, setEditId] = useState<string | null>(null)
   const [form, setForm] = useState({ name: '', category: '', yield_qty: '', yield_unit: 'pièces', labor_minutes: '', selling_price_ttc: '', tva_rate: '5.5', employee_id: '' })
+  // Coefficient multiplicateur affiché dans la modale — synchronisé avec le PV
+  // TTC dans les deux sens (saisir l'un recalcule l'autre) ; seul le PV est stocké.
+  const [coefField, setCoefField] = useState('')
   const [ings, setIngs] = useState<IngredientDraft[]>([EMPTY_ING()])
   const [pickerRow, setPickerRow] = useState<number | null>(null)
 
@@ -142,6 +145,26 @@ export default function RecettesPage() {
     const yieldQty = parseFloat(form.yield_qty.replace(',', '.')) || 0
     return { matiere, emballage, mo, total, parUnite: yieldQty > 0 ? total / yieldQty : null, manquants }
   }, [ings, form.labor_minutes, form.yield_qty, previewRate, genericById])
+
+  // ── PV TTC ↔ coefficient : saisir l'un recalcule l'autre sur le coût de
+  // l'aperçu (coût / unité, repli coût du batch). Seul le PV TTC est enregistré.
+  const previewCoutUnite = preview.parUnite ?? (preview.total > 0 ? preview.total : null)
+  function onPvChange(v: string) {
+    setForm(p => ({ ...p, selling_price_ttc: v }))
+    const pv = parseFloat(v.replace(',', '.'))
+    const tva = parseFloat(form.tva_rate.replace(',', '.')) || 0
+    if (pv > 0 && previewCoutUnite) {
+      setCoefField(String(Math.round((pv / (1 + tva / 100)) / previewCoutUnite * 100) / 100).replace('.', ','))
+    } else if (!v.trim()) setCoefField('')
+  }
+  function onCoefChange(v: string) {
+    setCoefField(v)
+    const k = parseFloat(v.replace(',', '.'))
+    const tva = parseFloat(form.tva_rate.replace(',', '.')) || 0
+    if (k > 0 && previewCoutUnite) {
+      setForm(p => ({ ...p, selling_price_ttc: String(Math.round(previewCoutUnite * k * (1 + tva / 100) * 100) / 100).replace('.', ',') }))
+    }
+  }
 
   // Recherche : par nom de recette, par catégorie, et par INGRÉDIENT — taper
   // « chipolata » amène aussi sur les fiches qui en contiennent.
@@ -205,6 +228,7 @@ export default function RecettesPage() {
   function openNew() {
     setEditId(null)
     setForm({ name: '', category: '', yield_qty: '', yield_unit: 'pièces', labor_minutes: '', selling_price_ttc: '', tva_rate: '5.5', employee_id: '' })
+    setCoefField('')
     setIngs([EMPTY_ING()])
     setShow(true)
   }
@@ -217,6 +241,7 @@ export default function RecettesPage() {
       labor_minutes: String(r.labor_minutes ?? ''), selling_price_ttc: r.selling_price_ttc != null ? String(r.selling_price_ttc) : '',
       tva_rate: String(r.tva_rate ?? '5.5'), employee_id: r.employee_id ?? '',
     })
+    setCoefField(r.cost.coefficient !== null ? String(r.cost.coefficient).replace('.', ',') : '')
     setIngs(r.ingredients.length > 0
       ? r.ingredients.map(i => ({
           generic_id: i.generic_id, article_id: i.article_id, label: i.label,
@@ -434,7 +459,7 @@ export default function RecettesPage() {
               <div className="mt-2 space-y-0.5 text-[11px] text-gray-500 tabular">
                 <p><ShoppingBasket className="w-3 h-3 inline mr-1 text-gray-400" />Matière {fmtEuro(r.cost.matiere_ht)}</p>
                 {r.cost.emballage_ht > 0 && <p><Package className="w-3 h-3 inline mr-1 text-gray-400" />Emballage {fmtEuro(r.cost.emballage_ht)}</p>}
-                <p><Clock className="w-3 h-3 inline mr-1 text-gray-400" />Main-d&apos;œuvre {fmtEuro(r.cost.main_oeuvre_ht)} ({r.labor_minutes} min{r.employee_id && employees.find(e => e.id === r.employee_id) ? ` · ${employees.find(e => e.id === r.employee_id)!.name}` : ''})</p>
+                <p><Clock className="w-3 h-3 inline mr-1 text-gray-400" />Main-d&apos;œuvre {fmtEuro(r.cost.main_oeuvre_ht)} ({(r.cost.total_minutes ?? r.labor_minutes).toLocaleString('fr-FR')} min{r.employee_id && employees.find(e => e.id === r.employee_id) ? ` · ${employees.find(e => e.id === r.employee_id)!.name}` : ''})</p>
               </div>
               <div className="mt-3 pt-3 border-t border-gray-100 flex items-center gap-2 flex-wrap">
                 {r.cost.marge_pct !== null && (
@@ -489,12 +514,18 @@ export default function RecettesPage() {
                   </div>
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-gray-700 mb-1">Main-d&apos;œuvre (minutes, pour le batch)</label>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">Temps (min) <span className="font-normal text-gray-400">— repli si les étapes de la fiche ne sont pas chronométrées</span></label>
                   <Input inputMode="decimal" value={form.labor_minutes} onChange={e => setForm(p => ({ ...p, labor_minutes: e.target.value }))} placeholder="45" />
                 </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-700 mb-1">Prix de vente TTC (par unité, optionnel)</label>
-                  <Input inputMode="decimal" value={form.selling_price_ttc} onChange={e => setForm(p => ({ ...p, selling_price_ttc: e.target.value }))} placeholder="4,50" />
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 mb-1">Prix de vente TTC <span className="font-normal text-gray-400">/ unité</span></label>
+                    <Input inputMode="decimal" value={form.selling_price_ttc} onChange={e => onPvChange(e.target.value)} placeholder="4,50" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 mb-1">Coef ×</label>
+                    <Input inputMode="decimal" value={coefField} onChange={e => onCoefChange(e.target.value)} placeholder="3" title="Coefficient multiplicateur : PV HT ÷ coût de revient — saisir un coef recalcule le PV TTC" />
+                  </div>
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-gray-700 mb-1">TVA de vente</label>
