@@ -25,10 +25,12 @@ export async function PUT(request: NextRequest, { params }: { params: { id: stri
   const body = await request.json().catch(() => ({} as Record<string, unknown>))
   if (!('generic_id' in body)) return NextResponse.json({ error: 'generic_id requis (null pour dissocier)' }, { status: 400 })
 
-  // Dissociation : la réf retourne dans la file d'attente.
+  // Dissociation : la réf retourne dans la file d'attente. no_auto empêche
+  // l'association automatique de la re-rattacher dans son dos au prochain
+  // affichage de la mercuriale — dissocier est un geste volontaire.
   if (body.generic_id === null) {
     const { error } = await service.from('articles')
-      .update({ generic_id: null, conversion_factor: null })
+      .update({ generic_id: null, conversion_factor: null, no_auto: true })
       .eq('id', params.id).eq('client_id', clientId)
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ success: true })
