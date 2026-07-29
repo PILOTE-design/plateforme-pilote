@@ -43,7 +43,7 @@ export async function GET(request: NextRequest) {
     service.from('recipes').select('id, name, yield_qty, yield_unit, labor_minutes, fabrication_steps, employee_id').eq('client_id', clientId),
     service.from('recipe_ingredients').select('*').eq('client_id', clientId),
     service.from('employees').select(PAYROLL_EMPLOYEE_COLUMNS).eq('client_id', clientId),
-    service.from('articles').select('id, last_price_ht, last_price_date, generic_id, conversion_factor').eq('client_id', clientId),
+    service.from('articles').select('id, unit, last_price_ht, last_price_date, generic_id, conversion_factor').eq('client_id', clientId),
     service.from('generic_articles').select('id, name, base_unit, category, default_loss_pct').eq('client_id', clientId).eq('active', true),
   ])
 
