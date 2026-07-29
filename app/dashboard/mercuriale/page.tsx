@@ -20,7 +20,7 @@
 // La lecture des factures se déclenche ici (une facture à la fois).
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ShoppingBasket, FileSearch, TrendingUp, TrendingDown, Search, RefreshCw, Link2, ChevronDown, ChevronRight, Pencil, Trash2, Unlink, X, Check, AlertTriangle } from 'lucide-react'
+import { ShoppingBasket, FileSearch, TrendingUp, TrendingDown, Search, RefreshCw, Link2, ChevronDown, ChevronRight, Pencil, Trash2, Unlink, X, Check, AlertTriangle, Sparkles } from 'lucide-react'
 import { useToast } from '@/components/ui/toast'
 import { guessBaseUnit, unitKind } from '@/lib/mercuriale-auto'
 
@@ -123,6 +123,14 @@ export default function MercurialePage() {
 
   // Dossier des associations : brouillons de conversion à régler sur place
   const [fixDrafts, setFixDrafts] = useState<Record<string, string>>({})
+
+  // Rapprochement intelligent : fusions d'appellations proposées par l'IA,
+  // chacune VALIDÉE à la main ; « Fusionner dans… » par générique en manuel.
+  const [smartLoading, setSmartLoading] = useState(false)
+  const [smartSuggestions, setSmartSuggestions] = useState<{ name: string; ids: string[] }[] | null>(null)
+  const [smartNames, setSmartNames] = useState<Record<string, string>>({})
+  const [mergeSel, setMergeSel] = useState<Record<string, string>>({})
+  const [merging, setMerging] = useState(false)
 
   // Catalogue : générique déplié + édition + suppression en deux clics
   const [openId, setOpenId] = useState<string | null>(null)
@@ -337,6 +345,74 @@ export default function MercurialePage() {
     }).catch(() => null)
     if (res?.ok) { toast({ variant: 'success', title: 'Conversion enregistrée — prix pris en compte' }); load() }
     else toast({ variant: 'error', title: 'Enregistrement impossible' })
+  }
+
+  /** La lecture intelligente (même IA que l'extraction des factures) propose
+   *  les génériques en doublon d'appellation — cervelas acheté chez trois
+   *  fournisseurs sous trois noms. Rien n'est fusionné sans validation. */
+  async function runSmart() {
+    if (smartLoading) return
+    setSmartLoading(true)
+    setSmartSuggestions(null)
+    const res = await fetch('/api/mercuriale/smart-groups', { method: 'POST' }).catch(() => null)
+    const data = res ? await res.json().catch(() => null) : null
+    setSmartLoading(false)
+    if (!res?.ok) { toast({ variant: 'error', title: data?.error || 'Lecture intelligente indisponible' }); return }
+    const sugg = Array.isArray(data?.suggestions) ? data.suggestions : []
+    setSmartSuggestions(sugg)
+    setSmartNames({})
+    if (sugg.length === 0) toast({ variant: 'info', title: 'Aucun doublon d’appellation détecté', description: 'La lecture intelligente n’a rien trouvé à fusionner dans le catalogue.' })
+  }
+
+  /** Cible d'une fusion : le générique du groupe qui a le plus de réfs (kg favorisé à égalité) */
+  function pickTarget(ids: string[]): Generic | null {
+    const members = ids.map(id => generics.find(g => g.id === id)).filter((g): g is Generic => !!g)
+    if (members.length < 2) return null
+    return [...members].sort((a, b) =>
+      b.refs_count - a.refs_count
+      || (a.base_unit === 'kg' ? 0 : 1) - (b.base_unit === 'kg' ? 0 : 1)
+      || a.name.localeCompare(b.name, 'fr'))[0]
+  }
+
+  /** Fusionne des génériques (réfs + fiches vers la cible, sources désactivées) */
+  async function doMerge(targetId: string, sourceIds: string[], newName?: string): Promise<boolean> {
+    if (merging) return false
+    setMerging(true)
+    const res = await fetch('/api/generic-articles/merge', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target_id: targetId, source_ids: sourceIds }),
+    }).catch(() => null)
+    const data = res ? await res.json().catch(() => null) : null
+    if (!res?.ok) {
+      setMerging(false)
+      toast({ variant: 'error', title: 'Fusion impossible', description: data?.error || 'Réessayez.' })
+      return false
+    }
+    // Renommage éventuel de la cible — non bloquant (nom déjà pris → conservé)
+    if (newName && newName.trim()) {
+      const cur = generics.find(g => g.id === targetId)
+      if (cur && cur.name.trim().toLowerCase() !== newName.trim().toLowerCase()) {
+        const r2 = await fetch(`/api/generic-articles/${targetId}`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: newName.trim() }),
+        }).catch(() => null)
+        if (!r2?.ok) toast({ variant: 'info', title: 'Fusion faite, nom conservé', description: `« ${newName.trim()} » n'a pas pu être appliqué (déjà pris ?).` })
+      }
+    }
+    setMerging(false)
+    const n = Number(data?.moved_refs) || 0
+    toast({ variant: 'success', title: `Fusion faite${n > 0 ? ` — ${n} réf${n > 1 ? 's' : ''} regroupée${n > 1 ? 's' : ''}` : ''}` })
+    load()
+    return true
+  }
+
+  /** Valide une suggestion de la lecture intelligente */
+  async function applySuggestion(key: string, s: { name: string; ids: string[] }) {
+    const target = pickTarget(s.ids)
+    if (!target) { toast({ variant: 'error', title: 'Suggestion périmée', description: 'Relancez le rapprochement intelligent.' }); return }
+    const sources = s.ids.filter(id => id !== target.id)
+    const ok = await doMerge(target.id, sources, smartNames[key] ?? s.name)
+    if (ok) setSmartSuggestions(prev => prev ? prev.filter(x => x.ids.join(',') !== key) : prev)
   }
 
   /** Déplace une réf vers un autre générique (conversion remise à zéro) */
@@ -679,13 +755,58 @@ export default function MercurialePage() {
           {/* ══ Vue DOSSIER DES ASSOCIATIONS ══ */}
           {view === 'associations' ? (
             <div>
-              <div className="flex items-baseline gap-2 mb-1">
-                <h2 className="text-sm font-extrabold uppercase tracking-wider text-gray-700">Dossier des associations</h2>
-                <span className="text-[11px] text-gray-400 tabular">{filteredGenerics.length} générique{filteredGenerics.length > 1 ? 's' : ''} · {refsAssociees} réf{refsAssociees > 1 ? 's' : ''} associée{refsAssociees > 1 ? 's' : ''}</span>
+              <div className="flex items-center justify-between gap-3 mb-1 flex-wrap">
+                <div className="flex items-baseline gap-2">
+                  <h2 className="text-sm font-extrabold uppercase tracking-wider text-gray-700">Dossier des associations</h2>
+                  <span className="text-[11px] text-gray-400 tabular">{filteredGenerics.length} générique{filteredGenerics.length > 1 ? 's' : ''} · {refsAssociees} réf{refsAssociees > 1 ? 's' : ''} associée{refsAssociees > 1 ? 's' : ''}</span>
+                </div>
+                <button onClick={runSmart} disabled={smartLoading}
+                  className="flex items-center gap-1.5 text-xs font-bold text-white bg-pilote hover:bg-pilote-hover rounded-xl px-3.5 py-2 shadow-card active:scale-[0.98] transition-all disabled:opacity-50">
+                  <Sparkles className="w-3.5 h-3.5" />{smartLoading ? 'Lecture intelligente…' : 'Rapprochement intelligent'}
+                </button>
               </div>
               <p className="text-[11px] text-gray-400 mb-3">
                 Chaque générique avec ses réfs : vérifiez les associations automatiques (badge Auto), réglez les conversions manquantes, déplacez ou dissociez une réf.
+                Le rapprochement intelligent repère les doublons d&apos;appellation entre fournisseurs (« cervelas » acheté chez trois maisons) — chaque fusion se valide.
               </p>
+
+              {/* Fusions proposées par la lecture intelligente — à valider une par une */}
+              {smartSuggestions !== null && smartSuggestions.length > 0 && (
+                <div className="mb-4 space-y-2.5">
+                  <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">{smartSuggestions.length} fusion{smartSuggestions.length > 1 ? 's' : ''} proposée{smartSuggestions.length > 1 ? 's' : ''} — rien n&apos;est fait sans votre accord</p>
+                  {smartSuggestions.map(s => {
+                    const key = s.ids.join(',')
+                    const target = pickTarget(s.ids)
+                    const members = s.ids.map(id => generics.find(g => g.id === id)).filter((g): g is Generic => !!g)
+                    if (!target || members.length < 2) return null
+                    return (
+                      <div key={key} className="bg-white rounded-2xl border border-pilote-200 shadow-card p-4">
+                        <div className="flex items-center gap-3 flex-wrap mb-2.5">
+                          <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Appellation</span>
+                          <input value={smartNames[key] ?? s.name}
+                            onChange={e => setSmartNames(p => ({ ...p, [key]: e.target.value }))}
+                            className="border border-gray-200 rounded-xl px-3 py-1.5 text-sm font-bold text-gray-900 focus:outline-none focus:ring-2 focus:ring-pilote-200 min-w-[180px]" />
+                          <span className="text-[11px] text-gray-400">/ {unitLabel(target.base_unit)} · les réfs des autres rejoignent « {target.name} »</span>
+                          <span className="flex-1" />
+                          <button onClick={() => applySuggestion(key, s)} disabled={merging}
+                            className="text-xs font-bold text-white bg-pilote hover:bg-pilote-hover rounded-xl px-3.5 py-2 shadow-card active:scale-[0.98] transition-all disabled:opacity-50">
+                            {merging ? 'Fusion…' : `Fusionner les ${members.length}`}
+                          </button>
+                          <button onClick={() => setSmartSuggestions(prev => prev ? prev.filter(x => x.ids.join(',') !== key) : prev)}
+                            className="text-xs font-semibold text-gray-500 rounded-xl px-3 py-2 hover:bg-gray-100 transition-colors">Ignorer</button>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {members.map(m => (
+                            <span key={m.id} className="text-[11px] text-gray-600 bg-gray-50 ring-1 ring-gray-100 rounded-full px-2.5 py-1 tabular">
+                              {m.name} · {m.refs_count} réf{m.refs_count > 1 ? 's' : ''} / {unitLabel(m.base_unit)}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
               {conversionsManquantes > 0 && (
                 <div className="mb-4 bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 flex items-center gap-2 text-xs text-amber-800">
                   <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
@@ -711,6 +832,17 @@ export default function MercurialePage() {
                         <span className="text-[11px] text-gray-400">/ {unitLabel(g.base_unit)}</span>
                         <span className="flex-1" />
                         <span className="text-xs font-bold text-gray-900 tabular">{g.price_ht !== null ? `${fmtEuro(Number(g.price_ht))} / ${unitLabel(g.base_unit)}` : 'pas de prix'}</span>
+                        <select value={mergeSel[g.id] ?? ''} onChange={e => setMergeSel(p => ({ ...p, [g.id]: e.target.value }))}
+                          className="text-[11px] border border-gray-200 rounded-lg px-1.5 py-1 bg-white max-w-[150px] text-gray-500 focus:outline-none focus:ring-2 focus:ring-pilote-200">
+                          <option value="">Fusionner dans…</option>
+                          {generics.filter(x => x.id !== g.id).map(x => <option key={x.id} value={x.id}>{x.name}</option>)}
+                        </select>
+                        {mergeSel[g.id] && (
+                          <button onClick={async () => { const ok = await doMerge(mergeSel[g.id], [g.id]); if (ok) setMergeSel(p => ({ ...p, [g.id]: '' })) }} disabled={merging}
+                            className="text-[11px] font-bold text-white bg-pilote hover:bg-pilote-hover rounded-lg px-2.5 py-1 shadow-card transition-colors disabled:opacity-50">
+                            Confirmer
+                          </button>
+                        )}
                         <button onClick={() => { setView('catalogue'); setOpenId(g.id); setEditId(null) }}
                           className="text-[11px] font-semibold text-pilote hover:underline">Ouvrir au catalogue</button>
                       </div>
