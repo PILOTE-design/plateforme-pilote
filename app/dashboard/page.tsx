@@ -198,17 +198,19 @@ export default async function DashboardPage() {
   // ── Agrégats — tous lus dans le moteur, aucun recalcul ici ──
   // ca_ttc = chiffre de caisse (ce que le gérant connaît) ; caHT = base des taux.
   // Cascade affichée : CA TTC → CA HT → achats (= MB) → masse salariale → marge
-  // sur coût direct → charges semaine → charges de structure → résultat EBE.
+  // sur coût direct → charges de structure → résultat EBE. Le « résultat EBE »
+  // est le resultat_net du moteur : marge sur coût direct − charges de structure
+  // (récurrentes proratisées) — choix client du 29/07, pas de ligne charges
+  // ponctuelles sur ce tableau de bord.
   const caHT          = eco?.ca_total ?? 0
   const achatsHT      = eco?.achats_ht ?? 0
   const chargesStruct = eco?.charges_fixes ?? 0
-  const chargesSem    = eco?.charges_semaine ?? 0
   const payrollRef    = eco?.masse_salariale ?? 0
   const marge_brute   = eco?.marge_brute ?? 0
   const taux_marge    = caHT > 0 ? (eco?.taux_marge ?? null) : null
   const margeCoutDirect = eco?.marge_apres_salaires ?? 0
   const tauxCoutDirect  = caHT > 0 ? (eco?.taux_apres_salaires ?? null) : null
-  const ebe           = caHT > 0 ? (eco?.ebe ?? null) : null
+  const ebe           = caHT > 0 ? (eco?.resultat_net ?? null) : null
   const ratioMS       = payrollRef > 0 ? (eco?.ratio_ms ?? null) : null
   const tvaRate       = eco?.tva_rate ?? 5.5
 
@@ -411,8 +413,8 @@ export default async function DashboardPage() {
             </Card>
           </div>
 
-          {/* ── 2e étage : masse salariale → marge sur coût direct → charges → RÉSULTAT EBE ── */}
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-8">
+          {/* ── 2e étage : masse salariale → marge sur coût direct → charges de structure → RÉSULTAT EBE ── */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
             <Card className="hover:shadow-card-hover transition-shadow">
               <CardContent className="p-4">
                 <div className="flex items-center gap-2 mb-2">
@@ -438,17 +440,6 @@ export default async function DashboardPage() {
             <Card className="hover:shadow-card-hover transition-shadow">
               <CardContent className="p-4">
                 <div className="flex items-center gap-2 mb-2">
-                  <Receipt className="w-3.5 h-3.5 text-pilote flex-shrink-0" />
-                  <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Charges semaine</p>
-                </div>
-                <p className="text-xl font-extrabold tracking-tight text-gray-900 tabular">{fmt(chargesSem)} €</p>
-                <p className="text-xs text-gray-400 mt-1">factures classées en charges</p>
-              </CardContent>
-            </Card>
-
-            <Card className="hover:shadow-card-hover transition-shadow">
-              <CardContent className="p-4">
-                <div className="flex items-center gap-2 mb-2">
                   <Repeat className="w-3.5 h-3.5 text-pilote flex-shrink-0" />
                   <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Charges de structure</p>
                 </div>
@@ -457,13 +448,13 @@ export default async function DashboardPage() {
               </CardContent>
             </Card>
 
-            <div className="rounded-2xl bg-pilote text-white shadow-card-hover p-4 col-span-2 md:col-span-1">
+            <div className="rounded-2xl bg-pilote text-white shadow-card-hover p-4 col-span-2 lg:col-span-1">
               <div className="flex items-center gap-2 mb-2">
                 {ebe !== null && ebe < 0 ? <TrendingDown className="w-3.5 h-3.5 text-red-300 flex-shrink-0" /> : <TrendingUp className="w-3.5 h-3.5 text-green-300 flex-shrink-0" />}
                 <p className="text-[11px] font-bold uppercase tracking-wider text-pilote-200">Résultat EBE · {weekLabel}</p>
               </div>
               <p className={`text-xl font-extrabold tracking-tight tabular ${ebe === null ? 'text-white' : ebe >= 0 ? 'text-green-300' : 'text-red-300'}`}>{ebe !== null ? `${ebe >= 0 ? '+' : ''}${fmt(ebe)} €` : '—'}</p>
-              <p className="text-xs text-pilote-200 mt-1">marge coût direct − charges</p>
+              <p className="text-xs text-pilote-200 mt-1">marge coût direct − charges de structure</p>
             </div>
           </div>
 
