@@ -6,9 +6,11 @@
 // devient d'office son propre article générique, prix utilisable immédiatement
 // dans les fiches recettes.
 //
-// La ressemblance se juge sur le TRONC du libellé : tokens significatifs, sans
-// nombres, unités, ni codes courts (LR, ML, SV…). Deux réfs au même tronc — ou
-// une réf au tronc d'un générique existant — restent en file « À rapprocher ».
+// La ressemblance se juge sur la CLÉ DE RAPPROCHEMENT : les deux premiers mots
+// significatifs du libellé (sans nombres, unités, ni codes courts LR/ML/SV…).
+// Deux réfs à la même clé — ou une réf à la clé d'un générique existant —
+// restent en file « À rapprocher ». Les lignes NON-PRODUIT (taxes, remises,
+// licences, entretien…) ne sont jamais associées d'office non plus.
 //
 // `ensureAutoGenerics` est appelée en tête de GET /api/mercuriale (rattrapage
 // paresseux, comme ensureMarginFamilies) : idempotente, silencieuse quand il
@@ -40,6 +42,34 @@ export function articleStem(name: string): string {
   return tokens.join(' ') || normText(name)
 }
 
+/** CLÉ DE RAPPROCHEMENT : les deux premiers mots significatifs du tronc.
+ *  Vérifié sur les réfs réelles : « FILET DE POULET GASTRON », « FILET DE
+ *  POULET REGION » et « FILET DE POULET S/ATMO » ont des troncs différents mais
+ *  la même clé « filet poulet » — c'est bien le même produit à rapprocher.
+ *  Deux mots (pas un) : « tomate cerise » et « tomate grappe » restent séparés. */
+export function stemKey(name: string): string {
+  return articleStem(name).split(' ').slice(0, 2).join(' ')
+}
+
+// Mots qui trahissent une ligne NON-PRODUIT (taxes, remises, frais, licences,
+// entretien…) arrivée dans les articles malgré la reconnaissance de nature.
+// Jugés sur les TOKENS du tronc (égalité stricte, jamais de sous-chaîne :
+// « porto » ne déclenche pas « port »). Ces lignes ne sont JAMAIS associées
+// automatiquement — elles restent en bas de file, repliées, associables à la main.
+const NON_PRODUCT_WORDS = new Set([
+  'taxe', 'taxes', 'remise', 'remises', 'ristourne', 'avoir', 'acompte',
+  'forfait', 'frais', 'port', 'transport', 'consigne', 'cotisation',
+  'interbev', 'inaporc', 'licence', 'licences', 'location', 'abonnement',
+  'intranet', 'application', 'logiciel', 'portefeuille', 'subvention',
+  'subventions', 'participation', 'degraissant', 'desinfectant', 'detergent',
+  'lavage', 'nettoyant', 'plonge',
+])
+
+/** Ligne non-produit ? (taxe, remise, licence, produit d'entretien…) */
+export function isNonProduct(name: string): boolean {
+  return articleStem(name).split(' ').some(t => NON_PRODUCT_WORDS.has(t))
+}
+
 /** Unité de base devinée depuis l'unité facturée d'une réf (repli : kg — la
  *  matière d'une boucherie se pèse). Modifiable ensuite sur le générique. */
 export function guessBaseUnit(unit: string | null): 'kg' | 'piece' {
@@ -57,10 +87,11 @@ export function titleize(name: string): string {
 
 /**
  * Associe d'office chaque réf « sans ressemblance » à son propre générique.
- * Une réf reste en file uniquement si : une AUTRE réf libre partage son tronc,
- * un générique existant partage son tronc (association suggérée), ou elle a été
- * dissociée volontairement (no_auto). Erreurs loguées, jamais bloquantes : la
- * réf reste alors simplement dans la file.
+ * Une réf reste en file uniquement si : une AUTRE réf libre partage sa clé de
+ * rapprochement (deux premiers mots significatifs), un générique existant la
+ * partage (association suggérée), la ligne est non-produit (taxe, remise…), ou
+ * elle a été dissociée volontairement (no_auto). Erreurs loguées, jamais
+ * bloquantes : la réf reste alors simplement dans la file.
  */
 export async function ensureAutoGenerics(service: ServiceClient, clientId: string): Promise<void> {
   const [{ data: generics, error: gErr }, { data: freeRefs, error: aErr }] = await Promise.all([
@@ -70,23 +101,24 @@ export async function ensureAutoGenerics(service: ServiceClient, clientId: strin
   if (gErr || aErr) { console.error('[mercuriale auto] lecture', gErr?.message || aErr?.message); return }
   if (!freeRefs || freeRefs.length === 0) return
 
-  const genericStems = new Set((generics || []).map(g => articleStem(String(g.name))))
+  const genericKeys = new Set((generics || []).map(g => stemKey(String(g.name))))
   const genericIdByNameKey = new Map((generics || []).map(g => [normText(String(g.name)), String(g.id)]))
 
-  // Groupes de réfs libres par tronc : un groupe de 2+ = ressemblance = manuel.
-  const byStem = new Map<string, { id: string; name: string; unit: string | null }[]>()
+  // Groupes de réfs libres par clé de rapprochement : 2+ = ressemblance = manuel.
+  const byKey = new Map<string, { id: string; name: string; unit: string | null }[]>()
   for (const r of freeRefs) {
-    const stem = articleStem(String(r.name))
-    const arr = byStem.get(stem) || []
+    if (isNonProduct(String(r.name))) continue
+    const key = stemKey(String(r.name))
+    const arr = byKey.get(key) || []
     arr.push({ id: String(r.id), name: String(r.name), unit: (r.unit as string | null) ?? null })
-    byStem.set(stem, arr)
+    byKey.set(key, arr)
   }
 
-  // Candidats à l'auto-association : seuls dans leur tronc, tronc inconnu des génériques.
+  // Candidats à l'auto-association : seuls sur leur clé, clé inconnue des génériques.
   const candidates: { id: string; name: string; unit: string | null; nameKey: string }[] = []
-  for (const [stem, refs] of byStem) {
+  for (const [key, refs] of byKey) {
     if (refs.length > 1) continue
-    if (genericStems.has(stem)) continue
+    if (genericKeys.has(key)) continue
     const ref = refs[0]
     candidates.push({ ...ref, nameKey: normText(ref.name) })
   }

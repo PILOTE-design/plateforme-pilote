@@ -27,9 +27,11 @@ type Ref = {
   variation_pct: number | null
   conversion_factor: number | string | null
   price_base: number | null
-  /** Tronc du libellé (calculé serveur) — les réfs au même tronc se ressemblent */
+  /** Clé de rapprochement (calculée serveur) — les réfs à la même clé se ressemblent */
   stem: string
-  /** Générique existant au même tronc, s'il y en a un : association suggérée */
+  /** Ligne non-produit (taxe, remise, licence…) : jamais associée d'office */
+  non_product: boolean
+  /** Générique existant à la même clé, s'il y en a un : association suggérée */
   suggested_generic_id: string | null
 }
 
@@ -296,11 +298,13 @@ export default function MercurialePage() {
     return queue.filter(r => r.name.toLowerCase().includes(q) || (r.supplier_name || '').toLowerCase().includes(q) || (r.article_code || '').toLowerCase().includes(q))
   }, [queue, search])
 
-  // Groupes de ressemblance : les réfs au même tronc de libellé, avec le
+  // Groupes de ressemblance : les réfs à la même clé de rapprochement, avec le
   // générique suggéré s'il existe et un nom proposé (début commun des libellés).
+  // Les lignes non-produit (taxes, remises…) vivent à part, repliées.
   const queueGroups = useMemo(() => {
     const m = new Map<string, Ref[]>()
     for (const r of filteredQueue) {
+      if (r.non_product) continue
       const key = r.stem || r.name.toLowerCase()
       const arr = m.get(key) || []
       arr.push(r)
@@ -316,7 +320,87 @@ export default function MercurialePage() {
       .sort((a, b) => b.refs.length - a.refs.length || a.label.localeCompare(b.label, 'fr'))
   }, [filteredQueue, generics])
 
+  const nonProductRefs = useMemo(() => filteredQueue.filter(r => r.non_product), [filteredQueue])
+  const productRefCount = filteredQueue.length - nonProductRefs.length
+  const [showNonProduct, setShowNonProduct] = useState(false)
+
   const hausses = useMemo(() => generics.filter(g => (g.variation_pct ?? 0) > 0).length, [generics])
+
+  /** Ligne d'une réf en file + formulaire d'association individuel (générique
+   *  existant ou création, facteur de conversion) — partagé entre les groupes
+   *  de rapprochement et la section repliée des lignes non-produit. */
+  const renderRef = (r: Ref) => {
+    const isOpen = assocId === r.id
+    const targetUnit = assoc.choice === 'new' ? assoc.newUnit : (generics.find(g => g.id === assoc.choice)?.base_unit ?? 'kg')
+    return (
+      <div key={r.id}>
+        <div className="flex items-center gap-3 px-4 py-2.5 flex-wrap">
+          <div className="flex-1 min-w-[220px]">
+            <p className="text-sm font-semibold text-gray-900">{r.name}</p>
+            <p className="text-[11px] text-gray-400">{r.supplier_name || '—'}{r.article_code ? ` · ${r.article_code}` : ''}</p>
+          </div>
+          <span className="text-xs text-gray-500 tabular">{r.last_price_ht !== null ? `${fmtEuro(Number(r.last_price_ht))}${r.unit ? ` / ${r.unit}` : ''}` : '—'}</span>
+          <button onClick={() => isOpen ? setAssocId(null) : openAssoc(r)}
+            className={`flex items-center gap-1.5 text-xs font-bold rounded-lg px-3 py-1.5 transition-all ${isOpen ? 'text-gray-500 bg-gray-100' : 'text-white bg-pilote hover:bg-pilote-hover shadow-card active:scale-[0.98]'}`}>
+            <Link2 className="w-3.5 h-3.5" />{isOpen ? 'Annuler' : 'Associer'}
+          </button>
+        </div>
+        {isOpen && (
+          <div className="px-4 pb-4 pt-1 bg-pilote-50/40 border-t border-dashed border-pilote-200">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+              <div>
+                <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1">Article générique</label>
+                <select value={assoc.choice} onChange={e => setAssoc(a => ({ ...a, choice: e.target.value }))}
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200">
+                  <option value="">— Choisir —</option>
+                  <option value="new">➕ Créer un nouvel article générique</option>
+                  {generics.map(g => <option key={g.id} value={g.id}>{g.name} (/ {unitLabel(g.base_unit)})</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1">
+                  Conversion — 1 {r.unit || 'unité facturée'} = combien de {unitLabel(targetUnit)} ?
+                </label>
+                <input value={assoc.factor} onChange={e => setAssoc(a => ({ ...a, factor: e.target.value }))} placeholder="1 (mêmes unités)" inputMode="decimal"
+                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200" />
+              </div>
+            </div>
+            {assoc.choice === 'new' && (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
+                <div>
+                  <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1">Nom du générique</label>
+                  <input value={assoc.newName} onChange={e => setAssoc(a => ({ ...a, newName: e.target.value }))} placeholder="Filet de poulet"
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200" />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1">Unité de base</label>
+                  <select value={assoc.newUnit} onChange={e => setAssoc(a => ({ ...a, newUnit: e.target.value as 'kg' | 'piece' }))}
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200">
+                    <option value="kg">au kg</option>
+                    <option value="piece">à la pièce</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1">Catégorie</label>
+                  <select value={assoc.newCat} onChange={e => setAssoc(a => ({ ...a, newCat: e.target.value as 'ingredient' | 'emballage' }))}
+                    className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200">
+                    <option value="ingredient">Ingrédient</option>
+                    <option value="emballage">Emballage &amp; conditionnement</option>
+                  </select>
+                </div>
+              </div>
+            )}
+            <div className="mt-3 flex justify-end">
+              <button onClick={() => submitAssoc(r)} disabled={saving}
+                className="text-xs font-bold text-white bg-pilote hover:bg-pilote-hover rounded-lg px-4 py-2 shadow-card active:scale-[0.98] transition-all disabled:opacity-50">
+                {saving ? 'Association…' : 'Associer cette réf'}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
 
   return (
     <div className="p-6 md:p-8 max-w-6xl mx-auto">
@@ -390,11 +474,11 @@ export default function MercurialePage() {
           {/* File de RAPPROCHEMENT : uniquement les réfs qui se ressemblent — entre
               elles (même tronc de libellé) ou avec un générique existant. Les réfs
               sans ressemblance sont associées automatiquement, il n'y a rien à faire. */}
-          {queueGroups.length > 0 && (
+          {(queueGroups.length > 0 || nonProductRefs.length > 0) && (
             <div className="mb-8">
               <div className="flex items-baseline gap-2 mb-1">
                 <h2 className="text-sm font-extrabold uppercase tracking-wider text-gray-700">À rapprocher</h2>
-                <span className="text-[11px] text-gray-400 tabular">{filteredQueue.length} réf{filteredQueue.length > 1 ? 's' : ''} · {queueGroups.length} produit{queueGroups.length > 1 ? 's' : ''}</span>
+                <span className="text-[11px] text-gray-400 tabular">{productRefCount} réf{productRefCount > 1 ? 's' : ''} · {queueGroups.length} produit{queueGroups.length > 1 ? 's' : ''}</span>
               </div>
               <p className="text-[11px] text-gray-400 mb-3">
                 Les réfs qui ne ressemblent à rien deviennent automatiquement leur propre article générique.
@@ -454,81 +538,31 @@ export default function MercurialePage() {
                       </div>
                     )}
                     <div className="divide-y divide-gray-100">
-                      {grp.refs.map(r => {
-                  const isOpen = assocId === r.id
-                  const targetUnit = assoc.choice === 'new' ? assoc.newUnit : (generics.find(g => g.id === assoc.choice)?.base_unit ?? 'kg')
-                  return (
-                    <div key={r.id}>
-                      <div className="flex items-center gap-3 px-4 py-2.5 flex-wrap">
-                        <div className="flex-1 min-w-[220px]">
-                          <p className="text-sm font-semibold text-gray-900">{r.name}</p>
-                          <p className="text-[11px] text-gray-400">{r.supplier_name || '—'}{r.article_code ? ` · ${r.article_code}` : ''}</p>
-                        </div>
-                        <span className="text-xs text-gray-500 tabular">{r.last_price_ht !== null ? `${fmtEuro(Number(r.last_price_ht))}${r.unit ? ` / ${r.unit}` : ''}` : '—'}</span>
-                        <button onClick={() => isOpen ? setAssocId(null) : openAssoc(r)}
-                          className={`flex items-center gap-1.5 text-xs font-bold rounded-lg px-3 py-1.5 transition-all ${isOpen ? 'text-gray-500 bg-gray-100' : 'text-white bg-pilote hover:bg-pilote-hover shadow-card active:scale-[0.98]'}`}>
-                          <Link2 className="w-3.5 h-3.5" />{isOpen ? 'Annuler' : 'Associer'}
-                        </button>
-                      </div>
-                      {isOpen && (
-                        <div className="px-4 pb-4 pt-1 bg-pilote-50/40 border-t border-dashed border-pilote-200">
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
-                            <div>
-                              <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1">Article générique</label>
-                              <select value={assoc.choice} onChange={e => setAssoc(a => ({ ...a, choice: e.target.value }))}
-                                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200">
-                                <option value="">— Choisir —</option>
-                                <option value="new">➕ Créer un nouvel article générique</option>
-                                {generics.map(g => <option key={g.id} value={g.id}>{g.name} (/ {unitLabel(g.base_unit)})</option>)}
-                              </select>
-                            </div>
-                            <div>
-                              <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1">
-                                Conversion — 1 {r.unit || 'unité facturée'} = combien de {unitLabel(targetUnit)} ?
-                              </label>
-                              <input value={assoc.factor} onChange={e => setAssoc(a => ({ ...a, factor: e.target.value }))} placeholder="1 (mêmes unités)" inputMode="decimal"
-                                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200" />
-                            </div>
-                          </div>
-                          {assoc.choice === 'new' && (
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
-                              <div>
-                                <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1">Nom du générique</label>
-                                <input value={assoc.newName} onChange={e => setAssoc(a => ({ ...a, newName: e.target.value }))} placeholder="Filet de poulet"
-                                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200" />
-                              </div>
-                              <div>
-                                <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1">Unité de base</label>
-                                <select value={assoc.newUnit} onChange={e => setAssoc(a => ({ ...a, newUnit: e.target.value as 'kg' | 'piece' }))}
-                                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200">
-                                  <option value="kg">au kg</option>
-                                  <option value="piece">à la pièce</option>
-                                </select>
-                              </div>
-                              <div>
-                                <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1">Catégorie</label>
-                                <select value={assoc.newCat} onChange={e => setAssoc(a => ({ ...a, newCat: e.target.value as 'ingredient' | 'emballage' }))}
-                                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200">
-                                  <option value="ingredient">Ingrédient</option>
-                                  <option value="emballage">Emballage &amp; conditionnement</option>
-                                </select>
-                              </div>
-                            </div>
-                          )}
-                          <div className="mt-3 flex justify-end">
-                            <button onClick={() => submitAssoc(r)} disabled={saving}
-                              className="text-xs font-bold text-white bg-pilote hover:bg-pilote-hover rounded-lg px-4 py-2 shadow-card active:scale-[0.98] transition-all disabled:opacity-50">
-                              {saving ? 'Association…' : 'Associer cette réf'}
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )
-                })}
+                      {grp.refs.map(renderRef)}
                     </div>
                   </div>
                 ))}
+
+                {/* Lignes non-produit (taxes, remises, frais, licences, entretien…) —
+                    jamais associées d'office, repliées pour ne pas encombrer */}
+                {nonProductRefs.length > 0 && (
+                  <div className="bg-white rounded-2xl border border-gray-100 shadow-card overflow-hidden">
+                    <button onClick={() => setShowNonProduct(v => !v)}
+                      className="w-full px-4 py-2.5 flex items-center justify-between gap-3 hover:bg-gray-50 transition-colors">
+                      <p className="text-xs font-semibold text-gray-500 text-left">
+                        Lignes non-produit ignorées
+                        <span className="text-gray-400 font-normal"> — taxes, remises, frais, licences, entretien… rien à faire, associables à la main si besoin</span>
+                      </p>
+                      <span className="text-[11px] font-bold text-gray-400 tabular flex items-center gap-1 flex-shrink-0">
+                        {nonProductRefs.length}
+                        {showNonProduct ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                      </span>
+                    </button>
+                    {showNonProduct && (
+                      <div className="divide-y divide-gray-100 border-t border-gray-100">{nonProductRefs.map(renderRef)}</div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           )}
