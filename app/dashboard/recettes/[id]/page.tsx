@@ -9,13 +9,14 @@ import { useCallback, useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { ChefHat, ArrowLeft } from 'lucide-react'
-import FichePanel, { type FicheRecipe, type FicheEmployee } from '../fiche-panel'
+import FichePanel, { type FicheRecipe, type FicheEmployee, type FicheGeneric } from '../fiche-panel'
 
 export default function FicheRecettePage() {
   const router = useRouter()
   const params = useParams<{ id: string }>()
   const [recipe, setRecipe] = useState<FicheRecipe | null>(null)
   const [employees, setEmployees] = useState<FicheEmployee[]>([])
+  const [generics, setGenerics] = useState<FicheGeneric[]>([])
   const [loading, setLoading] = useState(true)
 
   const load = useCallback(async () => {
@@ -23,6 +24,7 @@ export default function FicheRecettePage() {
     const r: FicheRecipe | undefined = (data?.recipes || []).find((x: FicheRecipe) => x.id === params.id)
     setRecipe(r ?? null)
     setEmployees(Array.isArray(data?.employees) ? data.employees : [])
+    setGenerics(Array.isArray(data?.generics) ? data.generics : [])
     setLoading(false)
   }, [params.id])
   useEffect(() => { load() }, [load])
@@ -47,6 +49,7 @@ export default function FicheRecettePage() {
           key={recipe.id}
           recipe={recipe}
           employees={employees}
+          generics={generics}
           onEditFull={() => router.push(`/dashboard/recettes?edit=${recipe.id}`)}
           onSaved={load}
         />
