@@ -114,6 +114,10 @@ export async function storeExtraction(
     extraction: StoredExtraction
     checks: unknown[] | null
     status: string
+    /** Moteur ayant produit ces chiffres (lot V6) : « crisalid-coordonnees-v1 »
+     *  pour la lecture déterministe, sinon le modèle IA par défaut. Sert à savoir,
+     *  a posteriori, si un rapport a été extrait sans IA ou par repli IA. */
+    model?: string
   },
 ): Promise<string | null> {
   const { data, error } = await service.from('report_extractions').insert({
@@ -125,7 +129,7 @@ export async function storeExtraction(
     extraction: args.extraction,
     checks: args.checks,
     status: args.status,
-    model: EXTRACTION_MODEL,
+    model: args.model ?? EXTRACTION_MODEL,
     prompt_version: EXTRACTION_PROMPT_VERSION,
   }).select('id').single()
   if (error) { console.error('[trace] enregistrement extraction impossible:', error.message); return null }
