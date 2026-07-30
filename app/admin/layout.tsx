@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-import { Users, FileText, LogOut, ArrowLeft, ShieldCheck } from 'lucide-react'
+import { Users, FileText, Gauge, LogOut, ArrowLeft, ShieldCheck } from 'lucide-react'
 import { isAdminEmail } from '@/lib/admins'
 
 async function signOut() {
@@ -40,6 +40,13 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           >
             <FileText className="w-4 h-4" />
             Générer un rapport
+          </Link>
+          <Link
+            href="/admin/extraction-eval"
+            className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-300 hover:bg-gray-800 hover:text-white transition-colors"
+          >
+            <Gauge className="w-4 h-4" />
+            Fiabilité extraction
           </Link>
           <div className="pt-4 mt-2 border-t border-gray-700">
             <Link
