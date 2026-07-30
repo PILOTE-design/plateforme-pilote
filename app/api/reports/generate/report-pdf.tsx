@@ -20,6 +20,11 @@ export const PiloteReport = ({ r }: { r: ComputedReport }) => {
   const { financier_n: fn, financier_n1: fn1, ventes_n: vn, ventes_n1: vn1 } = data
   const generatedOn = new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' })
 
+  // Comparaison N-1 possible ? Une boutique qui n'existait pas l'an dernier (ou
+  // un fichier N-1 vide) donne fn1.ca_net = 0 : la variation vaut alors 0 et le
+  // PDF affichait « +0,0 % » juste à côté de « +20 000 € ». On préfère annoncer
+  // franchement l'absence de comparatif plutôt qu'un pourcentage contradictoire.
+  const hasN1 = fn1.ca_net > 0
   const sortedByEcart = [...famRows].sort((a, b) => b.ecart - a.ecart)
   const bestFam  = sortedByEcart[0]
   const worstFam = sortedByEcart[sortedByEcart.length - 1]
@@ -47,9 +52,9 @@ export const PiloteReport = ({ r }: { r: ComputedReport }) => {
               <Text style={S.coverKpiLabel}>CA DE LA SEMAINE</Text>
               <Text style={S.coverKpiValue}>{eur0(fn.ca_net)}</Text>
             </View>
-            <View style={[S.coverKpi, { borderLeftColor: caVar >= 0 ? '#4CAF50' : '#EF5350' }]}>
+            <View style={[S.coverKpi, { borderLeftColor: !hasN1 ? '#90A4AE' : caVar >= 0 ? '#4CAF50' : '#EF5350' }]}>
               <Text style={S.coverKpiLabel}>VS MÊME SEMAINE {data.year - 1}</Text>
-              <Text style={[S.coverKpiValue, { color: caVar >= 0 ? '#81C784' : '#EF9A9A' }]}>{signPct(caVar)}</Text>
+              <Text style={[S.coverKpiValue, { color: !hasN1 ? '#B0BEC5' : caVar >= 0 ? '#81C784' : '#EF9A9A' }]}>{hasN1 ? signPct(caVar) : '-'}</Text>
             </View>
             <View style={S.coverKpi}>
               <Text style={S.coverKpiLabel}>TICKETS</Text>
@@ -90,14 +95,14 @@ export const PiloteReport = ({ r }: { r: ComputedReport }) => {
         <Text style={{ paddingHorizontal: 36, fontSize: 9, color: C.textLight, marginBottom: 8 }}>CHIFFRE D'AFFAIRES</Text>
         <View style={S.kpiRow}>
           <KpiBox label="CA SEMAINE N" value={eur(fn.ca_net)} sub={`S${data.week_number} - ${data.year}`} bg={C.navy} />
-          <KpiBox label="CA SEMAINE N-1" value={eur(fn1.ca_net)} sub={`S${data.week_number} - ${data.year - 1}`} bg={C.blue} />
-          <KpiBox label="VARIATION" value={signPct(caVar)} sub={signEur(fn.ca_net - fn1.ca_net)} bg={caVar >= 0 ? C.green : C.red} />
+          <KpiBox label="CA SEMAINE N-1" value={hasN1 ? eur(fn1.ca_net) : '-'} sub={hasN1 ? `S${data.week_number} - ${data.year - 1}` : 'aucun historique'} bg={C.blue} />
+          <KpiBox label="VARIATION" value={hasN1 ? signPct(caVar) : '-'} sub={hasN1 ? signEur(fn.ca_net - fn1.ca_net) : 'comparatif indisponible'} bg={!hasN1 ? C.blue : caVar >= 0 ? C.green : C.red} />
         </View>
         <Text style={{ paddingHorizontal: 36, fontSize: 9, color: C.textLight, marginTop: 4, marginBottom: 8 }}>TICKETS &amp; PANIER</Text>
         <View style={[S.kpiRow, { marginBottom: 18 }]}>
-          <KpiBox label="TICKETS N" value={String(fn.nb_tickets)} sub={`${fn.nb_tickets - fn1.nb_tickets >= 0 ? '+' : ''}${fn.nb_tickets - fn1.nb_tickets} vs N-1`} bg={fn.nb_tickets >= fn1.nb_tickets ? C.green : C.red} />
-          <KpiBox label="TICKETS N-1" value={String(fn1.nb_tickets)} sub={`S${data.week_number} - ${data.year - 1}`} bg={C.blue} />
-          <KpiBox label="PANIER MOYEN" value={eur(fn.moyenne_ticket)} sub={`N-1 : ${eur(fn1.moyenne_ticket)}`} bg={fn.moyenne_ticket >= fn1.moyenne_ticket ? C.green : C.red} />
+          <KpiBox label="TICKETS N" value={String(fn.nb_tickets)} sub={hasN1 ? `${fn.nb_tickets - fn1.nb_tickets >= 0 ? '+' : ''}${fn.nb_tickets - fn1.nb_tickets} vs N-1` : 'pas de comparatif'} bg={!hasN1 ? C.navy : fn.nb_tickets >= fn1.nb_tickets ? C.green : C.red} />
+          <KpiBox label="TICKETS N-1" value={hasN1 ? String(fn1.nb_tickets) : '-'} sub={hasN1 ? `S${data.week_number} - ${data.year - 1}` : 'aucun historique'} bg={C.blue} />
+          <KpiBox label="PANIER MOYEN" value={eur(fn.moyenne_ticket)} sub={hasN1 ? `N-1 : ${eur(fn1.moyenne_ticket)}` : 'pas de comparatif'} bg={!hasN1 ? C.navy : fn.moyenne_ticket >= fn1.moyenne_ticket ? C.green : C.red} />
         </View>
         <Text style={{ paddingHorizontal: 36, fontSize: 9.5, fontWeight: 700, color: C.navy, marginBottom: 10 }}>Récapitulatif par famille de produits</Text>
         <View style={S.tableWrap}>
