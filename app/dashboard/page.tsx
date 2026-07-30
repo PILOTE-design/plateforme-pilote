@@ -6,6 +6,7 @@ import {
   type PayrollEmployee, type PayrollEntry,
 } from '@/lib/payroll'
 import { computeWeekEconomics, type WeekEconomics } from '@/lib/week-economics'
+import { margeFiabilite } from '@/lib/postes'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { FileText, TrendingUp, TrendingDown, Users, Receipt, Euro, AlertTriangle, CalendarDays, Calculator, ArrowRight, Repeat, CheckCircle2, Circle } from 'lucide-react'
 import { formatDate } from '@/lib/utils'
@@ -214,8 +215,16 @@ export default async function DashboardPage() {
   const ratioMS       = payrollRef > 0 ? (eco?.ratio_ms ?? null) : null
   const tvaRate       = eco?.tva_rate ?? 5.5
 
+  // Fiabilité de la marge AVANT toute mise en couleur : sans achats saisis, le
+  // taux vaut mécaniquement 100 % — l'afficher en vert ferait lire « excellente
+  // semaine » là où il manque simplement les factures. Même règle que la page
+  // Marges et que le rapport PDF (lib/postes.margeFiabilite).
+  const margeInfo = margeFiabilite(caHT, achatsHT, taux_marge)
+  const tauxAffichable = margeInfo.fiable ? taux_marge : null
+
   const margeColor =
-    taux_marge === null ? 'text-gray-400'
+    !margeInfo.fiable ? 'text-gray-400'
+    : taux_marge === null ? 'text-gray-400'
     : taux_marge >= 40 ? 'text-green-600'
     : taux_marge >= 30 ? 'text-orange-500'
     : 'text-red-600'
@@ -238,6 +247,9 @@ export default async function DashboardPage() {
     : null
 
   const attention: { color: string; text: string; href?: string; cta?: string }[] = [
+    ...(!margeInfo.fiable && margeInfo.message
+      ? [{ color: 'bg-amber-500', text: margeInfo.message, href: '/dashboard/facturation', cta: 'Saisir les achats' }]
+      : []),
     ...legalAlerts.map(t => ({ color: 'bg-red-500', text: `Planning S${currentWeek} · ${t}` })),
     ...cddAlerts.map(t => ({ color: 'bg-amber-500', text: t })),
     ...(ratioMS !== null && ratioMS > 40 ? [{ color: 'bg-amber-500', text: `Masse salariale à ${ratioMS.toFixed(1)} % du CA HT (cible < 35 %)` }] : []),
@@ -408,7 +420,11 @@ export default async function DashboardPage() {
                   <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Marge brute (MB)</p>
                 </div>
                 <p className={`text-2xl font-extrabold tracking-tight tabular ${margeColor}`}>{caHT > 0 ? `${fmt(marge_brute)} €` : '—'}</p>
-                <p className="text-xs text-gray-400 mt-1 tabular">CA HT − achats HT{taux_marge !== null ? ` · ${taux_marge.toFixed(1)} %` : ''}</p>
+                <p className={`text-xs mt-1 tabular ${margeInfo.fiable ? 'text-gray-400' : 'text-amber-600 font-semibold'}`}>
+                  {margeInfo.fiable
+                    ? `CA HT − achats HT${tauxAffichable !== null ? ` · ${tauxAffichable.toFixed(1)} %` : ''}`
+                    : margeInfo.raison === 'aucun_achat' ? 'aucune facture saisie — taux non calculable' : 'taux surévalué — achats incomplets'}
+                </p>
               </CardContent>
             </Card>
           </div>

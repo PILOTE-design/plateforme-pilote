@@ -470,7 +470,9 @@ export default function RecettesPage() {
                 )}
                 {r.cost.coefficient !== null && <span className="text-xs text-gray-400 tabular">coef ×{r.cost.coefficient.toLocaleString('fr-FR')}</span>}
                 {r.cost.prix_manquants > 0 && (
-                  <span className="text-[11px] font-semibold text-amber-600">{r.cost.prix_manquants} prix manquant{r.cost.prix_manquants > 1 ? 's' : ''}</span>
+                  <span className="text-[11px] font-semibold text-amber-600">
+                    {r.cost.prix_manquants} prix manquant{r.cost.prix_manquants > 1 ? 's' : ''} — marge non calculable
+                  </span>
                 )}
               </div>
             </button>

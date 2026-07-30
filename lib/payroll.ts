@@ -126,11 +126,18 @@ export function entryHours(entry: PayrollEntry, contractH: number = 35, holidayF
   return { workedH, cpH, totalH: workedH + cpH, sundayH, holidayH }
 }
 
-/** Multiplicateur de charges patronales de l'employé (défaut 45 %) */
+/** Multiplicateur de charges patronales de l'employé (défaut 45 % — salarié).
+ *
+ *  Cas du GÉRANT non salarié : il ne génère pas de charges PATRONALES. Lui
+ *  appliquer le défaut 45 % gonflait sa masse salariale d'autant (et faussait
+ *  le ratio MS et la marge sur coût direct) dans le seul cas où personne n'a
+ *  renseigné le champ — typiquement une boutique tenue par le gérant seul, cas
+ *  qui n'existe pas dans la boutique de référence. Un taux EXPLICITEMENT saisi
+ *  (y compris sur un gérant) est toujours respecté : aucune configuration
+ *  existante n'est modifiée. */
 export function chargeMultiplier(emp: PayrollEmployee): number {
-  const pct = emp.charges_patronales === null || emp.charges_patronales === undefined
-    ? 45
-    : num(emp.charges_patronales)
+  const absent = emp.charges_patronales === null || emp.charges_patronales === undefined
+  const pct = absent ? (emp.is_gerant ? 0 : 45) : num(emp.charges_patronales)
   return 1 + pct / 100
 }
 
