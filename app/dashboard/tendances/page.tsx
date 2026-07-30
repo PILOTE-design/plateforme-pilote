@@ -20,6 +20,20 @@ type WeekKey = string // "2026-27"
 const keyOf = (year: number, week: number): WeekKey => `${year}-${String(week).padStart(2, '0')}`
 const labelOf = (k: WeekKey) => `S${parseInt(k.split('-')[1])}`
 
+// Lundi (00:00 UTC) de la semaine ISO (year, week) — même formule que
+// getWeekBounds (jan4 + décalage). Sert à mesurer l'écart RÉEL en semaines entre
+// deux clés : deux semaines ISO consécutives ont leurs lundis à 7 jours d'écart,
+// y compris au passage d'année (52/53 → 1), ce qu'une simple comparaison de
+// numéros de semaine ne capture pas.
+const isoWeekMondayMs = (k: WeekKey): number => {
+  const [year, week] = k.split('-').map(Number)
+  const jan4 = new Date(Date.UTC(year, 0, 4))
+  const dow = jan4.getUTCDay() || 7
+  const mon = new Date(jan4)
+  mon.setUTCDate(jan4.getUTCDate() - dow + 1 + (week - 1) * 7)
+  return mon.getTime()
+}
+
 // Palette camembert — famille navy/orange PILOTE + dérivés
 const PIE = ['#1E3A5F', '#FF8C00', '#2a4f7c', '#4a7ab5', '#ffb454', '#7d92ad', '#c5d2e2', '#9aa8bd']
 
@@ -29,9 +43,15 @@ export default async function TendancesPage() {
   const serviceSupabase = createServiceClient()
   const clientId = await resolveClientId(serviceSupabase, user!.id, user?.email)
 
-  // Tendances = ANNÉE EN COURS pour la courbe. Les semaines N-1 servent uniquement à la
-  // comparaison année précédente (KPIs), pas à la courbe de tendance.
-  const currentYear = new Date().getFullYear()
+  // Fenêtre = les 8 DERNIÈRES SEMAINES PRÉSENTES, sans filtre d'année calendaire
+  // en dur. weekly_ca / weekly_sales_products stockent l'année ISO du rapport
+  // (dérivée de la période) ; un filtre `année = new Date().getFullYear()`
+  // (année CIVILE) écartait à tort, début janvier, les semaines 52/53 archivées
+  // sous l'année ISO précédente — la courbe s'effondrait au passage d'année. On
+  // ne filtre donc plus par année : on trie par (année, semaine) décroissantes et
+  // on garde les 8 clés les plus récentes, ce qui franchit proprement la
+  // frontière décembre/janvier. Les semaines N-1 servent uniquement à la
+  // comparaison année précédente (KPIs), pas à la courbe.
 
   // Référentiel de familles + rattachement canonique d'un libellé (famille de
   // caisse OU nom de produit) : racine pour le regroupement, sous-famille pour
@@ -61,21 +81,32 @@ export default async function TendancesPage() {
         .from('weekly_sales_products')
         .select('product, amount, week_number, year, famille')
         .eq('client_id', clientId)
-        .eq('year', currentYear)
         .order('year', { ascending: false }).order('week_number', { ascending: false })
         .limit(8000),
       serviceSupabase
         .from('weekly_ca')
         .select('week_number, year, ca_total, nb_tickets, moyenne_ticket, families_detail')
         .eq('client_id', clientId)
-        .eq('year', currentYear)
         .order('year', { ascending: false }).order('week_number', { ascending: false })
         .limit(16),
     ])
 
+    // Fenêtre = les semaines présentes dans la TRANCHE des 8 dernières semaines
+    // ISO précédant la plus récente (incluse). On part de la dernière semaine
+    // présente et on remonte de 8 semaines RÉELLES (via les lundis ISO) : cela
+    // franchit proprement décembre→janvier (S52/53 → S1) SANS jamais sauter par
+    // dessus un trou pour aller chercher la même saison de l'an dernier (données
+    // clairsemées). Une semaine manquante laisse simplement moins de 8 barres.
     const allKeys = new Set<WeekKey>()
     for (const r of prodRows || []) allKeys.add(keyOf(r.year, r.week_number))
-    weekKeys = [...allKeys].sort().slice(-8) // 8 dernieres semaines chronologiques
+    const sortedKeys = [...allKeys].sort()
+    const latestKey = sortedKeys[sortedKeys.length - 1]
+    const latestMs = latestKey ? isoWeekMondayMs(latestKey) : 0
+    const WEEK_MS = 7 * 86400000
+    weekKeys = sortedKeys.filter(k => {
+      const gap = (latestMs - isoWeekMondayMs(k)) / WEEK_MS
+      return gap >= 0 && gap < 8 // dernière + 7 précédentes = 8 semaines ISO
+    }).slice(-8)
     const keep = new Set(weekKeys)
 
     for (const r of prodRows || []) {
@@ -118,6 +149,34 @@ export default async function TendancesPage() {
       panier: n1.moyenne_ticket != null ? parseFloat(String(n1.moyenne_ticket)) : null,
     }
   }
+
+  // ── GARDE-FOU COUVERTURE ─────────────────────────────────────────────────
+  // Un écart « par produit » (hausses/baisses, ± vs semaine précédente) n'a de
+  // sens que si la semaine est COMPLÈTE. Quand les lignes produits ne totalisent
+  // qu'une fraction du CA (export partiel de caisse) — ou, à l'inverse, le
+  // dépassent (doublons) — un produit paraît s'effondrer ou bondir alors qu'il
+  // manque ou double juste des lignes. On mesure la COUVERTURE d'une semaine =
+  // somme des produits ÷ CA du relevé financier ; hors d'une bande plausible
+  // (les semaines déterministes du rapport tombent à 100 %), les écarts sont
+  // MASQUÉS plutôt qu'affichés faux. Les KPI CA / tickets / panier, eux, viennent
+  // du relevé financier et restent fiables quelle que soit la couverture produit.
+  const COUV_MIN = 0.7, COUV_MAX = 1.3
+  const caByKey = new Map(caRows.map(r => [r.key, r.ca]))
+  const prodSumByKey = new Map<WeekKey, number>()
+  for (const series of byProduct.values())
+    for (const k of weekKeys) prodSumByKey.set(k, (prodSumByKey.get(k) ?? 0) + (series.get(k) ?? 0))
+  const couvertureDe = (k: WeekKey | undefined): number | null => {
+    if (!k) return null
+    const ca = caByKey.get(k) ?? 0
+    return ca > 0 ? (prodSumByKey.get(k) ?? 0) / ca : null
+  }
+  const couvertureOk = (k: WeekKey | undefined): boolean => {
+    const c = couvertureDe(k)
+    return c != null && c >= COUV_MIN && c <= COUV_MAX
+  }
+  // Une comparaison porte sur DEUX semaines : elle n'est fiable que si les deux
+  // sont bien couvertes (une semaine précédente partielle fait « bondir » à tort).
+  const deltasFiables = couvertureOk(lastKey) && couvertureOk(prevKey)
 
   // Ecarts produit derniere semaine vs precedente
   const deltas: { name: string; last: number; delta: number }[] = []
@@ -250,7 +309,7 @@ export default async function TendancesPage() {
         <div>
           <h1 className="text-2xl font-extrabold tracking-tight text-gray-900">Tendances produits</h1>
           <p className="text-sm text-gray-500 mt-1">
-            Évolution semaine par semaine sur {currentYear}, alimentée automatiquement par vos rapports hebdomadaires
+            Évolution semaine par semaine, alimentée automatiquement par vos rapports hebdomadaires
             {lastKey && <span className="ml-2 text-xs bg-pilote-50 text-pilote px-2 py-0.5 rounded-full font-semibold tabular">{weekKeys.length} semaine{weekKeys.length > 1 ? 's' : ''} · dernière : {labelOf(lastKey)}</span>}
           </p>
         </div>
@@ -294,8 +353,8 @@ export default async function TendancesPage() {
             </div>
           )}
 
-          {/* Top hausses / baisses — 5 produits chacun */}
-          {hasComparison && (
+          {/* Top hausses / baisses — 5 produits chacun · masqué si une semaine comparée est incomplète (garde-fou couverture) */}
+          {hasComparison && deltasFiables && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
               <Card>
                 <CardHeader>
@@ -336,6 +395,22 @@ export default async function TendancesPage() {
             </div>
           )}
 
+          {/* Semaine incomplète : on explique POURQUOI les écarts produits sont masqués (jamais de faux décrochage en silence) */}
+          {hasComparison && !deltasFiables && (
+            <div className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
+              <p className="text-sm font-semibold text-amber-800">Écarts par produit masqués — semaine incomplète</p>
+              <p className="text-xs text-amber-700 mt-1 leading-relaxed">
+                Les lignes produits d'au moins une des deux semaines comparées s'écartent du total du CA
+                {(() => {
+                  const parts: string[] = []
+                  const cl = couvertureDe(lastKey); if (lastKey && (cl == null || cl < COUV_MIN || cl > COUV_MAX)) parts.push(`${labelOf(lastKey)} : ${cl != null ? Math.round(cl * 100) + ' %' : 'CA inconnu'}`)
+                  const cp = couvertureDe(prevKey); if (prevKey && (cp == null || cp < COUV_MIN || cp > COUV_MAX)) parts.push(`${labelOf(prevKey)} : ${cp != null ? Math.round(cp * 100) + ' %' : 'CA inconnu'}`)
+                  return parts.length ? ` (couverture ${parts.join(' · ')})` : ''
+                })()}. Les hausses/baisses et les écarts par produit sont donc masqués pour ne pas afficher de faux mouvements. Le CA, les tickets et le panier moyen ci-dessus restent fiables. La couverture atteint 100 % dès qu'un rapport hebdomadaire complet est généré pour la semaine.
+              </p>
+            </div>
+          )}
+
           {/* Répartition & tendance par famille */}
           {familles.length > 0 && (
             <Card className="mb-6">
@@ -365,7 +440,7 @@ export default async function TendancesPage() {
                         <span className="text-sm text-gray-700 w-32 truncate flex-shrink-0">{f.name}</span>
                         <Spark series={f.series} />
                         <span className="text-sm font-semibold text-gray-900 ml-auto whitespace-nowrap tabular">{fmt(f.last)} €</span>
-                        {hasComparison && (
+                        {hasComparison && deltasFiables && (
                           <span className={`text-xs font-semibold w-16 text-right tabular ${f.delta >= 0 ? 'text-green-600' : 'text-red-500'}`}>
                             {f.delta >= 0 ? '+' : ''}{fmt(f.delta)} €
                           </span>
@@ -386,7 +461,7 @@ export default async function TendancesPage() {
                 allFamilles={families.filter(f => f.parent_id === null).map(f => f.name)}
                 lastLabel={lastKey ? labelOf(lastKey) : ''}
                 prevLabel={prevKey ? labelOf(prevKey) : ''}
-                hasComparison={hasComparison}
+                hasComparison={hasComparison && deltasFiables}
               />
             </CardContent>
           </Card>
