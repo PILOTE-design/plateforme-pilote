@@ -89,7 +89,7 @@ export default async function MargesPage() {
     ])
     caStemsRaw = (clientRow as { ca_stems?: unknown } | null)?.ca_stems ?? null
     ca12Rows = (caData || []).filter((r: any) => inWindow(r.year, r.week_number) && parseFloat(String(r.ca_total || 0)) > 0)
-    inv12Rows = (invData || []).filter((r: any) => inWindow(r.year, r.week_number) && r.status !== 'a_verifier')
+    inv12Rows = (invData || []).filter((r: any) => inWindow(r.year, r.week_number) && r.status === 'validee')
     splitRows = splitData || []
     rowsRaw = [...ca12Rows].filter((r: any) => r.year === currentYear)
       .sort((a: any, b: any) => b.week_number - a.week_number).slice(0, 4)

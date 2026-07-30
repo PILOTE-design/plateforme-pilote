@@ -136,6 +136,9 @@ Si montant HT absent, déduire de TTC : HT = TTC / 1.{tva_rate/100+1}`
       client_id:      clientRow.id,
       week_number:    week,
       year,
+      // Toujours importée « à vérifier » : ne compte dans la marge qu'après
+      // validation humaine. Explicite, sans dépendre du défaut de colonne.
+      status:         'a_verifier',
       supplier_name:  supplierName,
       invoice_number: invoiceData.invoice_number || null,
       invoice_date:   invoiceDate.toISOString().slice(0, 10),

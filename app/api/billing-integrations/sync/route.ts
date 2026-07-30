@@ -87,6 +87,9 @@ export async function POST(req: NextRequest) {
         amount_ttc:     inv.amount_ttc,
         week_number:    week,
         year,
+        // Toujours importée « à vérifier » : ne compte dans la marge qu'après
+        // validation humaine. Explicite, sans dépendre du défaut de colonne.
+        status:         'a_verifier',
         is_fixed_charge: inv.is_fixed_charge ?? false,
         period_days:     inv.period_days ?? null,
         prorata_ht:      inv.prorata_ht ?? null,
