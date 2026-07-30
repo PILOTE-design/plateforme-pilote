@@ -1,4 +1,5 @@
 import { Resend } from 'resend'
+import { appUrl } from '@/lib/app-url'
 
 // Clé de repli au build : le constructeur Resend lève une erreur si la clé est absente,
 // ce qui casse `next build` lors du « Collecting page data ». En prod l'envoi reste protégé
@@ -17,7 +18,7 @@ export async function sendWelcomeEmail(to: string, businessName: string) {
         <p>Votre abonnement pour <strong>${businessName}</strong> est maintenant actif.</p>
         <p>Vous recevrez votre première analyse comparative dès la semaine prochaine.</p>
         <p>En attendant, vous pouvez accéder à votre espace client pour mettre à jour vos informations.</p>
-        <a href="${process.env.NEXT_PUBLIC_APP_URL}/dashboard"
+        <a href="${appUrl()}/dashboard"
            style="display: inline-block; background: #2563eb; color: white; padding: 12px 24px;
                   border-radius: 6px; text-decoration: none; margin-top: 16px;">
           Accéder à mon espace

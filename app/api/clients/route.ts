@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { getAdminEmails, isAdminEmail } from '@/lib/admins'
+import { appUrl } from '@/lib/app-url'
 import { Resend } from 'resend'
 
 export async function GET() {
@@ -25,6 +26,19 @@ export async function POST(req: NextRequest) {
 
   const { name, email, phone, siret, address } = await req.json()
   if (!name || !email) return NextResponse.json({ error: 'Nom et email requis' }, { status: 400 })
+
+  // Anti-doublon : une fiche pour cet email existe déjà ? On la renvoie au lieu
+  // d'en créer une seconde. Deux fiches pour la même boutique rendaient la
+  // résolution par email ambiguë et vidaient tous les écrans du compte concerné.
+  const service = createServiceClient()
+  const { data: dup } = await service
+    .from('clients').select('id, name').eq('email', email).limit(1)
+  if (dup && dup.length > 0) {
+    return NextResponse.json(
+      { error: `Une fiche client existe déjà pour ${email}`, clientId: dup[0].id },
+      { status: 409 },
+    )
+  }
 
   const { data, error } = await supabase
     .from('clients')
@@ -67,7 +81,7 @@ export async function POST(req: NextRequest) {
               </tr>
             </table>
             <div style="margin-top:24px;text-align:center">
-              <a href="https://plateforme-pilote.vercel.app/admin/clients"
+              <a href="${appUrl()}/admin/clients"
                  style="background:#1E3A5F;color:white;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:bold;font-size:14px">
                 Voir le client dans PILOTE
               </a>

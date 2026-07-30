@@ -1,5 +1,6 @@
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { isAdminEmail } from '@/lib/admins'
+import { appUrl } from '@/lib/app-url'
 import { NextResponse } from 'next/server'
 
 export async function POST(
@@ -29,7 +30,7 @@ export async function POST(
     client.email,
     {
       data: { client_name: client.name },
-      redirectTo: `${process.env.NEXT_PUBLIC_APP_URL || 'https://pilote-coral.vercel.app'}/dashboard`,
+      redirectTo: `${appUrl()}/dashboard`,
     }
   )
 

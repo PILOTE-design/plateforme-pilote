@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { sendWelcomeEmail } from '@/lib/resend'
 import { PRIMARY_ADMIN_EMAIL, getAdminEmails } from '@/lib/admins'
+import { appUrl } from '@/lib/app-url'
 import { Resend } from 'resend'
 
 export async function POST(request: NextRequest) {
@@ -43,22 +44,39 @@ export async function POST(request: NextRequest) {
     const { data: adminUsers } = await serviceSupabase.auth.admin.listUsers()
     const adminUser = adminUsers?.users?.find((u: { email?: string }) => u.email === PRIMARY_ADMIN_EMAIL)
 
-    // Check if client already exists for this user
-    const { data: existing } = await serviceSupabase
-      .from('clients')
-      .select('id')
-      .eq('client_user_id', user.id)
-      .maybeSingle()
+    // Rattacher / créer la fiche client SANS jamais créer de DOUBLON pour une
+    // boutique déjà connue. Un second compte pour le même email engendrait une 2ᵉ
+    // fiche client : la résolution par email devenait alors ambiguë et TOUS les
+    // écrans de ce compte se vidaient (planning, fiches recettes…), donnant
+    // l'impression que les données avaient été « écrasées ». Ordre :
+    //   1. déjà une fiche rattachée à CE compte → rien à faire ;
+    //   2. une fiche existe pour cet email → on rattache ce compte à ELLE si libre,
+    //      jamais une 2ᵉ fiche ;
+    //   3. aucune fiche → on en crée une.
+    const { data: byUser } = await serviceSupabase
+      .from('clients').select('id').eq('client_user_id', user.id).limit(1)
 
-    if (!existing) {
-      await serviceSupabase
-        .from('clients')
-        .insert({
+    if (!byUser || byUser.length === 0) {
+      const { data: byEmail } = await serviceSupabase
+        .from('clients').select('id, client_user_id').eq('email', deliveryEmail)
+        .order('created_at', { ascending: true }).limit(1)
+      const existing = byEmail?.[0]
+
+      if (existing) {
+        // Boutique déjà en base : on rattache ce compte à la fiche existante si
+        // elle est libre. Sinon on n'écrit rien — mais on ne crée JAMAIS de doublon.
+        if (!existing.client_user_id) {
+          await serviceSupabase.from('clients')
+            .update({ client_user_id: user.id }).eq('id', existing.id).is('client_user_id', null)
+        }
+      } else {
+        await serviceSupabase.from('clients').insert({
           user_id: adminUser?.id ?? null,
           name: businessName,
           email: deliveryEmail,
           client_user_id: user.id,
         })
+      }
     }
   } catch (clientErr) {
     console.error('Auto client creation failed:', clientErr)
@@ -111,7 +129,7 @@ export async function POST(request: NextRequest) {
               </tr>
             </table>
             <div style="margin-top:24px;text-align:center">
-              <a href="https://plateforme-pilote.vercel.app/admin/clients"
+              <a href="${appUrl()}/admin/clients"
                  style="background:#1E3A5F;color:white;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:bold;font-size:14px">
                 Voir dans PILOTE Admin
               </a>
