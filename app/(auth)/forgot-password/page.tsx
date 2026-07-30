@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
+import { appUrl } from '@/lib/app-url'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -21,8 +22,12 @@ export default function ForgotPasswordPage() {
     setError('')
 
     const supabase = createClient()
+    // On force le domaine de PROD (jamais localhost) : le lien de réinitialisation
+    // envoyé par email doit ramener sur getpilote.app. NB : Supabase n'honore ce
+    // `redirectTo` que s'il figure dans la liste blanche « Redirect URLs » du projet
+    // (Authentication → URL Configuration) ; à défaut il retombe sur la « Site URL ».
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/auth/callback?next=/reset-password`,
+      redirectTo: `${appUrl()}/auth/callback?next=/reset-password`,
     })
 
     setLoading(false)
