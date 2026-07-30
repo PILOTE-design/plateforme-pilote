@@ -24,7 +24,7 @@ import {
   PAYROLL_EMPLOYEE_COLUMNS, PAYROLL_ENTRY_COLUMNS,
   type PayrollEmployee, type PayrollEntry,
 } from '@/lib/payroll'
-import { parseCustomPostes, parseMarginFamilies, posteLabel, familleMatchesText, classicRayonOfLabel, DIVERS_POSTE, DEFAULT_TVA_RATE } from '@/lib/postes'
+import { parseCustomPostes, parseMarginFamilies, posteLabel, familleMatchesText, classicRayonOfLabel, effectiveCaStems, DIVERS_POSTE, DEFAULT_TVA_RATE } from '@/lib/postes'
 import type { createServiceClient } from '@/lib/supabase/server'
 
 type ServiceClient = ReturnType<typeof createServiceClient>
@@ -127,14 +127,20 @@ export async function computeWeekEconomics(
 ): Promise<WeekEconomics> {
   // 0. Configuration du client : postes personnalisés + les 3 familles de marge choisies.
   const { data: clientRow } = await supabase
-    .from('clients').select('custom_postes, margin_families, tva_rate').eq('id', clientId).maybeSingle()
+    .from('clients').select('custom_postes, margin_families, tva_rate, ca_stems').eq('id', clientId).maybeSingle()
   const customPostes = parseCustomPostes(clientRow?.custom_postes)
   const familleKeys = parseMarginFamilies(clientRow?.margin_families)
   const familles = familleKeys.map(key => ({ key, label: posteLabel(key, customPostes) }))
+  // Vocabulaire de reconnaissance des libellés de vente : celui du CLIENT s'il en
+  // a défini un (clients.ca_stems), sinon celui du code. C'était la dernière
+  // hypothèse mono-boutique du moteur : les racines « viande / boeuf / volaille… »
+  // étaient figées, donc une caisse qui nomme ses familles autrement laissait le
+  // rayon à 0 € de CA. Sans réglage, le comportement est strictement inchangé.
+  const caStems = effectiveCaStems(clientRow?.ca_stems)
   // Reconnaissance floue : première famille (dans l'ordre choisi) qui reconnaît le texte.
   const familleFor = (textKey: string, textLabel?: string): number => {
     for (let i = 0; i < familles.length; i++) {
-      if (familleMatchesText(familles[i].key, familles[i].label, textKey, textLabel)) return i
+      if (familleMatchesText(familles[i].key, familles[i].label, textKey, textLabel, caStems)) return i
     }
     return -1
   }
@@ -203,7 +209,7 @@ export async function computeWeekEconomics(
       let bucket = 'divers'
       if (!root.is_rachat && !m.is_rachat) {
         for (const r of VENT_RAYONS) {
-          if (familleMatchesText(r.key, r.label, String(root.name_key || ''), String(root.name || ''))) { bucket = r.key; break }
+          if (familleMatchesText(r.key, r.label, String(root.name_key || ''), String(root.name || ''), caStems)) { bucket = r.key; break }
         }
       }
       return [String(m.id), bucket]
@@ -319,7 +325,7 @@ export async function computeWeekEconomics(
   const caByRayon: Record<string, number> = { boucherie: 0, charcuterie: 0, traiteur: 0 }
   const RAYON_KEYS = VENT_RAYONS.map(r => r.key)
   const fams: { nom: string; montant: number }[] = Array.isArray(ca.familles) ? ca.familles : []
-  for (const f of fams) { const rr = classicRayonOfLabel(f?.nom); if (rr && rr in caByRayon) caByRayon[rr] += toHT(Number(f?.montant) || 0) }
+  for (const f of fams) { const rr = classicRayonOfLabel(f?.nom, caStems); if (rr && rr in caByRayon) caByRayon[rr] += toHT(Number(f?.montant) || 0) }
   const caRayonSum = RAYON_KEYS.reduce((s, r) => s + caByRayon[r], 0)
   if (caRayonSum === 0) {
     for (const r of RAYON_KEYS) caByRayon[r] = toHT(Number(ca.by_rayon?.[r]) || 0)
@@ -343,7 +349,7 @@ export async function computeWeekEconomics(
     const fi = familleFor('', nom)
     if (fi < 0) continue
     caByFamille[fi] += montant
-    const rr = classicRayonOfLabel(nom)
+    const rr = classicRayonOfLabel(nom, caStems)
     if (rr && rr in caPrisParRayon) caPrisParRayon[rr] += montant
   }
   const rayonClaimedByFamille: number[] = VENT_RAYONS.map(r => familleFor(r.key, r.label))
