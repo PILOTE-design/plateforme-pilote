@@ -35,8 +35,10 @@ async function retagInvoices(svc: ReturnType<typeof createServiceClient>, client
     if (!updates.has(cat)) updates.set(cat, [])
     updates.get(cat)!.push(inv.id)
   }
+  // Cloisonnement redondant à l'écriture (les ids sont déjà lus filtrés par
+  // client, mais on refiltre pour que l'invariant tienne — garde-fou lot A).
   for (const [cat, ids] of updates) {
-    if (ids.length) await svc.from('invoices').update({ category: cat }).in('id', ids)
+    if (ids.length) await svc.from('invoices').update({ category: cat }).eq('client_id', clientId).in('id', ids)
   }
 }
 

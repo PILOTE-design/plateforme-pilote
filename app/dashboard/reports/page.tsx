@@ -19,12 +19,12 @@ export default async function ReportsPage() {
     .maybeSingle()
   const isClientUser = !!clientRecord
 
-  let reports: { id: string; title: string; file_url: string; created_at: string }[] = []
+  let reports: { id: string; title: string; file_url: string; file_path: string | null; created_at: string }[] = []
 
   if (isClientUser && clientRecord) {
     const { data } = await serviceSupabase
       .from('reports')
-      .select('id, title, file_url, created_at')
+      .select('id, title, file_url, file_path, created_at')
       .eq('client_id', clientRecord.id)
       .order('created_at', { ascending: false })
     reports = data ?? []
@@ -36,11 +36,28 @@ export default async function ReportsPage() {
       .single()
     const { data } = await supabase
       .from('reports')
-      .select('id, title, file_url, created_at')
+      .select('id, title, file_url, file_path, created_at')
       .eq('profile_id', profile?.id ?? '')
       .order('created_at', { ascending: false })
     reports = data ?? []
   }
+
+  // Rapport confidentiel : le bucket est privé → chaque PDF est servi par URL
+  // signée courte, calculée côté serveur (la page n'expose que les rapports du
+  // client déjà autorisé). Repli sur file_url si la signature échoue, pour ne
+  // jamais casser un téléchargement.
+  const stripBucket = (u: string) => u.replace(/^.*\/reports\//, '')
+  const pathOf = (r: { file_path: string | null; file_url: string }) => r.file_path || stripBucket(r.file_url)
+  const signed = new Map<string, string>()
+  const paths = reports.map(pathOf).filter(Boolean)
+  if (paths.length > 0) {
+    const { data: urls } = await serviceSupabase.storage.from('reports').createSignedUrls(paths, 3600)
+    for (const u of urls ?? []) { if (u.path && u.signedUrl) signed.set(u.path, u.signedUrl) }
+  }
+  const reportsOut = reports.map(r => ({
+    id: r.id, title: r.title, created_at: r.created_at,
+    download_url: signed.get(pathOf(r)) || r.file_url,
+  }))
 
   return (
     <div className="p-6 md:p-8 max-w-6xl mx-auto">
@@ -71,7 +88,7 @@ export default async function ReportsPage() {
           <span className="text-[11px] font-semibold text-gray-400 tabular">{reports.length} rapport{reports.length > 1 ? 's' : ''}</span>
         </div>
         <CardContent className="p-0">
-          <ReportsTree reports={reports} />
+          <ReportsTree reports={reportsOut} />
         </CardContent>
       </Card>
     </div>
