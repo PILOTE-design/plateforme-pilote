@@ -4,6 +4,7 @@ import { PROVIDERS } from '@/lib/billing-providers'
 import { classifyFixedCharges } from '@/lib/billing-providers/classify'
 import { loadSupplierCategories, rememberedCategory } from '@/lib/supplier-memory'
 import { enrichInvoicesAfterSync } from '@/lib/billing-providers/enrich'
+import { weekForInvoice } from '@/lib/invoice-week'
 
 export const maxDuration = 60 // Vercel Pro: 60s max, Hobby: 10s (mieux que défaut)
 
@@ -76,7 +77,12 @@ export async function POST(req: NextRequest) {
       // Classification IA des charges fixes (fallback : détection mots-clés déjà appliquée)
       const enriched = await classifyFixedCharges(syncResult.invoices)
 
-      const rows = enriched.map(inv => ({
+      const rows = enriched.map(inv => {
+        // Semaine d'imputation PAR FACTURE, dérivée de sa propre date (et non de
+        // la fenêtre de synchro appliquée en bloc). Repli sur la fenêtre si la
+        // facture n'a pas de date exploitable.
+        const wk = weekForInvoice(null, inv.invoice_date) ?? { week, year }
+        return {
         client_id:      clientRow.id,
         supplier_name:  inv.supplier_name,
         invoice_number: inv.invoice_number ?? null,
@@ -85,8 +91,8 @@ export async function POST(req: NextRequest) {
         amount_ht:      inv.amount_ht,
         tva_rate:       inv.tva_rate,
         amount_ttc:     inv.amount_ttc,
-        week_number:    week,
-        year,
+        week_number:    wk.week,
+        year:           wk.year,
         // Toujours importée « à vérifier » : ne compte dans la marge qu'après
         // validation humaine. Explicite, sans dépendre du défaut de colonne.
         status:         'a_verifier',
@@ -94,7 +100,8 @@ export async function POST(req: NextRequest) {
         period_days:     inv.period_days ?? null,
         prorata_ht:      inv.prorata_ht ?? null,
         notes: `Importé depuis ${prov.name}${inv.external_id ? ` (${inv.external_id})` : ''}`,
-      }))
+        }
+      })
 
       const { error: upsertError } = await service.from('invoices').upsert(rows, {
         onConflict: 'client_id,invoice_number,invoice_date',
