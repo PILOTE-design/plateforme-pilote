@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { resolveClientId } from '@/lib/resolve-client-id'
+import type { CaSourceKey } from '@/lib/ca-sources'
 
 export const dynamic = 'force-dynamic'
 
@@ -43,10 +44,13 @@ export async function POST(request: NextRequest) {
 
   if (!week_number || !year) return NextResponse.json({ error: 'week_number et year requis' }, { status: 400 })
 
+  // Saisie manuelle : le repli TOUJOURS disponible, quelle que soit la source
+  // branchée par ailleurs (cf. lib/ca-sources). On enregistre l'origine du
+  // chiffre pour que l'écran puisse dire d'où il vient.
   const { data, error } = await serviceSupabase
     .from('weekly_ca')
     .upsert(
-      { client_id: clientId, week_number, year, ca_total, ca_boucherie, ca_charcuterie, ca_traiteur, ca_divers, ca_vente, updated_at: new Date().toISOString() },
+      { client_id: clientId, week_number, year, ca_total, ca_boucherie, ca_charcuterie, ca_traiteur, ca_divers, ca_vente, source: 'manuel' as CaSourceKey, updated_at: new Date().toISOString() },
       { onConflict: 'client_id,week_number,year' }
     )
     .select()

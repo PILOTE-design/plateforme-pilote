@@ -32,6 +32,9 @@ export async function archiveWeekData(
     families_detail: familiesDetail,
     nb_tickets: fin.nb_tickets,
     moyenne_ticket: fin.moyenne_ticket,
+    // Origine du chiffre (cf. lib/ca-sources) : ici les relevés de caisse
+    // déposés à la génération du rapport.
+    source: 'rapport_pdf',
   })
   if (insCaErr) throw new Error(`Historisation weekly_ca (écriture) : ${insCaErr.message}`)
 

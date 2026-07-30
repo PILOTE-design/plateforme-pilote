@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { resolveClientId } from '@/lib/resolve-client-id'
 import { computeWeekEconomics } from '@/lib/week-economics'
+import { readWeekCa, CA_SOURCES } from '@/lib/ca-sources'
 
 export const dynamic = 'force-dynamic'
 
@@ -24,25 +25,21 @@ export async function GET(request: NextRequest) {
   const clientId = await resolveClientId(serviceSupabase, user.id, user.email)
   if (!clientId) return NextResponse.json({ achats_ht: 0, masse_salariale: 0, ca_total: 0 })
 
-  // CA de la semaine : détail automatique du rapport hebdo (families_detail),
-  // repli sur les montants ca_* saisis à la main dans la modale « Saisir le CA ».
-  const { data: caData } = await serviceSupabase
-    .from('weekly_ca')
-    .select('*')
-    .eq('client_id', clientId)
-    .eq('week_number', week)
-    .eq('year', year)
-    .maybeSingle()
+  // CA de la semaine — lecteur UNIQUE (lib/ca-sources) : détail par famille du
+  // rapport hebdo, repli sur les montants saisis à la main. Quelle que soit la
+  // source qui l'a écrit, le moteur reçoit la même entrée.
+  const record = await readWeekCa(serviceSupabase, clientId, week, year)
 
-  const economics = await computeWeekEconomics(serviceSupabase, clientId, week, year, {
-    ca_total: parseFloat((caData as any)?.ca_total || 0) || 0,
-    familles: Array.isArray((caData as any)?.families_detail) ? (caData as any).families_detail : null,
-    by_rayon: {
-      boucherie:   parseFloat((caData as any)?.ca_boucherie || 0) || 0,
-      charcuterie: parseFloat((caData as any)?.ca_charcuterie || 0) || 0,
-      traiteur:    parseFloat((caData as any)?.ca_traiteur || 0) || 0,
-    },
+  const economics = await computeWeekEconomics(serviceSupabase, clientId, week, year,
+    record?.ca ?? { ca_total: 0, familles: null, by_rayon: null })
+
+  return NextResponse.json({
+    ...economics,
+    // Contrat inchangé pour les écrans existants : la ligne weekly_ca brute
+    // (la page Facturation y lit families_detail).
+    ca_detail: record?.raw ?? null,
+    // Provenance du chiffre, pour que l'écran puisse l'annoncer au gérant
+    ca_source: record?.source ?? null,
+    ca_source_label: record ? CA_SOURCES[record.source].label : null,
   })
-
-  return NextResponse.json({ ...economics, ca_detail: caData || null })
 }
