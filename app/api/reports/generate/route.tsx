@@ -277,7 +277,7 @@ export async function POST(req: NextRequest) {
     const baseChecks = runExtractionChecks(serialized, checksCtx)
 
     // ── Contre-lecture indépendante (lot V4) — une 2ᵉ lecture qui NE PARTAGE PAS
-    //   les erreurs de la 1ʳᵉ, en deux briques complémentaires :
+    // les erreurs de la 1ʳᵉ, en deux briques complémentaires :
     //   · le TÉMOIN déterministe (report-witness) relit le TEXTE BRUT et confirme
     //     deux invariants structurels fiables — la liste des familles extraites =
     //     les en-têtes du fichier, et le CA du relevé financier figure bien dans
