@@ -9,7 +9,7 @@ const MONTHS_FR = [
   'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'
 ]
 
-type Report = { id: string; title: string; file_url: string; created_at: string }
+type Report = { id: string; title: string; created_at: string; download_url: string }
 
 function groupReports(reports: Report[]) {
   const grouped: Record<number, Record<number, Report[]>> = {}
@@ -133,7 +133,7 @@ export function ReportsTree({ reports }: { reports: Report[] }) {
                                   </p>
                                 </div>
                               </div>
-                              <a href={report.file_url} target="_blank" rel="noopener noreferrer" className="flex-shrink-0">
+                              <a href={report.download_url} target="_blank" rel="noopener noreferrer" className="flex-shrink-0">
                                 <Button variant="outline" size="sm" className="h-8 text-xs rounded-lg border-gray-200 text-pilote hover:border-pilote hover:bg-pilote-50 transition-colors">
                                   <Download className="w-3.5 h-3.5 mr-1.5" />Télécharger
                                 </Button>
