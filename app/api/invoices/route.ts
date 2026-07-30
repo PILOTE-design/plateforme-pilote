@@ -94,11 +94,15 @@ export async function PATCH(request: NextRequest) {
     .filter(r => r.category !== category && sameSupplierFamily(String(r.supplier_name || ''), supplierName))
     .map(r => r.id as string)
 
-  // Mise à jour par lots (borne large : un client TPE reste loin de ces volumes)
+  // Mise à jour par lots (borne large : un client TPE reste loin de ces volumes).
+  // Cloisonnement redondant : les ids viennent déjà d'une lecture filtrée par
+  // client, mais on refiltre à l'écriture pour que l'invariant tienne même si un
+  // futur refactor casse la lecture en amont (garde-fou systématique, lot A).
   for (let i = 0; i < ids.length; i += 500) {
     const { error } = await serviceSupabase
       .from('invoices')
       .update({ category })
+      .eq('client_id', clientId)
       .in('id', ids.slice(i, i + 500))
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   }
