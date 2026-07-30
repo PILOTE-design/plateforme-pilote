@@ -1,7 +1,7 @@
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { resolveClientId } from '@/lib/resolve-client-id'
-import { computeWeekEconomics, type WeekEconomics } from '@/lib/week-economics'
-import { familleMatchesText, margeFiabilite, effectiveCaStems } from '@/lib/postes'
+import { computeWeekEconomics, htConverter, type WeekEconomics } from '@/lib/week-economics'
+import { familleMatchesText, margeFiabilite, effectiveCaStems, DEFAULT_TVA_RATE } from '@/lib/postes'
 import { ensureMarginFamilies, caByFamily, type MarginFamily } from '@/lib/margin-families'
 import { normalizeSupplierName, sameSupplierFamily, supplierSociete } from '@/lib/supplier-memory'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -38,6 +38,8 @@ type FamRow = {
   taux: number | null        // marge matière (CA − achats) / CA
   tauxDirect: number | null  // marge sur coût direct (CA − achats − salaires) / CA
   taux12: number | null      // marge matière cumulée 12 mois glissants
+  fiable: boolean            // marge de la période lissée plausible (pas > 55 %, achats présents)
+  fiable12: boolean          // marge 12 mois plausible
 }
 
 function isoWeekOf(d: Date): { week: number; year: number } {
@@ -73,6 +75,9 @@ export default async function MargesPage() {
   // moteur hebdo ; sans ce réglage partagé, l'écran et le moteur diviseraient le
   // CA différemment dès qu'un client personnalise son vocabulaire.
   let caStemsRaw: unknown = null
+  // Taux de TVA du client : sert à ramener le CA archivé (TTC) en HT, EXACTEMENT
+  // comme le moteur hebdo, pour ne pas comparer du CA TTC à des achats HT.
+  let tvaRate = DEFAULT_TVA_RATE
   if (clientId) {
     const [{ data: caData }, { data: invData }, { data: splitData }, { data: clientRow }] = await Promise.all([
       serviceSupabase.from('weekly_ca')
@@ -85,9 +90,10 @@ export default async function MargesPage() {
       serviceSupabase.from('supplier_rayon_splits')
         .select('supplier_key, pct_boucherie, pct_charcuterie, pct_traiteur, pct_fruits_et_legumes, pct_divers')
         .eq('client_id', clientId),
-      serviceSupabase.from('clients').select('ca_stems').eq('id', clientId).maybeSingle(),
+      serviceSupabase.from('clients').select('ca_stems, tva_rate').eq('id', clientId).maybeSingle(),
     ])
     caStemsRaw = (clientRow as { ca_stems?: unknown } | null)?.ca_stems ?? null
+    tvaRate = Number((clientRow as { tva_rate?: unknown } | null)?.tva_rate ?? DEFAULT_TVA_RATE) || DEFAULT_TVA_RATE
     ca12Rows = (caData || []).filter((r: any) => inWindow(r.year, r.week_number) && parseFloat(String(r.ca_total || 0)) > 0)
     inv12Rows = (invData || []).filter((r: any) => inWindow(r.year, r.week_number) && r.status === 'validee')
     splitRows = splitData || []
@@ -134,14 +140,19 @@ export default async function MargesPage() {
   // ── 12 mois glissants : CA par famille (libellés de vente) + achats ventilés ──
   const entries12: { nom?: unknown; montant?: unknown }[] = ca12Rows.flatMap((r: any) => Array.isArray(r.families_detail) ? r.families_detail : [])
   const entries4: { nom?: unknown; montant?: unknown }[] = rowsRaw.flatMap((r: any) => Array.isArray(r.families_detail) ? r.families_detail : [])
-  const ca12ByRef = caByFamily(entries12, families).byId
-  const ca4ByRef  = caByFamily(entries4, families).byId
-  const ca12Total = ca12Rows.reduce((s: number, r: any) => s + (parseFloat(String(r.ca_total || 0)) || 0), 0)
+  // Le CA archivé (weekly_ca / families_detail) est TTC ; on le ramène en HT avec
+  // le MÊME taux que le moteur hebdo. Sinon on comparerait du CA TTC à des achats
+  // HT, ce qui surévalue la marge de ~3 points (cf. lib/week-economics).
+  const toHT = htConverter(tvaRate)
+  const toHTMap = (m: Map<string, number>) => new Map<string, number>([...m].map(([id, v]): [string, number] => [id, toHT(v)]))
+  const ca12ByRef = toHTMap(caByFamily(entries12, families).byId)
+  const ca4ByRef  = toHTMap(caByFamily(entries4, families).byId)
+  const ca12Total = toHT(ca12Rows.reduce((s: number, r: any) => s + (parseFloat(String(r.ca_total || 0)) || 0), 0))
 
   const caStems = effectiveCaStems(caStemsRaw)
   const famDefs = weeks[0]?.eco.familles || []
   const ca12Fam = famDefs.map(f =>
-    entries12.reduce((s, e) => s + (familleMatchesText(f.key, f.label, String(e?.nom ?? ''), String(e?.nom ?? ''), caStems) ? (Number(e?.montant) || 0) : 0), 0))
+    toHT(entries12.reduce((s, e) => s + (familleMatchesText(f.key, f.label, String(e?.nom ?? ''), String(e?.nom ?? ''), caStems) ? (Number(e?.montant) || 0) : 0), 0)))
 
   // Ventilation 12 mois des achats — même règle que le moteur (splits fournisseur,
   // fruits & légumes replié dans divers), réécrite ici sur la fenêtre longue.
@@ -181,17 +192,23 @@ export default async function MargesPage() {
     const salaires = sum(e => e.familles[i]?.salaires || 0)
     const a12 = (achats12 as Record<string, number>)[f.key] ?? 0
     const c12 = ca12Fam[i] || 0
+    // Voir lib/week-economics : sans achats rattachés, le taux vaudrait 100 % et
+    // serait peint en vert. On n'affiche rien plutôt qu'un chiffre faux.
+    const taux = ca > 0 && achats > 0 ? ((ca - achats) / ca) * 100 : null
+    const taux12 = c12 > 0 && a12 > 0 ? ((c12 - a12) / c12) * 100 : null
     return {
       key: f.key,
       label: f.label,
       refFam: refOf(f.key, f.label),
       ca, achats, salaires,
       ventile: weeks.some(w => w.eco.familles[i]?.achats_ventiles),
-      // Voir lib/week-economics : sans achats rattachés, le taux vaudrait 100 %
-      // et serait peint en vert. On n'affiche rien plutôt qu'un chiffre faux.
-      taux: ca > 0 && achats > 0 ? ((ca - achats) / ca) * 100 : null,
+      taux,
       tauxDirect: ca > 0 && achats > 0 ? ((ca - achats - salaires) / ca) * 100 : null,
-      taux12: c12 > 0 && a12 > 0 ? ((c12 - a12) / c12) * 100 : null,
+      taux12,
+      // Plausibilité PAR FAMILLE (même garde-fou que le global) : une marge > 55 %
+      // trahit une ventilation partielle des achats ; on ne la peint pas en vert.
+      fiable: margeFiabilite(ca, achats, taux).fiable,
+      fiable12: margeFiabilite(c12, a12, taux12).fiable,
     }
   })
 
@@ -215,11 +232,21 @@ export default async function MargesPage() {
   const hasDivers = diversRow.ca > 0 || diversRow.achats > 0
 
   const famSansAchats = famRows.filter(f => f.ca > 0 && !f.ventile)
+  // Familles à marge invraisemblable (> 55 %) : la ventilation des achats est
+  // PARTIELLE (un rayon revendiqué mais peu d'achats rattachés). Distinct de
+  // famSansAchats (aucune ventilation → taux « — »). Ici le taux se calcule mais
+  // ne veut rien dire : on l'affiche en alerte, jamais en vert.
+  const famDouteuses = famRows.filter(f => f.taux !== null && !f.fiable)
   const caFamilles     = famRows.reduce((s, f) => s + f.ca, 0)
   const achatsFamilles = famRows.reduce((s, f) => s + f.achats, 0)
   const salFamilles    = famRows.reduce((s, f) => s + f.salaires, 0)
   const caHorsFamilles = Math.max(0, caTotal - caFamilles - (hasDivers ? diversRow.ca : 0))
   const taux12Total = ca12Total > 0 && achats12.total > 0 ? ((ca12Total - achats12.total) / ca12Total) * 100 : null
+  // Plausibilité des TOTAUX peints en vert (pied de tableau) : une marge > 55 %
+  // (achats incomplets sur la période) n'est pas affichée en vert.
+  const margeInfo12 = margeFiabilite(ca12Total, achats12.total, taux12Total)
+  const tauxFamTotal = caFamilles > 0 ? ((caFamilles - achatsFamilles) / caFamilles) * 100 : null
+  const famTotalFiable = margeFiabilite(caFamilles, achatsFamilles, tauxFamTotal).fiable
 
   const periodLabel = weeks.length > 0
     ? `S${weeks[0].week} → S${weeks[weeks.length - 1].week} · ${currentYear} (${weeks.length} semaine${weeks.length > 1 ? 's' : ''} lissée${weeks.length > 1 ? 's' : ''})`
@@ -275,7 +302,7 @@ export default async function MargesPage() {
       ) : (
         <>
           {/* Alertes de fiabilité */}
-          {(!margeInfo.fiable || aVerifier > 0 || nonVentiles > 0 || famSansAchats.length > 0) && (
+          {(!margeInfo.fiable || aVerifier > 0 || nonVentiles > 0 || famSansAchats.length > 0 || famDouteuses.length > 0) && (
             <div className="mb-6 space-y-2">
               {!margeInfo.fiable && margeInfo.message && (
                 <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 flex items-center gap-2 text-sm text-amber-800">
@@ -302,6 +329,13 @@ export default async function MargesPage() {
                 <div className="bg-pilote-50 border border-pilote-200 rounded-xl px-4 py-2.5 flex items-center gap-2 text-sm text-pilote-800">
                   <Info className="w-4 h-4 flex-shrink-0" />
                   <span><strong>{famSansAchats.map(f => f.label).join(', ')}</strong> : aucun achat ventilé sur {famSansAchats.length > 1 ? 'ces familles' : 'cette famille'} — leur marge est donc surévaluée.</span>
+                  <Link href="/dashboard/facturation" className="ml-auto text-xs font-bold underline whitespace-nowrap">Ventiler →</Link>
+                </div>
+              )}
+              {famDouteuses.length > 0 && (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 flex items-center gap-2 text-sm text-amber-800">
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                  <span><strong>{famDouteuses.map(f => f.label).join(', ')}</strong> : marge anormalement haute ({famDouteuses.length > 1 ? 'ces familles ont' : 'cette famille a'} des achats probablement incomplets) — chiffre à vérifier avant de s&apos;y fier.</span>
                   <Link href="/dashboard/facturation" className="ml-auto text-xs font-bold underline whitespace-nowrap">Ventiler →</Link>
                 </div>
               )}
@@ -371,14 +405,14 @@ export default async function MargesPage() {
                         </td>
                         <td className="px-4 py-3 text-right text-sm text-gray-700 tabular">{fmt(f.ca)} €</td>
                         <td className="px-4 py-3 text-right text-sm text-gray-700 tabular">{fmt(f.achats)} €</td>
-                        <td className={`px-4 py-3 text-right text-sm font-semibold tabular ${f.ca - f.achats >= 0 ? 'text-gray-900' : 'text-red-600'}`}>{fmt(f.ca - f.achats)} €</td>
-                        <td className={`px-4 py-3 text-right text-sm font-bold tabular ${margeColor(f.taux, f.refFam)}`}>{pct(f.taux)}</td>
+                        <td className={`px-4 py-3 text-right text-sm font-semibold tabular ${f.achats <= 0 ? 'text-gray-400' : f.ca - f.achats >= 0 ? 'text-gray-900' : 'text-red-600'}`}>{fmt(f.ca - f.achats)} €</td>
+                        <td className={`px-4 py-3 text-right text-sm font-bold tabular ${f.fiable ? margeColor(f.taux, f.refFam) : 'text-amber-600'}`}>{pct(f.taux)}{!f.fiable && f.taux !== null && <sup className="ml-0.5 text-[9px] font-bold text-amber-500">!</sup>}</td>
                         <td className="px-4 py-3 text-right whitespace-nowrap">
                           <RepereEditor familyId={f.refFam?.id ?? null} lo={f.refFam?.benchmark_lo ?? null} hi={f.refFam?.benchmark_hi ?? null} />
                         </td>
                         <td className="px-4 py-3 text-right text-xs text-gray-500 tabular">{f.salaires > 0 ? `${fmt(f.salaires)} €` : '—'}</td>
                         <td className={`px-4 py-3 text-right text-sm font-semibold tabular ${f.tauxDirect !== null && f.tauxDirect < 0 ? 'text-red-600' : 'text-gray-700'}`}>{pct(f.tauxDirect)}</td>
-                        <td className={`px-4 py-3 text-right text-sm font-semibold tabular ${margeColor(f.taux12, f.refFam)}`}>{pct(f.taux12)}</td>
+                        <td className={`px-4 py-3 text-right text-sm font-semibold tabular ${f.fiable12 ? margeColor(f.taux12, f.refFam) : 'text-amber-600'}`}>{pct(f.taux12)}{!f.fiable12 && f.taux12 !== null && <sup className="ml-0.5 text-[9px] font-bold text-amber-500">!</sup>}</td>
                       </tr>,
                       ...sous.map(s => {
                         const ca4 = ca4ByRef.get(s.id) || 0
@@ -451,11 +485,11 @@ export default async function MargesPage() {
                     <td className="px-4 py-3 text-right font-bold tabular">{fmt(caFamilles)} €</td>
                     <td className="px-4 py-3 text-right font-bold tabular">{fmt(achatsFamilles)} €</td>
                     <td className="px-4 py-3 text-right font-bold tabular text-green-300">{fmt(caFamilles - achatsFamilles)} €</td>
-                    <td className="px-4 py-3 text-right font-bold tabular text-green-300">{pct(caFamilles > 0 ? ((caFamilles - achatsFamilles) / caFamilles) * 100 : null)}</td>
+                    <td className={`px-4 py-3 text-right font-bold tabular ${famTotalFiable ? 'text-green-300' : 'text-amber-300'}`}>{pct(tauxFamTotal)}</td>
                     <td className="px-4 py-3" />
                     <td className="px-4 py-3 text-right font-bold tabular text-white/70">{fmt(salFamilles)} €</td>
                     <td className="px-4 py-3 text-right font-bold tabular text-green-300">{pct(caFamilles > 0 ? ((caFamilles - achatsFamilles - salFamilles) / caFamilles) * 100 : null)}</td>
-                    <td className="px-4 py-3 text-right font-bold tabular text-green-300">{pct(taux12Total)}</td>
+                    <td className={`px-4 py-3 text-right font-bold tabular ${margeInfo12.fiable ? 'text-green-300' : 'text-amber-300'}`}>{pct(taux12Total)}</td>
                   </tr>
                 </tfoot>
               </table>
