@@ -23,7 +23,9 @@ import {
   loadExtractionRow, deserializeExtraction, finalizeExtraction,
   type FamilyOverride,
 } from './report-trace'
-import { runExtractionChecks, statusFromChecks, failedChecksSummary, type ChecksContext } from '@/lib/report-checks'
+import { runExtractionChecks, statusFromChecks, failedChecksSummary, type ChecksContext, type CheckResult } from '@/lib/report-checks'
+import { runWitnessChecks } from '@/lib/report-witness'
+import { verifyFamiliesCheck } from './report-verify'
 import { buildFamRows, buildStatus, buildMargeRead, buildExecSummary, generateInsights } from './report-compute'
 import { getPieBuffer } from './report-chart'
 import type { ComputedReport, ExtractedData } from './report-types'
@@ -272,7 +274,37 @@ export async function POST(req: NextRequest) {
       checksCtx.previousN1 = prevN1 ? { ca_total: parseFloat(String((prevN1 as any).ca_total)) || 0 } : null
     }
     const serialized = serializeExtraction(data)
-    const checks = runExtractionChecks(serialized, checksCtx)
+    const baseChecks = runExtractionChecks(serialized, checksCtx)
+
+    // ── Contre-lecture indépendante (lot V4) — une 2ᵉ lecture qui NE PARTAGE PAS
+    //   les erreurs de la 1ʳᵉ, en deux briques complémentaires :
+    //   · le TÉMOIN déterministe (report-witness) relit le TEXTE BRUT et confirme
+    //     deux invariants structurels fiables — la liste des familles extraites =
+    //     les en-têtes du fichier, et le CA du relevé financier figure bien dans
+    //     le fichier de ventes. Gratuit, jamais d'IA, jamais de re-somme ambiguë.
+    //   · le VÉRIFICATEUR IA (report-verify), focalisé « vérifie, ne ré-extrais
+    //     pas », relit chaque total de famille dans le texte pour désambiguïser le
+    //     collage quantité/montant que la regex ne sait pas trancher (ex. un code
+    //     PLU pris pour un montant). Best-effort et borné : un échec rend « info ».
+    // Le vérificateur (2 appels Haiku, en parallèle) ne tourne QUE si l'on n'est
+    // pas déjà bloqué par les contrôles gratuits : dans ce cas le rapport ne sort
+    // pas et l'écran de validation masque le bouton — payer l'IA n'apporterait
+    // rien. Toutes ces lectures sont « validation » : en désaccord elles envoient
+    // à la validation humaine, elles ne bloquent jamais seules.
+    const witnessChecks = runWitnessChecks(tVN, tVN1, serialized)
+    const interimStatus = statusFromChecks([...baseChecks, ...witnessChecks])
+    let verifyChecks: CheckResult[] = []
+    if (interimStatus !== 'bloque' && data.financier_n.ca_net > 0) {
+      verifyChecks = await Promise.all([
+        verifyFamiliesCheck(tVN, serialized.ventes_n.familles, serialized.financier_n.ca_net,
+          'contre_lecture_familles_n', 'Contre-lecture indépendante des familles N'),
+        verifyFamiliesCheck(tVN1, serialized.ventes_n1.familles, serialized.financier_n1.ca_net,
+          'contre_lecture_familles_n1', 'Contre-lecture indépendante des familles N-1'),
+      ])
+    }
+    // Le tableau combiné DEVIENT « checks » : trace, garde-fou CA et porte de
+    // validation consomment désormais l'ensemble V2 + témoin + vérificateur.
+    const checks = [...baseChecks, ...witnessChecks, ...verifyChecks]
     const checksStatus = statusFromChecks(checks)
 
     // ── Traçabilité (lot V1) — AVANT tout garde-fou : les extractions ratées
