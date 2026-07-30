@@ -1,7 +1,7 @@
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { resolveClientId } from '@/lib/resolve-client-id'
 import { computeWeekEconomics, type WeekEconomics } from '@/lib/week-economics'
-import { familleMatchesText } from '@/lib/postes'
+import { familleMatchesText, margeFiabilite } from '@/lib/postes'
 import { ensureMarginFamilies, caByFamily, type MarginFamily } from '@/lib/margin-families'
 import { normalizeSupplierName, sameSupplierFamily, supplierSociete } from '@/lib/supplier-memory'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -217,6 +217,12 @@ export default async function MargesPage() {
     ? `S${weeks[0].week} → S${weeks[weeks.length - 1].week} · ${currentYear} (${weeks.length} semaine${weeks.length > 1 ? 's' : ''} lissée${weeks.length > 1 ? 's' : ''})`
     : ''
 
+  // Fiabilité de la marge globale : sans achats saisis sur la période, le taux
+  // vaut mécaniquement 100 %. On ne le peint pas en vert et on dit pourquoi
+  // (même règle que le tableau de bord et le rapport PDF).
+  const margeInfo = margeFiabilite(caTotal, achatsTotal, tauxMarge)
+  const tauxMargeAffichable = margeInfo.fiable ? tauxMarge : null
+
   // Couleur : le repère MODIFIABLE de la famille quand il existe, sinon les seuils généraux.
   const margeColor = (m: number | null, ref: MarginFamily | null = null) => {
     if (m === null) return 'text-gray-400'
@@ -261,8 +267,15 @@ export default async function MargesPage() {
       ) : (
         <>
           {/* Alertes de fiabilité */}
-          {(aVerifier > 0 || nonVentiles > 0 || famSansAchats.length > 0) && (
+          {(!margeInfo.fiable || aVerifier > 0 || nonVentiles > 0 || famSansAchats.length > 0) && (
             <div className="mb-6 space-y-2">
+              {!margeInfo.fiable && margeInfo.message && (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 flex items-center gap-2 text-sm text-amber-800">
+                  <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                  <span>{margeInfo.message}</span>
+                  <Link href="/dashboard/facturation" className="ml-auto text-xs font-bold underline whitespace-nowrap">Saisir les achats →</Link>
+                </div>
+              )}
               {aVerifier > 0 && (
                 <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 flex items-center gap-2 text-sm text-amber-800">
                   <AlertTriangle className="w-4 h-4 flex-shrink-0" />
@@ -296,8 +309,12 @@ export default async function MargesPage() {
             </CardContent></Card>
             <Card className="hover:shadow-card-hover transition-shadow"><CardContent className="p-5">
               <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Marge matière</p>
-              <p className={`text-2xl font-bold tracking-tight tabular ${margeColor(tauxMarge)}`}>{pct(tauxMarge)}</p>
-              <p className="text-xs text-gray-400 mt-1 tabular">{fmt(margeBrute)} € · 12 mois : {pct(taux12Total)}</p>
+              <p className={`text-2xl font-bold tracking-tight tabular ${margeColor(tauxMargeAffichable)}`}>{pct(tauxMargeAffichable)}</p>
+              <p className={`text-xs mt-1 tabular ${margeInfo.fiable ? 'text-gray-400' : 'text-amber-600 font-semibold'}`}>
+                {margeInfo.fiable
+                  ? `${fmt(margeBrute)} € · 12 mois : ${pct(taux12Total)}`
+                  : margeInfo.raison === 'aucun_achat' ? 'aucune facture saisie' : 'achats incomplets'}
+              </p>
             </CardContent></Card>
             <Card className="hover:shadow-card-hover transition-shadow"><CardContent className="p-5">
               <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Masse salariale</p>
