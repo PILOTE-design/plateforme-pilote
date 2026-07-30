@@ -47,6 +47,36 @@ export const CLASSIC_CA_STEMS: Record<string, string[]> = {
   traiteur:    ['traiteur', 'rotisserie', 'snack', 'sandwich', 'plat'],
 }
 
+/** Vocabulaire de reconnaissance des libellés de vente, par rayon métier. */
+export type CaStems = Record<string, string[]>
+
+/** Lit `clients.ca_stems` (jsonb) : le vocabulaire PROPRE au client, quand sa
+ *  caisse ne nomme pas ses familles comme la nôtre (« BOEUF » vs « VIANDE DE
+ *  BOEUF », « SNACKING » vs « SNACK »…). Seuls les rayons connus sont retenus,
+ *  les racines sont normalisées comme celles du code. `null` = rien de valide,
+ *  le vocabulaire par défaut s'applique alors intégralement. */
+export function parseCaStems(raw: unknown): CaStems | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const out: CaStems = {}
+  for (const rayon of Object.keys(CLASSIC_CA_STEMS)) {
+    const v = (raw as Record<string, unknown>)[rayon]
+    if (!Array.isArray(v)) continue
+    const stems = [...new Set(v.map(s => normText(s).replace(/ /g, '')).filter(s => s.length >= 2))].slice(0, 40)
+    if (stems.length > 0) out[rayon] = stems
+  }
+  return Object.keys(out).length > 0 ? out : null
+}
+
+/** Vocabulaire EFFECTIF d'un client : le sien pour les rayons qu'il a redéfinis,
+ *  celui du code pour les autres. Un client sans réglage (cas de toutes les
+ *  boutiques existantes) retrouve donc EXACTEMENT le comportement d'origine.
+ *  L'ordre des rayons est celui de CLASSIC_CA_STEMS — il compte (première racine
+ *  qui reconnaît le libellé), et la fusion par étalement le préserve. */
+export function effectiveCaStems(raw: unknown): CaStems {
+  const custom = parseCaStems(raw)
+  return custom ? { ...CLASSIC_CA_STEMS, ...custom } : CLASSIC_CA_STEMS
+}
+
 // RACHAT / REVENTE : produit acheté fini et revendu tel quel. Ce n'est pas le métier —
 // ni la matière, ni la main-d'œuvre, ni la marge. Testé AVANT tout le reste, sinon
 // « CHARCUTERIE RACHAT » partirait en charcuterie et gonflerait sa marge apparente.
@@ -67,12 +97,12 @@ function stemInText(stem: string, normalized: string): boolean {
 /** Rayon métier d'une famille de vente (« VIANDE DE BOEUF » → boucherie).
  *  « divers » pour un rachat, `null` pour tout ce qui n'est reconnu par personne —
  *  les deux finissent dans le bloc Divers, mais seul le rachat est un choix explicite. */
-export function classicRayonOfLabel(nom: unknown): string | null {
+export function classicRayonOfLabel(nom: unknown, stems: CaStems = CLASSIC_CA_STEMS): string | null {
   const n = normText(nom)
   if (!n) return null
   if (DIVERS_STEMS.some(st => stemInText(st, n))) return DIVERS_POSTE.key
-  for (const [rayon, stems] of Object.entries(CLASSIC_CA_STEMS)) {
-    if (stems.some(st => stemInText(st, n))) return rayon
+  for (const [rayon, list] of Object.entries(stems)) {
+    if (list.some(st => stemInText(st, n))) return rayon
   }
   return null
 }
@@ -140,7 +170,13 @@ export function parseMarginFamilies(raw: unknown): string[] {
 
 /** Une famille (clé + libellé) reconnaît-elle ce texte (poste, famille de CA, rayon) ?
  *  Clé identique, libellés à racine commune, ou racine historique des 4 rayons classiques. */
-export function familleMatchesText(familleKey: string, familleLabel: string, textKey: string, textLabel?: string): boolean {
+export function familleMatchesText(
+  familleKey: string,
+  familleLabel: string,
+  textKey: string,
+  textLabel?: string,
+  stems: CaStems = CLASSIC_CA_STEMS,
+): boolean {
   const t = textLabel ?? textKey
   // BARRIÈRE PRIORITAIRE : un rachat n'appartient à aucun métier, même quand son nom
   // en porte le mot. Sans elle, « CHARCUTERIE RACHAT » ressemble trop à « Charcuterie »
@@ -148,7 +184,7 @@ export function familleMatchesText(familleKey: string, familleLabel: string, tex
   if (familleKey !== DIVERS_POSTE.key && isDiversLabel(t)) return false
   if (familleKey === textKey) return true
   if (labelsMatch(familleLabel, t)) return true
-  if (CLASSIC_CA_STEMS[familleKey]) return classicRayonOfLabel(t) === familleKey
+  if (stems[familleKey]) return classicRayonOfLabel(t, stems) === familleKey
   return false
 }
 

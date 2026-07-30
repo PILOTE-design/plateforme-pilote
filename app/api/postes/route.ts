@@ -3,6 +3,7 @@ import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { resolveClientId } from '@/lib/resolve-client-id'
 import {
   BUILTIN_POSTES, parseCustomPostes, parseMarginFamilies, slugifyPoste, DEFAULT_TVA_RATE,
+  CLASSIC_CA_STEMS, parseCaStems, effectiveCaStems,
   type Poste,
 } from '@/lib/postes'
 
@@ -24,10 +25,13 @@ export async function GET() {
 
   const serviceSupabase = createServiceClient()
   const clientId = await resolveClientId(serviceSupabase, user.id, user.email)
-  if (!clientId) return NextResponse.json({ builtin: BUILTIN_POSTES, custom: [], margin_families: parseMarginFamilies(null), tva_rate: DEFAULT_TVA_RATE })
+  if (!clientId) return NextResponse.json({
+    builtin: BUILTIN_POSTES, custom: [], margin_families: parseMarginFamilies(null),
+    tva_rate: DEFAULT_TVA_RATE, ca_stems: CLASSIC_CA_STEMS, ca_stems_personnalises: false,
+  })
 
   const { data: row, error } = await serviceSupabase
-    .from('clients').select('custom_postes, margin_families, tva_rate').eq('id', clientId).maybeSingle()
+    .from('clients').select('custom_postes, margin_families, tva_rate, ca_stems').eq('id', clientId).maybeSingle()
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
   return NextResponse.json({
@@ -35,6 +39,10 @@ export async function GET() {
     custom: parseCustomPostes(row?.custom_postes),
     margin_families: parseMarginFamilies(row?.margin_families),
     tva_rate: Number(row?.tva_rate ?? DEFAULT_TVA_RATE),
+    // Vocabulaire EFFECTIF (celui du client complété par le défaut) + drapeau
+    // indiquant s'il a été personnalisé, pour que l'écran sache quoi proposer.
+    ca_stems: effectiveCaStems(row?.ca_stems),
+    ca_stems_personnalises: parseCaStems(row?.ca_stems) !== null,
   })
 }
 
@@ -99,6 +107,22 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: 'Taux de TVA invalide (entre 0 et 20 %)' }, { status: 400 })
     }
     updates.tva_rate = Math.round(t * 100) / 100
+  }
+
+  // Vocabulaire de reconnaissance des libellés de vente, par rayon métier.
+  // `null` (ou objet vide) remet le client sur le vocabulaire par défaut.
+  if ('ca_stems' in body) {
+    if (body.ca_stems === null) {
+      updates.ca_stems = null
+    } else {
+      const parsed = parseCaStems(body.ca_stems)
+      if (parsed === null) {
+        return NextResponse.json({
+          error: 'Vocabulaire invalide : attendu { boucherie: ["boeuf", …], charcuterie: [...], traiteur: [...] } avec des mots d\'au moins 2 lettres',
+        }, { status: 400 })
+      }
+      updates.ca_stems = parsed
+    }
   }
 
   if (Object.keys(updates).length === 0) {

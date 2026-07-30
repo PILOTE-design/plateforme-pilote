@@ -1,13 +1,13 @@
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { resolveClientId } from '@/lib/resolve-client-id'
 import { computeWeekEconomics, type WeekEconomics } from '@/lib/week-economics'
-import { familleMatchesText, margeFiabilite } from '@/lib/postes'
+import { familleMatchesText, margeFiabilite, effectiveCaStems } from '@/lib/postes'
 import { ensureMarginFamilies, caByFamily, type MarginFamily } from '@/lib/margin-families'
 import { normalizeSupplierName, sameSupplierFamily, supplierSociete } from '@/lib/supplier-memory'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Percent, Info, Settings2, AlertTriangle } from 'lucide-react'
 import Link from 'next/link'
-import { RepereEditor } from './repere-editor'
+import { RepereEditor, StemsEditor } from './repere-editor'
 
 // Page Marges — vue LISSÉE (4 dernières semaines) du moteur unique
 // lib/week-economics, complétée depuis le 28/07 par le RÉFÉRENTIEL de familles
@@ -68,8 +68,13 @@ export default async function MargesPage() {
   let inv12Rows: any[] = []
   let splitRows: any[] = []
   let rowsRaw: any[] = []
+  // Vocabulaire de reconnaissance du client (clients.ca_stems) — le cumul 12 mois
+  // ci-dessous rattache les libellés de vente aux familles EXACTEMENT comme le
+  // moteur hebdo ; sans ce réglage partagé, l'écran et le moteur diviseraient le
+  // CA différemment dès qu'un client personnalise son vocabulaire.
+  let caStemsRaw: unknown = null
   if (clientId) {
-    const [{ data: caData }, { data: invData }, { data: splitData }] = await Promise.all([
+    const [{ data: caData }, { data: invData }, { data: splitData }, { data: clientRow }] = await Promise.all([
       serviceSupabase.from('weekly_ca')
         .select('week_number, year, ca_total, families_detail, ca_boucherie, ca_charcuterie, ca_traiteur')
         .eq('client_id', clientId).in('year', [currentYear - 1, currentYear]),
@@ -80,7 +85,9 @@ export default async function MargesPage() {
       serviceSupabase.from('supplier_rayon_splits')
         .select('supplier_key, pct_boucherie, pct_charcuterie, pct_traiteur, pct_fruits_et_legumes, pct_divers')
         .eq('client_id', clientId),
+      serviceSupabase.from('clients').select('ca_stems').eq('id', clientId).maybeSingle(),
     ])
+    caStemsRaw = (clientRow as { ca_stems?: unknown } | null)?.ca_stems ?? null
     ca12Rows = (caData || []).filter((r: any) => inWindow(r.year, r.week_number) && parseFloat(String(r.ca_total || 0)) > 0)
     inv12Rows = (invData || []).filter((r: any) => inWindow(r.year, r.week_number) && r.status !== 'a_verifier')
     splitRows = splitData || []
@@ -131,9 +138,10 @@ export default async function MargesPage() {
   const ca4ByRef  = caByFamily(entries4, families).byId
   const ca12Total = ca12Rows.reduce((s: number, r: any) => s + (parseFloat(String(r.ca_total || 0)) || 0), 0)
 
+  const caStems = effectiveCaStems(caStemsRaw)
   const famDefs = weeks[0]?.eco.familles || []
   const ca12Fam = famDefs.map(f =>
-    entries12.reduce((s, e) => s + (familleMatchesText(f.key, f.label, String(e?.nom ?? ''), String(e?.nom ?? '')) ? (Number(e?.montant) || 0) : 0), 0))
+    entries12.reduce((s, e) => s + (familleMatchesText(f.key, f.label, String(e?.nom ?? ''), String(e?.nom ?? ''), caStems) ? (Number(e?.montant) || 0) : 0), 0))
 
   // Ventilation 12 mois des achats — même règle que le moteur (splits fournisseur,
   // fruits & légumes replié dans divers), réécrite ici sur la fenêtre longue.
@@ -357,6 +365,9 @@ export default async function MargesPage() {
                         <td className="px-4 py-3 text-sm font-semibold text-gray-900">
                           {f.label}
                           {f.ca > 0 && !f.ventile && <span className="ml-1.5 text-[10px] font-medium text-amber-600">achats non ventilés</span>}
+                          <span className="block mt-0.5">
+                            <StemsEditor familyId={f.refFam?.id ?? null} stems={f.refFam?.match_stems ?? []} />
+                          </span>
                         </td>
                         <td className="px-4 py-3 text-right text-sm text-gray-700 tabular">{fmt(f.ca)} €</td>
                         <td className="px-4 py-3 text-right text-sm text-gray-700 tabular">{fmt(f.achats)} €</td>
