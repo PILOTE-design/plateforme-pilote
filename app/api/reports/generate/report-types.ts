@@ -19,6 +19,11 @@ export interface ExtractedData extends ReportData {
   prodN1: Map<string, number>
   prodFamN: Map<string, string>
   prodFamN1: Map<string, string>
+  /** Corrections appliquées PENDANT l'extraction (total reconcilié, décimale
+   *  perdue corrigée, famille écartée…). Plus jamais un simple console.warn :
+   *  ces notes alimentent le contrôle `corrections_extraction` (lib/report-checks)
+   *  qui met l'extraction en statut « à valider ». */
+  notes: string[]
 }
 export interface Insights { resume: string; insights: string[]; recommendations: string[]; vigilance: string[] }
 export interface FamRow { nom: string; caN: number; caN1: number | null; ecart: number }
