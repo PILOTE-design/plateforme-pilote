@@ -44,6 +44,8 @@ export type StoredExtraction = {
   produits_n1: Record<string, number>
   familles_produits_n: Record<string, string>
   familles_produits_n1: Record<string, string>
+  /** Corrections appliquées pendant l'extraction (cf. report-checks) */
+  notes: string[]
 }
 
 export function serializeExtraction(d: ExtractedData): StoredExtraction {
@@ -64,6 +66,7 @@ export function serializeExtraction(d: ExtractedData): StoredExtraction {
     produits_n1: Object.fromEntries(d.prodN1),
     familles_produits_n: Object.fromEntries(d.prodFamN),
     familles_produits_n1: Object.fromEntries(d.prodFamN1),
+    notes: d.notes ?? [],
   }
 }
 
