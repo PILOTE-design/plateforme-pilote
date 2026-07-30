@@ -21,6 +21,7 @@ import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { resolveClientId } from '@/lib/resolve-client-id'
 import { normalizeSupplierName, supplierSociete, societeKey } from '@/lib/supplier-memory'
 import { normText } from '@/lib/postes'
+import { pdfToLines } from '@/lib/pdf-lines'
 import Anthropic from '@anthropic-ai/sdk'
 
 export const maxDuration = 60
@@ -172,9 +173,18 @@ export async function POST(request: NextRequest) {
     const { data: file, error: dlErr } = await service.storage.from('invoice-files').download(invoice.file_path)
     if (dlErr || !file) throw new Error(`Téléchargement du PDF impossible : ${dlErr?.message ?? 'fichier vide'}`)
     const buffer = Buffer.from(await file.arrayBuffer())
-    const _m = await import('pdf-parse') as any
-    const pdfParse = typeof _m.default === 'function' ? _m.default : _m
-    const pdfText: string = (await pdfParse(buffer)).text
+    // Lecture PAR COORDONNÉES (colonnes séparées) ; repli sur le texte plat de
+    // pdf-parse seulement si le PDF résiste. C'est ce texte propre qui est donné
+    // à l'IA, au lieu du texte plat qui colle « 12.4kg5.8071.92 ».
+    const coordLines = await pdfToLines(buffer)
+    let pdfText: string
+    if (coordLines.length > 0) {
+      pdfText = coordLines.join('\n')
+    } else {
+      const _m = await import('pdf-parse') as any
+      const pdfParse = typeof _m.default === 'function' ? _m.default : _m
+      pdfText = (await pdfParse(buffer)).text
+    }
 
     // 2. Extraction des lignes
     const totalHT = parseFloat(String(invoice.amount_ht || 0)) || 0
@@ -196,11 +206,21 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Aucune ligne reconnue sur ce PDF.' }, { status: 422 })
     }
 
-    // 3. Garde-fou déterministe : la somme des lignes doit boucler sur le total.
-    // 'partial' n'est pas un échec — les lignes sont gardées, mais la mercuriale
-    // sait que cette facture n'est pas complètement lue.
+    // 3. Garde-fous déterministes de la lecture, à DEUX niveaux :
+    //   · FACTURE : la somme des lignes doit boucler sur le total (à 3 %). Un total
+    //     inconnu (0) n'est PLUS un laissez-passer — sans total, rien n'est
+    //     vérifiable, donc on ne promeut aucun prix.
+    //   · LIGNE : quand quantité ET prix unitaire figurent tous deux, leur produit
+    //     doit égaler le montant (sinon l'un des deux est mal lu). C'est ce prix
+    //     unitaire qui devient le point de mercuriale — on ne le publie que vérifié.
     const somme = lines.reduce((s, l) => s + l.amount_ht, 0)
-    const coherent = totalHT === 0 || Math.abs(somme - totalHT) / Math.abs(totalHT) <= 0.03
+    const coherent = totalHT > 0 && Math.abs(somme - totalHT) / totalHT <= 0.03
+    const ligneVerifiee = (l: ExtractedLine): boolean => {
+      if (l.unit_price_ht != null && l.quantity != null && l.quantity !== 0) {
+        return Math.abs(l.quantity * l.unit_price_ht - l.amount_ht) <= Math.max(0.05, Math.abs(l.amount_ht) * 0.01)
+      }
+      return true // pas de contradiction vérifiable (prix seul, ou dérivé de la quantité)
+    }
 
     // 4. Rattachement aux articles — par code fournisseur, sinon libellé normalisé.
     const supplierKey = normalizeSupplierName(supplierSociete(invoice.supplier_name || '')) || ''
@@ -215,38 +235,53 @@ export async function POST(request: NextRequest) {
     }
 
     const rows: any[] = []
+    let prixPromus = 0, prixQuarantaine = 0
     for (const l of lines) {
       const nameKey = normText(l.designation)
       let art = (l.article_code && byCode.get(l.article_code)) || byName.get(nameKey) || null
       const unitPrice = l.unit_price_ht ?? (l.quantity && l.quantity > 0 ? +(l.amount_ht / l.quantity).toFixed(4) : null)
+      // QUARANTAINE : un prix ne devient un point de mercuriale que si la facture
+      // boucle ET la ligne est vérifiée. Sinon l'article est rattaché SANS prix,
+      // et la ligne stockée SANS prix — « prix manquant » signalé plutôt qu'un
+      // prix douteux publié en silence (mercuriale ET coût des recettes protégés).
+      const promouvoir = coherent && ligneVerifiee(l) && unitPrice !== null
+      if (unitPrice !== null) { if (promouvoir) prixPromus++; else prixQuarantaine++ }
+      const prixRetenu = promouvoir ? unitPrice : null
 
       if (!art && nameKey) {
         const { data: created } = await service.from('articles').insert({
           client_id: clientId, name: l.designation, name_key: nameKey, unit: l.unit,
           supplier_key: supplierKey, supplier_name: invoice.supplier_name,
-          article_code: l.article_code, last_price_ht: unitPrice,
-          last_price_date: invoice.invoice_date, price_count: 1,
+          article_code: l.article_code,
+          last_price_ht: prixRetenu,
+          last_price_date: promouvoir ? invoice.invoice_date : null,
+          price_count: promouvoir ? 1 : 0,
         }).select('id, article_code, name_key, last_price_date, price_count').single()
         if (created) {
           art = created
           if (created.article_code) byCode.set(String(created.article_code), created)
           else byName.set(String(created.name_key), created)
         }
-      } else if (art) {
-        // Dernier prix : seule une facture plus récente (ou du même jour) le remplace
+      } else if (art && promouvoir) {
+        // Dernier prix : seule une facture plus récente (ou du même jour) le remplace.
         const patch: Record<string, unknown> = { price_count: (art.price_count || 0) + 1, updated_at: new Date().toISOString() }
-        if (unitPrice !== null && (!art.last_price_date || invoice.invoice_date >= art.last_price_date)) {
+        if (!art.last_price_date || invoice.invoice_date >= art.last_price_date) {
           patch.last_price_ht = unitPrice
           patch.last_price_date = invoice.invoice_date
         }
         await service.from('articles').update(patch).eq('id', art.id)
         art.price_count = (art.price_count || 0) + 1
       }
+      // Une ligne non promue laisse l'article INCHANGÉ (son prix précédent reste).
 
       rows.push({
         client_id: clientId, invoice_id: invoice.id, article_id: art?.id ?? null,
         designation: l.designation, article_code: l.article_code, quantity: l.quantity,
-        unit: l.unit, unit_price_ht: unitPrice, amount_ht: l.amount_ht, tva_rate: l.tva_rate ?? invoice.tva_rate,
+        unit: l.unit,
+        // Prix en quarantaine = null : la mercuriale prend le point de prix le plus
+        // récent depuis invoice_lines ; un prix non vérifié n'en est pas un.
+        unit_price_ht: prixRetenu,
+        amount_ht: l.amount_ht, tva_rate: l.tva_rate ?? invoice.tva_rate,
       })
     }
 
@@ -256,15 +291,19 @@ export async function POST(request: NextRequest) {
     const { error: insErr } = await service.from('invoice_lines').insert(rows)
     if (insErr) throw new Error(`Insertion des lignes : ${insErr.message}`)
 
-    // 6. Statut + dates lues sur le PDF (jamais d'écrasement d'une valeur déjà posée)
-    const patch: Record<string, unknown> = { lines_status: coherent ? 'done' : 'partial' }
+    // 6. Statut + dates lues sur le PDF (jamais d'écrasement d'une valeur déjà posée).
+    // 'done' seulement si la facture boucle ET aucun prix en quarantaine ; sinon
+    // 'partial' : les lignes sont gardées, mais des prix restent à valider.
+    const complet = coherent && prixQuarantaine === 0
+    const patch: Record<string, unknown> = { lines_status: complet ? 'done' : 'partial' }
     if (delivery_date && !invoice.delivery_date) patch.delivery_date = delivery_date
     if (due_date && !invoice.due_date) patch.due_date = due_date
     await service.from('invoices').update(patch).eq('id', invoice.id)
 
     return NextResponse.json({
-      success: true, status: coherent ? 'done' : 'partial',
-      lines: rows.length, somme: +somme.toFixed(2), total_facture: totalHT,
+      success: true, status: complet ? 'done' : 'partial',
+      lines: rows.length, prix_promus: prixPromus, prix_en_quarantaine: prixQuarantaine,
+      somme: +somme.toFixed(2), total_facture: totalHT,
     })
   } catch (err) {
     await service.from('invoices').update({ lines_status: 'error' }).eq('id', invoice.id)
