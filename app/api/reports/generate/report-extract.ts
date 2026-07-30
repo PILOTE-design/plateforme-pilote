@@ -69,7 +69,7 @@ function isoWeekOf(d: Date): { week: number; year: number } {
   return { week: Math.ceil((((t.getTime() - yearStart.getTime()) / 86400000) + 1) / 7), year: t.getUTCFullYear() }
 }
 
-function weekFromPeriod(period: string): { week: number; year: number } | null {
+export function weekFromPeriod(period: string): { week: number; year: number } | null {
   try {
     const p = (period || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
     const years = p.match(/20\d{2}/g) || []
@@ -102,7 +102,7 @@ function parseNum(s: string): number {
   return parseFloat(s.trim().replace(/\s/g, '').replace(',', '.')) || 0
 }
 
-async function extractVentesData(ventes_text: string): Promise<{ total: number; familles: Famille[] }> {
+async function extractVentesData(ventes_text: string): Promise<{ total: number; familles: Famille[]; notes: string[] }> {
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? '' })
   const r = await client.messages.create({
     model: 'claude-haiku-4-5-20251001', max_tokens: 1024,
@@ -125,18 +125,26 @@ async function extractVentesData(ventes_text: string): Promise<{ total: number; 
   // Un montant de famille ne peut jamais depasser le CA total de la periode. Erreurs classiques
   // d'extraction : virgule decimale perdue (x100), separateur de milliers avale (x1000),
   // colonne cumul annuel ou code PLU pris pour un montant -> corrige ou ecarte.
+  // Chaque correction est NOTEE (plus jamais un simple console.warn) : le controle
+  // `corrections_extraction` met alors l'extraction en statut « a valider ».
   const cleaned: Famille[] = []
+  const notes: string[] = []
   for (const f of familles) {
     let m = f.total_montant
     if (total > 0 && m > total * 1.005) {
       if (m / 100 <= total * 1.005) m = Math.round(m) / 100
       else if (m / 1000 <= total * 1.005) m = Math.round(m) / 1000
-      else { console.warn('[ventes] famille ecartee (montant aberrant):', f.nom, f.total_montant, '> CA total', total); continue }
+      else {
+        console.warn('[ventes] famille ecartee (montant aberrant):', f.nom, f.total_montant, '> CA total', total)
+        notes.push(`Famille « ${f.nom} » écartée : montant lu ${f.total_montant} supérieur au CA total ${total}.`)
+        continue
+      }
       console.warn('[ventes] montant corrige (decimale perdue):', f.nom, f.total_montant, '->', m)
+      notes.push(`Famille « ${f.nom} » : montant corrigé de ${f.total_montant} à ${m} (décimale perdue présumée).`)
     }
     cleaned.push({ ...f, total_montant: m })
   }
-  return { total, familles: cleaned }
+  return { total, familles: cleaned, notes }
 }
 
 /** Extrait le CA TOTAL par produit d'un fichier ventes CRISALID.
@@ -244,6 +252,9 @@ export async function extractData(texts: { fin_n: string; fin_n1: string; ventes
   // Le relevé financier fait foi (c'est la caisse). Le total du fichier ventes n'est
   // gardé que s'il concorde ; sinon on recalcule la somme des familles réellement lues,
   // et à défaut on reprend le CA caisse. Aucune de ces valeurs n'est inventée.
+  // La bascule n'est plus silencieuse : elle est notee et fera passer
+  // l'extraction en statut « a valider » (controle corrections_extraction).
+  const notes: string[] = [...ventes_n.notes, ...ventes_n1.notes]
   const reconcile = (v: { total: number; familles: Famille[] }, caCaisse: number, label: string) => {
     if (!(caCaisse > 0)) return v
     const ecart = Math.abs(v.total - caCaisse) / caCaisse
@@ -253,6 +264,7 @@ export async function extractData(texts: { fin_n: string; fin_n1: string; ventes
     const retenu = ecartSomme < ecart ? sommeFamilles : caCaisse
     console.warn(`[ventes ${label}] total extrait ${v.total} incoherent avec le CA caisse ${caCaisse}`
       + ` (somme des familles ${sommeFamilles.toFixed(2)}) -> total retenu ${retenu.toFixed(2)}`)
+    notes.push(`Total ventes ${label} : ${v.total.toFixed(2)} incohérent avec le CA caisse ${caCaisse.toFixed(2)} (somme des familles ${sommeFamilles.toFixed(2)}) — total retenu ${retenu.toFixed(2)}.`)
     return { ...v, total: retenu }
   }
   const finN = cleanFin(financials.financier_n)
@@ -268,7 +280,10 @@ export async function extractData(texts: { fin_n: string; fin_n1: string; ventes
     week_number: isoFixed?.week ?? toNum(financials.week_number),
     year: isoFixed?.year ?? toNum(financials.year),
     financier_n: finN, financier_n1: finN1,
-    ventes_n: ventesN, ventes_n1: ventesN1, tops: topFlop.tops, flops: topFlop.flops,
+    ventes_n: { total: ventesN.total, familles: ventesN.familles },
+    ventes_n1: { total: ventesN1.total, familles: ventesN1.familles },
+    tops: topFlop.tops, flops: topFlop.flops,
     prodN, prodN1, prodFamN, prodFamN1,
+    notes,
   }
 }
