@@ -7,6 +7,7 @@ import {
 } from '@/lib/payroll'
 import { computeWeekEconomics, type WeekEconomics } from '@/lib/week-economics'
 import { margeFiabilite } from '@/lib/postes'
+import { readSetupStatus } from '@/lib/onboarding-status'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { FileText, TrendingUp, TrendingDown, Users, Receipt, Euro, AlertTriangle, CalendarDays, Calculator, ArrowRight, Repeat, CheckCircle2, Circle } from 'lucide-react'
 import { formatDate } from '@/lib/utils'
@@ -74,9 +75,6 @@ export default async function DashboardPage() {
   let legalAlerts: string[] = []
   let cddAlerts: string[] = []
   let reports: Array<{ id: string; title: string; file_url: string; created_at: string }> = []
-  let hasIntegration = false
-  let anyPlanning = false
-  let employeeCount = 0
   let aVerifierCount = 0
   let fournisseursNonVentiles = 0
 
@@ -138,31 +136,24 @@ export default async function DashboardPage() {
     }
     fournisseursNonVentiles = manquants.size
 
-    // ── Intégration comptable connectée ? (checklist de démarrage) ──
-    const { data: integ } = await serviceSupabase
-      .from('billing_integrations').select('id').eq('client_id', clientId).eq('is_active', true).limit(1)
-    hasIntegration = (integ || []).length > 0
-
     // ── Employés + plannings (semaine de référence pour la masse salariale, semaine courante pour les alertes) ──
     const { data: emps } = await serviceSupabase
       .from('employees')
       .select(`${PAYROLL_EMPLOYEE_COLUMNS}, contract_end_date`)
       .eq('client_id', clientId)
     const employees = (emps || []) as unknown as EmpRow[]
-    employeeCount = employees.length
 
     if (employees.length > 0) {
       const empIds = employees.map(e => e.id)
 
       // La masse salariale de la semaine de référence vient du moteur (eco) ; ici on ne
       // lit que la semaine COURANTE, pour les alertes légales du planning en cours.
-      const [{ data: curPlanning }, { data: anyPlan }] = await Promise.all([
-        serviceSupabase.from('planning_entries').select(PAYROLL_ENTRY_COLUMNS).in('employee_id', empIds).eq('week_number', currentWeek).eq('year', currentYear),
-        serviceSupabase.from('planning_entries').select('id').in('employee_id', empIds).limit(1),
-      ])
+      // (L'état d'avancement de la mise en route est calculé par lib/onboarding-status.)
+      const { data: curPlanning } = await serviceSupabase
+        .from('planning_entries').select(PAYROLL_ENTRY_COLUMNS)
+        .in('employee_id', empIds).eq('week_number', currentWeek).eq('year', currentYear)
 
       legalAlerts = computeLegalAlerts((curPlanning || []) as unknown as PayrollEntry[], employees)
-      anyPlanning = (anyPlan || []).length > 0
 
       // Fins de CDD dans les 45 jours
       for (const emp of employees) {
@@ -257,15 +248,15 @@ export default async function DashboardPage() {
     ...(fournisseursNonVentiles > 0 ? [{ color: 'bg-pilote', text: `${fournisseursNonVentiles} fournisseur${fournisseursNonVentiles > 1 ? 's' : ''} sans ventilation — leurs achats pèsent sur la marge globale, sur aucune famille`, href: '/dashboard/facturation', cta: 'Ventiler' }] : []),
   ]
 
-  // ── Checklist de démarrage (onboarding nouveau client) ──
-  const onboardingSteps = [
-    { done: hasIntegration,      label: 'Connecter votre logiciel comptable (Pennylane...)', desc: 'Vos factures s’importeront automatiquement chaque lundi', href: '/dashboard/facturation' },
-    { done: employeeCount > 0,   label: 'Ajouter vos employés',                              desc: 'Contrats, taux horaires et charges patronales',            href: '/dashboard/planning' },
-    { done: anyPlanning,         label: 'Remplir votre premier planning',                    desc: 'Coûts CCN, heures sup et alertes légales calculés',       href: '/dashboard/planning' },
-    { done: caTrend.length > 0,  label: 'Saisir votre CA hebdomadaire',                      desc: 'Débloque la marge, le résultat et le rapport automatique', href: '/dashboard/facturation' },
-  ]
-  const stepsDone = onboardingSteps.filter(s => s.done).length
-  const showOnboarding = clientId !== null && stepsDone < onboardingSteps.length
+  // ── Checklist de démarrage (mise en route autonome) ──
+  // Liste PARTAGÉE (lib/onboarding-status) : le boucher se met en route seul, et
+  // chaque étape manquante annonce ce qu'elle fausse. L'ancienne liste, écrite
+  // ici, oubliait les FACTURES D'ACHAT — l'étape dont l'absence fait justement
+  // afficher une marge de 100 %.
+  const setup = clientId ? await readSetupStatus(serviceSupabase, clientId) : null
+  const onboardingSteps = setup?.steps ?? []
+  const stepsDone = setup?.done ?? 0
+  const showOnboarding = setup !== null && !setup.complete
 
   const weekLabel = `S${refWeek}`
   const hasAnyData = ca_ttc > 0 || achatsHT > 0 || payrollRef > 0 || reports.length > 0
@@ -322,6 +313,11 @@ export default async function DashboardPage() {
                 <div className="flex-1">
                   <p className={`text-sm font-medium ${step.done ? 'text-gray-400 line-through' : 'text-gray-900'}`}>{step.label}</p>
                   {!step.done && <p className="text-xs text-gray-400 mt-0.5">{step.desc}</p>}
+                  {/* Ce que le manque fausse réellement — dit franchement plutôt
+                      que de laisser lire un chiffre qui paraît bon. */}
+                  {!step.done && step.impact && (
+                    <p className="text-[11px] text-amber-600 mt-0.5">{step.impact}</p>
+                  )}
                 </div>
                 {!step.done && <ArrowRight className="w-4 h-4 text-gray-300 group-hover:text-pilote group-hover:translate-x-0.5 transition-all" />}
               </Link>
