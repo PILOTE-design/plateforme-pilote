@@ -157,9 +157,14 @@ export async function computeWeekEconomics(
   // (provision étalée au jour près). Les factures importées « à vérifier » sont
   // EXCLUES des calculs tant qu'elles ne sont pas validées.
   const allVariable = (invoicesData || []).filter((inv: any) => !inv.is_fixed_charge)
-  const varInv = allVariable.filter((inv: any) => inv.status !== 'a_verifier')
+  // Opt-in : une facture n'entre dans la marge QUE si elle est explicitement
+  // « validee ». Toute autre valeur (« a_verifier », ou un statut inattendu) est
+  // exclue et rangée en « à vérifier » — jamais comptée en silence sur la seule
+  // foi d'un défaut de colonne. (Aujourd'hui identique à l'ancien filtre, les deux
+  // seules valeurs étant validee/a_verifier ; robuste si une 3ᵉ apparaissait.)
+  const varInv = allVariable.filter((inv: any) => inv.status === 'validee')
   const achats_a_verifier = allVariable
-    .filter((inv: any) => inv.status === 'a_verifier')
+    .filter((inv: any) => inv.status !== 'validee')
     .reduce((s: number, inv: any) => s + parseFloat(inv.amount_ht || 0), 0)
 
   const achats_ht = varInv.reduce((s: number, inv: any) => s + parseFloat(inv.amount_ht || 0), 0)
