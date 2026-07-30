@@ -17,6 +17,7 @@ import { PiloteReport } from './report-pdf'
 import { eur0, signPct, trunc } from './report-format'
 import { createHash } from 'crypto'
 import { parsePDF, extractData, weekFromPeriod } from './report-extract'
+import { extractDataCrisalid } from './report-extract-crisalid'
 import { archiveWeekData } from './report-persist'
 import {
   serializeExtraction, storeReportSources, storeExtraction,
@@ -246,7 +247,19 @@ export async function POST(req: NextRequest) {
       parsePDF(finN), parsePDF(finN1), parsePDF(venN), parsePDF(venN1),
     ])
 
-    const data = await extractData({ fin_n: tFN, fin_n1: tFN1, ventes_n: tVN, ventes_n1: tVN1 })
+    // ── Lecture DÉTERMINISTE d'abord (lot V6) : on relit les 4 PDF PAR COORDONNÉES.
+    // Si le format Crisalid est reconnu ET cohérent (somme des familles = Total
+    // général de chaque côté), ces chiffres sont EXACTS et aucune IA ne touche aux
+    // montants — l'IA passe témoin (lot V4), plus source. Sinon (format inattendu,
+    // incohérence de lecture), repli AUTOMATIQUE sur l'extraction IA : jamais pire
+    // qu'avant. Le texte plat reste parsé plus haut pour la traçabilité (lot V1).
+    const crisalid = await extractDataCrisalid({ finN, finN1, venN, venN1 })
+    if (!crisalid.ok) console.warn('[extraction] lecture déterministe écartée, repli IA:', crisalid.reason)
+    const data = crisalid.ok
+      ? crisalid.data
+      : await extractData({ fin_n: tFN, fin_n1: tFN1, ventes_n: tVN, ventes_n1: tVN1 })
+    // Moteur ayant produit ces chiffres, pour la trace : déterministe, ou IA (repli).
+    const extractionModel = crisalid.ok ? 'crisalid-coordonnees-v1' : undefined
 
     // ── Contrôles déterministes (lot V2) — zéro IA, seuils calibrés sur
     // l'historique réel. Le contexte est lu AVANT toute écriture : l'archive N-1
@@ -291,10 +304,17 @@ export async function POST(req: NextRequest) {
     // pas et l'écran de validation masque le bouton — payer l'IA n'apporterait
     // rien. Toutes ces lectures sont « validation » : en désaccord elles envoient
     // à la validation humaine, elles ne bloquent jamais seules.
+    // Le témoin déterministe reste utile même sur la lecture par coordonnées (lot
+    // V6) : il recoupe la liste des familles et la concordance du CA de façon
+    // indépendante. En revanche, quand les chiffres viennent DÉJÀ du parseur
+    // déterministe (crisalid.ok), le vérificateur IA n'a plus lieu d'être — lui
+    // demander de relire le texte collé qu'il ne sait pas lire ne ferait que
+    // risquer de recaler à tort une extraction pourtant exacte. Il ne tourne donc
+    // que sur le chemin de REPLI IA.
     const witnessChecks = runWitnessChecks(tVN, tVN1, serialized)
     const interimStatus = statusFromChecks([...baseChecks, ...witnessChecks])
     let verifyChecks: CheckResult[] = []
-    if (interimStatus !== 'bloque' && data.financier_n.ca_net > 0) {
+    if (!crisalid.ok && interimStatus !== 'bloque' && data.financier_n.ca_net > 0) {
       verifyChecks = await Promise.all([
         verifyFamiliesCheck(tVN, serialized.ventes_n.familles, serialized.financier_n.ca_net,
           'contre_lecture_familles_n', 'Contre-lecture indépendante des familles N'),
@@ -320,6 +340,7 @@ export async function POST(req: NextRequest) {
         rawTexts: { financier_n: tFN, financier_n1: tFN1, ventes_n: tVN, ventes_n1: tVN1 },
         extraction: serialized,
         checks, status: checksStatus,
+        model: extractionModel,
       })
     } catch (traceErr) {
       console.error('Traçabilité extraction indisponible:', traceErr)
