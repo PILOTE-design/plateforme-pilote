@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/server'
 import { loadSupplierCategories, rememberedCategory } from '@/lib/supplier-memory'
+import { weekForInvoice } from '@/lib/invoice-week'
 import Anthropic from '@anthropic-ai/sdk'
 
 // Clé de repli au build : le constructeur Anthropic lève une erreur si la clé est absente,
@@ -112,7 +113,11 @@ Si montant HT absent, déduire de TTC : HT = TTC / 1.{tva_rate/100+1}`
 
   const invoiceDate = new Date(invoiceData.invoice_date || new Date().toISOString().slice(0, 10))
   if (isNaN(invoiceDate.getTime())) invoiceDate.setTime(Date.now())
-  const { week, year } = getISOWeek(invoiceDate)
+  // Semaine d'imputation : livraison si l'IA l'a lue, sinon date de facture ;
+  // repli sur la date de facture parsée SEULEMENT si aucune date exploitable (la
+  // facture reste « à vérifier », donc hors marge tant qu'elle n'est pas validée).
+  const { week, year } = weekForInvoice(invoiceData.delivery_date ?? null, invoiceData.invoice_date ?? null)
+    ?? getISOWeek(invoiceDate)
 
   const amountHT  = parseFloat(invoiceData.amount_ht)  || 0
   const tvaRate   = parseFloat(invoiceData.tva_rate)   || 20
