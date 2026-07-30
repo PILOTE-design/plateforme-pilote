@@ -128,20 +128,27 @@ export async function POST(req: NextRequest) {
     }
     const pdfBuffer = await generatePDF(report)
 
+    // Rapport confidentiel (CA, marges, masse salariale) : chemin PAR CLIENT (non
+    // devinable) et AUCUNE URL publique n'est générée. Le bucket `reports` est
+    // privé ; le PDF est servi par URL signée courte à l'affichage (espace client
+    // et espace admin). On stocke le CHEMIN de l'objet, jamais un lien public.
     const fileName = `rapport-s${data.week_number}-${data.year}-${Date.now()}.pdf`
+    const filePath = clientId ? `${clientId}/${fileName}` : fileName
     const { error: uploadError } = await serviceSupabase.storage.from('reports').upload(
-      fileName, pdfBuffer, { contentType: 'application/pdf', upsert: false },
+      filePath, pdfBuffer, { contentType: 'application/pdf', upsert: false },
     )
     if (uploadError) return NextResponse.json({ error: 'Upload: ' + uploadError.message }, { status: 500 })
 
-    const { data: urlData } = serviceSupabase.storage.from('reports').getPublicUrl(fileName)
-    const fileUrl = urlData.publicUrl
+    // L'email pointe vers l'espace client (page rapports), jamais vers un lien
+    // direct : le rapport ne se télécharge qu'authentifié.
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://getpilote.app'
+    const reportsPageUrl = `${appUrl}/dashboard/reports`
 
     const title = `Analyse S${data.week_number} - ${data.period_n}${clientName ? ' - ' + clientName : ''}`
     const { error: dbError } = await serviceSupabase.from('reports').insert({
       profile_id: profile.id, title,
       week_number: data.week_number, year: data.year,
-      file_url: fileUrl,
+      file_url: filePath, file_path: filePath,
       ...(clientId ? { client_id: clientId } : {}),
     })
     if (dbError) return NextResponse.json({ error: 'DB: ' + dbError.message }, { status: 500 })
@@ -170,7 +177,7 @@ export async function POST(req: NextRequest) {
       <div style="color:#374151;font-size:13px">${data.period_n} — comparée à ${data.period_n1}</div>
     </div>
     <div style="text-align:center;margin-bottom:28px">
-      <a href="${fileUrl}" style="display:inline-block;background:#1E3A5F;color:#ffffff;padding:14px 36px;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px">Télécharger le rapport PDF</a>
+      <a href="${reportsPageUrl}" style="display:inline-block;background:#1E3A5F;color:#ffffff;padding:14px 36px;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px">Consulter mon rapport</a>
     </div>
     <p style="color:#9ca3af;font-size:11px;text-align:center;margin:0;border-top:1px solid #f3f4f6;padding-top:16px">Rapport confidentiel · Généré automatiquement par <span style="font-weight:700;color:#1E3A5F">PILOTE<span style="color:#FF8C00">.</span></span></p>
   </div>
@@ -181,7 +188,7 @@ export async function POST(req: NextRequest) {
       console.error('Email rapport non envoye:', emailErr)
     }
 
-    return NextResponse.json({ success: true, title, file_url: fileUrl })
+    return NextResponse.json({ success: true, title, file_url: reportsPageUrl })
 
   } catch (err: unknown) {
     console.error(err)
