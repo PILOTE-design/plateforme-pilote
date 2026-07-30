@@ -26,6 +26,10 @@ function AdminNouveauRapportForm() {
   const [showDetail,  setShowDetail]  = useState(false)
   const [clients,     setClients]     = useState<Client[]>([])
   const [clientId,    setClientId]    = useState(searchParams.get('client') || '')
+  // Porte de validation (lot V3) : quand les contrôles ne sont pas au vert, la
+  // génération renvoie ici de quoi corriger avant de produire le rapport.
+  const [validation,  setValidation]  = useState<any>(null)
+  const [edits,       setEdits]       = useState<{ n: Record<string, string>; n1: Record<string, string> }>({ n: {}, n1: {} })
 
   const allSelected = Object.values(files).every(Boolean)
 
@@ -55,6 +59,15 @@ function AdminNouveauRapportForm() {
       const rawText = await res.text()
 
       if (res.ok) {
+        let parsed: any = null
+        try { parsed = JSON.parse(rawText) } catch {}
+        // Contrôles non au vert : on n'a rien généré, on passe en validation.
+        if (parsed && parsed.needs_validation) {
+          setValidation(parsed)
+          setEdits({ n: {}, n1: {} })
+          setLoading(false)
+          return
+        }
         router.push(clientId ? `/admin/clients/${clientId}` : '/admin/clients')
         return
       }
@@ -89,6 +102,43 @@ function AdminNouveauRapportForm() {
     } finally {
       setLoading(false)
     }
+  }
+
+  async function submitValidation() {
+    if (!validation || loading) return
+    setLoading(true); setError(''); setErrorDetail('')
+    const overrides: { cote: 'n' | 'n1'; nom: string; montant: number }[] = []
+    for (const cote of ['n', 'n1'] as const) {
+      const src: { nom: string; montant: number }[] = validation[cote === 'n' ? 'familles_n' : 'familles_n1'] || []
+      for (const f of src) {
+        const raw = edits[cote][f.nom]
+        if (raw === undefined || raw === '') continue
+        const m = parseFloat(String(raw).replace(',', '.'))
+        if (Number.isFinite(m) && Math.abs(m - f.montant) > 0.005) overrides.push({ cote, nom: f.nom, montant: m })
+      }
+    }
+    try {
+      const res = await fetch('/api/reports/generate', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ extraction_id: validation.extraction_id, overrides }),
+      })
+      const txt = await res.text()
+      if (res.ok) { router.push(clientId ? `/admin/clients/${clientId}` : '/admin/clients'); return }
+      let msg = `Erreur HTTP ${res.status}`
+      try { const p = JSON.parse(txt); if (p.error) msg = p.error } catch {}
+      setError(msg); setLoading(false)
+    } catch (e) {
+      setError(`Erreur reseau — ${e instanceof Error ? e.message : 'connexion impossible'}`); setLoading(false)
+    }
+  }
+
+  const sommeCote = (cote: 'n' | 'n1') => {
+    const src: { nom: string; montant: number }[] = validation?.[cote === 'n' ? 'familles_n' : 'familles_n1'] || []
+    return src.reduce((s, f) => {
+      const raw = edits[cote][f.nom]
+      const m = raw !== undefined && raw !== '' ? parseFloat(String(raw).replace(',', '.')) : f.montant
+      return s + (Number.isFinite(m) ? m : f.montant)
+    }, 0)
   }
 
   return (
@@ -184,6 +234,93 @@ function AdminNouveauRapportForm() {
           }
         </button>
       </div>
+
+      {/* ── Porte de validation (lot V3) : les contrôles ne sont pas au vert ── */}
+      {validation && (
+        <div className="mt-6 bg-white rounded-2xl border-2 border-amber-200 shadow-sm overflow-hidden">
+          <div className={`px-6 py-4 ${validation.status === 'bloque' ? 'bg-red-50 border-b border-red-200' : 'bg-amber-50 border-b border-amber-200'}`}>
+            <div className="flex items-center gap-2">
+              <AlertCircle className={`w-5 h-5 ${validation.status === 'bloque' ? 'text-red-500' : 'text-amber-500'}`} />
+              <h2 className="font-bold text-gray-900">
+                {validation.status === 'bloque'
+                  ? 'Rapport bloqué — un contrôle critique a échoué'
+                  : 'Chiffres à vérifier avant génération'}
+              </h2>
+            </div>
+            <p className="text-sm text-gray-600 mt-1">
+              S{validation.week_number} · {validation.period_n} — le rapport n'est pas encore généré.
+              {validation.status === 'bloque'
+                ? ' Corrigez les fichiers en cause et relancez.'
+                : ' Corrigez les montants douteux, puis validez pour générer.'}
+            </p>
+          </div>
+
+          {/* Contrôles */}
+          <div className="px-6 py-4 border-b border-gray-100 space-y-2">
+            {(validation.checks || []).slice().sort((a: any, b: any) => (a.passe === b.passe ? 0 : a.passe ? 1 : -1)).map((c: any, i: number) => (
+              <div key={i} className="flex items-start gap-2 text-sm">
+                <span className={`mt-1 w-2 h-2 rounded-full flex-shrink-0 ${c.passe ? 'bg-green-400' : c.severite === 'bloquant' ? 'bg-red-500' : c.severite === 'validation' ? 'bg-amber-500' : 'bg-gray-300'}`} />
+                <div>
+                  <span className={`font-semibold ${c.passe ? 'text-gray-400' : 'text-gray-900'}`}>{c.label}</span>
+                  {!c.passe && <span className="text-gray-600"> — {c.details}</span>}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Familles éditables — uniquement quand une validation (pas un blocage) est possible */}
+          {validation.status !== 'bloque' && (['n', 'n1'] as const).map((cote) => {
+            const familles: { nom: string; montant: number }[] = validation[cote === 'n' ? 'familles_n' : 'familles_n1'] || []
+            const caCible: number = cote === 'n' ? validation.ca_n : validation.ca_n1
+            if (familles.length === 0) return null
+            const somme = sommeCote(cote)
+            const ecart = somme - caCible
+            return (
+              <div key={cote} className="px-6 py-4 border-b border-gray-100">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-gray-400">Familles {cote === 'n' ? 'semaine N' : 'semaine N-1'}</h3>
+                  <span className={`text-xs font-semibold tabular ${Math.abs(ecart) < 0.5 ? 'text-green-600' : 'text-amber-600'}`}>
+                    somme {somme.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} € · CA {caCible.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} € · écart {ecart >= 0 ? '+' : ''}{ecart.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €
+                  </span>
+                </div>
+                <div className="space-y-1">
+                  {familles.map((f) => (
+                    <div key={f.nom} className="flex items-center gap-2">
+                      <span className="flex-1 text-sm text-gray-700 truncate">{f.nom}</span>
+                      <input
+                        type="text" inputMode="decimal"
+                        value={edits[cote][f.nom] ?? ''}
+                        placeholder={f.montant.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        onChange={e => setEdits(prev => ({ ...prev, [cote]: { ...prev[cote], [f.nom]: e.target.value } }))}
+                        className="w-32 border border-gray-200 rounded-lg px-2 py-1 text-sm text-right tabular focus:ring-2 focus:ring-[#1E3A5F] outline-none"
+                      />
+                      <span className="text-xs text-gray-400 w-4">€</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )
+          })}
+
+          <div className="px-6 py-4 flex items-center gap-3">
+            {validation.status !== 'bloque' && (
+              <button
+                onClick={submitValidation}
+                disabled={loading}
+                className="bg-[#1E3A5F] disabled:opacity-40 text-white font-semibold px-5 py-2.5 rounded-xl hover:bg-[#2a4f7c] transition-colors flex items-center gap-2"
+              >
+                {loading ? <><Loader2 className="w-4 h-4 animate-spin" />Génération...</> : 'Valider et générer le rapport'}
+              </button>
+            )}
+            <button
+              onClick={() => { setValidation(null); setError('') }}
+              className="text-sm text-gray-500 hover:text-gray-700 font-medium"
+            >
+              {validation.status === 'bloque' ? 'Recommencer avec les bons fichiers' : 'Annuler'}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
