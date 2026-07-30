@@ -71,9 +71,17 @@ export async function POST(req: NextRequest) {
       ? (data.financier_n.ca_net - data.financier_n1.ca_net) / data.financier_n1.ca_net
       : 0
 
+    // Le graphique est un CONFORT, pas le rapport : QuickChart en échec (sandbox
+    // saturée, timeout 8 s) ne doit pas emporter la génération entière. Le PDF
+    // sait dégrader (« graphique momentanément indisponible ») — encore
+    // faut-il lui passer null au lieu de laisser l'exception remonter.
+    // Critique pour le futur cron hebdo : un hoquet = un rapport client perdu.
     const [insightsResult, pieBuffer] = await Promise.all([
       generateInsights(data, famRows),
-      getPieBuffer(data),
+      getPieBuffer(data).catch(chartErr => {
+        console.error('Graphique QuickChart indisponible, rapport généré sans:', chartErr)
+        return null
+      }),
     ])
 
     let clientEmail: string | null = null
