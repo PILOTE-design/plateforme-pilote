@@ -7,13 +7,23 @@
 
 export const PRIMARY_ADMIN_EMAIL = 'nouvion.theo51@gmail.com'
 
-/** Tous les emails admin : le principal + ceux de la variable d'env ADMIN_EMAILS */
+/** Co-administrateurs (associés) ajoutés en dur : même accès admin que le
+ *  principal. La propriété des enregistrements clients (clients.user_id) reste au
+ *  principal (cf. avertissement plus haut). On peut aussi en ajouter sans code via
+ *  la variable d'env ADMIN_EMAILS. */
+const CO_ADMIN_EMAILS = ['boucherieduvaldesbois@gmail.com']
+
+/** Tous les emails admin : le principal + les co-admins en dur + ceux de ADMIN_EMAILS */
 export function getAdminEmails(): string[] {
   const extra = (process.env.ADMIN_EMAILS || '')
     .split(',')
     .map(e => e.trim().toLowerCase())
     .filter(Boolean)
-  return [...new Set([PRIMARY_ADMIN_EMAIL.toLowerCase(), ...extra])]
+  return [...new Set([
+    PRIMARY_ADMIN_EMAIL.toLowerCase(),
+    ...CO_ADMIN_EMAILS.map(e => e.toLowerCase()),
+    ...extra,
+  ])]
 }
 
 /** Vrai si l'email appartient à un administrateur (insensible à la casse) */
