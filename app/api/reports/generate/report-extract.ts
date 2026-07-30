@@ -201,7 +201,7 @@ function couvertureOk(prod: Map<string, number>, caPeriode: number): boolean {
   return somme >= caPeriode * COUVERTURE_MIN
 }
 
-function computeTopFlop(
+export function computeTopFlop(
   prodN: Map<string, number>,
   prodN1: Map<string, number>,
   caN = 0,
