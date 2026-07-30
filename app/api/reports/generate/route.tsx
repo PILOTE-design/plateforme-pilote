@@ -15,9 +15,11 @@ import { computeWeekEconomics } from '@/lib/week-economics'
 import { ensureFonts } from './report-fonts'
 import { PiloteReport } from './report-pdf'
 import { eur0, signPct, trunc } from './report-format'
-import { parsePDF, extractData } from './report-extract'
+import { createHash } from 'crypto'
+import { parsePDF, extractData, weekFromPeriod } from './report-extract'
 import { archiveWeekData } from './report-persist'
 import { serializeExtraction, storeReportSources, storeExtraction, linkExtractionToReport } from './report-trace'
+import { runExtractionChecks, statusFromChecks, failedChecksSummary, type ChecksContext } from '@/lib/report-checks'
 import { buildFamRows, buildStatus, buildMargeRead, buildExecSummary, generateInsights } from './report-compute'
 import { getPieBuffer } from './report-chart'
 import type { ComputedReport, ReportData } from './report-types'
@@ -59,6 +61,35 @@ export async function POST(req: NextRequest) {
 
     const data = await extractData({ fin_n: tFN, fin_n1: tFN1, ventes_n: tVN, ventes_n1: tVN1 })
 
+    // ── Contrôles déterministes (lot V2) — zéro IA, seuils calibrés sur
+    // l'historique réel (cf. lib/report-checks). Le contexte est lu AVANT toute
+    // écriture : l'archive N-1 de l'an dernier sert de témoin avant écrasement.
+    const sha = async (f: File) => createHash('sha256').update(Buffer.from(await f.arrayBuffer())).digest('hex')
+    const [hFN, hFN1, hVN, hVN1] = await Promise.all([sha(finN), sha(finN1), sha(venN), sha(venN1)])
+    const checksCtx: ChecksContext = {
+      fileHashes: { financier_n: hFN, financier_n1: hFN1, ventes_n: hVN, ventes_n1: hVN1 },
+      weekN1: weekFromPeriod(data.period_n1),
+    }
+    if (clientId) {
+      const [{ data: hist }, { data: prevN1 }] = await Promise.all([
+        serviceSupabase.from('weekly_ca').select('ca_total, week_number, year')
+          .eq('client_id', clientId)
+          .order('year', { ascending: false }).order('week_number', { ascending: false }).limit(9),
+        serviceSupabase.from('weekly_ca').select('ca_total')
+          .eq('client_id', clientId)
+          .eq('week_number', data.week_number).eq('year', data.year - 1).maybeSingle(),
+      ])
+      checksCtx.historyCa = (hist || [])
+        .filter((r: any) => !(r.week_number === data.week_number && r.year === data.year))
+        .map((r: any) => parseFloat(String(r.ca_total)) || 0)
+        .filter((n: number) => n > 0)
+        .slice(0, 8)
+      checksCtx.previousN1 = prevN1 ? { ca_total: parseFloat(String((prevN1 as any).ca_total)) || 0 } : null
+    }
+    const serialized = serializeExtraction(data)
+    const checks = runExtractionChecks(serialized, checksCtx)
+    const checksStatus = statusFromChecks(checks)
+
     // ── Traçabilité (lot V1) — AVANT tout garde-fou : les extractions ratées
     // sont les plus précieuses à archiver. Best-effort : un échec de trace est
     // loggé et ne bloque jamais la génération.
@@ -71,8 +102,8 @@ export async function POST(req: NextRequest) {
         clientId, week: data.week_number, year: data.year,
         files: sourcePaths,
         rawTexts: { financier_n: tFN, financier_n1: tFN1, ventes_n: tVN, ventes_n1: tVN1 },
-        extraction: serializeExtraction(data),
-        checks: null, status: 'archivee',
+        extraction: serialized,
+        checks, status: checksStatus,
       })
     } catch (traceErr) {
       console.error('Traçabilité extraction indisponible:', traceErr)
@@ -83,7 +114,19 @@ export async function POST(req: NextRequest) {
     if (data.financier_n.ca_net <= 0) {
       return NextResponse.json({
         error: 'Aucun chiffre d\'affaires detecte dans le " Releve Financier - Semaine N ". Verifiez que les fichiers ne sont pas inverses : le Releve Financier va dans les 2 premiers champs, les Ventes par familles dans les 2 derniers.',
+        checks,
       }, { status: 400 })
+    }
+
+    // ── Porte v0 (lot V2) : un contrôle BLOQUANT en échec = pas de rapport.
+    // Les extractions « à valider » passent encore à ce stade (les contrôles
+    // sont stockés et renvoyés) — la porte complète avec écran de validation
+    // arrive au lot V3.
+    if (checksStatus === 'bloque') {
+      return NextResponse.json({
+        error: 'Rapport non genere - controles bloquants en echec. ' + failedChecksSummary(checks),
+        checks,
+      }, { status: 422 })
     }
 
     const famRows = buildFamRows(data.ventes_n, data.ventes_n1)
@@ -222,7 +265,7 @@ export async function POST(req: NextRequest) {
       console.error('Email rapport non envoye:', emailErr)
     }
 
-    return NextResponse.json({ success: true, title, file_url: reportsPageUrl })
+    return NextResponse.json({ success: true, title, file_url: reportsPageUrl, controles: { status: checksStatus, checks } })
 
   } catch (err: unknown) {
     console.error(err)
