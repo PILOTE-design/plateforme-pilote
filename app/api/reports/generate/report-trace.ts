@@ -16,7 +16,8 @@
 // pièce d'identité du rapport et cesse d'être optionnelle.
 
 import type { createServiceClient } from '@/lib/supabase/server'
-import type { ExtractedData, FinancierData } from './report-types'
+import type { ExtractedData, Famille, FinancierData } from './report-types'
+import { computeTopFlop } from './report-extract'
 
 type ServiceClient = ReturnType<typeof createServiceClient>
 
@@ -140,4 +141,85 @@ export async function linkExtractionToReport(
   const { error } = await service.from('report_extractions')
     .update({ report_id: reportId }).eq('id', extractionId)
   if (error) console.error('[trace] liaison extraction→rapport impossible:', error.message)
+}
+
+// ─── Flux en deux temps (lot V3) : générer À PARTIR d'une extraction stockée ───
+//
+// Quand les contrôles laissent l'extraction « à valider », le rapport n'est pas
+// produit tout de suite. L'écran admin corrige les familles fautives, puis
+// rappelle la génération à partir de la MÊME extraction (rechargée ici) : aucune
+// relecture des PDF, donc aucun nouvel appel IA (déterministe, et on tient dans
+// la fenêtre 60 s de Vercel).
+
+export type StoredExtractionRow = {
+  id: string
+  client_id: string | null
+  week_number: number
+  year: number
+  extraction: StoredExtraction
+  status: string
+}
+
+/** Recharge une extraction archivée par son id (client vérifié par l'appelant). */
+export async function loadExtractionRow(
+  service: ServiceClient,
+  extractionId: string,
+): Promise<StoredExtractionRow | null> {
+  const { data, error } = await service.from('report_extractions')
+    .select('id, client_id, week_number, year, extraction, status')
+    .eq('id', extractionId).maybeSingle()
+  if (error) { console.error('[trace] rechargement extraction impossible:', error.message); return null }
+  return (data as StoredExtractionRow | null) ?? null
+}
+
+/** Corrections humaines d'un montant de famille, par côté. */
+export type FamilyOverride = { cote: 'n' | 'n1'; nom: string; montant: number }
+
+/** Reconstruit un ExtractedData complet depuis l'extraction stockée, en
+ *  appliquant d'éventuelles corrections de familles. Les tops/flops sont
+ *  RECALCULÉS en code depuis les produits (zéro IA, zéro écart). */
+export function deserializeExtraction(s: StoredExtraction, overrides: FamilyOverride[] = []): ExtractedData {
+  const applyOne = (cote: 'n' | 'n1', familles: { id: string; nom: string; montant: number }[]): Famille[] => {
+    const ovByNom = new Map(overrides.filter(o => o.cote === cote).map(o => [o.nom, o.montant]))
+    return familles.map(f => ({
+      id: f.id, nom: f.nom,
+      total_montant: ovByNom.has(f.nom) ? ovByNom.get(f.nom)! : f.montant,
+      produits: [],
+    }))
+  }
+  const prodN = new Map<string, number>(Object.entries(s.produits_n))
+  const prodN1 = new Map<string, number>(Object.entries(s.produits_n1))
+  const prodFamN = new Map<string, string>(Object.entries(s.familles_produits_n))
+  const prodFamN1 = new Map<string, string>(Object.entries(s.familles_produits_n1))
+  const ventesN = { total: s.ventes_n.total, familles: applyOne('n', s.ventes_n.familles) }
+  const ventesN1 = { total: s.ventes_n1.total, familles: applyOne('n1', s.ventes_n1.familles) }
+  const topFlop = computeTopFlop(prodN, prodN1, ventesN.total, ventesN1.total)
+  return {
+    period_n: s.period_n, period_n1: s.period_n1,
+    week_number: s.week_number, year: s.year,
+    financier_n: s.financier_n, financier_n1: s.financier_n1,
+    ventes_n: ventesN, ventes_n1: ventesN1,
+    tops: topFlop.tops, flops: topFlop.flops,
+    prodN, prodN1, prodFamN, prodFamN1,
+    notes: s.notes ?? [],
+  }
+}
+
+/** Clôt une extraction : statut final, rapport lié, corrections humaines et
+ *  contrôles re-calculés après correction (pour l'audit). */
+export async function finalizeExtraction(
+  service: ServiceClient,
+  extractionId: string,
+  args: { status: string; reportId?: string | null; overrides?: FamilyOverride[] | null; checks?: unknown[] | null; validatedBy?: string | null },
+): Promise<void> {
+  const patch: Record<string, unknown> = { status: args.status }
+  if (args.reportId) patch.report_id = args.reportId
+  if (args.overrides && args.overrides.length > 0) patch.human_overrides = args.overrides
+  if (args.checks) patch.checks = args.checks
+  if (args.status === 'validee_humain') {
+    patch.validated_at = new Date().toISOString()
+    if (args.validatedBy) patch.validated_by = args.validatedBy
+  }
+  const { error } = await service.from('report_extractions').update(patch).eq('id', extractionId)
+  if (error) console.error('[trace] clôture extraction impossible:', error.message)
 }
