@@ -159,6 +159,45 @@ export const MATIERE_BENCH: Record<string, [number, number]> = {
   boucherie: [35, 45], charcuterie: [40, 55], traiteur: [50, 65], vente: [20, 35],
 }
 
+// ── Fiabilité d'un taux de marge ─────────────────────────────────────────────
+// Un taux de marge matière ne se lit pas seul : sans achats saisis il vaut
+// mécaniquement 100 %, ce qui n'est pas une performance mais une donnée
+// manquante. Ce garde-fou existait UNIQUEMENT dans le rapport PDF ; il vit ici
+// pour que le tableau de bord, la page Marges et le PDF disent la même chose.
+// Principe du projet : on affiche le trou, on n'invente pas un chiffre plausible.
+
+/** Au-delà de ce taux, la marge matière ne peut pas être réelle en boucherie
+ *  artisanale (repère de branche 35-45 %) : il manque des factures d'achat. */
+export const MARGE_MAX_PLAUSIBLE = 55
+
+export type MargeFiabilite = {
+  /** false = le taux affiché est surévalué, il ne faut pas le présenter comme un résultat */
+  fiable: boolean
+  raison: 'aucun_achat' | 'taux_impossible' | null
+  /** Message prêt à afficher, ou null si le taux est exploitable */
+  message: string | null
+}
+
+/** Le taux de marge de cette période est-il exploitable ?
+ *  `caHT` et `achatsHT` sont HT (sorties de lib/week-economics). */
+export function margeFiabilite(caHT: number, achatsHT: number, taux: number | null): MargeFiabilite {
+  if (caHT > 0 && achatsHT <= 0) {
+    return {
+      fiable: false,
+      raison: 'aucun_achat',
+      message: "Aucune facture d'achat sur la période : la marge affichée n'a aucun sens tant que les achats manquent.",
+    }
+  }
+  if (taux !== null && taux > MARGE_MAX_PLAUSIBLE) {
+    return {
+      fiable: false,
+      raison: 'taux_impossible',
+      message: `Marge à ${taux.toFixed(1)} % : ce niveau n'existe pas en boucherie artisanale (repère 35-45 %) et signale des factures d'achat non saisies.`,
+    }
+  }
+  return { fiable: true, raison: null, message: null }
+}
+
 /** Repère d'une famille — reconnaissance souple sur le libellé (« boucher » ≈ boucherie) */
 export function benchOf(key: string, label: string): [number, number] | null {
   const n = (label || key).toLowerCase()
