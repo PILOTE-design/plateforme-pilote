@@ -17,6 +17,7 @@ import { PiloteReport } from './report-pdf'
 import { eur0, signPct, trunc } from './report-format'
 import { parsePDF, extractData } from './report-extract'
 import { archiveWeekData } from './report-persist'
+import { serializeExtraction, storeReportSources, storeExtraction, linkExtractionToReport } from './report-trace'
 import { buildFamRows, buildStatus, buildMargeRead, buildExecSummary, generateInsights } from './report-compute'
 import { getPieBuffer } from './report-chart'
 import type { ComputedReport, ReportData } from './report-types'
@@ -57,6 +58,25 @@ export async function POST(req: NextRequest) {
     ])
 
     const data = await extractData({ fin_n: tFN, fin_n1: tFN1, ventes_n: tVN, ventes_n1: tVN1 })
+
+    // ── Traçabilité (lot V1) — AVANT tout garde-fou : les extractions ratées
+    // sont les plus précieuses à archiver. Best-effort : un échec de trace est
+    // loggé et ne bloque jamais la génération.
+    let extractionId: string | null = null
+    try {
+      const sourcePaths = await storeReportSources(serviceSupabase, clientId, data.week_number, data.year, {
+        financier_n: finN, financier_n1: finN1, ventes_n: venN, ventes_n1: venN1,
+      })
+      extractionId = await storeExtraction(serviceSupabase, {
+        clientId, week: data.week_number, year: data.year,
+        files: sourcePaths,
+        rawTexts: { financier_n: tFN, financier_n1: tFN1, ventes_n: tVN, ventes_n1: tVN1 },
+        extraction: serializeExtraction(data),
+        checks: null, status: 'archivee',
+      })
+    } catch (traceErr) {
+      console.error('Traçabilité extraction indisponible:', traceErr)
+    }
 
     // Garde-fou : si aucun CA n'est detecte dans le Releve Financier, le fichier est
     // probablement le mauvais (souvent une inversion Financier <-> Ventes par familles)
@@ -153,13 +173,19 @@ export async function POST(req: NextRequest) {
     const reportsPageUrl = `${appUrl}/dashboard/reports`
 
     const title = `Analyse S${data.week_number} - ${data.period_n}${clientName ? ' - ' + clientName : ''}`
-    const { error: dbError } = await serviceSupabase.from('reports').insert({
+    const { data: reportRow, error: dbError } = await serviceSupabase.from('reports').insert({
       profile_id: profile.id, title,
       week_number: data.week_number, year: data.year,
       file_url: filePath, file_path: filePath,
       ...(clientId ? { client_id: clientId } : {}),
-    })
+    }).select('id').single()
     if (dbError) return NextResponse.json({ error: 'DB: ' + dbError.message }, { status: 500 })
+
+    // La trace pointe vers le rapport qu'elle a produit (audit : chaque chiffre
+    // du PDF remonte à son extraction, donc à ses fichiers sources).
+    if (extractionId && reportRow?.id) {
+      await linkExtractionToReport(serviceSupabase, extractionId, String(reportRow.id))
+    }
 
     // Email non bloquant : un echec Resend ne doit ni planter ni ralentir la generation
     try {
