@@ -423,7 +423,24 @@ export async function computeWeekEconomics(
   // Bloc Divers : tout le CA qu'aucune famille ne revendique (rachat, épicerie,
   // boissons, fruits & légumes, prestations…), face aux achats ventilés en divers et à
   // sa part d'heures sans poste. Les 3 familles + Divers font le CA total.
-  const achDivers = round2(achats_by_rayon.divers || 0)
+  //
+  // RÉCONCILIATION DES ACHATS ORPHELINS — un rayon métier (boucherie / charcuterie /
+  // traiteur) qu'AUCUNE famille de marge ne revendique voit déjà son CA tomber dans
+  // Divers (caDivers = CA total − familles), mais ses ACHATS, eux, n'étaient rattachés
+  // à aucun bloc : ni à une famille (aucune ne réclame ce rayon), ni à Divers (qui ne
+  // prenait que le rayon « divers »), ni aux « non ventilés » (réservés aux fournisseurs
+  // sans répartition). Ils disparaissaient donc de la ventilation — « somme des blocs <
+  // achats totaux ». On les rattache à Divers, là où va DÉJÀ leur CA : l'invariant
+  // « familles + Divers + non ventilés = achats validés » est rétabli, et la marge du
+  // bloc Divers reste cohérente (même périmètre au numérateur qu'au dénominateur).
+  // Cas typique : une famille personnalisée (« Volaille ») remplace un rayon figé, si
+  // bien que « traiteur » n'est réclamé par personne. Config standard (les 3 rayons
+  // réclamés) : orphelins = 0, comportement strictement inchangé.
+  const achatsRayonsOrphelins = VENT_RAYONS.reduce(
+    (s, r, ri) => (rayonClaimedByFamille[ri] < 0 ? s + (achats_by_rayon[r.key] || 0) : s),
+    0,
+  )
+  const achDivers = round2((achats_by_rayon.divers || 0) + achatsRayonsOrphelins)
   const divers: FamilleEconomics = {
     key: DIVERS_POSTE.key,
     label: DIVERS_POSTE.label,
