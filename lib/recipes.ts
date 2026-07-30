@@ -221,6 +221,15 @@ export function computeRecipeCost(
   const yieldQty = Number(recipe.yield_qty) || 0
   const parUnite = yieldQty > 0 ? round2(total / yieldQty) : null
 
+  // Un ingrédient sans prix compte pour 0 € : le coût de revient est donc
+  // SOUS-évalué, et la marge qui s'en déduit SUR-évaluée. Afficher « 62 % de
+  // marge » avec un badge « 2 prix manquants » à côté laissait lire le chiffre
+  // et ignorer le badge. Conformément au principe du projet (afficher le trou
+  // plutôt qu'un chiffre plausible mais faux), la marge et le coefficient ne
+  // sont PAS calculés tant qu'il manque un prix — le coût matière connu, lui,
+  // reste affiché.
+  const prixManquants = ingredients.filter(i => i.price_source === 'aucun').length
+
   let pvHT: number | null = null
   let marge: number | null = null
   let coef: number | null = null
@@ -229,7 +238,7 @@ export function computeRecipeCost(
     const tva = Number(recipe.tva_rate) || 0
     pvHT = round2(pvTTC / (1 + tva / 100))
     const coutUnite = parUnite ?? total // sans rendement renseigné, le PV est comparé au batch entier
-    if (pvHT > 0 && coutUnite > 0) {
+    if (pvHT > 0 && coutUnite > 0 && prixManquants === 0) {
       marge = round2(((pvHT - coutUnite) / pvHT) * 100)
       coef = round2(pvHT / coutUnite)
     }
@@ -241,7 +250,7 @@ export function computeRecipeCost(
     main_oeuvre_ht: mo,
     total_ht: total,
     par_unite_ht: parUnite,
-    prix_manquants: ingredients.filter(i => i.price_source === 'aucun').length,
+    prix_manquants: prixManquants,
     labor_rate_ht: laborRate,
     total_minutes: totalMinutes,
     pv_unitaire_ht: pvHT,
