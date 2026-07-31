@@ -2,12 +2,29 @@
  * Webhook de réception d'emails entrants (factures transférées par l'utilisateur).
  * Compatible Resend Inbound, Mailgun, Postmark, SendGrid Inbound Parse.
  * L'adresse cible est : factures-{billing_forward_id}@mail.getpilote.app
+ *
+ * C'EST LE CONNECTEUR DES BOUCHERIES SANS LOGICIEL DE FACTURATION (31/07).
+ * Beaucoup de maisons n'ont ni Pennylane ni équivalent : elles transfèrent
+ * simplement la facture reçue par mail. Le chemin doit alors être EXACTEMENT
+ * celui d'une facture Pennylane, à la source près.
+ *
+ * D'où : la PIÈCE JOINTE PDF est la source. Elle est archivée dans le bucket
+ * `invoice-files` comme le fait la synchro, l'en-tête est lu SUR LE PDF (texte
+ * par coordonnées, puis IA) et la facture entre dans la MÊME file de lecture
+ * (`lines_status` null) — lignes, articles, mercuriale, quarantaine des prix,
+ * fiches recettes. Un seul moteur, une seule porte de validation : la facture
+ * arrive « à vérifier » et ne compte dans la marge qu'après validation humaine.
+ *
+ * Le corps du mail reste le repli quand il n'y a AUCUNE pièce jointe lisible —
+ * la facture est alors créée sans PDF et signalée comme telle, jamais devinée.
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/server'
 import { resolveClientId } from '@/lib/resolve-client-id'
 import { loadSupplierCategories, rememberedCategory } from '@/lib/supplier-memory'
-import { weekForInvoice } from '@/lib/invoice-week'
+import { weekForInvoice, plausibleDelivery } from '@/lib/invoice-week'
+import { pdfToLines } from '@/lib/pdf-lines'
+import { randomUUID } from 'crypto'
 import Anthropic from '@anthropic-ai/sdk'
 
 // Clé de repli au build : le constructeur Anthropic lève une erreur si la clé est absente,
@@ -23,16 +40,72 @@ function getISOWeek(date: Date) {
   return { week: Math.ceil((((d.getTime() - y.getTime()) / 86400000) + 1) / 7), year: d.getUTCFullYear() }
 }
 
+/** Une pièce jointe retenue : son nom et son contenu */
+type Piece = { filename: string; buffer: Buffer }
+
+const looksPdf = (name: string, type?: string) =>
+  /\.pdf$/i.test(String(name || '')) || String(type || '').toLowerCase().includes('pdf')
+
+/** Première pièce jointe PDF du message, quel que soit le fournisseur d'email.
+ *  Trois formats coexistent dans la nature :
+ *   · form-data avec un vrai fichier (SendGrid Inbound Parse, Mailgun) ;
+ *   · JSON avec un tableau `attachments` en base64 (Resend, Mailgun API) ;
+ *   · JSON Postmark, qui capitalise (`Attachments`, `Name`, `Content`).
+ *  Aucune n'est privilégiée : on prend la première qui ressemble à un PDF.
+ *  null = pas de pièce jointe exploitable (le corps du mail prendra le relais). */
+async function pickPdf(body: any, form: FormData | null): Promise<Piece | null> {
+  if (form) {
+    for (const [, value] of form.entries()) {
+      if (value && typeof value === 'object' && 'arrayBuffer' in value) {
+        const f = value as File
+        if (!looksPdf(f.name, f.type)) continue
+        const buf = Buffer.from(await f.arrayBuffer())
+        if (buf.length > 0) return { filename: f.name || 'facture.pdf', buffer: buf }
+      }
+    }
+  }
+  const arr: any[] = Array.isArray(body?.attachments) ? body.attachments
+    : Array.isArray(body?.Attachments) ? body.Attachments
+    : []
+  for (const a of arr) {
+    const name = a?.filename ?? a?.Name ?? a?.name ?? ''
+    const type = a?.content_type ?? a?.ContentType ?? a?.contentType ?? ''
+    if (!looksPdf(name, type)) continue
+    const raw = a?.content ?? a?.Content ?? a?.data ?? null
+    if (typeof raw !== 'string' || raw.length === 0) continue
+    try {
+      // Certains fournisseurs préfixent en data-URL : on ne garde que le base64
+      const b64 = raw.includes(',') && raw.slice(0, 40).includes('base64') ? raw.slice(raw.indexOf(',') + 1) : raw
+      const buf = Buffer.from(b64, 'base64')
+      if (buf.length > 0) return { filename: String(name) || 'facture.pdf', buffer: buf }
+    } catch { /* pièce illisible : on tente la suivante */ }
+  }
+  return null
+}
+
+/** Texte d'un PDF : par COORDONNÉES d'abord (colonnes séparées, même lecture
+ *  que l'extraction des lignes), repli sur le texte plat de pdf-parse. */
+async function readPdfText(buffer: Buffer): Promise<string> {
+  const coordLines = await pdfToLines(buffer)
+  if (coordLines.length > 0) return coordLines.join('\n')
+  const _m = await import('pdf-parse') as any
+  const pdfParse = typeof _m.default === 'function' ? _m.default : _m
+  return (await pdfParse(buffer)).text
+}
+
 export async function POST(request: NextRequest) {
   const serviceSupabase = createServiceClient()
 
-  // Accepter JSON ou form-data selon le provider
+  // Accepter JSON ou form-data selon le provider. Le FormData est CONSERVÉ :
+  // c'est là que vivent les pièces jointes des fournisseurs qui postent en
+  // multipart (les aplatir dans `body` perdait le contenu des fichiers).
   let body: any = {}
+  let form: FormData | null = null
   const contentType = request.headers.get('content-type') || ''
   if (contentType.includes('application/json')) {
     body = await request.json()
   } else if (contentType.includes('multipart/form-data') || contentType.includes('application/x-www-form-urlencoded')) {
-    const form = await request.formData()
+    form = await request.formData()
     for (const [k, v] of form.entries()) body[k] = v
   }
 
@@ -64,7 +137,33 @@ export async function POST(request: NextRequest) {
   const htmlBody  = body.html      || body['body-html']   || body.stripped_html || ''
   const plainText = textBody || htmlBody.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
 
-  const emailContent = `Objet: ${subject}\n\n${plainText}`.slice(0, 8000)
+  // ── LA PIÈCE JOINTE PDF EST LA SOURCE ──────────────────────────────────
+  // Le PDF est archivé AVANT toute lecture : même s'il n'est pas exploitable
+  // aujourd'hui, le document reste consultable et relisible plus tard. Un échec
+  // d'archivage ne fait jamais échouer la réception — la facture existe quand
+  // même, simplement sans PDF (et l'écran le dit).
+  const piece = await pickPdf(body, form)
+  let filePath: string | null = null
+  let pdfText = ''
+  if (piece) {
+    const path = `${clientId}/mail-${randomUUID()}.pdf`
+    const { error: upErr } = await serviceSupabase.storage
+      .from('invoice-files')
+      .upload(path, piece.buffer, { contentType: 'application/pdf', upsert: false })
+    if (!upErr) filePath = path
+    else console.error('[inbound] archivage du PDF impossible:', upErr.message)
+    try {
+      pdfText = await readPdfText(piece.buffer)
+    } catch (e) {
+      console.error('[inbound] lecture du PDF impossible:', e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  // La source de vérité est le PDF quand il est lisible ; le corps du mail ne
+  // sert que de repli (facture annoncée dans le texte, sans pièce jointe).
+  const emailContent = pdfText.trim().length > 40
+    ? `Facture (texte du PDF joint « ${piece?.filename ?? 'facture.pdf'} ») :\n\n${pdfText}`.slice(0, 12000)
+    : `Objet: ${subject}\n\n${plainText}`.slice(0, 8000)
 
   // Claude Haiku extrait les données de la facture
   const extraction = await anthropic.messages.create({
@@ -82,11 +181,18 @@ JSON attendu :
   "supplier_name": "Nom du fournisseur",
   "invoice_number": "Numéro ou null",
   "invoice_date": "YYYY-MM-DD",
+  "delivery_date": "YYYY-MM-DD ou null",
+  "due_date": "YYYY-MM-DD ou null",
   "amount_ht": 0.00,
   "tva_rate": 20,
   "amount_ttc": 0.00,
   "category": "viande|charcuterie|epicerie|emballage|frais_generaux|autre"
 }
+
+Règle des DATES — elles sont distinctes, ne jamais recopier l'une dans l'autre :
+- invoice_date = date d'ÉMISSION de la facture (« facture du », « le »).
+- delivery_date = date de LIVRAISON de la marchandise (« livré le », « bon de livraison », « expédition »), null si absente.
+- due_date = date limite de PAIEMENT (« à régler avant le », « échéance », « payable au »), null si absente.
 
 Règles catégories :
 - viande : bœuf, porc, veau, agneau, volaille, abats
@@ -118,10 +224,18 @@ Si montant HT absent, déduire de TTC : HT = TTC / 1.{tva_rate/100+1}`
   // facture reste « à vérifier », donc hors marge tant qu'elle n'est pas validée).
   // L'échéance de paiement est passée en 3e argument : une date de livraison qui
   // lui est égale (confusion classique de l'IA) est écartée par le garde-fou.
+  const echeance = typeof invoiceData.due_date === 'string' && invoiceData.due_date ? invoiceData.due_date.slice(0, 10) : null
+  // Même garde-fou que l'extraction des lignes : une date de livraison égale à
+  // l'échéance, ou hors de la fenêtre autour de la facture, n'est PAS retenue.
+  const livraisonRetenue = plausibleDelivery(
+    typeof invoiceData.delivery_date === 'string' ? invoiceData.delivery_date.slice(0, 10) : null,
+    invoiceData.invoice_date ?? null,
+    echeance,
+  )
   const { week, year } = weekForInvoice(
     invoiceData.delivery_date ?? null,
     invoiceData.invoice_date ?? null,
-    invoiceData.due_date ?? null,
+    echeance,
   ) ?? getISOWeek(invoiceDate)
 
   const amountHT  = parseFloat(invoiceData.amount_ht)  || 0
@@ -156,11 +270,24 @@ Si montant HT absent, déduire de TTC : HT = TTC / 1.{tva_rate/100+1}`
       amount_ht:      amountHT,
       tva_rate:       tvaRate,
       amount_ttc:     amountTTC,
-      notes:          `Importé automatiquement${memoryApplied ? ' · catégorie reprise de vos factures précédentes' : ''} — objet: ${subject.slice(0, 100)}`,
+      // Dates lues sur le document — la livraison passe le garde-fou (une date
+      // égale à l'échéance, ou hors fenêtre, est écartée plutôt que propagée).
+      delivery_date:  livraisonRetenue,
+      due_date:       echeance,
+      // Le PDF archivé rend la facture RELISIBLE : elle rejoint la file
+      // « factures en attente de lecture » de la mercuriale (lines_status null)
+      // et suit ensuite exactement le chemin d'une facture Pennylane.
+      file_path:      filePath,
+      lines_status:   null,
+      notes:          `Reçue par email${piece ? ` · pièce jointe ${piece.filename}` : ' · sans pièce jointe (lu dans le corps du message)'}${memoryApplied ? ' · catégorie reprise de vos factures précédentes' : ''} — objet: ${subject.slice(0, 100)}`,
     })
     .select()
     .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ ok: true, invoice, memoryApplied })
+  return NextResponse.json({
+    ok: true, invoice, memoryApplied,
+    pdf_archive: Boolean(filePath),
+    lu_sur: pdfText.trim().length > 40 ? 'pdf' : 'corps_du_mail',
+  })
 }
