@@ -293,10 +293,18 @@ export async function GET() {
     rang(a.lines_status) - rang(b.lines_status)
     || String(b.invoice_date || '').localeCompare(String(a.invoice_date || '')))
 
+  // Factures SANS PDF : elles n'entrent pas dans la file (rien à lire), mais
+  // elles pèsent — leurs prix manquent à la mercuriale. Le compte est remonté
+  // pour que l'écran propose le rattrapage au lieu de laisser un trou muet.
+  const { count: sansPdf } = await service.from('invoices')
+    .select('id', { count: 'exact', head: true })
+    .eq('client_id', clientId).eq('is_fixed_charge', false).is('file_path', null)
+
   return NextResponse.json({
     generics: genericsOut,
     queue: queueOut,
     pending: pendingOut,
+    sans_pdf: sansPdf ?? 0,
     moves: movesOut,
     moves_total: moves.length,
   })

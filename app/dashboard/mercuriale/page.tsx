@@ -186,6 +186,10 @@ export default function MercurialePage() {
   // Motifs d'échec / de lecture partielle (lot 1) : dépliables, relisibles un par un
   const [showMotifs, setShowMotifs] = useState(false)
   const [relisant, setRelisant] = useState<string | null>(null)
+  // Rattrapage des PDF manquants (lot 2) : une facture sans PDF n'a ni lignes
+  // ni prix — c'est le plus gros gisement de mercuriale inexploitée.
+  const [sansPdf, setSansPdf] = useState(0)
+  const [backfill, setBackfill] = useState(false)
 
   // ── ASSOCIATION PAR SÉLECTION : « Associer » sur une réf l'ajoute au lot,
   // « Associer » sur une autre l'ajoute aussi ; tout part vers le même générique.
@@ -223,6 +227,7 @@ export default function MercurialePage() {
       setPending(Array.isArray(data.pending) ? data.pending : [])
       setMoves(Array.isArray(data.moves) ? data.moves : [])
       setMovesTotal(Number(data.moves_total) || 0)
+      setSansPdf(Number(data.sans_pdf) || 0)
     }
     setLoading(false)
   }, [])
@@ -257,6 +262,24 @@ export default function MercurialePage() {
     toast(errors === 0
       ? { variant: 'success', title: detail.join(' · '), description: 'Les réfs sans ressemblance s’associent toutes seules ; les autres arrivent dans « À rapprocher ».' }
       : { variant: 'error', title: detail.join(' · '), description: 'Les factures en échec peuvent être relancées.' })
+    load()
+  }
+
+  /** Redemande à Pennylane les PDF des factures qui n'en ont pas. Par lots :
+   *  la fenêtre d'exécution est courte, et la route dit combien il en reste. */
+  async function rattraperPdf() {
+    if (backfill) return
+    setBackfill(true)
+    const res = await fetch('/api/billing-integrations/backfill-pdf', { method: 'POST' }).catch(() => null)
+    const data = res ? await res.json().catch(() => null) : null
+    setBackfill(false)
+    if (res?.ok) {
+      toast(Number(data?.recuperes) > 0
+        ? { variant: 'success', title: data?.message, description: 'Les factures récupérées sont revenues dans la file de lecture.' }
+        : { variant: 'info', title: data?.message || 'Aucun PDF récupéré', description: Array.isArray(data?.echecs) && data.echecs.length > 0 ? `${data.echecs[0].facture} : ${data.echecs[0].motif}` : undefined })
+    } else {
+      toast({ variant: 'error', title: data?.error || 'Rattrapage impossible' })
+    }
     load()
   }
 
@@ -715,6 +738,21 @@ export default function MercurialePage() {
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />Actualiser
         </button>
       </div>
+
+      {/* Factures sans PDF : rien à lire tant que le document n'est pas récupéré */}
+      {sansPdf > 0 && (
+        <div className="mb-4 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex items-center gap-3 flex-wrap">
+          <AlertTriangle className="w-4 h-4 text-amber-700 flex-shrink-0" />
+          <p className="text-sm text-amber-900 flex-1 min-w-[220px]">
+            <strong>{sansPdf} facture{sansPdf > 1 ? 's' : ''} sans document archivé</strong> — sans PDF, aucune ligne ne peut être lue
+            et leurs prix manquent à la mercuriale. Le fichier peut être redemandé à votre logiciel de facturation.
+          </p>
+          <button onClick={rattraperPdf} disabled={backfill}
+            className="text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-lg px-3.5 py-2 shadow-card active:scale-[0.98] transition-all disabled:opacity-50">
+            {backfill ? 'Récupération…' : 'Récupérer les PDF'}
+          </button>
+        </div>
+      )}
 
       {/* File d'attente d'extraction — jamais lues ET relectures (partial, error) */}
       {pending.length > 0 && (() => {
