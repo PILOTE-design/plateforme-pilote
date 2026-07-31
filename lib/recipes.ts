@@ -77,6 +77,8 @@ export type IngredientRow = {
   id?: string
   generic_id: string | null
   article_id: string | null
+  /** Sous-recette : la ligne vise une AUTRE fiche (quantité en unités de son rendement) */
+  sub_recipe_id?: string | null
   label: string
   quantity: number
   unit: string | null              // héritage : unité libre des anciennes lignes
@@ -98,9 +100,11 @@ export type GenericInfo = {
 }
 
 export type IngredientCost = IngredientRow & {
-  unit_price_ht: number | null   // prix retenu, par unité de base (générique) ou d'achat (hérité)
-  price_source: 'mercuriale' | 'manuel' | 'aucun'
+  unit_price_ht: number | null   // prix retenu, par unité de base (générique), d'achat (hérité) ou de rendement (sous-recette)
+  price_source: 'mercuriale' | 'manuel' | 'aucun' | 'sous_recette'
   categorie: 'ingredient' | 'emballage'
+  /** Sous-recette au coût sous-évalué (elle-même a des prix manquants) */
+  sub_incomplete?: boolean
   qty_base: number               // quantité NETTE convertie en unité de base (kg/pièce)
   qty_brute: number              // quantité BRUTE à sortir (net ÷ (1 − perte))
   line_total_ht: number          // qty_brute × prix (0 si aucun prix connu)
@@ -168,10 +172,33 @@ export function costIngredients(
   ingredients: IngredientRow[],
   priceByArticle: Map<string, number>,
   genericById?: Map<string, GenericInfo>,
+  /** Résout le coût par unité d'une SOUS-RECETTE (cf. buildRecipeCostGraph).
+   *  Sans résolveur, une ligne sous-recette garde ses quantités mais son prix
+   *  est « manquant » — jamais un chiffre inventé. */
+  subResolver?: (subRecipeId: string) => SubCostInfo | null,
 ): IngredientCost[] {
   return ingredients.map(ing => {
     const qty = Number(ing.quantity) || 0
     const loss = Math.min(99, Math.max(0, Number(ing.loss_pct) || 0))
+
+    // Ligne SOUS-RECETTE : quantité en unités de rendement de la sous-fiche,
+    // coût = son coût complet ÷ son rendement (relu, jamais stocké).
+    if (ing.sub_recipe_id) {
+      const info = subResolver ? subResolver(ing.sub_recipe_id) : null
+      const price = info && info.per_unit !== null ? info.per_unit : null
+      const qtyBrute = round4(qty / (1 - loss / 100))
+      return {
+        ...ing,
+        unit_price_ht: price,
+        price_source: (price !== null ? 'sous_recette' : 'aucun') as IngredientCost['price_source'],
+        categorie: 'ingredient' as const,
+        qty_base: qty,
+        qty_brute: qtyBrute,
+        line_total_ht: round2((price ?? 0) * qtyBrute),
+        sub_incomplete: Boolean(info?.incomplete),
+      }
+    }
+
     const generic = ing.generic_id != null ? genericById?.get(ing.generic_id) ?? null : null
 
     if (generic) {
@@ -232,7 +259,9 @@ export function computeRecipeCost(
   // plutôt qu'un chiffre plausible mais faux), la marge et le coefficient ne
   // sont PAS calculés tant qu'il manque un prix — le coût matière connu, lui,
   // reste affiché.
-  const prixManquants = ingredients.filter(i => i.price_source === 'aucun').length
+  // Une sous-recette au coût incomplet (elle-même a des prix manquants) compte
+  // comme un prix manquant : son coût est sous-évalué, la marge serait flattée.
+  const prixManquants = ingredients.filter(i => i.price_source === 'aucun' || i.sub_incomplete === true).length
 
   let pvHT: number | null = null
   let marge: number | null = null
@@ -281,8 +310,11 @@ export function parseIngredients(raw: unknown): { error?: string; rows?: Ingredi
     const manual = Number(r?.manual_price_ht)
     const loss = Number(r?.loss_pct)
     const qtyUnit = typeof r?.qty_unit === 'string' && ['kg', 'g', 'piece'].includes(r.qty_unit) ? r.qty_unit : null
+    // Sous-recette : exclusive de l'article générique (contrainte CHECK en base)
+    const subId = typeof r?.sub_recipe_id === 'string' && r.sub_recipe_id ? r.sub_recipe_id : null
     rows.push({
-      generic_id: typeof r?.generic_id === 'string' && r.generic_id ? r.generic_id : null,
+      generic_id: subId ? null : (typeof r?.generic_id === 'string' && r.generic_id ? r.generic_id : null),
+      sub_recipe_id: subId,
       article_id: typeof r?.article_id === 'string' && r.article_id ? r.article_id : null,
       label: label.slice(0, 120),
       quantity,
@@ -485,4 +517,64 @@ export function costMatiereAtDate(
     }
   }
   return Math.round(total * 100) / 100
+}
+
+// ── Sous-recettes ─────────────────────────────────────────────────────────
+// Une fiche peut entrer dans une autre (farce fine, pâte, court-bouillon…).
+// Son coût d'ingrédient = son coût COMPLET (matière + emballage + MO au taux
+// productif) ÷ son rendement — relu à chaque affichage, jamais stocké.
+
+/** Coût par unité de rendement d'une sous-recette, et honnêteté du chiffre */
+export type SubCostInfo = {
+  per_unit: number | null   // null : rendement absent ou boucle — « prix manquant »
+  incomplete: boolean       // la sous-fiche a elle-même des prix manquants
+}
+
+/** Graphe de coût des fiches avec sous-recettes : mémoïsation + garde
+ *  anti-cycle. Une sous-recette en boucle ou sans rendement se résout en
+ *  « prix manquant » (per_unit null) — jamais un chiffre inventé, jamais de
+ *  boucle infinie. `costFor` renvoie null pour un id inconnu. */
+export function buildRecipeCostGraph(args: {
+  recipes: (RecipeRow & Record<string, unknown>)[]
+  ingredientsByRecipe: Map<string, IngredientRow[]>
+  priceByArticle: Map<string, number>
+  genericById: Map<string, GenericInfo>
+  rateForRecipe: (r: RecipeRow & Record<string, unknown>) => number | null
+}): { costedFor: (id: string) => IngredientCost[]; costFor: (id: string) => RecipeCost | null } {
+  const byId = new Map(args.recipes.map(r => [String(r.id), r]))
+  const memo = new Map<string, { costed: IngredientCost[]; cost: RecipeCost }>()
+  const visiting = new Set<string>()
+
+  const compute = (id: string): { costed: IngredientCost[]; cost: RecipeCost } | null => {
+    const hit = memo.get(id)
+    if (hit) return hit
+    if (visiting.has(id)) return null // boucle : la ligne appelante devient « prix manquant »
+    const r = byId.get(id)
+    if (!r) return null
+    visiting.add(id)
+    const costed = costIngredients(args.ingredientsByRecipe.get(id) || [], args.priceByArticle, args.genericById, subResolver)
+    const cost = computeRecipeCost(r, costed, args.rateForRecipe(r))
+    visiting.delete(id)
+    const out = { costed, cost }
+    memo.set(id, out)
+    return out
+  }
+
+  const subResolver = (subId: string): SubCostInfo | null => {
+    const key = String(subId)
+    const r = byId.get(key)
+    if (!r) return null
+    const res = compute(key)
+    if (!res) return null // boucle détectée
+    const y = Number(r.yield_qty) || 0
+    return {
+      per_unit: y > 0 ? round4(res.cost.total_ht / y) : null,
+      incomplete: res.cost.prix_manquants > 0,
+    }
+  }
+
+  return {
+    costedFor: (id: string) => compute(String(id))?.costed ?? [],
+    costFor: (id: string) => compute(String(id))?.cost ?? null,
+  }
 }
