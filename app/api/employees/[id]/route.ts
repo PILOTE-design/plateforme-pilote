@@ -1,19 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
+import { resolveClientId } from '@/lib/resolve-client-id'
 
-async function resolveClient(
-  serviceSupabase: ReturnType<typeof createServiceClient>,
-  userId: string,
-  userEmail?: string | null,
-) {
-  const { data: byId } = await serviceSupabase
-    .from('clients').select('id').eq('client_user_id', userId).maybeSingle()
-  if (byId) return byId
-  if (!userEmail) return null
-  const { data: byEmail } = await serviceSupabase
-    .from('clients').select('id').eq('email', userEmail).maybeSingle()
-  return byEmail ?? null
-}
+// Résolution de compte : resolveClientId (source unique de vérité) — l'ancien
+// helper local dupliquait la logique sans la garde anti-ambiguïté.
 
 export async function PATCH(
   req: NextRequest,
@@ -24,8 +14,8 @@ export async function PATCH(
   if (!user) return NextResponse.json({ error: 'Non autorisé' }, { status: 401 })
 
   const serviceSupabase = createServiceClient()
-  const clientRecord = await resolveClient(serviceSupabase, user.id, user.email)
-  if (!clientRecord) return NextResponse.json({ error: 'Client introuvable' }, { status: 404 })
+  const clientId = await resolveClientId(serviceSupabase, user.id, user.email)
+  if (!clientId) return NextResponse.json({ error: 'Client introuvable' }, { status: 404 })
 
   const body = await req.json() as Record<string, unknown>
   const allowed = [
@@ -49,7 +39,7 @@ export async function PATCH(
     .from('employees')
     .update(updates)
     .eq('id', params.id)
-    .eq('client_id', (clientRecord as { id: string }).id)
+    .eq('client_id', clientId)
     .select()
     .single()
 
@@ -66,14 +56,14 @@ export async function DELETE(
   if (!user) return NextResponse.json({ error: 'Non autorisé' }, { status: 401 })
 
   const serviceSupabase = createServiceClient()
-  const clientRecord = await resolveClient(serviceSupabase, user.id, user.email)
-  if (!clientRecord) return NextResponse.json({ error: 'Client introuvable' }, { status: 404 })
+  const clientId = await resolveClientId(serviceSupabase, user.id, user.email)
+  if (!clientId) return NextResponse.json({ error: 'Client introuvable' }, { status: 404 })
 
   const { error } = await serviceSupabase
     .from('employees')
     .delete()
     .eq('id', params.id)
-    .eq('client_id', (clientRecord as { id: string }).id)
+    .eq('client_id', clientId)
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   return NextResponse.json({ success: true })
