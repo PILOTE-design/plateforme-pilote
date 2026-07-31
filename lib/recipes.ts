@@ -97,11 +97,20 @@ export type GenericInfo = {
   category: 'ingredient' | 'emballage'
   default_loss_pct: number
   price_ht: number | null
+  /** DATE de la facture d'où vient ce prix. Elle était lue pour choisir la réf
+   *  la plus récente, puis jetée : une fiche chiffrée sur un prix de février et
+   *  une fiche chiffrée sur une facture d'hier avaient exactement la même
+   *  apparence, alors que c'est le chiffre sur lequel se décide un prix de
+   *  vente. La mercuriale, elle, sait déjà signaler un prix de plus de 30 jours. */
+  price_date: string | null
 }
 
 export type IngredientCost = IngredientRow & {
   unit_price_ht: number | null   // prix retenu, par unité de base (générique), d'achat (hérité) ou de rendement (sous-recette)
   price_source: 'mercuriale' | 'manuel' | 'aucun' | 'sous_recette'
+  /** Date de la facture d'où vient le prix mercuriale (null : prix manuel,
+   *  sous-recette, ou aucun prix) — l'âge du chiffre, affiché sur la fiche. */
+  price_date?: string | null
   categorie: 'ingredient' | 'emballage'
   /** Sous-recette au coût sous-évalué (elle-même a des prix manquants) */
   sub_incomplete?: boolean
@@ -211,6 +220,7 @@ export function costIngredients(
         ...ing,
         unit_price_ht: price,
         price_source: source,
+        price_date: source === 'mercuriale' ? generic.price_date : null,
         categorie: generic.category,
         qty_base: qtyBase,
         qty_brute: qtyBrute,
@@ -433,6 +443,7 @@ export function buildGenericMap(
       category: g.category === 'emballage' ? 'emballage' : 'ingredient',
       default_loss_pct: Number(g.default_loss_pct) || 0,
       price_ht: bestByGeneric.has(id) ? round4(bestByGeneric.get(id)!.price) : null,
+      price_date: bestByGeneric.get(id)?.date || null,
     })
   }
   return map
