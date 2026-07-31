@@ -17,9 +17,9 @@ import { PAYROLL_EMPLOYEE_COLUMNS, chargeMultiplier, productiveFactor, type Payr
 import {
   averageLoadedRate, employeeLoadedRate, buildGenericMap,
   buildGenericPriceSeries, costMatiereAtDate,
-  costIngredients, computeRecipeCost,
+  buildRecipeCostGraph,
   parseIngredients, parseRecipeFields,
-  type IngredientRow, type RecipeRow,
+  type IngredientRow, type RecipeCost, type RecipeRow,
 } from '@/lib/recipes'
 
 export const dynamic = 'force-dynamic'
@@ -98,16 +98,28 @@ export async function GET() {
   const todayIso = new Date().toISOString().slice(0, 10)
   if (jalons[jalons.length - 1] !== todayIso) jalons.push(todayIso)
 
+  // Graphe de coût AVEC sous-recettes : mémoïsation, garde anti-cycle, coût
+  // d'une sous-fiche = son coût complet ÷ son rendement (relu, jamais stocké).
+  const graph = buildRecipeCostGraph({
+    recipes: (recipes || []) as (RecipeRow & Record<string, unknown>)[],
+    ingredientsByRecipe: byRecipe,
+    priceByArticle,
+    genericById,
+    rateForRecipe: r => employeeLoadedRate(emps, r.employee_id as string | null) ?? averageRate,
+  })
+
   const out = (recipes || []).map((r: RecipeRow & Record<string, unknown>) => {
-    const costed = costIngredients(byRecipe.get(r.id) || [], priceByArticle, genericById)
-    const rate = employeeLoadedRate(emps, r.employee_id as string | null) ?? averageRate
+    const costed = graph.costedFor(r.id)
+    const cost = graph.costFor(r.id) as RecipeCost
     const hasMercuriale = costed.some(l => l.generic_id && l.price_source === 'mercuriale')
+    // Série du coût matière : les lignes sous-recettes y restent CONSTANTES (au
+    // coût du jour) — seule la matière mercuriale directe est relue à date.
     const matiere_series = hasMercuriale
       ? jalons
           .map(d => ({ d, v: costMatiereAtDate(costed, seriesByGeneric, d) }))
           .filter((x): x is { d: string; v: number } => x.v !== null)
       : []
-    return { ...r, ingredients: costed, cost: { ...computeRecipeCost(r, costed, rate), matiere_series } }
+    return { ...r, ingredients: costed, cost: { ...cost, matiere_series } }
   })
 
   return NextResponse.json({
@@ -180,6 +192,13 @@ async function checkOwnership(
     const { data } = await service.from('generic_articles')
       .select('id').eq('client_id', clientId).eq('active', true).in('id', genericIds)
     if ((data || []).length !== genericIds.length) return 'Un des articles génériques est introuvable'
+  }
+  // Sous-recettes : chacune doit être une fiche ACTIVE du client
+  const subIds = [...new Set(rows.map(r => r.sub_recipe_id ?? null).filter((s): s is string => s !== null))]
+  if (subIds.length > 0) {
+    const { data } = await service.from('recipes')
+      .select('id').eq('client_id', clientId).eq('active', true).in('id', subIds)
+    if ((data || []).length !== subIds.length) return 'Une des sous-recettes est introuvable'
   }
   return null
 }
