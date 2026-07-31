@@ -55,27 +55,40 @@ export async function POST(req: NextRequest) {
 
   const service = createServiceClient()
 
-  // Intégration Pennylane active — le token reste côté serveur
+  // TOUTES les intégrations Pennylane actives — une boutique peut en porter
+  // plusieurs (constaté le 31/07 : deux clés pour la même maison, dont une
+  // périmée). On les essaie l'une après l'autre plutôt que d'en tirer une au
+  // hasard : un 401 sur la première ne prouve rien sur les autres.
   let q = service.from('billing_integrations')
-    .select('client_id, api_token, clients(name)')
+    .select('client_id, api_token, last_sync_at, clients(name, email)')
     .eq('provider', 'pennylane').eq('is_active', true)
+    .order('last_sync_at', { ascending: false })
   if (clientId) q = q.eq('client_id', clientId)
-  const { data: integrations, error: intErr } = await q.limit(1)
+  const { data: integrations, error: intErr } = await q.limit(5)
   if (intErr) return NextResponse.json({ error: intErr.message }, { status: 500 })
-  const integ = (integrations || [])[0] as any
-  if (!integ?.api_token) {
+  const actives = (integrations || []).filter((i: any) => i?.api_token)
+  if (actives.length === 0) {
     return NextResponse.json({ error: 'Aucune intégration Pennylane active' }, { status: 404 })
   }
-  const token = String(integ.api_token)
-  const boutique = integ.clients?.name ?? '—'
 
-  // 1. Quelques factures fournisseurs récentes (pour disposer d'un id réel)
-  const list = await plFetch(token, '/supplier_invoices?limit=5&sort=-date')
-  if (!list.ok) {
+  // 1. Première clé qui répond — les refus sont listés, jamais tus
+  const refusees: { boutique: string; email: string; status: number; reponse: string }[] = []
+  let token = ''
+  let boutique = '—'
+  let list: Awaited<ReturnType<typeof plFetch>> | null = null
+  for (const integ of actives as any[]) {
+    const t = String(integ.api_token)
+    const nom = `${integ.clients?.name ?? '—'} (${integ.clients?.email ?? '—'})`
+    const essai = await plFetch(t, '/supplier_invoices?limit=5&sort=-date')
+    if (essai.ok) { token = t; boutique = nom; list = essai; break }
+    refusees.push({ boutique: integ.clients?.name ?? '—', email: integ.clients?.email ?? '—', status: essai.status, reponse: essai.text.slice(0, 300) })
+  }
+  if (!list || !token) {
     return NextResponse.json({
-      boutique, etape: 'liste des factures',
-      status: list.status, reponse: list.text,
-      error: `Pennylane a répondu ${list.status}`,
+      etape: 'liste des factures', cles_essayees: actives.length, cles_refusees: refusees,
+      error: refusees.length === 1
+        ? `Pennylane a répondu ${refusees[0].status} — la clé enregistrée n'est plus valide`
+        : `Les ${refusees.length} clés enregistrées sont refusées par Pennylane`,
     }, { status: 502 })
   }
   const items = pickLines(list.json).length > 0 ? pickLines(list.json) : (list.json as any)?.supplier_invoices ?? []
@@ -116,5 +129,10 @@ export async function POST(req: NextRequest) {
     champs_montant: trouve(['amount', 'total']),
   }
 
-  return NextResponse.json({ boutique, sondes, verdict, champs_vus: [...champs].sort() })
+  return NextResponse.json({
+    boutique, sondes, verdict,
+    champs_vus: [...champs].sort(),
+    cles_essayees: actives.length,
+    cles_refusees: refusees,
+  })
 }

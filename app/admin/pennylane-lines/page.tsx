@@ -36,6 +36,8 @@ type Reponse = {
     champs_prix_unitaire: string[]
     champs_montant: string[]
   }
+  cles_essayees?: number
+  cles_refusees?: { boutique: string; email: string; status: number; reponse: string }[]
   error?: string
   etape?: string
   reponse?: string
@@ -45,14 +47,16 @@ export default function PennylaneLinesProbe() {
   const [running, setRunning] = useState(false)
   const [res, setRes] = useState<Reponse | null>(null)
   const [err, setErr] = useState<string | null>(null)
+  const [refus, setRefus] = useState<Reponse['cles_refusees']>(undefined)
 
   async function lancer() {
-    setRunning(true); setErr(null); setRes(null)
+    setRunning(true); setErr(null); setRes(null); setRefus(undefined)
     try {
       const r = await fetch('/api/admin/pennylane-lines', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
       })
       const data = await r.json()
+      setRefus(data?.cles_refusees)
       if (!r.ok) { setErr(data?.error ? `${data.error}${data.reponse ? ` — ${String(data.reponse).slice(0, 300)}` : ''}` : 'Échec de la sonde.'); return }
       setRes(data as Reponse)
     } catch (e) {
@@ -91,6 +95,20 @@ export default function PennylaneLinesProbe() {
         <div className="mt-5 bg-red-50 border border-red-200 rounded-xl px-4 py-3 flex items-start gap-2 text-sm text-red-800">
           <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
           <span>{err}</span>
+        </div>
+      )}
+
+      {/* Clés refusées — une intégration périmée ne doit pas rester invisible */}
+      {refus && refus.length > 0 && (
+        <div className="mt-4 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+          <p className="text-xs font-bold text-amber-900 mb-1.5">
+            {refus.length} clé{refus.length > 1 ? 's' : ''} enregistrée{refus.length > 1 ? 's' : ''} refusée{refus.length > 1 ? 's' : ''} par Pennylane — à remplacer depuis Facturation
+          </p>
+          {refus.map((r, i) => (
+            <p key={i} className="text-[11px] text-amber-800 tabular">
+              {r.boutique} · {r.email} — HTTP {r.status} · {r.reponse}
+            </p>
+          ))}
         </div>
       )}
 
