@@ -126,6 +126,28 @@ export async function POST(request: NextRequest) {
   const clientId = await resolveClientId(service, user.id, user.email)
   if (!clientId) return NextResponse.json({ error: 'Client introuvable' }, { status: 404 })
 
+  /** Écrit l'issue de la lecture AVEC SON MOTIF (lot 1, 31/07).
+   *
+   *  Jusqu'ici chaque sortie posait un `lines_status` et jetait la raison : 26
+   *  factures sur 118 étaient des boîtes noires, impossible de distinguer un
+   *  scan illisible d'une somme qui ne boucle pas. Sans motif persisté, aucune
+   *  correction de l'extraction n'est mesurable — c'est le préalable à tout le
+   *  reste. Le motif est écrit en FRANÇAIS LISIBLE : il s'affiche tel quel au
+   *  boucher, qui doit pouvoir décider quoi faire sans lire du code. */
+  const marquer = async (
+    invoiceId: string,
+    status: 'done' | 'partial' | 'error' | 'no_file' | 'hors_matiere',
+    motif: string | null,
+    extra: Record<string, unknown> = {},
+  ) => {
+    await service.from('invoices').update({
+      lines_status: status,
+      lines_error: motif,
+      lines_checked_at: new Date().toISOString(),
+      ...extra,
+    }).eq('id', invoiceId)
+  }
+
   const { invoice_id } = await request.json().catch(() => ({} as Record<string, unknown>))
   if (!invoice_id) return NextResponse.json({ error: 'invoice_id requis' }, { status: 400 })
 
@@ -139,7 +161,7 @@ export async function POST(request: NextRequest) {
   // Étage 1 — déterministe : une charge fixe (loyer, logiciel, leasing, assurance…)
   // n'est jamais de la matière. Zéro appel IA.
   if (invoice.is_fixed_charge) {
-    await service.from('invoices').update({ lines_status: 'hors_matiere' }).eq('id', invoice.id)
+    await marquer(invoice.id, 'hors_matiere', 'Charge fixe (loyer, abonnement, assurance…) — jamais de la matière première.')
     return NextResponse.json({ success: true, status: 'hors_matiere', reason: 'charge fixe' })
   }
 
@@ -159,13 +181,13 @@ export async function POST(request: NextRequest) {
       else dejaMatiere = true
     }
     if (dejaHors && !dejaMatiere) {
-      await service.from('invoices').update({ lines_status: 'hors_matiere' }).eq('id', invoice.id)
+      await marquer(invoice.id, 'hors_matiere', `Fournisseur déjà reconnu hors matière sur une facture précédente — non relu. Si c'est une erreur, relancez la lecture de cette facture.`)
       return NextResponse.json({ success: true, status: 'hors_matiere', reason: 'fournisseur déjà reconnu hors matière' })
     }
   }
 
   if (!invoice.file_path) {
-    await service.from('invoices').update({ lines_status: 'no_file' }).eq('id', invoice.id)
+    await marquer(invoice.id, 'no_file', 'Aucun PDF archivé pour cette facture : rien à lire. Le PDF se récupère par une nouvelle synchronisation du connecteur.')
     return NextResponse.json({ error: 'Aucun PDF pour cette facture — relancez une synchronisation Pennylane.' }, { status: 422 })
   }
 
@@ -196,14 +218,14 @@ export async function POST(request: NextRequest) {
     // « frais_divers ») : le document tranche, pas l'étiquette.
     if (nature === 'hors_matiere') {
       await service.from('invoice_lines').delete().eq('invoice_id', invoice.id).eq('client_id', clientId)
-      const patch: Record<string, unknown> = { lines_status: 'hors_matiere' }
+      const patch: Record<string, unknown> = {}
       if (due_date && !invoice.due_date) patch.due_date = due_date
-      await service.from('invoices').update(patch).eq('id', invoice.id)
+      await marquer(invoice.id, 'hors_matiere', 'Le document lui-même ne porte aucune matière première (matériel, service, abonnement).', patch)
       return NextResponse.json({ success: true, status: 'hors_matiere', reason: 'facture sans matière première (matériel, service, abonnement…)' })
     }
 
     if (lines.length === 0) {
-      await service.from('invoices').update({ lines_status: 'error' }).eq('id', invoice.id)
+      await marquer(invoice.id, 'error', `Aucune ligne d'article reconnue sur ce PDF (${pdfText.trim().length} caractères de texte lus). Si le document est un scan ou une photo, demandez un PDF natif au fournisseur.`)
       return NextResponse.json({ error: 'Aucune ligne reconnue sur ce PDF.' }, { status: 422 })
     }
 
@@ -296,7 +318,20 @@ export async function POST(request: NextRequest) {
     // 'done' seulement si la facture boucle ET aucun prix en quarantaine ; sinon
     // 'partial' : les lignes sont gardées, mais des prix restent à valider.
     const complet = coherent && prixQuarantaine === 0
-    const patch: Record<string, unknown> = { lines_status: complet ? 'done' : 'partial' }
+    // Motif d'une lecture PARTIELLE : les deux chiffres qui expliquent tout —
+    // l'écart somme/total et le nombre de prix écartés — étaient jusqu'ici
+    // calculés, renvoyés dans le JSON, puis perdus. Ils sont maintenant écrits.
+    const ecart = +(somme - totalHT).toFixed(2)
+    const motifPartiel = complet ? null : [
+      !coherent
+        ? `La somme des lignes lues (${somme.toFixed(2)} €) ne boucle pas sur le total de la facture (${totalHT.toFixed(2)} €) : ${ecart > 0 ? '+' : ''}${ecart.toFixed(2)} €.`
+        : null,
+      prixQuarantaine > 0
+        ? `${prixQuarantaine} prix écarté${prixQuarantaine > 1 ? 's' : ''} : non vérifiable${prixQuarantaine > 1 ? 's' : ''} contre le montant de la ligne, donc non publié${prixQuarantaine > 1 ? 's' : ''} dans la mercuriale.`
+        : null,
+      `${rows.length} ligne${rows.length > 1 ? 's' : ''} conservée${rows.length > 1 ? 's' : ''}, ${prixPromus} prix retenu${prixPromus > 1 ? 's' : ''}.`,
+    ].filter(Boolean).join(' ')
+    const patch: Record<string, unknown> = {}
     // GARDE-FOU DATES (31/07) : une date de livraison lue par l'IA n'est écrite
     // que si elle est PLAUSIBLE — jamais l'échéance de paiement recopiée, jamais
     // une date hors de la fenêtre autour de la facture. Mesuré en prod : 10
@@ -307,16 +342,17 @@ export async function POST(request: NextRequest) {
     const livraisonRetenue = plausibleDelivery(delivery_date, invoice.invoice_date as string | null, echeance)
     if (livraisonRetenue && !invoice.delivery_date) patch.delivery_date = livraisonRetenue
     if (due_date && !invoice.due_date) patch.due_date = due_date
-    await service.from('invoices').update(patch).eq('id', invoice.id)
+    await marquer(invoice.id, complet ? 'done' : 'partial', motifPartiel, patch)
 
     return NextResponse.json({
       success: true, status: complet ? 'done' : 'partial',
       lines: rows.length, prix_promus: prixPromus, prix_en_quarantaine: prixQuarantaine,
       somme: +somme.toFixed(2), total_facture: totalHT,
+      motif: motifPartiel,
     })
   } catch (err) {
-    await service.from('invoices').update({ lines_status: 'error' }).eq('id', invoice.id)
     const msg = err instanceof Error ? err.message : String(err)
+    await marquer(invoice.id, 'error', msg.slice(0, 500))
     return NextResponse.json({ error: msg }, { status: 500 })
   }
 }
