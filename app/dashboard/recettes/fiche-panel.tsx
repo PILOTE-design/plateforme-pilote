@@ -113,10 +113,14 @@ function TrendSpark({ points }: { points: { d: string; v: number }[] }) {
 }
 
 export default function FichePanel({
-  recipe, employees, generics, target = null, onEditFull, onSaved, onClose,
+  recipe, employees, generics, target = null, historiqueIncomplet = false, onEditFull, onSaved, onClose,
 }: {
   recipe: FicheRecipe
   employees: FicheEmployee[]
+  /** L'historique de prix a été tronqué côté serveur : la courbe ci-dessous ne
+   *  porte que sur ce qui a pu être lu. Une courbe qui rétrécit ressemble en
+   *  tout point à un prix qui n'a pas bougé — il faut donc le dire. */
+  historiqueIncomplet?: boolean
   /** Articles génériques de la mercuriale — pour l'ajout d'ingrédient sur place */
   generics: FicheGeneric[]
   /** Cible de marge de la catégorie de la fiche (R-A) — null : pas de cible posée */
@@ -555,6 +559,15 @@ export default function FichePanel({
             </div>
           )
         })()}
+
+        {/* Historique tronqué : la courbe est partielle, ou absente faute de
+            points. Le silence donnerait à lire « le prix n'a pas bougé ». */}
+        {historiqueIncomplet && (
+          <div className="mb-4 bg-amber-50 border border-amber-200 rounded-xl px-4 py-2 flex items-start gap-2 text-xs text-amber-800">
+            <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+            <span>L&apos;historique des prix n&apos;a pas pu être lu en entier : la courbe du coût matière ci-dessus est partielle. Actualisez ; si le message persiste, signalez-le.</span>
+          </div>
+        )}
 
         {/* ── Paliers de quantité : pour N produits, temps ×multiple ── */}
         <div className="mb-4 rounded-2xl border border-gray-100 bg-gray-50/60 px-4 py-3">
