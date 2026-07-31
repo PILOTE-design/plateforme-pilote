@@ -30,6 +30,8 @@ async function checkOwnership(
   clientId: string,
   fields: Record<string, unknown>,
   rows: IngredientRow[] | null,
+  /** id de la fiche en cours d'édition — pour interdire l'auto-référence */
+  selfId?: string,
 ): Promise<string | null> {
   const employeeId = fields.employee_id as string | null
   if (employeeId) {
@@ -41,6 +43,15 @@ async function checkOwnership(
     const { data } = await service.from('generic_articles')
       .select('id').eq('client_id', clientId).eq('active', true).in('id', genericIds)
     if ((data || []).length !== genericIds.length) return 'Un des articles génériques est introuvable'
+  }
+  // Sous-recettes : fiches ACTIVES du client, et jamais la fiche elle-même
+  // (les boucles plus profondes sont neutralisées à l'affichage — garde anti-cycle)
+  const subIds = [...new Set((rows || []).map(r => r.sub_recipe_id ?? null).filter((s): s is string => s !== null))]
+  if (subIds.length > 0) {
+    if (selfId && subIds.includes(selfId)) return 'Une fiche ne peut pas être sa propre sous-recette'
+    const { data } = await service.from('recipes')
+      .select('id').eq('client_id', clientId).eq('active', true).in('id', subIds)
+    if ((data || []).length !== subIds.length) return 'Une des sous-recettes est introuvable'
   }
   return null
 }
@@ -65,7 +76,7 @@ export async function PUT(request: NextRequest, { params }: { params: { id: stri
     rows = parsedIngs.rows!
   }
 
-  const guard = await checkOwnership(service, clientId, parsedFields.fields!, rows)
+  const guard = await checkOwnership(service, clientId, parsedFields.fields!, rows, params.id)
   if (guard) return NextResponse.json({ error: guard }, { status: 400 })
 
   const { error: upErr } = await service.from('recipes')
