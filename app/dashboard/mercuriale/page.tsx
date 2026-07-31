@@ -96,6 +96,10 @@ type Move = {
   old_base: number
   new_base: number
   pct: number | null
+  /** Facture qui porte le NOUVEAU prix — pour ouvrir le PDF source */
+  invoice_id: string | null
+  /** Saut ≥ ±25 % : signalement « à vérifier », pas un verdict */
+  anomalie: boolean
 }
 
 type PendingInvoice = {
@@ -742,6 +746,12 @@ export default function MercurialePage() {
               30 derniers jours · {movesTotal} changement{movesTotal > 1 ? 's' : ''}
               {movesTotal > moves.length ? ` (les ${moves.length} plus récents affichés)` : ''}
             </span>
+            {moves.filter(m => m.anomalie).length > 0 && (
+              <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-700 bg-amber-50 ring-1 ring-amber-200 rounded-full px-2.5 py-0.5 tabular">
+                <AlertTriangle className="w-3 h-3" />
+                {moves.filter(m => m.anomalie).length} à vérifier (écart ≥ 25 %)
+              </span>
+            )}
           </div>
           <div className="divide-y divide-gray-50">
             {(movesOpen ? moves : moves.slice(0, 5)).map((m, i) => (
@@ -765,6 +775,20 @@ export default function MercurialePage() {
                   </span>
                 )}
                 <Variation pct={m.pct} />
+                {m.anomalie && (
+                  <span className="inline-flex items-center gap-1.5 text-[10px] font-bold text-amber-700 bg-amber-50 ring-1 ring-amber-200 rounded-full px-2 py-0.5"
+                    title="Saut de prix inhabituel entre deux factures de cette réf — promo, saison… ou erreur de facturation : vérifiez, et demandez un avoir au fournisseur si le prix est faux">
+                    <AlertTriangle className="w-3 h-3" />à vérifier
+                    {m.invoice_id && (
+                      <span role="link" tabIndex={0}
+                        onClick={e => { e.stopPropagation(); window.open(`/api/invoices/${m.invoice_id}/file`, '_blank') }}
+                        onKeyDown={e => { if (e.key === 'Enter') { e.stopPropagation(); window.open(`/api/invoices/${m.invoice_id}/file`, '_blank') } }}
+                        className="underline hover:text-amber-900 cursor-pointer">
+                        voir la facture
+                      </span>
+                    )}
+                  </span>
+                )}
               </button>
             ))}
           </div>
