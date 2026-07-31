@@ -9,7 +9,7 @@
 // restent calculées comme avant. La main-d'œuvre lit le taux horaire chargé de
 // l'EMPLOYÉ choisi sur la fiche (repli : taux moyen de l'équipe, CCN 992).
 
-import { chargeMultiplier, type PayrollEmployee } from '@/lib/payroll'
+import { chargeMultiplier, productiveFactor, type PayrollEmployee } from '@/lib/payroll'
 import { unitKind } from '@/lib/mercuriale-auto'
 
 export type RecipeRow = {
@@ -128,24 +128,28 @@ const round4 = (n: number) => Math.round(n * 10000) / 10000
  *  taux horaire × multiplicateur de charges patronales (CCN 992). Le gérant sans
  *  taux horaire renseigné est ignoré. null si aucun employé exploitable. */
 export function averageLoadedRate(employees: PayrollEmployee[]): number | null {
+  // Taux PRODUCTIF : chargé × 52/(52 − semaines non travaillées). Le coût d'une
+  // heure de fabrication est celui d'une heure RÉELLEMENT travaillée — l'heure
+  // payée (CP, fériés, RCR compris) sous-évaluait la MO des fiches d'~15-20 %.
   const rates = employees
     .map(e => {
       const h = Number((e as Record<string, unknown>).hourly_rate) || 0
-      return h > 0 ? h * chargeMultiplier(e) : 0
+      return h > 0 ? h * chargeMultiplier(e) * productiveFactor(e) : 0
     })
     .filter(r => r > 0)
   if (rates.length === 0) return null
   return round2(rates.reduce((a, b) => a + b, 0) / rates.length)
 }
 
-/** Taux horaire chargé d'UN employé (€/h), null si introuvable ou sans taux —
+/** Taux horaire PRODUCTIF chargé d'UN employé (€/h de travail réel : chargé ×
+ *  52/(52 − semaines non travaillées)), null si introuvable ou sans taux —
  *  l'appelant replie alors sur averageLoadedRate. */
 export function employeeLoadedRate(employees: PayrollEmployee[], employeeId: string | null | undefined): number | null {
   if (!employeeId) return null
   const e = employees.find(x => (x as Record<string, unknown>).id === employeeId)
   if (!e) return null
   const h = Number((e as Record<string, unknown>).hourly_rate) || 0
-  return h > 0 ? round2(h * chargeMultiplier(e)) : null
+  return h > 0 ? round2(h * chargeMultiplier(e) * productiveFactor(e)) : null
 }
 
 /** Quantité nette convertie vers l'unité de base du générique.
