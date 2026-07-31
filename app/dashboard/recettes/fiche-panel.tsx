@@ -162,6 +162,18 @@ export default function FichePanel({
 
   const coutMatiere = (c?.matiere_ht ?? 0) + (c?.emballage_ht ?? 0)
   const coutUnite = c ? (c.par_unite_ht ?? c.total_ht) : null
+  // Ingrédients comptés pour ZÉRO dans le coût, nommés. Le moteur refuse déjà de
+  // publier marge et coefficient quand il en reste (lib/recipes.ts) ; la
+  // conversion coefficient → prix de vente, elle, passait quand même : le coût
+  // sous-évalué produisait un prix trop bas, enregistré et affiché en boutique.
+  const sansPrix = useMemo(
+    () => recipe.ingredients
+      .filter(i => i.price_source === 'aucun' || i.sub_incomplete === true)
+      .map(i => (i.label || '').trim() || 'ingrédient sans nom'),
+    [recipe.ingredients],
+  )
+  const nomsSansPrix = sansPrix.slice(0, 3).join(', ') + (sansPrix.length > 3 ? `, +${sansPrix.length - 3}` : '')
+  const coutIncomplet = (c?.prix_manquants ?? 0) > 0
   // Coût matière (« food cost ») : part de la matière SEULE dans le PV HT d'une
   // unité — calculable uniquement quand rendement et prix de vente sont connus.
   const foodCostPct = c && c.pv_unitaire_ht !== null && c.pv_unitaire_ht > 0 && baseQty > 0
@@ -256,6 +268,16 @@ export default function FichePanel({
       toast({ variant: 'error', title: 'Coût de revient inconnu', description: 'Renseignez d’abord les ingrédients (et leurs prix) pour calculer un prix depuis le coefficient.' })
       return
     }
+    // Un coût dont il manque un prix est SOUS-ESTIMÉ : le multiplier par un coef
+    // donnerait un prix de vente trop bas, enregistré tel quel et affiché en
+    // boutique. On refuse, en nommant ce qui manque.
+    if (coutIncomplet) {
+      toast({
+        variant: 'error', title: 'Coût incomplet — prix non calculable',
+        description: `${nomsSansPrix} sans prix : ${sansPrix.length > 1 ? 'ils comptent' : 'il compte'} pour 0 €, le coût est sous-estimé et le prix obtenu serait trop bas. Renseignez le prix depuis la Mercuriale, ou saisissez le prix de vente directement.`,
+      })
+      return
+    }
     const pvTTC = round2(coutUnite * v * (1 + (Number(recipe.tva_rate) || 0) / 100))
     saveAll({ selling_price_ttc: pvTTC })
   }
@@ -344,15 +366,25 @@ export default function FichePanel({
               <p className="text-[11px] text-gray-400 mt-0.5">{c.pv_unitaire_ht !== null ? `${fmtEuro(c.pv_unitaire_ht)} HT` : 'cliquer pour saisir'}</p>
             </div>
 
-            <div className="rounded-2xl bg-white border border-gray-100 shadow-card p-4 group cursor-pointer hover:border-pilote-200 transition-colors"
-              onClick={() => !editKpi && setEditKpi({ field: 'coef', value: c.coefficient !== null ? String(c.coefficient).replace('.', ',') : '' })}>
+            <div className={`rounded-2xl bg-white border border-gray-100 shadow-card p-4 group transition-colors ${coutIncomplet ? 'cursor-not-allowed' : 'cursor-pointer hover:border-pilote-200'}`}
+              onClick={() => {
+                if (editKpi) return
+                if (coutIncomplet) {
+                  toast({
+                    variant: 'error', title: 'Coût incomplet — coefficient inutilisable',
+                    description: `${nomsSansPrix} sans prix : le coût est sous-estimé, un prix calculé dessus serait trop bas.`,
+                  })
+                  return
+                }
+                setEditKpi({ field: 'coef', value: c.coefficient !== null ? String(c.coefficient).replace('.', ',') : '' })
+              }}>
               <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-1">
-                Coef multiplicateur <Pencil className="w-2.5 h-2.5 text-gray-300 group-hover:text-pilote transition-colors" />
+                Coef multiplicateur {!coutIncomplet && <Pencil className="w-2.5 h-2.5 text-gray-300 group-hover:text-pilote transition-colors" />}
               </p>
               {editKpi?.field === 'coef' ? kpiInput() : (
                 <p className="text-xl font-extrabold tracking-tight text-gray-900 tabular mt-1">{c.coefficient !== null ? `×${c.coefficient.toLocaleString('fr-FR')}` : '—'}</p>
               )}
-              <p className="text-[11px] text-gray-400 mt-0.5">saisir un coef fixe le PV</p>
+              <p className="text-[11px] text-gray-400 mt-0.5">{coutIncomplet ? 'coût incomplet — prix non calculable' : 'saisir un coef fixe le PV'}</p>
             </div>
 
             <div className="rounded-2xl bg-white border border-gray-100 shadow-card p-4">
@@ -375,9 +407,11 @@ export default function FichePanel({
         )}
 
         {c && c.prix_manquants > 0 && (
-          <div className="mb-4 bg-amber-50 border border-amber-200 rounded-xl px-4 py-2 flex items-center gap-2 text-xs text-amber-800">
-            <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
-            <span>{c.prix_manquants} ingrédient{c.prix_manquants > 1 ? 's' : ''} sans prix — coût sous-estimé. Le prix arrivera via la <Link href="/dashboard/mercuriale" className="font-bold underline">Mercuriale</Link>.</span>
+          <div className="mb-4 bg-amber-50 border border-amber-200 rounded-xl px-4 py-2 flex items-start gap-2 text-xs text-amber-800">
+            <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+            <span>
+              {c.prix_manquants} ingrédient{c.prix_manquants > 1 ? 's' : ''} sans prix{sansPrix.length > 0 ? ` — ${nomsSansPrix}` : ''} : {c.prix_manquants > 1 ? 'ils comptent' : 'il compte'} pour 0 €, le coût affiché est donc <span className="font-semibold">sous-estimé</span> et la marge ne peut pas être calculée. Le prix arrivera via la <Link href="/dashboard/mercuriale" className="font-bold underline">Mercuriale</Link>.
+            </span>
           </div>
         )}
 

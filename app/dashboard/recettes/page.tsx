@@ -14,6 +14,7 @@ import Link from 'next/link'
 import { useToast } from '@/components/ui/toast'
 import { useConfirm } from '@/components/ui/confirm-dialog'
 import FichePanel, { type FicheRecipe } from './fiche-panel'
+import { parseStoredSteps, recipeTotalMinutes } from '@/lib/recipes'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 
@@ -53,6 +54,9 @@ type Recipe = {
   yield_qty: number | null; yield_unit: string | null
   labor_minutes: number; selling_price_ttc: number | null; tva_rate: number; notes: string | null
   employee_id: string | null
+  /** jsonb des étapes : dès qu'une est chronométrée, c'est LEUR somme qui fait le
+   *  temps de la fiche côté serveur — le champ labor_minutes n'est plus qu'un repli. */
+  fabrication_steps?: unknown
   ingredients: { generic_id: string | null; article_id: string | null; sub_recipe_id?: string | null; label: string; quantity: number; qty_unit: string | null; unit: string | null; loss_pct: number | null; manual_price_ht: number | null; unit_price_ht: number | null; price_source: string; line_total_ht: number }[]
   cost: RecipeCost
 }
@@ -142,10 +146,29 @@ export default function RecettesPage() {
     return employees.find(e => e.id === form.employee_id)?.loaded_rate ?? laborRate
   }, [form.employee_id, employees, laborRate])
 
+  // Temps de la fiche en cours d'édition : le serveur somme les étapes
+  // CHRONOMÉTRÉES dès qu'il y en a une et ne retombe sur le champ « Temps » qu'à
+  // défaut (recipeTotalMinutes). L'aperçu appliquait l'autre règle et affichait
+  // donc une main-d'œuvre différente de celle enregistrée — sur une fiche dont
+  // les étapes totalisent 80 min avec un champ resté à 45, le coût de revient
+  // était sous-évalué à l'écran, et ce coût alimentait le calcul du prix de
+  // vente par coefficient. Le chiffre vient désormais du moteur lui-même.
+  const etapesChrono = useMemo(() => {
+    const r = editId ? recipeById.get(editId) : null
+    if (!r) return null
+    const chrono = parseStoredSteps(r.fabrication_steps).filter(s => s.minutes !== null)
+    if (chrono.length === 0) return null
+    return { n: chrono.length, minutes: recipeTotalMinutes({ labor_minutes: 0, fabrication_steps: r.fabrication_steps }) }
+  }, [editId, recipeById])
+
   // Aperçu du coût dans la modale — même logique que le serveur, en lecture seule :
   // conversion g→kg, perte sur le brut, matière et emballage séparés.
   const preview = useMemo(() => {
-    let matiere = 0, emballage = 0, manquants = 0
+    let matiere = 0, emballage = 0
+    // Les ingrédients comptés pour ZÉRO, nommés : « il manque un prix » sans dire
+    // lequel n'indique aucun geste à faire, et c'est ce qui bloque le coefficient.
+    const sansPrix: string[] = []
+    const nomDe = (i: IngredientDraft) => i.label.trim() || 'ingrédient sans nom'
     for (const ing of ings) {
       const qty = parseFloat(ing.quantity.replace(',', '.')) || 0
       if (qty <= 0) continue
@@ -154,37 +177,48 @@ export default function RecettesPage() {
       if (ing.sub_recipe_id) {
         const sub = recipeById.get(ing.sub_recipe_id)
         const price = sub && sub.cost.par_unite_ht !== null ? sub.cost.par_unite_ht : null
-        if (price === null) { manquants++; continue }
-        if (sub && sub.cost.prix_manquants > 0) manquants++
+        if (price === null) { sansPrix.push(nomDe(ing)); continue }
+        if (sub && sub.cost.prix_manquants > 0) sansPrix.push(`${nomDe(ing)} (fiche au coût incomplet)`)
         matiere += price * (qty / (1 - loss / 100))
         continue
       }
       const g = ing.generic_id ? genericById.get(ing.generic_id) ?? null : null
       const manual = parseFloat(ing.manual_price_ht.replace(',', '.')) || null
       const price = g ? (g.price_ht ?? manual) : (ing.legacy_price ?? manual)
-      if (price === null) { manquants++; continue }
+      if (price === null) { sansPrix.push(nomDe(ing)); continue }
       const qtyBase = g && g.base_unit === 'kg' && ing.qty_unit === 'g' ? qty / 1000 : qty
       const cout = price * (qtyBase / (1 - loss / 100))
       if (g?.category === 'emballage') emballage += cout
       else matiere += cout
     }
-    const minutes = parseFloat(form.labor_minutes.replace(',', '.')) || 0
+    const minutes = etapesChrono ? etapesChrono.minutes : (parseFloat(form.labor_minutes.replace(',', '.')) || 0)
     const mo = previewRate !== null ? minutes / 60 * previewRate : 0
     const total = matiere + emballage + mo
     const yieldQty = parseFloat(form.yield_qty.replace(',', '.')) || 0
-    return { matiere, emballage, mo, total, parUnite: yieldQty > 0 ? total / yieldQty : null, manquants }
-  }, [ings, form.labor_minutes, form.yield_qty, previewRate, genericById])
+    return { matiere, emballage, mo, minutes, total, parUnite: yieldQty > 0 ? total / yieldQty : null, manquants: sansPrix.length, sansPrix }
+  }, [ings, form.labor_minutes, form.yield_qty, previewRate, genericById, recipeById, etapesChrono])
 
   // ── PV TTC ↔ coefficient : saisir l'un recalcule l'autre sur le coût de
   // l'aperçu (coût / unité, repli coût du batch). Seul le PV TTC est enregistré.
-  const previewCoutUnite = preview.parUnite ?? (preview.total > 0 ? preview.total : null)
+  //
+  // Un coût auquel il MANQUE un prix ne sert pas de base : les lignes sans prix
+  // comptent pour 0 €, le coût est donc sous-évalué et un coefficient appliqué
+  // dessus produit un prix de vente trop bas — affiché en boutique, encaissé, et
+  // jamais repris. Le moteur refuse déjà de publier marge et coefficient dans ce
+  // cas (lib/recipes.ts) ; la conversion inverse doit refuser pareil.
+  const coutIncomplet = preview.manquants > 0
+  const previewCoutUnite = coutIncomplet ? null : (preview.parUnite ?? (preview.total > 0 ? preview.total : null))
+  /** Les ingrédients à prix manquant, nommés, pour l'info-bulle et le message */
+  const nomsSansPrix = preview.sansPrix.slice(0, 3).join(', ') + (preview.sansPrix.length > 3 ? `, +${preview.sansPrix.length - 3}` : '')
   function onPvChange(v: string) {
     setForm(p => ({ ...p, selling_price_ttc: v }))
     const pv = parseFloat(v.replace(',', '.'))
     const tva = parseFloat(form.tva_rate.replace(',', '.')) || 0
+    // Coût inconnu ou incomplet : le coef affiché serait faux — on le vide plutôt
+    // que de laisser à l'écran celui d'avant.
     if (pv > 0 && previewCoutUnite) {
       setCoefField(String(Math.round((pv / (1 + tva / 100)) / previewCoutUnite * 100) / 100).replace('.', ','))
-    } else if (!v.trim()) setCoefField('')
+    } else setCoefField('')
   }
   function onCoefChange(v: string) {
     setCoefField(v)
@@ -692,7 +726,18 @@ export default function RecettesPage() {
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-gray-700 mb-1">Temps (min) <span className="font-normal text-gray-400">— repli si les étapes de la fiche ne sont pas chronométrées</span></label>
-                  <Input inputMode="decimal" value={form.labor_minutes} onChange={e => setForm(p => ({ ...p, labor_minutes: e.target.value }))} placeholder="45" />
+                  {etapesChrono ? (
+                    <>
+                      <div className="flex h-10 w-full items-center rounded-md border border-gray-200 bg-gray-50 px-3 text-sm text-gray-500 tabular">
+                        {etapesChrono.minutes.toLocaleString('fr-FR')} min
+                      </div>
+                      <p className="text-[10px] text-gray-400 mt-0.5">
+                        Somme des {etapesChrono.n} étape{etapesChrono.n > 1 ? 's' : ''} chronométrée{etapesChrono.n > 1 ? 's' : ''} — c&apos;est ce temps-là qui compte. Il se modifie sur la fiche, étape par étape.
+                      </p>
+                    </>
+                  ) : (
+                    <Input inputMode="decimal" value={form.labor_minutes} onChange={e => setForm(p => ({ ...p, labor_minutes: e.target.value }))} placeholder="45" />
+                  )}
                 </div>
                 <div className="grid grid-cols-2 gap-2">
                   <div>
@@ -701,7 +746,11 @@ export default function RecettesPage() {
                   </div>
                   <div>
                     <label className="block text-xs font-semibold text-gray-700 mb-1">Coef ×</label>
-                    <Input inputMode="decimal" value={coefField} onChange={e => onCoefChange(e.target.value)} placeholder="3" title="Coefficient multiplicateur : PV HT ÷ coût de revient — saisir un coef recalcule le PV TTC" />
+                    <Input inputMode="decimal" value={coefField} onChange={e => onCoefChange(e.target.value)} placeholder="3"
+                      disabled={coutIncomplet}
+                      title={coutIncomplet
+                        ? `Coût incomplet : ${nomsSansPrix} sans prix. Un coefficient appliqué dessus donnerait un prix de vente trop bas — saisissez le prix de vente directement, ou attendez le prix.`
+                        : 'Coefficient multiplicateur : PV HT ÷ coût de revient — saisir un coef recalcule le PV TTC'} />
                   </div>
                 </div>
                 <div>
@@ -850,14 +899,18 @@ export default function RecettesPage() {
                   <div className="flex justify-between text-gray-600"><span>Emballage &amp; conditionnement</span><span className="font-semibold">{fmtEuro(preview.emballage)}</span></div>
                 )}
                 <div className="flex justify-between text-gray-600">
-                  <span>Main-d&apos;œuvre{previewRate !== null ? ` (${fmtEuro(previewRate)}/h)` : ''}</span>
+                  <span>Main-d&apos;œuvre{previewRate !== null ? ` (${fmtEuro(previewRate)}/h)` : ''}{preview.minutes > 0 ? ` — ${preview.minutes.toLocaleString('fr-FR')} min${etapesChrono ? ' (étapes)' : ''}` : ''}</span>
                   <span className="font-semibold">{fmtEuro(preview.mo)}</span>
                 </div>
                 <div className="flex justify-between font-extrabold text-pilote-800 mt-1.5 pt-1.5 border-t border-pilote-100">
                   <span>Coût de revient{preview.parUnite !== null ? ` (${fmtEuro(preview.parUnite)} / ${form.yield_unit || 'unité'})` : ''}</span>
                   <span>{fmtEuro(preview.total)}</span>
                 </div>
-                {preview.manquants > 0 && <p className="text-[11px] text-amber-600 mt-1.5">{preview.manquants} ingrédient{preview.manquants > 1 ? 's' : ''} sans prix — le prix arrivera avec la prochaine facture lue, ou saisissez un prix de repli.</p>}
+                {preview.manquants > 0 && (
+                  <p className="text-[11px] text-amber-600 mt-1.5">
+                    {preview.manquants} ingrédient{preview.manquants > 1 ? 's' : ''} sans prix ({nomsSansPrix}) — ce coût est donc <span className="font-semibold">sous-estimé</span>, et le coef reste désactivé tant qu&apos;il l&apos;est : un prix de vente calculé dessus serait trop bas. Le prix arrivera avec la prochaine facture lue, ou saisissez un prix de repli.
+                  </p>
+                )}
               </div>
 
               <div className="flex gap-3 pt-1">
