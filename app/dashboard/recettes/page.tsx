@@ -4,7 +4,7 @@
 // les données PILOTE : chaque ingrédient est un ARTICLE GÉNÉRIQUE de la
 // mercuriale (prix par unité de base kg/pièce, dernier prix facturé de ses réfs
 // fournisseurs), la quantité se saisit en kg, g ou pièce, une perte % gonfle le
-// brut, et la main-d'œuvre lit le taux chargé de l'employé choisi (repli : taux
+// brut, et la main-d'œuvre lit le taux PRODUCTIF de l'employé choisi (chargé × 52/(52 − semaines non travaillées)) (repli : taux
 // moyen d'équipe, CCN 992). Rien n'est figé : une facture lue, une association
 // ou une embauche, et toutes les fiches se recalculent.
 
@@ -429,7 +429,7 @@ export default function RecettesPage() {
             <h1 className="text-2xl font-extrabold tracking-tight text-gray-900">Fiches recettes</h1>
             <p className="text-sm text-gray-500 mt-1">
               Coût de revient au prix du jour — matière (mercuriale) + main-d&apos;œuvre
-              {laborRate !== null ? ` à ${fmtEuro(laborRate)}/h chargé` : ''}
+              {laborRate !== null ? ` à ${fmtEuro(laborRate)}/h productif (l'heure réellement travaillée, CP et fériés déduits)` : ''}
             </p>
           </div>
         </div>
@@ -690,13 +690,13 @@ export default function RecettesPage() {
                   </select>
                 </div>
                 <div className="sm:col-span-2">
-                  <label className="block text-xs font-semibold text-gray-700 mb-1">Qui fabrique ? <span className="font-normal text-gray-400">— le coût main-d&apos;œuvre prend son taux chargé</span></label>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">Qui fabrique ? <span className="font-normal text-gray-400">— le coût main-d&apos;œuvre prend son taux productif (heure travaillée)</span></label>
                   <select value={form.employee_id} onChange={e => setForm(p => ({ ...p, employee_id: e.target.value }))}
                     className="w-full h-10 border border-gray-200 rounded-lg px-3 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200 bg-white">
                     <option value="">Taux moyen de l&apos;équipe{laborRate !== null ? ` (${fmtEuro(laborRate)}/h)` : ''}</option>
                     {employees.map(e => (
                       <option key={e.id} value={e.id}>
-                        {e.name}{e.loaded_rate !== null ? ` (${fmtEuro(e.loaded_rate)}/h chargé)` : ' (sans taux — repli taux moyen)'}
+                        {e.name}{e.loaded_rate !== null ? ` (${fmtEuro(e.loaded_rate)}/h productif)` : ' (sans taux — repli taux moyen)'}
                       </option>
                     ))}
                   </select>
