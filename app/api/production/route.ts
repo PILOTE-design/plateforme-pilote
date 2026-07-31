@@ -12,7 +12,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { resolveClientId } from '@/lib/resolve-client-id'
 import { PAYROLL_EMPLOYEE_COLUMNS, JOURS, type PayrollEmployee } from '@/lib/payroll'
-import { averageLoadedRate, employeeLoadedRate, buildGenericMap, costIngredients, recipeTotalMinutes, type IngredientRow } from '@/lib/recipes'
+import { averageLoadedRate, employeeLoadedRate, buildGenericMap, buildRecipeCostGraph, recipeTotalMinutes, type IngredientRow, type RecipeRow } from '@/lib/recipes'
 
 export const dynamic = 'force-dynamic'
 
@@ -63,6 +63,16 @@ export async function GET(request: NextRequest) {
   const emps = (employees || []) as unknown as PayrollEmployee[]
   const laborRate = averageLoadedRate(emps)
 
+  // Graphe de coût avec SOUS-RECETTES (mêmes règles que la page Fiches) : une
+  // ligne sous-recette est valorisée au coût complet de sa fiche ÷ rendement.
+  const graph = buildRecipeCostGraph({
+    recipes: (recipes || []) as (RecipeRow & Record<string, unknown>)[],
+    ingredientsByRecipe: ingsByRecipe,
+    priceByArticle,
+    genericById,
+    rateForRecipe: r => employeeLoadedRate(emps, r.employee_id as string | null) ?? laborRate,
+  })
+
   // Heures pointées au planning ce jour-là (pour la jauge de charge par personne)
   const day = new Date(dateStr + 'T00:00:00Z')
   const { week, year } = isoWeekOf(day)
@@ -92,7 +102,7 @@ export async function GET(request: NextRequest) {
     // même définition que le coût MO des recettes. Multiplication linéaire par
     // batch — les paliers de temps (time_tiers) sont un outil de LECTURE de la fiche.
     const minutes = recipe ? recipeTotalMinutes(recipe) * batches : 0
-    const costed = recipe ? costIngredients(ingsByRecipe.get(o.recipe_id) || [], priceByArticle, genericById) : []
+    const costed = recipe ? graph.costedFor(o.recipe_id) : []
     const matiere = round2(costed.reduce((s, i) => s + i.line_total_ht, 0) * batches)
     // Taux MO : l'employé choisi sur la FICHE prime, sinon taux moyen d'équipe
     const rate = (recipe ? employeeLoadedRate(emps, recipe.employee_id) : null) ?? laborRate
@@ -104,7 +114,8 @@ export async function GET(request: NextRequest) {
 
     for (const ing of costed) {
       const generic = ing.generic_id ? genericById.get(ing.generic_id) : null
-      const key = ing.generic_id || ing.article_id || `libre:${ing.label.toLowerCase()}`
+      // Une ligne sous-recette s'agrège sous sa fiche (quantités en unités de son rendement)
+      const key = ing.generic_id || (ing.sub_recipe_id ? `sub:${ing.sub_recipe_id}` : null) || ing.article_id || `libre:${ing.label.toLowerCase()}`
       const unit = generic ? (generic.base_unit === 'kg' ? 'kg' : 'pièce') : ing.unit
       const cur = needs.get(key) || { label: generic?.name ?? ing.label, unit, article_id: ing.article_id, total_qty: 0, unit_price_ht: ing.unit_price_ht, total_cost: 0, missing_price: ing.price_source === 'aucun' }
       cur.total_qty = round2(cur.total_qty + ing.qty_brute * batches)
