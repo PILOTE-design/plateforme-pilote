@@ -61,24 +61,28 @@ export async function GET() {
       .select('id, name, base_unit, category, default_loss_pct, auto_created')
       .eq('client_id', clientId).eq('active', true)
       .order('name'),
-    fetchAllPages<any>(() => service.from('articles')
-      .select('id, name, unit, supplier_name, article_code, last_price_ht, last_price_date, price_count, generic_id, conversion_factor, ignored')
-      .eq('client_id', clientId)
-      .order('updated_at', { ascending: false })
-      .order('id', { ascending: true })),
+    fetchAllPages<any>(apres => {
+      let q = service.from('articles')
+        .select('id, name, unit, supplier_name, article_code, last_price_ht, last_price_date, price_count, generic_id, conversion_factor, ignored, updated_at')
+        .eq('client_id', clientId)
+      if (apres) q = q.gt('id', apres)
+      return q.order('id', { ascending: true })
+    }),
     // Points de prix sur 12 mois (variation, historique, mouvements) — la date
     // vient de la facture ; un prix en quarantaine (unit_price_ht NULL) est absent
     // Les lignes SANS prix (quarantaine) sont lues elles aussi : sans elles, on
     // ne peut pas dire à quel article il manque un prix À CAUSE d'un refus de
     // lecture — l'écran affichait « pas de prix » pour quatre causes opposées.
-    fetchAllPages<any>(() => service.from('invoice_lines')
-      .select('article_id, unit_price_ht, invoice_id, invoices!inner(invoice_date)')
-      .eq('client_id', clientId)
-      .not('article_id', 'is', null)
-      .not('unit_price_ht', 'is', null)
-      .gte('invoices.invoice_date', cutoff12m)
-      .order('created_at', { ascending: false })
-      .order('id', { ascending: true })),
+    fetchAllPages<any>(apres => {
+      let q = service.from('invoice_lines')
+        .select('id, article_id, unit_price_ht, invoice_id, invoices!inner(invoice_date)')
+        .eq('client_id', clientId)
+        .not('article_id', 'is', null)
+        .not('unit_price_ht', 'is', null)
+        .gte('invoices.invoice_date', cutoff12m)
+      if (apres) q = q.gt('id', apres)
+      return q.order('id', { ascending: true })
+    }),
     // File d'attente d'extraction : PDF présent, lignes jamais lues (ou échec à
     // retenter). Les CHARGES FIXES sont exclues d'office ; le reste passe par la
     // reconnaissance de nature à l'extraction — la CATÉGORIE n'est pas fiable.
@@ -88,16 +92,22 @@ export async function GET() {
     // prompt ou le seuil ne débloquait rien, la facture restait figée. Idem
     // pour un `no_file` à qui on vient de poser un PDF. Les quatre états
     // relisables sont maintenant dans la file, les jamais-lues d'abord.
-    fetchAllPages<any>(() => service.from('invoices')
-      .select('id, supplier_name, invoice_date, amount_ht, lines_status, lines_error, lines_checked_at')
-      .eq('client_id', clientId)
-      .eq('is_fixed_charge', false)
-      .not('file_path', 'is', null)
-      .or('lines_status.is.null,lines_status.eq.error,lines_status.eq.no_file,lines_status.eq.partial')
-      .order('invoice_date', { ascending: false })
-      .order('id', { ascending: true }), { max: 5000 }),
+    fetchAllPages<any>(apres => {
+      let q = service.from('invoices')
+        .select('id, supplier_name, invoice_date, amount_ht, lines_status, lines_error, lines_checked_at')
+        .eq('client_id', clientId)
+        .eq('is_fixed_charge', false)
+        .not('file_path', 'is', null)
+        .or('lines_status.is.null,lines_status.eq.error,lines_status.eq.no_file,lines_status.eq.partial')
+      if (apres) q = q.gt('id', apres)
+      return q.order('id', { ascending: true })
+    }, { max: 5000 }),
   ])
+  // La pagination se fait par identifiant (seul tri stable). L'ordre d'affichage
+  // — la réf touchée le plus récemment d'abord — est rétabli ici, en mémoire.
   const articles = refsPage.rows
+    .slice()
+    .sort((a: any, b: any) => String(b.updated_at || '').localeCompare(String(a.updated_at || '')))
   const pricePoints = pointsPage.rows
   const pending = pendingPage.rows
 
@@ -116,12 +126,15 @@ export async function GET() {
   // Lignes en QUARANTAINE par réf : un prix a été lu sur la facture mais refusé
   // par les garde-fous. C'est une cause d'absence de prix radicalement différente
   // de « jamais facturé », et le boucher doit pouvoir les distinguer.
-  const quarantainePage = await fetchAllPages<any>(() => service.from('invoice_lines')
-    .select('article_id')
-    .eq('client_id', clientId)
-    .is('unit_price_ht', null)
-    .not('article_id', 'is', null)
-    .order('id', { ascending: true }))
+  const quarantainePage = await fetchAllPages<any>(apres => {
+    let q = service.from('invoice_lines')
+      .select('id, article_id')
+      .eq('client_id', clientId)
+      .is('unit_price_ht', null)
+      .not('article_id', 'is', null)
+    if (apres) q = q.gt('id', apres)
+    return q.order('id', { ascending: true })
+  })
   const quarantaine = quarantainePage.rows
   const quarantaineParArticle = new Map<string, number>()
   for (const q of (quarantaine || []) as any[]) {
@@ -290,14 +303,29 @@ export async function GET() {
     // ratait le mouvement. On lit maintenant la série du générique : le dernier
     // prix payé AVANT celui du jour et DIFFÉRENT de lui, quel que soit le
     // fournisseur — avec son nom, pour que l'écran puisse dire chez qui.
-    const prixJour = best ? best.price_base : null
-    const dateJour = best ? String(best.last_price_date || '') : ''
+    // Le prix du jour est ARRONDI comme les points de la série avant toute
+    // comparaison. Sans cet arrondi, une réf à facteur de conversion faisait
+    // échouer l'égalité stricte — 23,168 ÷ 1,5 vaut 15,445333333333332 côté prix
+    // du jour et 15,4453 côté série : la boucle retenait alors le point du jour
+    // LUI-MÊME comme « précédent » et annonçait 0 % de variation. Mesuré sur
+    // l'Andouille : −46 % réels affichés en « aucun mouvement ». (lot 10)
+    const prixJour = best && best.price_base !== null ? round4(best.price_base) : null
+    // Date de référence : celle du prix affiché, ou à défaut celle du dernier
+    // point connu — sinon un générique sans last_price_date n'aurait jamais de
+    // précédent.
+    const dateJour = (best && String(best.last_price_date || ''))
+      || (points.length > 0 ? points[points.length - 1].d : '')
     let prevPoint: { d: string; p: number; s: string | null } | null = null
-    if (prixJour !== null) {
+    if (prixJour !== null && dateJour) {
       for (let i = points.length - 1; i >= 0; i--) {
         const pt = points[i]
-        if (dateJour && pt.d > dateJour) continue   // postérieur au prix affiché
-        if (pt.p === prixJour) continue             // même prix : pas un mouvement
+        // STRICTEMENT antérieur : deux fournisseurs livrés le MÊME jour ne sont
+        // pas un mouvement de prix, c'est un choix d'achat. Le tolérer inventait
+        // une hausse (ou une baisse, selon lequel des deux passait en tête) sur
+        // un générique dont aucun prix n'avait bougé. (lot 10)
+        if (pt.d >= dateJour) continue
+        // Écart sous le dixième de centime : c'est le même prix.
+        if (Math.abs(pt.p - prixJour) < 0.00005) continue
         prevPoint = pt
         break
       }
@@ -328,7 +356,7 @@ export async function GET() {
       refs_count: refs.length,
       prix_quarantaine: prixEnQuarantaine,
       price_missing_reason,
-      price_ht: best ? best.price_base : null,
+      price_ht: prixJour,
       price_date: best ? best.last_price_date : null,
       price_supplier: best ? best.supplier_name : null,
       variation_pct: variationGenerique,
