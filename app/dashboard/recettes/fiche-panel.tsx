@@ -16,7 +16,7 @@
 
 import { useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import { Pencil, Plus, X, Clock, ShoppingBasket, Package, AlertTriangle, Users, Printer } from 'lucide-react'
+import { Pencil, Plus, X, Clock, ShoppingBasket, Package, AlertTriangle, Users, Printer, Copy } from 'lucide-react'
 import { useToast } from '@/components/ui/toast'
 import { parseStoredSteps, parseStoredTiers } from '@/lib/recipes'
 
@@ -28,6 +28,8 @@ export type FicheIngredient = {
   quantity: number; qty_unit: string | null; unit: string | null; loss_pct: number | null
   manual_price_ht?: number | null
   unit_price_ht: number | null; price_source: string; categorie: 'ingredient' | 'emballage'
+  /** Date de la facture d'où vient le prix mercuriale — l'âge du chiffre */
+  price_date?: string | null
   qty_base: number; qty_brute: number; line_total_ht: number
 }
 
@@ -81,6 +83,14 @@ function fmtMin(m: number): string {
 }
 
 const fmtDateFr = (s: string) => new Date(s + 'T00:00:00Z').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', timeZone: 'UTC' })
+
+/** Âge d'une date de prix, en jours pleins. null si la date est illisible. */
+function ageJours(d: string | null | undefined): number | null {
+  if (!d) return null
+  const t = new Date(String(d).slice(0, 10) + 'T00:00:00Z').getTime()
+  if (!Number.isFinite(t)) return null
+  return Math.max(0, Math.floor((Date.now() - t) / 86400000))
+}
 
 /** Mini-courbe du coût matière : x = jalon hebdomadaire, y = coût du batch.
  *  Trait navy, dernier point orange — même langage que la mercuriale. */
@@ -153,12 +163,19 @@ export default function FichePanel({
   const timeMult = active ? active.mult : 1
   const scaledMinutes = baseMinutes * timeMult
 
-  // Poids total NET des lignes en g/kg (les pièces sont hors assiette de poids)
-  const poidsTotalKg = useMemo(() => recipe.ingredients.reduce((s, i) => {
-    if (i.generic_id && (i.qty_unit === 'kg' || i.qty_unit === 'g')) return s + i.qty_base
-    if (!i.generic_id && (i.unit || '').toLowerCase().includes('kg')) return s + (Number(i.quantity) || 0)
-    return s
-  }, 0), [recipe])
+  // Poids total des lignes en g/kg (les pièces sont hors assiette de poids).
+  // NET *et* BRUT : chaque ligne du tableau affiche sa quantité BRUTE — ce qu'on
+  // sort du frigo, perte comprise — alors que le pied ne sommait que le NET,
+  // dans la même colonne. Sur une fiche à 15 % de perte l'écart saute aux yeux
+  // et jette le doute sur le reste des chiffres. Les deux sont affichés.
+  const poids = useMemo(() => recipe.ingredients.reduce((acc, i) => {
+    if (i.generic_id && (i.qty_unit === 'kg' || i.qty_unit === 'g')) return { net: acc.net + i.qty_base, brut: acc.brut + i.qty_brute }
+    if (!i.generic_id && (i.unit || '').toLowerCase().includes('kg')) {
+      const q = Number(i.quantity) || 0
+      return { net: acc.net + q, brut: acc.brut + (Number(i.qty_brute) || q) }
+    }
+    return acc
+  }, { net: 0, brut: 0 }), [recipe])
 
   const coutMatiere = (c?.matiere_ht ?? 0) + (c?.emballage_ht ?? 0)
   const coutUnite = c ? (c.par_unite_ht ?? c.total_ht) : null
@@ -166,13 +183,35 @@ export default function FichePanel({
   // publier marge et coefficient quand il en reste (lib/recipes.ts) ; la
   // conversion coefficient → prix de vente, elle, passait quand même : le coût
   // sous-évalué produisait un prix trop bas, enregistré et affiché en boutique.
+  // Chaque ingrédient sans prix porte de quoi ALLER LE CORRIGER : l'article
+  // générique visé, ou la sous-fiche fautive. Le bandeau renvoyait jusqu'ici
+  // vers la page Mercuriale entière — un catalogue de 125 lignes à fouiller
+  // pour retrouver l'article dont on venait de lire le nom.
   const sansPrix = useMemo(
     () => recipe.ingredients
       .filter(i => i.price_source === 'aucun' || i.sub_incomplete === true)
-      .map(i => (i.label || '').trim() || 'ingrédient sans nom'),
+      .map(i => ({
+        nom: (i.label || '').trim() || 'ingrédient sans nom',
+        href: i.sub_recipe_id
+          ? `/dashboard/recettes/${i.sub_recipe_id}`
+          : i.generic_id ? `/dashboard/mercuriale?generic=${i.generic_id}` : null,
+      })),
     [recipe.ingredients],
   )
-  const nomsSansPrix = sansPrix.slice(0, 3).join(', ') + (sansPrix.length > 3 ? `, +${sansPrix.length - 3}` : '')
+  const nomsSansPrix = sansPrix.slice(0, 3).map(x => x.nom).join(', ') + (sansPrix.length > 3 ? `, +${sansPrix.length - 3}` : '')
+  /** Le prix mercuriale le PLUS ANCIEN de la fiche — le niveau de confiance du
+   *  coût de revient tient à lui. Signalé seulement au-delà de 30 jours : en
+   *  deçà, « prix du jour » reste une description honnête. */
+  const prixLePlusAncien = useMemo(() => {
+    let pire: { date: string; jours: number; nom: string } | null = null
+    for (const i of recipe.ingredients) {
+      if (i.price_source !== 'mercuriale' || !i.price_date) continue
+      const j = ageJours(i.price_date)
+      if (j === null || j <= 30) continue
+      if (!pire || j > pire.jours) pire = { date: String(i.price_date).slice(0, 10), jours: j, nom: (i.label || '').trim() || 'un ingrédient' }
+    }
+    return pire
+  }, [recipe.ingredients])
   const coutIncomplet = (c?.prix_manquants ?? 0) > 0
   // Coût matière (« food cost ») : part de la matière SEULE dans le PV HT d'une
   // unité — calculable uniquement quand rendement et prix de vente sont connus.
@@ -223,6 +262,45 @@ export default function FichePanel({
     setSaving(false)
     if (res?.ok) { toast({ variant: 'success', title: 'Fiche enregistrée' }); setDirty(false); onSaved() }
     else toast({ variant: 'error', title: 'Enregistrement impossible', description: data?.error || 'Réessayez.' })
+  }
+
+  /** Duplique la fiche entière — champs, étapes chronométrées, paliers et
+   *  ingrédients — sous « (copie) », puis ouvre la copie.
+   *
+   *  Les cinq fiches vont devenir cinquante, dont une bonne moitié de variantes
+   *  (saucisse nature / herbes / piment, terrine 500 g / 1 kg). Sans ce bouton,
+   *  chaque variante se ressaisit intégralement : douze ingrédients, les pertes,
+   *  les étapes minutées, les paliers. La route POST accepte déjà tout — c'est
+   *  de la réutilisation, pas du nouveau code serveur. */
+  async function dupliquer() {
+    if (saving) return
+    setSaving(true)
+    const res = await fetch('/api/recipes', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        // 80 caractères maximum côté serveur : on rogne le nom, pas le suffixe,
+        // sinon dupliquer une fiche au nom long échouerait sur un 400 obscur.
+        name: `${recipe.name.slice(0, 72).trim()} (copie)`,
+        category: recipe.category,
+        yield_qty: recipe.yield_qty, yield_unit: recipe.yield_unit,
+        labor_minutes: recipe.labor_minutes,
+        // Le PV n'est PAS repris : une variante n'a aucune raison de se vendre
+        // au même prix, et un prix hérité en silence est un prix qu'on oublie.
+        selling_price_ttc: null,
+        tva_rate: recipe.tva_rate, notes: recipe.notes, employee_id: recipe.employee_id,
+        fabrication_steps: parseStoredSteps(recipe.fabrication_steps),
+        time_tiers: parseStoredTiers(recipe.time_tiers),
+        ingredients: ingPayload(),
+      }),
+    }).catch(() => null)
+    const data = res ? await res.json().catch(() => null) : null
+    setSaving(false)
+    if (!res?.ok || !data?.id) {
+      toast({ variant: 'error', title: 'Duplication impossible', description: data?.error || 'Réessayez.' })
+      return
+    }
+    toast({ variant: 'success', title: 'Copie créée', description: 'Le prix de vente est à poser sur la copie.' })
+    window.location.href = `/dashboard/recettes/${data.id}`
   }
 
   /** Ajoute l'ingrédient choisi et enregistre aussitôt (la liste est REMPLACÉE côté API) */
@@ -313,7 +391,12 @@ export default function FichePanel({
           </div>
           <p className="text-xs text-gray-500 mt-0.5">
             {recipe.yield_qty ? `Base : ${fmtQty(recipe.yield_qty)} ${uniteLabel} par batch` : 'Rendement non renseigné'}
-            {' · '}coûts au prix du jour de la mercuriale
+            {/* « Prix du jour » sans nuance était une promesse que les données
+                ne tiennent pas toujours : le plus ancien prix de la fiche peut
+                dater de plusieurs mois. On dit lequel, et depuis quand. */}
+            {prixLePlusAncien
+              ? <>{' · '}coûts aux prix de la mercuriale — le plus ancien remonte au {fmtDateFr(prixLePlusAncien.date)} ({prixLePlusAncien.jours} j, {prixLePlusAncien.nom})</>
+              : <>{' · '}coûts au prix du jour de la mercuriale</>}
           </p>
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
@@ -327,6 +410,11 @@ export default function FichePanel({
             title="Fiche atelier à imprimer pour le classeur — sans coûts, prix ni marges"
             className="flex items-center gap-1.5 text-xs font-bold text-pilote border border-pilote-200 bg-white rounded-xl px-3.5 py-2 hover:bg-pilote-50 transition-colors">
             <Printer className="w-3.5 h-3.5" />Imprimer
+          </button>
+          <button onClick={dupliquer} disabled={saving}
+            title="Créer une variante : mêmes ingrédients, mêmes étapes et paliers, sans le prix de vente"
+            className="flex items-center gap-1.5 text-xs font-bold text-pilote border border-pilote-200 bg-white rounded-xl px-3.5 py-2 hover:bg-pilote-50 transition-colors disabled:opacity-50">
+            <Copy className="w-3.5 h-3.5" />Dupliquer
           </button>
           <button onClick={onEditFull}
             className="flex items-center gap-1.5 text-xs font-bold text-pilote border border-pilote-200 bg-white rounded-xl px-3.5 py-2 hover:bg-pilote-50 transition-colors">
@@ -349,9 +437,13 @@ export default function FichePanel({
               <p className="text-xl font-extrabold tracking-tight text-white tabular mt-1">
                 {c.par_unite_ht !== null ? fmtEuro(c.par_unite_ht) : fmtEuro(c.total_ht)}
               </p>
+              {/* « Matière » désignait deux montants différents à quelques
+                  centimètres l'un de l'autre : le total du tableau inclut
+                  l'emballage, ce pourcentage l'exclut. Le food cost du métier
+                  exclut l'emballage — c'est donc le libellé qui est précisé. */}
               <p className="text-[11px] text-pilote-200 mt-0.5 tabular">
                 {c.par_unite_ht !== null ? `/ ${recipe.yield_unit || 'unité'}` : '/ batch'}
-                {foodCostPct !== null ? ` · matière ${foodCostPct} % du PV HT` : ''}
+                {foodCostPct !== null ? ` · matière seule ${foodCostPct} % du PV HT` : ''}
               </p>
             </div>
 
@@ -410,7 +502,18 @@ export default function FichePanel({
           <div className="mb-4 bg-amber-50 border border-amber-200 rounded-xl px-4 py-2 flex items-start gap-2 text-xs text-amber-800">
             <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
             <span>
-              {c.prix_manquants} ingrédient{c.prix_manquants > 1 ? 's' : ''} sans prix{sansPrix.length > 0 ? ` — ${nomsSansPrix}` : ''} : {c.prix_manquants > 1 ? 'ils comptent' : 'il compte'} pour 0 €, le coût affiché est donc <span className="font-semibold">sous-estimé</span> et la marge ne peut pas être calculée. Le prix arrivera via la <Link href="/dashboard/mercuriale" className="font-bold underline">Mercuriale</Link>.
+              {c.prix_manquants} ingrédient{c.prix_manquants > 1 ? 's' : ''} sans prix
+              {sansPrix.length > 0 && (
+                <> — {sansPrix.map((x, i) => (
+                  <span key={`${x.nom}-${i}`}>
+                    {i > 0 ? ', ' : ''}
+                    {x.href
+                      ? <Link href={x.href} className="font-bold underline hover:text-amber-950">{x.nom}</Link>
+                      : <span className="font-bold">{x.nom}</span>}
+                  </span>
+                ))}</>
+              )}
+              {' '}: {c.prix_manquants > 1 ? 'ils comptent' : 'il compte'} pour 0 €, le coût affiché est donc <span className="font-semibold">sous-estimé</span> et la marge ne peut pas être calculée. Cliquez un nom pour aller lui donner un prix.
             </span>
           </div>
         )}
@@ -588,6 +691,19 @@ export default function FichePanel({
                           {ing.price_source === 'aucun' && <span className="ml-1.5 text-[10px] font-semibold text-amber-600">{ing.sub_recipe_id ? 'rendement de la sous-fiche requis' : 'prix manquant'}</span>}
                           {ing.price_source === 'manuel' && <span className="ml-1.5 text-[10px] text-gray-400">prix manuel</span>}
                           {ing.sub_incomplete && <span className="ml-1.5 text-[10px] font-semibold text-amber-600">coût de la sous-fiche incomplet</span>}
+                          {/* De QUAND date ce prix. Même code que la mercuriale :
+                              au-delà de 30 jours, l'orange signale que le chiffre
+                              a vieilli — c'est sur lui que se décide un PV. */}
+                          {ing.price_source === 'mercuriale' && ing.price_date && (() => {
+                            const j = ageJours(ing.price_date)
+                            if (j === null) return null
+                            return (
+                              <span className={`ml-1.5 text-[10px] tabular ${j > 30 ? 'font-semibold text-orange-500' : 'text-gray-400'}`}
+                                title={`Dernière facture connue pour cet article : ${fmtDateFr(ing.price_date)}`}>
+                                prix du {fmtDateFr(ing.price_date)}{j > 30 ? ` · ${j} j` : ''}
+                              </span>
+                            )
+                          })()}
                         </td>
                         <td className="px-3.5 py-2.5 text-right tabular">
                           <span className="text-sm font-semibold text-gray-900">{fmtQty(ing.quantity * ratio)} {uniteAffichee}</span>
@@ -615,7 +731,16 @@ export default function FichePanel({
                 <tfoot>
                   <tr className="bg-pilote text-white">
                     <td className="px-3.5 py-2.5 text-[11px] font-bold uppercase tracking-wider text-white/60">Total matière{c && c.emballage_ht > 0 ? ' + emb.' : ''}</td>
-                    <td className="px-3.5 py-2.5 text-right font-bold tabular text-sm">{poidsTotalKg > 0 ? `${fmtQty(poidsTotalKg * ratio)} kg` : ''}</td>
+                    <td className="px-3.5 py-2.5 text-right font-bold tabular text-sm">
+                      {poids.brut > 0 ? (
+                        <>
+                          {fmtQty(poids.brut * ratio)} kg <span className="font-semibold text-white/60">brut</span>
+                          {Math.abs(poids.brut - poids.net) >= 0.005 && (
+                            <span className="block text-[10px] font-semibold text-white/60">{fmtQty(poids.net * ratio)} kg net</span>
+                          )}
+                        </>
+                      ) : ''}
+                    </td>
                     <td className="px-3.5 py-2.5 text-right font-bold tabular text-sm">{fmtEuro(coutMatiere * ratio)}</td>
                     <td className="px-3.5 py-2.5 text-right font-bold tabular text-white/70 text-sm">100 %</td>
                     <td />
