@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
+import { resolveClientId } from '@/lib/resolve-client-id'
 import { PROVIDERS } from '@/lib/billing-providers'
 import { classifyFixedCharges } from '@/lib/billing-providers/classify'
 import { loadSupplierCategories, rememberedCategory } from '@/lib/supplier-memory'
@@ -43,13 +44,13 @@ export async function POST(req: NextRequest) {
     ? { week: Number(bodyWeek), year: Number(bodyYear) }
     : getISOWeek(new Date())
 
-  const { data: clientRow } = await service
-    .from('clients').select('id').eq('client_user_id', user.id).maybeSingle()
-  if (!clientRow) return NextResponse.json({ error: 'Client introuvable' }, { status: 404 })
+  // resolveClientId (user_id puis email) — même règle que le reste des routes
+  const clientId = await resolveClientId(service, user.id, user.email)
+  if (!clientId) return NextResponse.json({ error: 'Client introuvable' }, { status: 404 })
 
   let query = service.from('billing_integrations')
     .select('*')
-    .eq('client_id', clientRow.id)
+    .eq('client_id', clientId)
     .eq('is_active', true)
   if (filterProvider) query = query.eq('provider', filterProvider)
   const { data: integrations } = await query
@@ -62,7 +63,7 @@ export async function POST(req: NextRequest) {
   // ── MÉMOIRE DE TRI FOURNISSEUR ──
   // La catégorie déjà choisie par le boucher pour un fournisseur l'emporte sur
   // celle devinée par le connecteur (cohérent avec l'import email).
-  const supplierMemory = await loadSupplierCategories(service, clientRow.id)
+  const supplierMemory = await loadSupplierCategories(service, clientId)
 
   for (const integ of integrations) {
     const prov = PROVIDERS[integ.provider]
@@ -83,7 +84,7 @@ export async function POST(req: NextRequest) {
         // facture n'a pas de date exploitable.
         const wk = weekForInvoice(null, inv.invoice_date) ?? { week, year }
         return {
-        client_id:      clientRow.id,
+        client_id:      clientId,
         supplier_name:  inv.supplier_name,
         invoice_number: inv.invoice_number ?? null,
         invoice_date:   inv.invoice_date,
@@ -115,7 +116,7 @@ export async function POST(req: NextRequest) {
         // Échéance, statut de paiement, PDF stocké — updates ciblés post-upsert
         // (cf. lib/billing-providers/enrich). Non bloquant : les montants sont déjà là.
         try {
-          await enrichInvoicesAfterSync(service, clientRow.id, enriched)
+          await enrichInvoicesAfterSync(service, clientId, enriched)
         } catch (e) { console.error('Enrichissement factures:', e) }
       }
     }
