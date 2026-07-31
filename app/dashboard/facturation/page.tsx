@@ -13,7 +13,7 @@ import {
   TrendingUp, TrendingDown, ShoppingCart, Users, Euro,
   Save, X, Settings, Check, Loader2, AlertCircle,
   Link2, Link2Off, RefreshCw, ArrowUpRight, Repeat, PieChart,
-  Pencil, CalendarClock, Scale
+  Pencil, CalendarClock, Scale, Mail, Copy
 } from 'lucide-react'
 import {
   costForWindow, weekRecurringCost, provisionForWindow, enumeratePeriods,
@@ -331,6 +331,15 @@ export default function FacturationPage() {
   const [memoTouched, setMemoTouched] = useState(false)
   const [caForm,    setCaForm]    = useState({ ca_total: '', ca_boucherie: '', ca_charcuterie: '', ca_traiteur: '', ca_divers: '' })
   const [settForm,  setSettForm]  = useState({ company_name: '', siret: '' })
+  // Connecteur EMAIL : pour les maisons sans logiciel de facturation. L'adresse
+  // de transfert n'existe qu'une fois l'email du gérant vérifié par code.
+  const [mail, setMail] = useState<{ forward_id: string | null; verified: boolean; email: string | null }>({ forward_id: null, verified: false, email: null })
+  const [mailStep, setMailStep] = useState<'idle' | 'code'>('idle')
+  const [mailAddr, setMailAddr] = useState('')
+  const [mailCode, setMailCode] = useState('')
+  const [mailBusy, setMailBusy] = useState(false)
+  const [mailMsg, setMailMsg] = useState<{ ok: boolean; texte: string } | null>(null)
+  const [mailCopie, setMailCopie] = useState(false)
   // Taux de TVA : saisi ici mais porte par `clients` (API /api/postes), pas par
   // billing-settings — c'est une donnee de CALCUL, pas une mention legale.
   const [tvaDraft,  setTvaDraft]  = useState('')
@@ -383,10 +392,41 @@ export default function FacturationPage() {
     setSummary(sumRes)
     const s = settRes || {}
     setSettForm({ company_name: s.company_name || '', siret: s.siret || '' })
+    setMail({ forward_id: s.billing_forward_id || null, verified: Boolean(s.billing_email_verified), email: s.billing_email || null })
+    if (s.billing_email && !mailAddr) setMailAddr(String(s.billing_email))
     if (caRes && !caRes.error) setCaForm({ ca_total: String(caRes.ca_total || ''), ca_boucherie: String(caRes.ca_boucherie || ''), ca_charcuterie: String(caRes.ca_charcuterie || ''), ca_traiteur: String(caRes.ca_traiteur || ''), ca_divers: String(caRes.ca_divers || '') })
     else setCaForm({ ca_total: '', ca_boucherie: '', ca_charcuterie: '', ca_traiteur: '', ca_divers: '' })
     setLoading(false)
   }, [week, year])
+
+  /** Envoie le code de validation à l'adresse du gérant (l'adresse de transfert
+   *  n'est activée qu'après vérification — sans quoi n'importe qui pourrait
+   *  déposer des factures dans une boucherie qui n'est pas la sienne). */
+  async function envoyerCodeMail() {
+    const addr = mailAddr.trim()
+    if (!addr.includes('@')) { setMailMsg({ ok: false, texte: 'Adresse email invalide.' }); return }
+    setMailBusy(true); setMailMsg(null)
+    const r = await fetch('/api/billing-settings/send-code', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ billing_email: addr }),
+    }).catch(() => null)
+    const d = r ? await r.json().catch(() => null) : null
+    setMailBusy(false)
+    if (r?.ok) { setMailStep('code'); setMailMsg({ ok: true, texte: `Code envoyé à ${addr} — il expire dans 15 minutes.` }) }
+    else setMailMsg({ ok: false, texte: d?.error || 'Envoi impossible.' })
+  }
+
+  async function validerCodeMail() {
+    const code = mailCode.trim()
+    if (code.length !== 6) { setMailMsg({ ok: false, texte: 'Le code fait 6 chiffres.' }); return }
+    setMailBusy(true); setMailMsg(null)
+    const r = await fetch('/api/billing-settings/verify-code', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }),
+    }).catch(() => null)
+    const d = r ? await r.json().catch(() => null) : null
+    setMailBusy(false)
+    if (r?.ok) { setMailStep('idle'); setMailCode(''); setMailMsg({ ok: true, texte: 'Adresse vérifiée — vous pouvez transférer vos factures.' }); load() }
+    else setMailMsg({ ok: false, texte: d?.error || 'Code refusé.' })
+  }
 
   const loadIntegrations = useCallback(async () => {
     const res = await fetch('/api/billing-integrations', { cache: 'no-store' }).catch(() => null)
@@ -1020,7 +1060,72 @@ export default function FacturationPage() {
 
       {/* Panneau intégrations (replié par défaut) */}
       {showProviders && (
-        <div className="bg-white border-b border-gray-100 px-6 py-4">
+        <div className="bg-white border-b border-gray-100 px-6 py-4 space-y-4">
+          {/* ── Sans logiciel de facturation : l'adresse de transfert ── */}
+          <div className="rounded-2xl border border-pilote-100 bg-pilote-50/40 p-4">
+            <div className="flex items-start gap-3 flex-wrap">
+              <div className="w-8 h-8 rounded-lg bg-pilote flex items-center justify-center flex-shrink-0">
+                <Mail className="w-4 h-4 text-white" />
+              </div>
+              <div className="flex-1 min-w-[240px]">
+                <p className="font-bold text-sm text-gray-900">Pas de logiciel de facturation ? Transférez vos factures par email</p>
+                <p className="text-[11px] text-gray-500 mt-0.5 leading-relaxed">
+                  Vous transférez la facture reçue de votre fournisseur à votre adresse PILOTE ; la pièce jointe PDF est
+                  archivée et lue exactement comme une facture synchronisée — lignes, mercuriale, prix du jour.
+                  Elle arrive « à vérifier » et n&apos;entre dans vos marges qu&apos;après votre validation.
+                </p>
+              </div>
+            </div>
+
+            {mail.verified && mail.forward_id ? (
+              <div className="mt-3 flex items-center gap-2 flex-wrap">
+                <code className="text-xs font-semibold text-pilote-800 bg-white ring-1 ring-pilote-100 rounded-lg px-3 py-2 tabular">
+                  factures-{mail.forward_id}@mail.getpilote.app
+                </code>
+                <button
+                  onClick={() => {
+                    navigator.clipboard?.writeText(`factures-${mail.forward_id}@mail.getpilote.app`)
+                      .then(() => { setMailCopie(true); setTimeout(() => setMailCopie(false), 2000) })
+                      .catch(() => setMailMsg({ ok: false, texte: 'Copie impossible — sélectionnez l\'adresse à la main.' }))
+                  }}
+                  className="flex items-center gap-1.5 text-xs font-semibold text-pilote border border-pilote-200 bg-white rounded-lg px-2.5 py-2 hover:bg-pilote-50 transition-colors">
+                  {mailCopie ? <><Check className="w-3.5 h-3.5" />Copiée</> : <><Copy className="w-3.5 h-3.5" />Copier</>}
+                </button>
+                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-green-700 bg-green-50 rounded-full px-2 py-1">
+                  <Check className="w-3 h-3" />Adresse active{mail.email ? ` · vérifiée sur ${mail.email}` : ''}
+                </span>
+              </div>
+            ) : (
+              <div className="mt-3 flex items-center gap-2 flex-wrap">
+                {mailStep === 'idle' ? (
+                  <>
+                    <Input value={mailAddr} onChange={e => setMailAddr(e.target.value)} placeholder="votre@email.fr"
+                      className="h-9 text-sm max-w-[240px]" />
+                    <Button onClick={envoyerCodeMail} disabled={mailBusy}
+                      className="h-9 bg-pilote hover:bg-pilote-hover text-white text-xs">
+                      {mailBusy ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Envoi…</> : 'Recevoir le code'}
+                    </Button>
+                    <span className="text-[11px] text-gray-400">Une seule fois : on vérifie que l&apos;adresse est bien la vôtre.</span>
+                  </>
+                ) : (
+                  <>
+                    <Input value={mailCode} onChange={e => setMailCode(e.target.value)} placeholder="123456" inputMode="numeric"
+                      className="h-9 text-sm max-w-[120px] tabular" />
+                    <Button onClick={validerCodeMail} disabled={mailBusy}
+                      className="h-9 bg-pilote hover:bg-pilote-hover text-white text-xs">
+                      {mailBusy ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Validation…</> : 'Valider'}
+                    </Button>
+                    <button onClick={() => { setMailStep('idle'); setMailMsg(null) }}
+                      className="text-[11px] font-semibold text-gray-500 hover:text-gray-700">Changer d&apos;adresse</button>
+                  </>
+                )}
+              </div>
+            )}
+            {mailMsg && (
+              <p className={`text-[11px] mt-2 font-medium ${mailMsg.ok ? 'text-green-700' : 'text-red-600'}`}>{mailMsg.texte}</p>
+            )}
+          </div>
+
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             {PROVIDERS_META.filter(p => !integrations.find(i => i.provider === p.id)).map(prov => (
               <div key={prov.id} className="rounded-lg border-2 border-dashed border-gray-200 hover:border-gray-300 bg-gray-50/30 p-4 transition-all">
