@@ -18,6 +18,7 @@ export default function FicheRecettePage() {
   const [employees, setEmployees] = useState<FicheEmployee[]>([])
   const [generics, setGenerics] = useState<FicheGeneric[]>([])
   const [target, setTarget] = useState<number | null>(null)
+  const [historiqueIncomplet, setHistoriqueIncomplet] = useState(false)
   const [loading, setLoading] = useState(true)
 
   // UNE fiche, une route dédiée. Avant : on demandait la LISTE puis on y
@@ -30,6 +31,7 @@ export default function FicheRecettePage() {
     setEmployees(Array.isArray(data?.employees) ? data.employees : [])
     setGenerics(Array.isArray(data?.generics) ? data.generics : [])
     setTarget(data?.target != null ? Number(data.target) : null)
+    setHistoriqueIncomplet(data?.historique_incomplet === true)
     setLoading(false)
   }, [params.id])
   useEffect(() => { load() }, [load])
@@ -56,6 +58,7 @@ export default function FicheRecettePage() {
           employees={employees}
           generics={generics}
           target={target}
+          historiqueIncomplet={historiqueIncomplet}
           onEditFull={() => router.push(`/dashboard/recettes?edit=${recipe.id}`)}
           onSaved={load}
         />

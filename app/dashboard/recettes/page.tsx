@@ -89,6 +89,9 @@ export default function RecettesPage() {
   const [employees, setEmployees] = useState<Employee[]>([])
   const [laborRate, setLaborRate] = useState<number | null>(null)
   const [targets, setTargets] = useState<Target[]>([])
+  // Historique de prix tronqué côté serveur : les courbes de coût matière sont
+  // partielles, et une courbe qui rétrécit se lit comme un prix stable.
+  const [historiqueIncomplet, setHistoriqueIncomplet] = useState(false)
   // Cible en cours d'édition dans un en-tête de section (une seule à la fois)
   const [editTarget, setEditTarget] = useState<{ cat: string; value: string } | null>(null)
   const [targetSaving, setTargetSaving] = useState(false)
@@ -120,6 +123,7 @@ export default function RecettesPage() {
       setGenerics(Array.isArray(rec.generics) ? rec.generics : [])
       setEmployees(Array.isArray(rec.employees) ? rec.employees : [])
       setTargets(Array.isArray(rec.targets) ? rec.targets : [])
+      setHistoriqueIncomplet(rec.historique_incomplet === true)
     }
     setLoading(false)
   }, [])
@@ -606,6 +610,7 @@ export default function RecettesPage() {
               employees={employees}
               generics={generics}
               target={targetByCat.get(catLabel(r.category)) ?? null}
+              historiqueIncomplet={historiqueIncomplet}
               onEditFull={() => openEdit(r)}
               onSaved={load}
               onClose={() => setOpenId(null)}
