@@ -133,12 +133,23 @@ export async function ensureAutoGenerics(service: ServiceClient, clientId: strin
     byKey.set(key, arr)
   }
 
-  // Candidats à l'auto-association : seuls sur leur clé, clé inconnue des génériques.
+  // Candidats à l'auto-association : seuls sur leur clé, clé inconnue des
+  // génériques — ET dont l'UNITÉ EST LISIBLE.
+  //
+  // GARDE-FOU UNITÉS (31/07). `guessBaseUnit` retombait sur « kg » quand l'unité
+  // était vide ou illisible, et le garde-fou de conversion, qui exige une unité
+  // reconnue des deux côtés, ne se déclenchait alors jamais : un prix au colis
+  // était publié en euros par kilo, sans encadré orange, sans quarantaine. C'est
+  // le seul endroit du produit où un chiffre faux passait encore en silence.
+  // Mesuré : la colonne unit contient parfois « 1 », « 1.57 », « -19.20 » —
+  // l'extraction y range une quantité ou un montant. Ces réfs restent désormais
+  // dans la file « à rapprocher », où le gérant choisit kg ou pièce lui-même.
   const candidates: { id: string; name: string; unit: string | null; nameKey: string }[] = []
   for (const [key, refs] of byKey) {
     if (refs.length > 1) continue
     if (genericKeys.has(key)) continue
     const ref = refs[0]
+    if (unitKind(ref.unit) === null) continue
     candidates.push({ ...ref, nameKey: normText(ref.name) })
   }
   if (candidates.length === 0) return
