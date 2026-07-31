@@ -20,16 +20,16 @@ export default function FicheRecettePage() {
   const [target, setTarget] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
 
+  // UNE fiche, une route dédiée. Avant : on demandait la LISTE puis on y
+  // cherchait la sienne — ce qui faisait calculer le coût de toutes les fiches
+  // et relire le coût matière de chacune à neuf jalons, à chaque ouverture ET
+  // après chaque étape, palier ou ingrédient enregistré depuis le panneau.
   const load = useCallback(async () => {
-    const data = await fetch('/api/recipes', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).catch(() => null)
-    const r: FicheRecipe | undefined = (data?.recipes || []).find((x: FicheRecipe) => x.id === params.id)
-    setRecipe(r ?? null)
+    const data = await fetch(`/api/recipes/${params.id}`, { cache: 'no-store' }).then(r => r.ok ? r.json() : null).catch(() => null)
+    setRecipe((data?.recipe ?? null) as FicheRecipe | null)
     setEmployees(Array.isArray(data?.employees) ? data.employees : [])
     setGenerics(Array.isArray(data?.generics) ? data.generics : [])
-    // Cible de marge de la catégorie de la fiche (même normalisation que la liste)
-    const cat = (r?.category ?? '').trim().toLowerCase()
-    const t = (Array.isArray(data?.targets) ? data.targets : []).find((x: { category: string }) => x.category === cat)
-    setTarget(t ? Number(t.target_marge_pct) : null)
+    setTarget(data?.target != null ? Number(data.target) : null)
     setLoading(false)
   }, [params.id])
   useEffect(() => { load() }, [load])

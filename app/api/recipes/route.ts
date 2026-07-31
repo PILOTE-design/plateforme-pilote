@@ -21,6 +21,7 @@ import {
   parseIngredients, parseRecipeFields,
   type IngredientRow, type RecipeCost, type RecipeRow,
 } from '@/lib/recipes'
+import { fetchAllPages } from '@/lib/fetch-all'
 
 export const dynamic = 'force-dynamic'
 
@@ -37,22 +38,52 @@ export async function GET() {
   // (un prix en quarantaine a unit_price_ht NULL et n'apparaît jamais ici)
   const cutoff12m = new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10)
 
-  const [{ data: recipes }, { data: ingredients }, { data: employees }, { data: articles }, { data: generics }, { data: targets }, { data: pricePoints }] = await Promise.all([
+  const [{ data: recipes }, { data: ingredients }, { data: employees }, articlesPage, { data: generics }, { data: targets }] = await Promise.all([
     service.from('recipes').select('*').eq('client_id', clientId).eq('active', true).order('name'),
     service.from('recipe_ingredients').select('*').eq('client_id', clientId).order('position'),
     service.from('employees').select(PAYROLL_EMPLOYEE_COLUMNS).eq('client_id', clientId),
-    service.from('articles').select('id, unit, last_price_ht, last_price_date, generic_id, conversion_factor').eq('client_id', clientId),
+    fetchAllPages<any>(() => service.from('articles')
+      .select('id, unit, last_price_ht, last_price_date, generic_id, conversion_factor')
+      .eq('client_id', clientId).order('id', { ascending: true })),
     service.from('generic_articles').select('id, name, base_unit, category, default_loss_pct').eq('client_id', clientId).eq('active', true).order('name'),
     service.from('recipe_targets').select('category, target_marge_pct').eq('client_id', clientId),
-    service.from('invoice_lines')
+  ])
+  const articles = articlesPage.rows
+
+  // Points de prix pour la COURBE de coût matière. Deux corrections (lot 8) :
+  //   · le `.limit(2000)` muet coupait les points les plus ANCIENS — le prix à
+  //     une date passée devenait introuvable, le jalon était filtré, et la
+  //     courbe rétrécissait puis disparaissait (elle exige deux points) sans le
+  //     moindre message. Mesuré : la boutique lit 93 lignes par semaine, le
+  //     plafond tombait vers la mi-décembre, AVANT que la fenêtre de 12 mois
+  //     qu'il sert soit seulement remplie ;
+  //   · on ne lit plus QUE les réfs des génériques réellement utilisés dans les
+  //     fiches — le reste ne sert à aucune courbe. Ici : une petite fraction du
+  //     volume, et la requête reste bornée quand le catalogue grandit.
+  const genericsUtilises = new Set(
+    ((ingredients || []) as IngredientRow[]).map(i => i.generic_id).filter((g): g is string => !!g),
+  )
+  const articlesUtiles = articles
+    .filter((a: any) => a.generic_id && genericsUtilises.has(String(a.generic_id)))
+    .map((a: any) => String(a.id))
+  // PostgREST met les valeurs d'un `in` dans l'URL : par paquets, sinon la
+  // requête devient trop longue dès quelques centaines de réfs.
+  const LOT_IDS = 150
+  const pricePoints: any[] = []
+  let pointsTronque = false
+  for (let i = 0; i < articlesUtiles.length; i += LOT_IDS) {
+    const lot = articlesUtiles.slice(i, i + LOT_IDS)
+    const p = await fetchAllPages<any>(() => service.from('invoice_lines')
       .select('article_id, unit_price_ht, invoices!inner(invoice_date)')
       .eq('client_id', clientId)
-      .not('article_id', 'is', null)
+      .in('article_id', lot)
       .not('unit_price_ht', 'is', null)
       .gte('invoices.invoice_date', cutoff12m)
       .order('created_at', { ascending: false })
-      .limit(2000),
-  ])
+      .order('id', { ascending: true }))
+    pricePoints.push(...p.rows)
+    if (p.tronque) pointsTronque = true
+  }
 
   const emps = (employees || []) as unknown as PayrollEmployee[]
   const averageRate = averageLoadedRate(emps)
@@ -125,6 +156,10 @@ export async function GET() {
   return NextResponse.json({
     recipes: out,
     labor_rate_ht: averageRate,
+    // Historique de prix tronqué : les courbes « 8 dernières semaines » sont
+    // alors incomplètes. Annoncé plutôt que subi — une courbe qui rétrécit
+    // ressemble en tout point à un prix qui n'a pas bougé.
+    historique_incomplet: pointsTronque || articlesPage.tronque,
     targets: (targets || []).map((t: any) => ({ category: String(t.category), target_marge_pct: Number(t.target_marge_pct) })),
     generics: [...genericById.values()],
     employees: emps

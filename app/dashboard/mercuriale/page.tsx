@@ -204,6 +204,10 @@ export default function MercurialePage() {
   // ni prix — c'est le plus gros gisement de mercuriale inexploitée.
   const [sansPdf, setSansPdf] = useState(0)
   const [backfill, setBackfill] = useState(false)
+  // Troncature de lecture annoncée par l'API (lot 8) : tant que ce message est
+  // null, tout ce qui est affiché ici est COMPLET. Il ne s'agit pas d'un détail
+  // technique — un catalogue amputé se lit comme un catalogue entier.
+  const [lectureIncomplete, setLectureIncomplete] = useState<string | null>(null)
 
   // ── ASSOCIATION PAR SÉLECTION : « Associer » sur une réf l'ajoute au lot,
   // « Associer » sur une autre l'ajoute aussi ; tout part vers le même générique.
@@ -242,6 +246,7 @@ export default function MercurialePage() {
       setMoves(Array.isArray(data.moves) ? data.moves : [])
       setMovesTotal(Number(data.moves_total) || 0)
       setSansPdf(Number(data.sans_pdf) || 0)
+      setLectureIncomplete(typeof data.lecture_incomplete === 'string' ? data.lecture_incomplete : null)
     }
     setLoading(false)
   }, [])
@@ -752,6 +757,16 @@ export default function MercurialePage() {
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />Actualiser
         </button>
       </div>
+
+      {/* Lecture tronquée : le catalogue affiché n'est pas complet. En tête de
+          page, avant tout chiffre — c'est la fiabilité de TOUT l'écran qui est
+          en cause, pas celle d'une section. */}
+      {lectureIncomplete && (
+        <div className="mb-4 bg-red-50 border border-red-200 rounded-xl px-4 py-3 flex items-start gap-3">
+          <AlertTriangle className="w-4 h-4 text-red-700 flex-shrink-0 mt-0.5" />
+          <p className="text-sm text-red-900">{lectureIncomplete} Actualisez ; si le message persiste, signalez-le — les prix, min/max et mouvements ci-dessous ne portent que sur ce qui a pu être lu.</p>
+        </div>
+      )}
 
       {/* Factures sans PDF : rien à lire tant que le document n'est pas récupéré */}
       {sansPdf > 0 && (

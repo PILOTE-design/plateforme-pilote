@@ -27,6 +27,7 @@ import { NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { resolveClientId } from '@/lib/resolve-client-id'
 import { ensureAutoGenerics, stemKey, isNonProduct, unitKind } from '@/lib/mercuriale-auto'
+import { fetchAllPages } from '@/lib/fetch-all'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -50,29 +51,34 @@ export async function GET() {
   const cutoff12m = isoDay(Date.now() - 365 * 86400000)
   const cutoff30j = isoDay(Date.now() - 30 * 86400000)
 
-  const [{ data: generics }, { data: articles }, { data: pricePoints }, { data: pending }] = await Promise.all([
+  // Toutes ces lectures sont PAGINÉES (lib/fetch-all) : elles portaient des
+  // `.limit()` muets — 1000 réfs, 2000 points de prix, 200 factures en file —
+  // qui n'apparaissaient nulle part dans la réponse. Le tri se termine par une
+  // colonne unique (`id`) pour que deux pages ne se recouvrent ni ne s'omettent
+  // quand deux lignes partagent la même date.
+  const [{ data: generics }, refsPage, pointsPage, pendingPage] = await Promise.all([
     service.from('generic_articles')
       .select('id, name, base_unit, category, default_loss_pct, auto_created')
       .eq('client_id', clientId).eq('active', true)
       .order('name'),
-    service.from('articles')
+    fetchAllPages<any>(() => service.from('articles')
       .select('id, name, unit, supplier_name, article_code, last_price_ht, last_price_date, price_count, generic_id, conversion_factor, ignored')
       .eq('client_id', clientId)
       .order('updated_at', { ascending: false })
-      .limit(1000),
+      .order('id', { ascending: true })),
     // Points de prix sur 12 mois (variation, historique, mouvements) — la date
     // vient de la facture ; un prix en quarantaine (unit_price_ht NULL) est absent
     // Les lignes SANS prix (quarantaine) sont lues elles aussi : sans elles, on
     // ne peut pas dire à quel article il manque un prix À CAUSE d'un refus de
     // lecture — l'écran affichait « pas de prix » pour quatre causes opposées.
-    service.from('invoice_lines')
+    fetchAllPages<any>(() => service.from('invoice_lines')
       .select('article_id, unit_price_ht, invoice_id, invoices!inner(invoice_date)')
       .eq('client_id', clientId)
       .not('article_id', 'is', null)
       .not('unit_price_ht', 'is', null)
       .gte('invoices.invoice_date', cutoff12m)
       .order('created_at', { ascending: false })
-      .limit(2000),
+      .order('id', { ascending: true })),
     // File d'attente d'extraction : PDF présent, lignes jamais lues (ou échec à
     // retenter). Les CHARGES FIXES sont exclues d'office ; le reste passe par la
     // reconnaissance de nature à l'extraction — la CATÉGORIE n'est pas fiable.
@@ -82,15 +88,18 @@ export async function GET() {
     // prompt ou le seuil ne débloquait rien, la facture restait figée. Idem
     // pour un `no_file` à qui on vient de poser un PDF. Les quatre états
     // relisables sont maintenant dans la file, les jamais-lues d'abord.
-    service.from('invoices')
+    fetchAllPages<any>(() => service.from('invoices')
       .select('id, supplier_name, invoice_date, amount_ht, lines_status, lines_error, lines_checked_at')
       .eq('client_id', clientId)
       .eq('is_fixed_charge', false)
       .not('file_path', 'is', null)
       .or('lines_status.is.null,lines_status.eq.error,lines_status.eq.no_file,lines_status.eq.partial')
       .order('invoice_date', { ascending: false })
-      .limit(200),
+      .order('id', { ascending: true }), { max: 5000 }),
   ])
+  const articles = refsPage.rows
+  const pricePoints = pointsPage.rows
+  const pending = pendingPage.rows
 
   // Fiches recettes utilisatrices — pour « utilisé dans N fiches » et l'impact
   // d'un mouvement de prix (Δprix × quantité brute). Lignes génériques seulement.
@@ -107,12 +116,13 @@ export async function GET() {
   // Lignes en QUARANTAINE par réf : un prix a été lu sur la facture mais refusé
   // par les garde-fous. C'est une cause d'absence de prix radicalement différente
   // de « jamais facturé », et le boucher doit pouvoir les distinguer.
-  const { data: quarantaine } = await service.from('invoice_lines')
+  const quarantainePage = await fetchAllPages<any>(() => service.from('invoice_lines')
     .select('article_id')
     .eq('client_id', clientId)
     .is('unit_price_ht', null)
     .not('article_id', 'is', null)
-    .limit(2000)
+    .order('id', { ascending: true }))
+  const quarantaine = quarantainePage.rows
   const quarantaineParArticle = new Map<string, number>()
   for (const q of (quarantaine || []) as any[]) {
     const k = String(q.article_id)
@@ -334,6 +344,18 @@ export async function GET() {
     .select('id', { count: 'exact', head: true })
     .eq('client_id', clientId).eq('is_fixed_charge', false).is('file_path', null)
 
+  // Troncature ANNONCÉE. Les quatre lectures sont désormais paginées jusqu'à
+  // épuisement ; si l'une bute quand même sur son plafond de sécurité ou sur une
+  // erreur Supabase, l'écran doit le dire — un catalogue amputé en silence se
+  // lit exactement comme un catalogue complet.
+  const incomplet = [
+    refsPage.tronque ? 'les réfs fournisseurs' : null,
+    pointsPage.tronque ? 'l’historique des prix' : null,
+    quarantainePage.tronque ? 'les prix en quarantaine' : null,
+    pendingPage.tronque ? 'la file de lecture' : null,
+  ].filter((x): x is string => x !== null)
+  const erreurLecture = refsPage.erreur ?? pointsPage.erreur ?? quarantainePage.erreur ?? pendingPage.erreur
+
   return NextResponse.json({
     generics: genericsOut,
     queue: queueOut,
@@ -341,5 +363,8 @@ export async function GET() {
     sans_pdf: sansPdf ?? 0,
     moves: movesOut,
     moves_total: moves.length,
+    lecture_incomplete: incomplet.length > 0
+      ? `Lecture incomplète : ${incomplet.join(', ')}${erreurLecture ? ` (${erreurLecture})` : ''}. Les chiffres affichés sont donc partiels.`
+      : null,
   })
 }
