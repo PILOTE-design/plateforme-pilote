@@ -1,0 +1,170 @@
+// lib/invoice-eval.ts — MESURE de la lecture des factures fournisseurs.
+//
+// Module PUR : zéro IA, zéro base, testable seul. Il compare deux jeux de lignes
+// de facture et compte ce qui coïncide :
+//   · ATTENDU = les lignes de référence, celles déjà en base pour une facture
+//     dont la lecture est jugée sûre (somme des lignes = total au centime) ;
+//   · OBTENU  = la relecture du MÊME texte source par l'extracteur courant.
+//
+// Pourquoi ce module existe. Le rapport hebdomadaire a son corpus depuis le lot
+// V5 : on y REJOUE l'extracteur sur des cas dont on connaît la bonne réponse, et
+// un changement de prompt qui fait baisser le taux est refusé avant d'être
+// livré. La lecture des FACTURES, elle, n'avait rien : aucun texte source
+// archivé, donc aucun moyen de dire si une modification du prompt améliore ou
+// dégrade. Toucher au prompt sans ça, c'est espérer, pas vérifier.
+//
+// Deux chiffres, et ils ne disent pas la même chose :
+//   · l'EXACTITUDE — les montants, quantités et prix relus coïncident-ils avec
+//     la référence ? C'est le garde-fou anti-régression ;
+//   · les PRIX EXPLOITABLES — combien de lignes ressortent avec un prix qui se
+//     recoupe, donc publiable dans la mercuriale ? C'est le chiffre à faire
+//     monter. Mesuré le 31/07 : 47 prix sur 306 lignes étaient refusés, dont 32
+//     sur des factures dont la somme tombait pourtant au centime près.
+//
+// Un changement réussi fait MONTER le second sans faire baisser le premier.
+
+import { normText } from '@/lib/postes'
+
+/** Tolérances. Les montants se comparent au centime ; les quantités au gramme ;
+ *  les prix unitaires au dixième de centime (un prix au kilo a 3 décimales). */
+export const EPS_MONTANT = 0.01
+export const EPS_QUANTITE = 0.001
+export const EPS_PRIX = 0.005
+
+/** Une ligne de facture, réduite à ce qui se compare. */
+export type LigneFacture = {
+  designation: string
+  quantity: number | null
+  unit: string | null
+  unit_price_ht: number | null
+  amount_ht: number
+}
+
+export type EcartChamp = {
+  /** Libellé lisible (ex. « ÉCHINE DE PORC — montant »). */
+  champ: string
+  attendu: number | null
+  /** null = le chiffre attendu n'a pas été retrouvé dans la relecture. */
+  obtenu: number | null
+  ecart: number
+  ok: boolean
+}
+
+export type CasFacture = {
+  invoice_id: string
+  fournisseur: string
+  date: string | null
+  lignes_attendues: number
+  lignes_obtenues: number
+  /** Nombre de chiffres comparés / justes. */
+  total: number
+  exacts: number
+  exactitude: number
+  /** Lignes de la relecture portant un prix unitaire qui se recoupe avec le
+   *  montant : ce sont elles qui alimenteraient la mercuriale. */
+  prix_exploitables: number
+  divergences: EcartChamp[]
+}
+
+export type CorpusFactures = {
+  cas: number
+  total_chiffres: number
+  exacts: number
+  exactitude: number
+  lignes_attendues: number
+  lignes_obtenues: number
+  prix_exploitables: number
+  par_cas: CasFacture[]
+}
+
+function champ(nom: string, attendu: number | null, obtenu: number | null, eps: number): EcartChamp {
+  // Un chiffre absent DES DEUX CÔTÉS n'est pas une faute : la facture ne le
+  // portait pas. C'est le cas courant d'une remise sans quantité.
+  if (attendu === null && obtenu === null) return { champ: nom, attendu: null, obtenu: null, ecart: 0, ok: true }
+  if (attendu === null || obtenu === null) {
+    return { champ: nom, attendu, obtenu, ecart: Math.abs(attendu ?? obtenu ?? 0), ok: false }
+  }
+  const ecart = Math.abs(obtenu - attendu)
+  return { champ: nom, attendu, obtenu, ecart: +ecart.toFixed(4), ok: ecart <= eps }
+}
+
+/** Un prix unitaire est EXPLOITABLE quand il se recoupe avec le montant de la
+ *  ligne — c'est exactement la règle appliquée à la publication en mercuriale.
+ *  Sans quantité ni prix, rien à recouper, donc rien à publier. */
+export function prixExploitable(l: LigneFacture): boolean {
+  if (l.unit_price_ht === null || l.quantity === null || l.quantity === 0) return false
+  return Math.abs(l.quantity * l.unit_price_ht - l.amount_ht) <= Math.max(0.05, Math.abs(l.amount_ht) * 0.01)
+}
+
+/** Compare les lignes d'une facture à leur relecture. L'appariement se fait sur
+ *  le libellé normalisé ; une ligne oubliée comme une ligne inventée comptent
+ *  toutes deux comme des fautes. */
+export function compareFacture(
+  invoiceId: string,
+  fournisseur: string,
+  date: string | null,
+  attendu: LigneFacture[],
+  obtenu: LigneFacture[],
+): CasFacture {
+  const champs: EcartChamp[] = []
+  const parCle = new Map<string, LigneFacture[]>()
+  for (const l of obtenu) {
+    const k = normText(l.designation)
+    const arr = parCle.get(k) || []
+    arr.push(l)
+    parCle.set(k, arr)
+  }
+
+  const consommees = new Set<LigneFacture>()
+  for (const a of attendu) {
+    const k = normText(a.designation)
+    // Un même libellé peut revenir plusieurs fois sur une facture (deux lots du
+    // même article) : on apparie celui dont le montant est le plus proche, et on
+    // ne le réutilise pas.
+    const candidats = (parCle.get(k) || []).filter(c => !consommees.has(c))
+    const o = candidats.length === 0 ? null
+      : candidats.reduce((best, c) =>
+          Math.abs(c.amount_ht - a.amount_ht) < Math.abs(best.amount_ht - a.amount_ht) ? c : best)
+    if (o) consommees.add(o)
+    const nom = a.designation.slice(0, 40)
+    champs.push(champ(`${nom} — montant`, a.amount_ht, o ? o.amount_ht : null, EPS_MONTANT))
+    champs.push(champ(`${nom} — quantité`, a.quantity, o ? o.quantity : null, EPS_QUANTITE))
+    champs.push(champ(`${nom} — prix unitaire`, a.unit_price_ht, o ? o.unit_price_ht : null, EPS_PRIX))
+  }
+  // Lignes inventées : présentes à la relecture, absentes de la référence.
+  for (const o of obtenu) {
+    if (consommees.has(o)) continue
+    champs.push({ champ: `${o.designation.slice(0, 40)} — ligne en trop`, attendu: null, obtenu: o.amount_ht, ecart: Math.abs(o.amount_ht), ok: false })
+  }
+
+  const exacts = champs.filter(c => c.ok).length
+  return {
+    invoice_id: invoiceId,
+    fournisseur,
+    date,
+    lignes_attendues: attendu.length,
+    lignes_obtenues: obtenu.length,
+    total: champs.length,
+    exacts,
+    exactitude: champs.length ? exacts / champs.length : 1,
+    prix_exploitables: obtenu.filter(prixExploitable).length,
+    divergences: champs.filter(c => !c.ok),
+  }
+}
+
+/** Agrège les cas. L'exactitude porte sur le TOTAL des chiffres (une facture
+ *  plus riche pèse plus lourd), pas sur la moyenne des taux par facture. */
+export function aggregerFactures(cas: CasFacture[]): CorpusFactures {
+  const total_chiffres = cas.reduce((s, c) => s + c.total, 0)
+  const exacts = cas.reduce((s, c) => s + c.exacts, 0)
+  return {
+    cas: cas.length,
+    total_chiffres,
+    exacts,
+    exactitude: total_chiffres ? exacts / total_chiffres : 1,
+    lignes_attendues: cas.reduce((s, c) => s + c.lignes_attendues, 0),
+    lignes_obtenues: cas.reduce((s, c) => s + c.lignes_obtenues, 0),
+    prix_exploitables: cas.reduce((s, c) => s + c.prix_exploitables, 0),
+    par_cas: cas,
+  }
+}
