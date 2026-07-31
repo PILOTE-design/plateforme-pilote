@@ -30,10 +30,11 @@ type Employee = { id: string; name: string; loaded_rate: number | null }
 type IngredientDraft = {
   generic_id: string | null
   article_id: string | null      // héritage (ancienne réf directe)
+  sub_recipe_id: string | null   // sous-recette : la ligne vise une autre fiche
   label: string
   quantity: string
   qty_unit: 'kg' | 'g' | 'piece' | null
-  unit: string | null            // héritage
+  unit: string | null            // héritage — et unité de rendement d'une sous-recette
   loss_pct: string
   manual_price_ht: string
   legacy_price: number | null    // prix serveur d'une ligne héritée (aperçu seulement)
@@ -52,7 +53,7 @@ type Recipe = {
   yield_qty: number | null; yield_unit: string | null
   labor_minutes: number; selling_price_ttc: number | null; tva_rate: number; notes: string | null
   employee_id: string | null
-  ingredients: { generic_id: string | null; article_id: string | null; label: string; quantity: number; qty_unit: string | null; unit: string | null; loss_pct: number | null; manual_price_ht: number | null; unit_price_ht: number | null; price_source: string; line_total_ht: number }[]
+  ingredients: { generic_id: string | null; article_id: string | null; sub_recipe_id?: string | null; label: string; quantity: number; qty_unit: string | null; unit: string | null; loss_pct: number | null; manual_price_ht: number | null; unit_price_ht: number | null; price_source: string; line_total_ht: number }[]
   cost: RecipeCost
 }
 
@@ -61,7 +62,7 @@ type Target = { category: string; target_marge_pct: number }
 
 const fmtEuro = (n: number) => n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'
 const unitFr = (u: string | null) => (u === 'piece' ? 'pièce' : u || '')
-const EMPTY_ING = (): IngredientDraft => ({ generic_id: null, article_id: null, label: '', quantity: '', qty_unit: null, unit: null, loss_pct: '0', manual_price_ht: '', legacy_price: null })
+const EMPTY_ING = (): IngredientDraft => ({ generic_id: null, article_id: null, sub_recipe_id: null, label: '', quantity: '', qty_unit: null, unit: null, loss_pct: '0', manual_price_ht: '', legacy_price: null })
 
 /** Couleur d'une marge : jugée contre la CIBLE de sa catégorie quand elle
  *  existe (vert ≥ cible, orange à moins de 10 pts sous la cible, rouge sinon),
@@ -133,6 +134,7 @@ export default function RecettesPage() {
   }, [loading, recipes])
 
   const genericById = useMemo(() => new Map(generics.map(g => [g.id, g])), [generics])
+  const recipeById = useMemo(() => new Map(recipes.map(r => [r.id, r])), [recipes])
 
   // Taux MO de l'aperçu : l'employé choisi (s'il a un taux), sinon le taux moyen
   const previewRate = useMemo(() => {
@@ -147,11 +149,20 @@ export default function RecettesPage() {
     for (const ing of ings) {
       const qty = parseFloat(ing.quantity.replace(',', '.')) || 0
       if (qty <= 0) continue
+      const loss = Math.min(99, Math.max(0, parseFloat(ing.loss_pct.replace(',', '.')) || 0))
+      // Sous-recette : coût complet de la fiche ÷ rendement (même règle que le serveur)
+      if (ing.sub_recipe_id) {
+        const sub = recipeById.get(ing.sub_recipe_id)
+        const price = sub && sub.cost.par_unite_ht !== null ? sub.cost.par_unite_ht : null
+        if (price === null) { manquants++; continue }
+        if (sub && sub.cost.prix_manquants > 0) manquants++
+        matiere += price * (qty / (1 - loss / 100))
+        continue
+      }
       const g = ing.generic_id ? genericById.get(ing.generic_id) ?? null : null
       const manual = parseFloat(ing.manual_price_ht.replace(',', '.')) || null
       const price = g ? (g.price_ht ?? manual) : (ing.legacy_price ?? manual)
       if (price === null) { manquants++; continue }
-      const loss = Math.min(99, Math.max(0, parseFloat(ing.loss_pct.replace(',', '.')) || 0))
       const qtyBase = g && g.base_unit === 'kg' && ing.qty_unit === 'g' ? qty / 1000 : qty
       const cout = price * (qtyBase / (1 - loss / 100))
       if (g?.category === 'emballage') emballage += cout
@@ -299,13 +310,13 @@ export default function RecettesPage() {
     setCoefField(r.cost.coefficient !== null ? String(r.cost.coefficient).replace('.', ',') : '')
     setIngs(r.ingredients.length > 0
       ? r.ingredients.map(i => ({
-          generic_id: i.generic_id, article_id: i.article_id, label: i.label,
+          generic_id: i.generic_id, article_id: i.article_id, sub_recipe_id: i.sub_recipe_id ?? null, label: i.label,
           quantity: String(i.quantity),
           qty_unit: (i.qty_unit === 'kg' || i.qty_unit === 'g' || i.qty_unit === 'piece') ? i.qty_unit : null,
           unit: i.unit,
           loss_pct: String(i.loss_pct ?? 0),
           manual_price_ht: i.manual_price_ht != null ? String(i.manual_price_ht) : '',
-          legacy_price: !i.generic_id ? i.unit_price_ht : null,
+          legacy_price: !i.generic_id && !i.sub_recipe_id ? i.unit_price_ht : null,
         }))
       : [EMPTY_ING()])
     setShow(true)
@@ -313,13 +324,13 @@ export default function RecettesPage() {
 
   async function save() {
     const kept = ings.filter(i => i.label.trim() && parseFloat(i.quantity.replace(',', '.')) > 0)
-    // Obligation d'associer : une ligne neuve doit viser un article générique.
-    // Seules les lignes héritées (ancienne réf directe) échappent à la règle.
-    const libres = kept.filter(i => !i.generic_id && !i.article_id)
+    // Obligation d'associer : une ligne neuve vise un article générique OU une
+    // sous-recette. Seules les lignes héritées (ancienne réf directe) échappent.
+    const libres = kept.filter(i => !i.generic_id && !i.article_id && !i.sub_recipe_id)
     if (libres.length > 0) {
       toast({
         variant: 'error', title: 'Ingrédient hors mercuriale',
-        description: `« ${libres[0].label.slice(0, 40)} » : choisissez un article générique dans la liste (créez-le depuis la page Mercuriale s'il n'existe pas encore).`,
+        description: `« ${libres[0].label.slice(0, 40)} » : choisissez un article générique ou une fiche recette dans la liste (créez l'article depuis la page Mercuriale s'il n'existe pas encore).`,
       })
       return
     }
@@ -333,7 +344,7 @@ export default function RecettesPage() {
       tva_rate: parseFloat(form.tva_rate.replace(',', '.')) || 5.5,
       employee_id: form.employee_id || null,
       ingredients: kept.map(i => ({
-        generic_id: i.generic_id, article_id: i.article_id, label: i.label, unit: i.unit,
+        generic_id: i.generic_id, article_id: i.article_id, sub_recipe_id: i.sub_recipe_id, label: i.label, unit: i.unit,
         quantity: parseFloat(i.quantity.replace(',', '.')),
         qty_unit: i.qty_unit,
         loss_pct: parseFloat(i.loss_pct.replace(',', '.')) || 0,
@@ -365,10 +376,23 @@ export default function RecettesPage() {
   function pickGeneric(row: number, g: Generic) {
     setIngs(prev => prev.map((ing, i) => i === row
       ? {
-          ...ing, generic_id: g.id, article_id: null, label: g.name, unit: null,
+          ...ing, generic_id: g.id, article_id: null, sub_recipe_id: null, label: g.name, unit: null,
           qty_unit: g.base_unit === 'kg' ? 'kg' : 'piece',
           loss_pct: String(g.default_loss_pct || 0),
           manual_price_ht: '', legacy_price: null,
+        }
+      : ing))
+    setPickerRow(null)
+  }
+
+  /** Sous-recette choisie : la ligne vise la fiche entière — quantité en unités
+   *  de SON rendement, coût = son coût complet ÷ rendement (relu en continu) */
+  function pickSub(row: number, r: Recipe) {
+    setIngs(prev => prev.map((ing, i) => i === row
+      ? {
+          ...ing, sub_recipe_id: r.id, generic_id: null, article_id: null, label: r.name,
+          unit: r.yield_unit || 'u', qty_unit: null,
+          loss_pct: '0', manual_price_ht: '', legacy_price: null,
         }
       : ing))
     setPickerRow(null)
@@ -714,21 +738,26 @@ export default function RecettesPage() {
                 <div className="space-y-2">
                   {ings.map((ing, i) => {
                     const g = ing.generic_id ? genericById.get(ing.generic_id) ?? null : null
+                    const sub = ing.sub_recipe_id ? recipeById.get(ing.sub_recipe_id) ?? null : null
                     const q = ing.label.trim().toLowerCase()
-                    const sugg = pickerRow === i && q.length >= 2 && !ing.generic_id
+                    const sugg = pickerRow === i && q.length >= 2 && !ing.generic_id && !ing.sub_recipe_id
                       ? generics.filter(x => x.name.toLowerCase().includes(q)).slice(0, 6)
                       : []
-                    const isLegacy = !ing.generic_id && !!ing.article_id
+                    // Fiches proposées en sous-recette — jamais la fiche en cours d'édition
+                    const suggR = pickerRow === i && q.length >= 2 && !ing.generic_id && !ing.sub_recipe_id
+                      ? recipes.filter(x => x.id !== editId && x.name.toLowerCase().includes(q)).slice(0, 4)
+                      : []
+                    const isLegacy = !ing.generic_id && !ing.sub_recipe_id && !!ing.article_id
                     return (
                       <div key={i} className="relative">
                         <div className="flex items-center gap-2">
                           <div className="flex-1 relative min-w-[140px]">
                             <Search className="w-3.5 h-3.5 text-gray-300 absolute left-2.5 top-1/2 -translate-y-1/2" />
                             <input value={ing.label}
-                              onChange={e => { setIngs(prev => prev.map((x, j) => j === i ? { ...x, label: e.target.value, generic_id: null, article_id: null, legacy_price: null } : x)); setPickerRow(i) }}
+                              onChange={e => { setIngs(prev => prev.map((x, j) => j === i ? { ...x, label: e.target.value, generic_id: null, article_id: null, sub_recipe_id: null, legacy_price: null } : x)); setPickerRow(i) }}
                               onFocus={() => setPickerRow(i)}
-                              placeholder="Chercher un article générique…"
-                              className={`w-full border rounded-lg pl-8 pr-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200 ${ing.generic_id ? 'border-pilote-200 bg-pilote-50/50 font-medium' : isLegacy ? 'border-amber-200 bg-amber-50/50' : 'border-gray-200'}`} />
+                              placeholder="Chercher un article générique ou une fiche…"
+                              className={`w-full border rounded-lg pl-8 pr-2 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200 ${ing.generic_id || ing.sub_recipe_id ? 'border-pilote-200 bg-pilote-50/50 font-medium' : isLegacy ? 'border-amber-200 bg-amber-50/50' : 'border-gray-200'}`} />
                           </div>
                           <input inputMode="decimal" value={ing.quantity}
                             onChange={e => setIngs(prev => prev.map((x, j) => j === i ? { ...x, quantity: e.target.value } : x))}
@@ -761,6 +790,10 @@ export default function RecettesPage() {
                                 onChange={e => setIngs(prev => prev.map((x, j) => j === i ? { ...x, manual_price_ht: e.target.value } : x))}
                                 placeholder={`€/${unitFr(g.base_unit)}`} className="w-24 border border-amber-200 rounded-lg px-2 py-2 text-xs text-right tabular focus:outline-none focus:ring-2 focus:ring-pilote-200" />
                             )
+                          ) : sub ? (
+                            <span className="text-xs text-gray-500 tabular w-24 text-right flex-shrink-0" title="Coût complet de la sous-fiche ÷ son rendement — relu en continu">
+                              {sub.cost.par_unite_ht !== null ? `${fmtEuro(sub.cost.par_unite_ht)} / ${sub.yield_unit || 'u'}` : 'rendement requis'}
+                            </span>
                           ) : (
                             <span className="text-xs text-gray-500 tabular w-24 text-right flex-shrink-0">{ing.legacy_price !== null ? fmtEuro(ing.legacy_price) : '—'}</span>
                           )}
@@ -770,7 +803,10 @@ export default function RecettesPage() {
                         {isLegacy && (
                           <p className="text-[10px] text-amber-600 mt-0.5 ml-1">Ancienne réf directe — re-choisissez un article générique pour profiter des prix à jour.</p>
                         )}
-                        {sugg.length > 0 && (
+                        {sub && (
+                          <p className="text-[10px] text-pilote mt-0.5 ml-1">Sous-recette — quantité en {sub.yield_unit || 'unités'} de « {sub.name} », coût complet ÷ rendement, relu en continu.</p>
+                        )}
+                        {(sugg.length > 0 || suggR.length > 0) && (
                           <div className="absolute z-10 left-0 right-24 mt-1 bg-white border border-gray-200 rounded-lg shadow-card-hover overflow-hidden">
                             {sugg.map(x => (
                               <button key={x.id} onClick={() => pickGeneric(i, x)}
@@ -780,6 +816,20 @@ export default function RecettesPage() {
                                 </span>
                                 <span className="text-xs text-gray-500 tabular flex-shrink-0">
                                   {x.price_ht !== null ? `${fmtEuro(x.price_ht)} / ${unitFr(x.base_unit)}` : 'pas encore de prix'}
+                                </span>
+                              </button>
+                            ))}
+                            {suggR.length > 0 && (
+                              <p className={`px-3 pt-2 pb-1 text-[10px] font-semibold text-gray-400 uppercase tracking-wider ${sugg.length > 0 ? 'border-t border-gray-100' : ''}`}>Fiches recettes — en sous-recette</p>
+                            )}
+                            {suggR.map(x => (
+                              <button key={`sub-${x.id}`} onClick={() => pickSub(i, x)}
+                                className="w-full text-left px-3 py-2 text-sm hover:bg-pilote-50 flex items-center justify-between gap-2">
+                                <span className="truncate">{x.name}
+                                  <span className="ml-1.5 text-[10px] font-semibold uppercase tracking-wider text-pilote bg-pilote-50 rounded px-1 py-0.5">Fiche</span>
+                                </span>
+                                <span className="text-xs text-gray-500 tabular flex-shrink-0">
+                                  {x.cost.par_unite_ht !== null ? `${fmtEuro(x.cost.par_unite_ht)} / ${x.yield_unit || 'u'}` : 'rendement requis'}
                                 </span>
                               </button>
                             ))}
