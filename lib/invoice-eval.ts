@@ -38,6 +38,9 @@ export type LigneFacture = {
   unit: string | null
   unit_price_ht: number | null
   amount_ht: number
+  /** Poids facturé, quand la facture porte une colonne distincte du nombre de
+   *  colis. C'est LUI qui porte le prix au kilo. */
+  weight_kg?: number | null
 }
 
 export type EcartChamp = {
@@ -92,8 +95,13 @@ function champ(nom: string, attendu: number | null, obtenu: number | null, eps: 
  *  ligne — c'est exactement la règle appliquée à la publication en mercuriale.
  *  Sans quantité ni prix, rien à recouper, donc rien à publier. */
 export function prixExploitable(l: LigneFacture): boolean {
-  if (l.unit_price_ht === null || l.quantity === null || l.quantity === 0) return false
-  return Math.abs(l.quantity * l.unit_price_ht - l.amount_ht) <= Math.max(0.05, Math.abs(l.amount_ht) * 0.01)
+  if (l.unit_price_ht === null) return false
+  // L'assiette : le POIDS quand la facture en porte un, la quantité sinon.
+  // Même règle exactement que la publication en mercuriale.
+  const base = l.weight_kg != null && l.weight_kg > 0 ? l.weight_kg
+    : (l.quantity !== null && l.quantity !== 0 ? l.quantity : null)
+  if (base === null) return false
+  return Math.abs(base * l.unit_price_ht - l.amount_ht) <= Math.max(0.05, Math.abs(l.amount_ht) * 0.01)
 }
 
 /** Compare les lignes d'une facture à leur relecture. L'appariement se fait sur
@@ -128,7 +136,17 @@ export function compareFacture(
     if (o) consommees.add(o)
     const nom = a.designation.slice(0, 40)
     champs.push(champ(`${nom} — montant`, a.amount_ht, o ? o.amount_ht : null, EPS_MONTANT))
-    champs.push(champ(`${nom} — quantité`, a.quantity, o ? o.quantity : null, EPS_QUANTITE))
+    // QUANTITÉ : le chiffre attendu peut avoir simplement changé de colonne.
+    // Quand le format apprend à lire le poids séparément, un nombre qui était
+    // rangé en quantité se retrouve légitimement en poids — ce n'est pas une
+    // régression, et le compter comme telle rendrait la mesure inutilisable au
+    // moment précis où elle sert. On accepte donc l'une OU l'autre colonne.
+    const qObtenue = o
+      ? (a.quantity !== null && o.weight_kg != null && Math.abs(o.weight_kg - a.quantity) <= EPS_QUANTITE
+          ? o.weight_kg
+          : o.quantity)
+      : null
+    champs.push(champ(`${nom} — quantité`, a.quantity, qObtenue, EPS_QUANTITE))
     champs.push(champ(`${nom} — prix unitaire`, a.unit_price_ht, o ? o.unit_price_ht : null, EPS_PRIX))
   }
   // Lignes inventées : présentes à la relecture, absentes de la référence.

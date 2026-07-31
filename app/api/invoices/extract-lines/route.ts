@@ -214,9 +214,24 @@ export async function POST(request: NextRequest) {
     // (qté × PU = montant) : punir vingt lignes justes pour la faute d'une
     // seule mettait 15 % des prix au rebut sans raison.
     const factureSuspecte = base <= 0 || ecartAbs > Math.max(50, base * 0.15) || tronque
+    /** L'ASSIETTE du prix unitaire : ce par quoi il faut le multiplier pour
+     *  retomber sur le montant de la ligne.
+     *
+     *  Sur une facture de boucherie, la ligne aligne le nombre de colis, le
+     *  poids et le prix au kilo — et c'est le POIDS qui porte le prix, pas le
+     *  nombre de colis. Tant que le format ne connaissait qu'une quantité,
+     *  « 2 pièces × 14,97 €/kg » était comparé à 224,73 € : le contrôle
+     *  échouait, et un prix parfaitement lu partait en quarantaine. Mesuré le
+     *  31/07 : 32 prix refusés sur des factures dont la somme des lignes
+     *  tombait pourtant au centime près. */
+    const assiette = (l: ExtractedLine): number | null =>
+      l.weight_kg != null && l.weight_kg > 0 ? l.weight_kg
+        : (l.quantity != null && l.quantity !== 0 ? l.quantity : null)
+
     const ligneVerifiee = (l: ExtractedLine): boolean => {
-      if (l.unit_price_ht != null && l.quantity != null && l.quantity !== 0) {
-        return Math.abs(l.quantity * l.unit_price_ht - l.amount_ht) <= Math.max(0.05, Math.abs(l.amount_ht) * 0.01)
+      const base = assiette(l)
+      if (l.unit_price_ht != null && base !== null) {
+        return Math.abs(base * l.unit_price_ht - l.amount_ht) <= Math.max(0.05, Math.abs(l.amount_ht) * 0.01)
       }
       return true // pas de contradiction vérifiable (prix seul, ou dérivé de la quantité)
     }
@@ -247,9 +262,15 @@ export async function POST(request: NextRequest) {
       const nameKey = normText(l.designation)
       let art = (l.article_code && byCode.get(l.article_code)) || byName.get(nameKey) || null
       const prixLu = l.unit_price_ht
-      const prixDerive = prixLu === null && l.quantity && l.quantity > 0 && uniteExploitable(l.unit)
-        ? +(l.amount_ht / l.quantity).toFixed(4)
-        : null
+      // Un poids facturé est une assiette SÛRE : il est en kilos par définition,
+      // donc le prix qu'on en déduit est un prix au kilo — pas besoin que
+      // l'unité de la ligne soit exploitable, elle ne décide de rien ici.
+      const prixDerive = prixLu !== null ? null
+        : l.weight_kg != null && l.weight_kg > 0
+          ? +(l.amount_ht / l.weight_kg).toFixed(4)
+          : l.quantity && l.quantity > 0 && uniteExploitable(l.unit)
+            ? +(l.amount_ht / l.quantity).toFixed(4)
+            : null
       const unitPrice = prixLu ?? prixDerive
       // QUARANTAINE : un prix ne devient un point de mercuriale que si la LIGNE
       // se recoupe (qté × PU = montant) et que la facture n'est pas massivement
@@ -290,6 +311,9 @@ export async function POST(request: NextRequest) {
         client_id: clientId, invoice_id: invoice.id, article_id: art?.id ?? null,
         designation: l.designation, article_code: l.article_code, quantity: l.quantity,
         unit: l.unit,
+        // Le poids facturé est CONSERVÉ tel que lu : c'est lui qui porte le prix
+        // au kilo, et sans lui la ligne redeviendrait invérifiable à la relecture.
+        weight_kg: l.weight_kg,
         // Prix en quarantaine = null : la mercuriale prend le point de prix le plus
         // récent depuis invoice_lines ; un prix non vérifié n'en est pas un.
         unit_price_ht: prixRetenu,

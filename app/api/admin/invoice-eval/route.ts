@@ -78,7 +78,7 @@ export async function POST(request: NextRequest) {
   // Lignes de référence de ces factures
   const ids = liste.map(i => String(i.id))
   const { data: toutesLignes } = await service.from('invoice_lines')
-    .select('invoice_id, designation, quantity, unit, unit_price_ht, amount_ht')
+    .select('invoice_id, designation, quantity, unit, unit_price_ht, amount_ht, weight_kg')
     .in('invoice_id', ids)
 
   const refParFacture = new Map<string, LigneFacture[]>()
@@ -91,6 +91,7 @@ export async function POST(request: NextRequest) {
       unit: (l.unit as string) ?? null,
       unit_price_ht: num(l.unit_price_ht),
       amount_ht: num(l.amount_ht) ?? 0,
+      weight_kg: num(l.weight_kg),
     })
     refParFacture.set(k, arr)
   }
@@ -124,6 +125,7 @@ export async function POST(request: NextRequest) {
           unit: l.unit,
           unit_price_ht: l.unit_price_ht,
           amount_ht: l.amount_ht,
+          weight_kg: l.weight_kg,
         })),
       ))
     } catch (e) {

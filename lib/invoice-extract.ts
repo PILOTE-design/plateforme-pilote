@@ -16,7 +16,7 @@ import Anthropic from '@anthropic-ai/sdk'
 /** Version du prompt d'extraction. À INCRÉMENTER à chaque modification : c'est
  *  elle qui permet de dire « avant / après » sur le corpus, et donc de refuser
  *  un changement qui dégrade au lieu de le découvrir en production. */
-export const PROMPT_LIGNES_VERSION = '2026-07-31-a'
+export const PROMPT_LIGNES_VERSION = '2026-07-31-b-poids'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || 'MISSING_ANTHROPIC_KEY' })
 
@@ -28,6 +28,16 @@ export type ExtractedLine = {
   unit_price_ht: number | null
   amount_ht: number
   tva_rate: number | null
+  /** POIDS FACTURÉ en kilos, quand la facture porte une colonne de poids
+   *  DISTINCTE du nombre de colis.
+   *
+   *  Une facture de boucherie aligne trois nombres par ligne : le nombre de
+   *  colis, le poids, et le prix au kilo. Le format n'en acceptait qu'un seul,
+   *  et l'IA y mettait le nombre de colis — si bien que le contrôle
+   *  « quantité × prix = montant » échouait sur des lignes parfaitement lues,
+   *  et que le prix, juste, partait en quarantaine. Mesuré le 31/07 : 32 prix
+   *  refusés sur des factures dont la somme tombait au centime près. */
+  weight_kg: number | null
 }
 
 export function parseNum(s: string): number | null {
@@ -66,18 +76,22 @@ Sinon, extrais CHAQUE ligne d'article facturé. Retourne UNIQUEMENT des lignes a
 NATURE|matiere
 LIVRAISON|2026-07-21
 ECHEANCE|2026-08-20
-L|DESIGNATION|CODE|QUANTITE|UNITE|PRIX_UNITAIRE_HT|MONTANT_HT|TAUX_TVA
+L|DESIGNATION|CODE|QUANTITE|UNITE|PRIX_UNITAIRE_HT|MONTANT_HT|TAUX_TVA|POIDS_KG
 
 Exemples :
-L|ECHINE DE PORC SANS OS|4521|12.4|kg|5.80|71.92|5.5
-L|BARQUETTE 500G x100|EMB-102|2|colis|18.50|37.00|20
-L|REMISE COMMERCIALE||||-12.00|-12.00|5.5
+L|ECHINE DE PORC SANS OS|4521|12.4|kg|5.80|71.92|5.5|
+L|JAMBON SEC BAYONNE|8842|2|pièce|14.97|224.73|5.5|15.012
+L|SALADE PIEMONTAISE 2.8KG|3310|1|colis|6.00|16.80|5.5|2.8
+L|BARQUETTE 500G x100|EMB-102|2|colis|18.50|37.00|20|
+L|REMISE COMMERCIALE||||-12.00|-12.00|5.5|
 
 Règles STRICTES :
 - MONTANT_HT = montant HT de la ligne tel qu'écrit sur la facture (jamais recalculé, jamais TTC).
 - CODE = référence article du fournisseur si présente, sinon vide.
 - QUANTITE et PRIX_UNITAIRE_HT vides s'ils ne figurent pas sur la facture — ne JAMAIS les inventer.
 - UNITE = kg, pièce, colis, L… telle qu'écrite.
+- POIDS_KG : ces factures portent SOUVENT DEUX nombres par ligne — le nombre de colis (ou de pièces) ET le poids facturé. Quand c'est le cas, mets le nombre de colis en QUANTITE et le POIDS EN KILOS dans POIDS_KG, et le prix au kilo en PRIX_UNITAIRE_HT. Exemple : « 2 pce · 15,012 kg · 14,97 €/kg · 224,73 € » donne QUANTITE=2, POIDS_KG=15.012, PRIX_UNITAIRE_HT=14.97.
+- POIDS_KG reste VIDE si la facture ne montre qu'un seul nombre (la quantité EST le poids, ou l'article se vend à la pièce). Ne jamais le déduire ni le calculer : uniquement s'il est ÉCRIT.
 - Point décimal. Une ligne L| par article, remises et consignes comprises (montants négatifs autorisés).
 - Ignorer les sous-totaux, totaux, TVA récapitulative, frais de port SI déjà comptés ailleurs.
 - LIVRAISON = date de LIVRAISON de la marchandise (mentions « livré le », « date de livraison », « expédition », « bon de livraison / BL »). ECHEANCE = date limite de PAIEMENT (« à régler avant le », « échéance », « date d'échéance », « payable au »). Ces deux dates sont DIFFÉRENTES : ne jamais recopier l'échéance en LIVRAISON. Si une seule figure sur la facture, ne renseigner QUE celle-là. Format AAAA-MM-JJ, ligne absente si introuvable.
@@ -111,6 +125,10 @@ export function parseReponse(raw: string): {
       unit_price_ht: parseNum(p[4] ?? ''),
       amount_ht: amount,
       tva_rate: parseNum(p[6] ?? ''),
+      // Colonne ajoutée en fin de format : les réponses au format précédent
+      // (sept champs) restent lisibles telles quelles, poids simplement absent.
+      // Un poids nul ou négatif n'a pas de sens et vaut « non renseigné ».
+      weight_kg: (() => { const w = parseNum(p[7] ?? ''); return w !== null && w > 0 ? w : null })(),
     })
   }
   return { lines: lines.slice(0, LIGNES_MAX), delivery_date, due_date, nature }
