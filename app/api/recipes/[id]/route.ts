@@ -93,9 +93,13 @@ export async function GET(_request: NextRequest, { params }: { params: { id: str
     service.from('recipes').select('*').eq('client_id', clientId).eq('active', true).order('name'),
     service.from('recipe_ingredients').select('*').eq('client_id', clientId).order('position'),
     service.from('employees').select(PAYROLL_EMPLOYEE_COLUMNS).eq('client_id', clientId),
-    fetchAllPages<any>(() => service.from('articles')
-      .select('id, unit, last_price_ht, last_price_date, generic_id, conversion_factor')
-      .eq('client_id', clientId).order('id', { ascending: true })),
+    fetchAllPages<any>(apres => {
+      let q = service.from('articles')
+        .select('id, unit, last_price_ht, last_price_date, generic_id, conversion_factor')
+        .eq('client_id', clientId)
+      if (apres) q = q.gt('id', apres)
+      return q.order('id', { ascending: true })
+    }),
     service.from('generic_articles').select('id, name, base_unit, category, default_loss_pct').eq('client_id', clientId).eq('active', true).order('name'),
     service.from('recipe_targets').select('category, target_marge_pct').eq('client_id', clientId),
   ])
@@ -148,14 +152,16 @@ export async function GET(_request: NextRequest, { params }: { params: { id: str
     const points: any[] = []
     for (let i = 0; i < idsArticles.length; i += LOT_IDS) {
       const lot = idsArticles.slice(i, i + LOT_IDS)
-      const p = await fetchAllPages<any>(() => service.from('invoice_lines')
-        .select('article_id, unit_price_ht, invoices!inner(invoice_date)')
-        .eq('client_id', clientId)
-        .in('article_id', lot)
-        .not('unit_price_ht', 'is', null)
-        .gte('invoices.invoice_date', cutoff12m)
-        .order('created_at', { ascending: false })
-        .order('id', { ascending: true }))
+      const p = await fetchAllPages<any>(apres => {
+        let q = service.from('invoice_lines')
+          .select('id, article_id, unit_price_ht, invoices!inner(invoice_date)')
+          .eq('client_id', clientId)
+          .in('article_id', lot)
+          .not('unit_price_ht', 'is', null)
+          .gte('invoices.invoice_date', cutoff12m)
+        if (apres) q = q.gt('id', apres)
+        return q.order('id', { ascending: true })
+      })
       points.push(...p.rows)
       if (p.tronque) historique_incomplet = true
     }
