@@ -173,6 +173,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
                     <View style={[s.cellName, { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center' }]}>
                       <Text>{ing.label}</Text>
                       {ing.categorie === 'emballage' ? <Text style={s.tag}>EMBALLAGE</Text> : null}
+                      {ing.sub_recipe_id ? <Text style={s.tag}>SOUS-RECETTE</Text> : null}
                     </View>
                     <Text style={s.cellQty}>{fmtQty(Number(ing.quantity) || 0)} {u}</Text>
                     <Text style={s.cellBrut}>{loss > 0 ? `${fmtQty(ing.qty_brute)} ${uBrut}` : '—'}</Text>

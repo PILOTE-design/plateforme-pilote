@@ -22,6 +22,9 @@ import { parseStoredSteps, parseStoredTiers } from '@/lib/recipes'
 
 export type FicheIngredient = {
   generic_id: string | null; article_id: string | null; label: string
+  /** Sous-recette : la ligne vise une autre fiche (unités de son rendement) */
+  sub_recipe_id?: string | null
+  sub_incomplete?: boolean
   quantity: number; qty_unit: string | null; unit: string | null; loss_pct: number | null
   manual_price_ht?: number | null
   unit_price_ht: number | null; price_source: string; categorie: 'ingredient' | 'emballage'
@@ -175,9 +178,11 @@ export default function FichePanel({
   const moScaled = c?.labor_rate_ht != null ? round2(scaledMinutes / 60 * c.labor_rate_ht) : 0
   const coutScaled = round2(coutMatiere * ratio + moScaled)
 
-  /** Lignes d'ingrédients ACTUELLES au format d'écriture de l'API (PUT = remplacement complet) */
+  /** Lignes d'ingrédients ACTUELLES au format d'écriture de l'API (PUT = remplacement
+   *  complet) — sub_recipe_id DOIT voyager, sinon un enregistrement d'étapes ou de
+   *  paliers déferait les sous-recettes de la fiche. */
   const ingPayload = () => recipe.ingredients.map(i => ({
-    generic_id: i.generic_id, article_id: i.article_id, label: i.label,
+    generic_id: i.generic_id, article_id: i.article_id, sub_recipe_id: i.sub_recipe_id ?? null, label: i.label,
     quantity: i.quantity, qty_unit: i.qty_unit, unit: i.unit,
     loss_pct: i.loss_pct, manual_price_ht: i.manual_price_ht ?? null,
   }))
@@ -214,7 +219,7 @@ export default function FichePanel({
     const g = newIng.generic
     saveAll({
       ingredients: [...ingPayload(), {
-        generic_id: g.id, article_id: null, label: g.name,
+        generic_id: g.id, article_id: null, sub_recipe_id: null, label: g.name,
         quantity: num(newIng.qty),
         qty_unit: g.base_unit === 'kg' ? (newIng.unit === 'g' ? 'g' : 'kg') : 'piece',
         unit: null, loss_pct: num(newIng.loss), manual_price_ht: null,
@@ -539,8 +544,16 @@ export default function FichePanel({
                         <td className="px-3.5 py-2.5">
                           <span className="text-sm font-semibold text-gray-900">{ing.label}</span>
                           {ing.categorie === 'emballage' && <span className="ml-1.5 text-[10px] font-semibold uppercase tracking-wider text-blue-700 bg-blue-50 rounded px-1.5 py-0.5">Emballage</span>}
-                          {ing.price_source === 'aucun' && <span className="ml-1.5 text-[10px] font-semibold text-amber-600">prix manquant</span>}
+                          {ing.sub_recipe_id && (
+                            <Link href={`/dashboard/recettes/${ing.sub_recipe_id}`}
+                              title="Sous-recette — coût complet de la fiche ÷ son rendement, relu en continu. Cliquer pour l'ouvrir."
+                              className="ml-1.5 text-[10px] font-semibold uppercase tracking-wider text-pilote bg-pilote-50 ring-1 ring-pilote-100 rounded px-1.5 py-0.5 hover:bg-pilote-100 transition-colors">
+                              Sous-recette
+                            </Link>
+                          )}
+                          {ing.price_source === 'aucun' && <span className="ml-1.5 text-[10px] font-semibold text-amber-600">{ing.sub_recipe_id ? 'rendement de la sous-fiche requis' : 'prix manquant'}</span>}
                           {ing.price_source === 'manuel' && <span className="ml-1.5 text-[10px] text-gray-400">prix manuel</span>}
+                          {ing.sub_incomplete && <span className="ml-1.5 text-[10px] font-semibold text-amber-600">coût de la sous-fiche incomplet</span>}
                         </td>
                         <td className="px-3.5 py-2.5 text-right tabular">
                           <span className="text-sm font-semibold text-gray-900">{fmtQty(ing.quantity * ratio)} {uniteAffichee}</span>
