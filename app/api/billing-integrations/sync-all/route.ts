@@ -138,7 +138,14 @@ async function runSyncAll(req: NextRequest) {
         // Échéance, statut de paiement, PDF stocké — mêmes updates ciblés que la
         // sync manuelle (cf. lib/billing-providers/enrich). Non bloquant.
         try {
-          await enrichInvoicesAfterSync(service, integ.client_id, enriched)
+          // Le bilan était calculé puis jeté : sur le cron, personne ne voyait
+          // que des PDF manquaient à l'appel. Il est désormais consigné.
+          const bilan = await enrichInvoicesAfterSync(service, integ.client_id, enriched)
+          if (bilan) {
+            const manquants = (bilan.echecs ?? 0) + (bilan.sansUrl ?? 0)
+            pdfInfo = `${bilan.pdfs} PDF archivé${bilan.pdfs > 1 ? 's' : ''}`
+              + (manquants > 0 ? ` · ${manquants} manquant${manquants > 1 ? 's' : ''}` : '')
+          }
         } catch (e) { console.error('Enrichissement factures:', e) }
       }
     }
