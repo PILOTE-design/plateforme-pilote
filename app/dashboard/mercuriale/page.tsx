@@ -608,6 +608,39 @@ export default function MercurialePage() {
   [filteredGenerics])
   /** Âge du dernier prix en jours — au-delà de 30 j, le catalogue le signale */
   const priceAge = (d: string | null) => (d ? Math.floor((Date.now() - new Date(d + 'T00:00:00Z').getTime()) / 86400000) : null)
+
+  /** Dernier prix utilisable PAR FOURNISSEUR d'un générique, du moins cher au
+   *  plus cher — la matière de la comparaison fournisseurs. Une réf sans prix
+   *  ramené à la base (quarantaine, conversion manquante) n'y entre pas. */
+  const supplierRows = (g: Generic) => {
+    const bySupplier = new Map<string, { sup: string; price: number; date: string | null }>()
+    for (const r of g.refs) {
+      if (r.price_base === null) continue
+      const sup = (r.supplier_name || 'Fournisseur inconnu').trim()
+      const cur = bySupplier.get(sup)
+      if (!cur || String(r.last_price_date || '') > String(cur.date || '')) {
+        bySupplier.set(sup, { sup, price: r.price_base, date: r.last_price_date })
+      }
+    }
+    return [...bySupplier.values()].sort((a, b) => a.price - b.price)
+  }
+
+  /** Fournisseur moins cher que celui du prix du jour (badge au catalogue) —
+   *  écart d'au moins 0,5 % pour ne pas signaler du bruit d'arrondi. */
+  const cheaperAlt = (g: Generic) => {
+    if (g.price_ht === null || g.price_ht <= 0) return null
+    const rows = supplierRows(g)
+    if (rows.length < 2) return null
+    const cheapest = rows[0]
+    if (cheapest.sup === (g.price_supplier || 'Fournisseur inconnu').trim()) return null
+    if (cheapest.price >= g.price_ht * 0.995) return null
+    return {
+      sup: cheapest.sup,
+      pct: Math.round(((g.price_ht - cheapest.price) / g.price_ht) * 1000) / 10,
+      price: cheapest.price,
+      date: cheapest.date,
+    }
+  }
   const refsAssociees = useMemo(() => generics.reduce((s, g) => s + g.refs.length, 0), [generics])
   const recipesCountByGeneric = useMemo(() => new Map(generics.map(g => [g.id, g.recipes_count])), [generics])
 
@@ -1146,7 +1179,18 @@ export default function MercurialePage() {
                                     {g.category === 'emballage' ? 'Emballage' : 'Ingrédient'}
                                   </span>
                                 </td>
-                                <td className="px-4 py-2.5 text-right text-sm font-bold text-gray-900 tabular">{g.price_ht !== null ? fmtEuro(Number(g.price_ht)) : '—'}</td>
+                                <td className="px-4 py-2.5 text-right">
+                                  <span className="text-sm font-bold text-gray-900 tabular">{g.price_ht !== null ? fmtEuro(Number(g.price_ht)) : '—'}</span>
+                                  {(() => {
+                                    const alt = cheaperAlt(g)
+                                    return alt ? (
+                                      <span className="block text-[10px] font-semibold text-green-700 tabular"
+                                        title={`${alt.sup} : ${fmtEuro(alt.price)} / ${unitLabel(g.base_unit)} le ${fmtDate(alt.date)} — comparaison complète dans la ligne dépliée`}>
+                                        −{alt.pct.toLocaleString('fr-FR')} % chez {alt.sup}
+                                      </span>
+                                    ) : null
+                                  })()}
+                                </td>
                                 <td className="px-4 py-2.5 text-xs text-gray-500">/ {unitLabel(g.base_unit)}</td>
                                 <td className="px-4 py-2.5 text-right text-xs tabular">
                                   {(() => { const age = priceAge(g.price_date); const vieux = age !== null && age > 30; return (
@@ -1247,6 +1291,45 @@ export default function MercurialePage() {
                                               : <>Pas encore d&apos;historique — la courbe des prix se construit à chaque facture lue.</>}
                                           </p>
                                         )}
+                                        {/* Comparaison fournisseurs : dernier prix connu de chacun, du moins cher au plus cher */}
+                                        {(() => {
+                                          const rows = supplierRows(g)
+                                          if (rows.length < 2) return null
+                                          const cheapest = rows[0]
+                                          return (
+                                            <div className="mb-2.5 bg-white border border-gray-100 rounded-xl overflow-hidden">
+                                              <div className="px-3.5 py-2 bg-gray-50/80">
+                                                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Comparaison fournisseurs — dernier prix connu de chacun</p>
+                                              </div>
+                                              <div className="divide-y divide-gray-50">
+                                                {rows.map(row => {
+                                                  const gapPct = cheapest.price > 0 ? Math.round(((row.price - cheapest.price) / cheapest.price) * 1000) / 10 : null
+                                                  const age = priceAge(row.date)
+                                                  const vieux = age !== null && age > 30
+                                                  return (
+                                                    <div key={row.sup} className="px-3.5 py-2 flex items-center gap-3 flex-wrap text-xs">
+                                                      <span className="font-semibold text-gray-800 flex-1 min-w-[140px]">{row.sup}</span>
+                                                      <span className={`tabular ${vieux ? 'text-amber-600 font-semibold' : 'text-gray-400'}`} title={vieux ? `Dernier prix il y a ${age} jours — il a pu bouger depuis` : undefined}>
+                                                        {fmtDate(row.date)}{vieux ? ` (${age} j)` : ''}
+                                                      </span>
+                                                      <span className="font-bold text-gray-900 tabular">{fmtEuro(row.price)} / {unitLabel(g.base_unit)}</span>
+                                                      {row.sup === cheapest.sup ? (
+                                                        <span className="text-[10px] font-semibold uppercase tracking-wider text-green-700 bg-green-50 rounded-full px-2 py-0.5">le moins cher</span>
+                                                      ) : gapPct !== null && gapPct > 0 ? (
+                                                        <span className="text-[11px] font-bold text-red-600 tabular">+{gapPct.toLocaleString('fr-FR')} %</span>
+                                                      ) : (
+                                                        <span className="text-[11px] text-gray-400 tabular">=</span>
+                                                      )}
+                                                    </div>
+                                                  )
+                                                })}
+                                              </div>
+                                              <p className="px-3.5 py-1.5 text-[10px] text-gray-400 border-t border-gray-50">
+                                                Écarts sur le dernier prix connu de chaque fournisseur, à l&apos;unité de base — les dates comptent : un prix ancien a pu bouger depuis.
+                                              </p>
+                                            </div>
+                                          )
+                                        })()}
                                         {/* Impact sur les fiches recettes : Δprix × quantité brute, par batch et par unité produite */}
                                         {g.recipes_used.length > 0 ? (() => {
                                           const delta = g.price_ht !== null && g.prev_price_ht !== null
