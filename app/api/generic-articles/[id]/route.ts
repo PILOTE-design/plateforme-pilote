@@ -45,7 +45,20 @@ export async function PUT(request: NextRequest, { params }: { params: { id: stri
     if (!Number.isFinite(v) || v < 0 || v >= 100) return NextResponse.json({ error: 'Perte invalide (0 à 99 %)' }, { status: 400 })
     patch.default_loss_pct = v
   }
+  // `auto_created` marque un générique fabriqué tout seul par le rapprochement
+  // automatique. Le badge « Auto » invite à vérifier nom et unité — mais le
+  // champ n'était remis à false NULLE PART : après vérification, les 125
+  // génériques concernés affichaient toujours « Auto », et la file de revue ne
+  // décroissait jamais. C'est le seul champ que le gérant ne pouvait pas
+  // corriger sur un écran qui lui demandait précisément de corriger.
+  if ('auto_created' in body) {
+    if (typeof body.auto_created !== 'boolean') return NextResponse.json({ error: 'auto_created doit être vrai ou faux' }, { status: 400 })
+    patch.auto_created = body.auto_created
+  }
   if (Object.keys(patch).length === 0) return NextResponse.json({ error: 'Aucun champ à mettre à jour' }, { status: 400 })
+  // Modifier un générique auto, c'est l'avoir revu : le badge tombe de lui-même.
+  // (Sauf demande explicite du contraire dans le corps de la requête.)
+  if (!('auto_created' in body) && (patch.name || patch.base_unit || patch.category)) patch.auto_created = false
   patch.updated_at = new Date().toISOString()
 
   const { error } = await service.from('generic_articles')

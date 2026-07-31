@@ -47,6 +47,10 @@ type Ref = {
   ignored: boolean
   /** Générique existant à la même clé, s'il y en a un : association suggérée */
   suggested_generic_id: string | null
+  /** Facture d'où vient le dernier prix — pour aller vérifier le produit */
+  last_invoice_id?: string | null
+  /** Date du dernier prix vu (facture), repli last_price_date */
+  last_seen?: string | null
 }
 
 /** Point d'historique : date de facture + prix payé, à l'unité de base */
@@ -72,14 +76,20 @@ type Generic = {
   price_ht: number | null
   price_date: string | null
   price_supplier: string | null
+  /** Variation DU GÉNÉRIQUE (toutes réfs), pas de sa seule meilleure réf */
   variation_pct: number | null
+  variation_ref_pct?: number | null
   /** Prix payés sur 12 mois (inflexions, 40 points max) — réfs utilisables seulement */
   history: PricePoint[]
+  /** Points d'inflexion écartés par le plafond d'affichage de la courbe */
+  history_tronque?: number
   points_12m: number
   min_12m: number | null
   max_12m: number | null
-  /** Prix précédent (dernière valeur différente) — pour chiffrer l'impact */
+  /** Prix précédent du GÉNÉRIQUE (dernière valeur différente, toutes réfs) */
   prev_price_ht: number | null
+  prev_price_supplier?: string | null
+  prev_price_date?: string | null
   /** Nombre de prix lus sur facture mais REFUSÉS par les garde-fous */
   prix_quarantaine: number
   /** Pourquoi il n'y a pas de prix — chaque cause appelle une action différente */
@@ -130,6 +140,22 @@ const MOTIF_PRIX: Record<string, { court: string; quoi_faire: string }> = {
   jamais_facture:  { court: 'jamais facturé',         quoi_faire: 'Aucune facture lue ne porte encore cet article — le prix arrivera à la prochaine lecture.' },
 }
 const fmtDate = (s: string | null) => (s ? new Date(s + 'T00:00:00Z').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }) : '—')
+
+/** Nom de fournisseur LISIBLE. Le connecteur stocke des libellés générés du
+ *  genre « Facture AURIBAULT OIRY - 15299292 (label généré) » : affichés tels
+ *  quels, ils noient le nom qui compte au milieu d'un numéro de pièce. On garde
+ *  la maison, pas la référence de la facture. */
+const nomFournisseur = (s: string | null | undefined): string => {
+  const t = String(s ?? '').trim()
+  if (!t) return ''
+  return t
+    .replace(/^(facture|avoir)\s+/i, '')
+    .replace(/\s*\(label\s+g[ée]n[ée]r[ée]\)\s*$/i, '')
+    // Numéro de pièce en fin de libellé : EXIGE un espace avant le tiret et au
+    // moins un chiffre — sinon « SOCIETE JEAN-CHARLES » perdrait son Charles.
+    .replace(/\s+-\s*(?=[A-Za-z0-9/-]*\d)[A-Za-z0-9/-]{4,}$/, '')
+    .trim() || t
+}
 const unitLabel = (u: 'kg' | 'piece') => (u === 'kg' ? 'kg' : 'pièce')
 const titleize = (s: string) => { const t = s.trim().replace(/\s+/g, ' '); return t ? t.charAt(0).toUpperCase() + t.slice(1).toLowerCase() : t }
 
@@ -160,17 +186,34 @@ function Variation({ pct }: { pct: number | null }) {
     </span>
   )}
 
-/** Courbe d'historique d'un générique : x = rang du point (une inflexion par
- *  changement de prix), y = prix à l'unité de base. Trait navy, dernier prix
- *  marqué en orange — l'unique accent de la ligne. */
+/** Courbe d'historique d'un générique : x = DATE du point, y = prix à l'unité
+ *  de base. Trait navy, dernier prix marqué en orange — l'unique accent.
+ *
+ *  L'axe des x plaçait les points par RANG, alors que les étiquettes en dessous
+ *  sont des dates : un prix stable onze mois puis un bond la semaine dernière se
+ *  dessinait comme une montée régulière, c'est-à-dire l'inverse de ce qui s'est
+ *  passé. Les paliers se voient maintenant tels quels — un plat long reste plat.
+ *  Un escalier (« le prix a tenu jusqu'ici, puis a sauté ») est plus honnête
+ *  qu'une diagonale : le prix payé n'a pas glissé entre deux factures. */
 function Sparkline({ points }: { points: PricePoint[] }) {
   const W = 240, H = 48, PAD = 5
   const ps = points.map(x => x.p)
   const min = Math.min(...ps), max = Math.max(...ps)
   const span = max - min
-  const X = (i: number) => (points.length < 2 ? W / 2 : PAD + (i / (points.length - 1)) * (W - PAD * 2))
+  const jour = (d: string) => new Date(d + 'T00:00:00Z').getTime()
+  const t0 = jour(points[0]?.d ?? ''), t1 = jour(points[points.length - 1]?.d ?? '')
+  const dt = t1 - t0
+  const X = (i: number) => {
+    if (points.length < 2) return W / 2
+    // Dates identiques ou illisibles : repli sur le rang plutôt qu'un NaN
+    if (!Number.isFinite(dt) || dt <= 0) return PAD + (i / (points.length - 1)) * (W - PAD * 2)
+    return PAD + ((jour(points[i].d) - t0) / dt) * (W - PAD * 2)
+  }
   const Y = (p: number) => (span === 0 ? H / 2 : H - PAD - ((p - min) / span) * (H - PAD * 2))
-  const d = ps.map((p, i) => `${i === 0 ? 'M' : 'L'}${X(i).toFixed(1)},${Y(p).toFixed(1)}`).join(' ')
+  // Tracé en ESCALIER : le prix tient jusqu'à la facture suivante, puis change.
+  const d = ps.map((p, i) => (i === 0
+    ? `M${X(0).toFixed(1)},${Y(p).toFixed(1)}`
+    : `L${X(i).toFixed(1)},${Y(ps[i - 1]).toFixed(1)} L${X(i).toFixed(1)},${Y(p).toFixed(1)}`)).join(' ')
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-12" role="img" aria-label="Historique du prix sur 12 mois">
       {points.length >= 2 && (
@@ -191,6 +234,9 @@ export default function MercurialePage() {
   const [movesOpen, setMovesOpen] = useState(false)
   // KPI « Prix en hausse » cliquable : restreint le catalogue aux génériques en hausse
   const [hausseFilter, setHausseFilter] = useState(false)
+  // Revue des génériques créés tout seuls : filtre + validation une par une
+  const [autoFilter, setAutoFilter] = useState(false)
+  const [validant, setValidant] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [view, setView] = useState<'catalogue' | 'associations'>('catalogue')
@@ -233,6 +279,9 @@ export default function MercurialePage() {
   const [editId, setEditId] = useState<string | null>(null)
   const [edit, setEdit] = useState({ name: '', base_unit: 'kg' as 'kg' | 'piece', category: 'ingredient' as 'ingredient' | 'emballage', loss: '0' })
   const [confirmDelId, setConfirmDelId] = useState<string | null>(null)
+  // Tri de la file « À rapprocher » et repli au-delà des dix premiers groupes
+  const [queueSort, setQueueSort] = useState<'refs' | 'montant' | 'fournisseur' | 'anciennete'>('montant')
+  const [queueAll, setQueueAll] = useState(false)
   const [showNonProduct, setShowNonProduct] = useState(false)
   const [showIgnored, setShowIgnored] = useState(false)
 
@@ -252,6 +301,30 @@ export default function MercurialePage() {
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  // Lien profond ?generic=<id> : ouvre directement la fiche de l'article visé
+  // et l'amène sous les yeux. C'est ce qui permet à une fiche recette de dire
+  // « Pilon de poulet n'a pas de prix » et d'y conduire en un clic, au lieu de
+  // renvoyer vers un catalogue de 125 lignes. Consommé une seule fois.
+  const generiqueVuRef = useRef(false)
+  useEffect(() => {
+    if (loading || generics.length === 0 || generiqueVuRef.current) return
+    const id = new URLSearchParams(window.location.search).get('generic')
+    if (!id) return
+    generiqueVuRef.current = true
+    if (!generics.some(g => g.id === id)) {
+      toast({ variant: 'error', title: 'Article introuvable', description: 'Il a pu être supprimé ou fusionné depuis.' })
+      return
+    }
+    setView('catalogue')
+    setSearch('')
+    setHausseFilter(false)
+    setAutoFilter(false)
+    setOpenId(id)
+    // Le laisser-passer au rendu avant de faire défiler jusqu'à la ligne
+    setTimeout(() => document.getElementById(`generic-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 80)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, generics])
 
   /** Lit les factures en attente UNE PAR UNE (extraction PDF + IA par appel) ;
    *  interruptible, reprend où elle en était. */
@@ -360,6 +433,10 @@ export default function MercurialePage() {
     setSelIds([])
     setFactors({})
     nameTouchedRef.current = false
+    // La CIBLE aussi : sans ça, le lot suivant repartait avec le générique
+    // précédent déjà présélectionné, et une réf de bœuf pouvait atterrir sous
+    // « Ficelle à rôti » d'un simple clic sur « Associer ».
+    setSelTarget({ choice: '', newName: '', newUnit: 'kg', newCat: 'ingredient' })
   }
 
   /** Charge un groupe entier dans l'association en cours (préréglée) */
@@ -617,6 +694,22 @@ export default function MercurialePage() {
     load()
   }
 
+  /** « Vu, c'est bon » sur un générique créé automatiquement : le badge tombe.
+   *  Sans ce geste, `auto_created` restait vrai à vie et la revue n'avançait
+   *  jamais — 125 génériques marqués « à vérifier » indéfiniment. */
+  async function validerAuto(g: Generic) {
+    if (validant) return
+    setValidant(g.id)
+    const res = await fetch(`/api/generic-articles/${g.id}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ auto_created: false }),
+    }).catch(() => null)
+    setValidant(null)
+    if (!res?.ok) { toast({ variant: 'error', title: 'Validation impossible' }); return }
+    // Mise à jour locale : la revue enchaîne sans recharger toute la page.
+    setGenerics(prev => prev.map(x => (x.id === g.id ? { ...x, auto_created: false } : x)))
+  }
+
   // Suppression en deux temps (jamais de dialogue natif) : premier clic arme,
   // second clic exécute. Les réfs retournent dans la file d'attente.
   async function removeGeneric(g: Generic) {
@@ -633,11 +726,12 @@ export default function MercurialePage() {
     const q = search.trim().toLowerCase()
     let list = generics
     if (hausseFilter) list = list.filter(g => (g.variation_pct ?? 0) > 0)
+    if (autoFilter) list = list.filter(g => g.auto_created)
     if (!q) return list
     return list.filter(g =>
       g.name.toLowerCase().includes(q)
       || g.refs.some(r => r.name.toLowerCase().includes(q) || (r.supplier_name || '').toLowerCase().includes(q)))
-  }, [generics, search, hausseFilter])
+  }, [generics, search, hausseFilter, autoFilter])
 
   const filteredQueue = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -650,6 +744,17 @@ export default function MercurialePage() {
   // Les lignes non-produit et les réfs ÉCARTÉES par le gérant vivent à part.
   const visibleQueue = useMemo(() => filteredQueue.filter(r => !r.ignored), [filteredQueue])
   const ignoredRefs = useMemo(() => filteredQueue.filter(r => r.ignored), [filteredQueue])
+  /** Poids en euros d'un groupe : le plus gros dernier prix de ses réfs. Le
+   *  gérant traite d'abord ce qui pèse. */
+  const montantGroupe = (grp: { refs: Ref[] }) =>
+    grp.refs.reduce((mx, r) => Math.max(mx, r.last_price_ht !== null ? Number(r.last_price_ht) : 0), 0)
+  /** Date du prix le plus ANCIEN du groupe — ce qui traîne remonte en premier. */
+  const dateGroupe = (grp: { refs: Ref[] }) =>
+    grp.refs.reduce((mn, r) => {
+      const d = String(r.last_seen || r.last_price_date || '9999-99-99')
+      return d < mn ? d : mn
+    }, '9999-99-99')
+
   const queueGroups = useMemo(() => {
     const m = new Map<string, Ref[]>()
     for (const r of visibleQueue) {
@@ -666,12 +771,34 @@ export default function MercurialePage() {
         label: commonLabel(refs.map(r => r.name)),
         suggested: refs[0].suggested_generic_id ? generics.find(g => g.id === refs[0].suggested_generic_id) ?? null : null,
       }))
-      .sort((a, b) => b.refs.length - a.refs.length || a.label.localeCompare(b.label, 'fr'))
-  }, [visibleQueue, generics])
+      .sort((a, b) => {
+        // Le seul tri possible était le NOMBRE de réfs : la réf de bœuf à
+        // 14 €/kg passait derrière trois groupes de ficelle à rôti. Le gérant
+        // choisit maintenant ce qui compte pour lui — l'argent, le fournisseur,
+        // ou ce qui traîne depuis le plus longtemps.
+        if (queueSort === 'montant') return montantGroupe(b) - montantGroupe(a) || a.label.localeCompare(b.label, 'fr')
+        if (queueSort === 'fournisseur') return (a.refs[0].supplier_name || 'zzz').localeCompare(b.refs[0].supplier_name || 'zzz', 'fr') || a.label.localeCompare(b.label, 'fr')
+        if (queueSort === 'anciennete') return dateGroupe(a).localeCompare(dateGroupe(b)) || a.label.localeCompare(b.label, 'fr')
+        return b.refs.length - a.refs.length || a.label.localeCompare(b.label, 'fr')
+      })
+  }, [visibleQueue, generics, queueSort])
 
   const nonProductRefs = useMemo(() => visibleQueue.filter(r => r.non_product), [visibleQueue])
   const productRefCount = visibleQueue.length - nonProductRefs.length
+  // Décompte du KPI, sur la file ENTIÈRE (jamais sur le filtre de recherche) et
+  // avec la même définition que la liste : un « produit à rapprocher » n'est ni
+  // écarté ni non-produit. Le KPI affichait `queue.length`, tout compris.
+  const queueCounts = useMemo(() => {
+    let produits = 0, ecartees = 0, nonProduit = 0
+    for (const r of queue) {
+      if (r.ignored) ecartees++
+      else if (r.non_product) nonProduit++
+      else produits++
+    }
+    return { produits, ecartees, nonProduit }
+  }, [queue])
   const hausses = useMemo(() => generics.filter(g => (g.variation_pct ?? 0) > 0).length, [generics])
+  const autoAVerifier = useMemo(() => generics.filter(g => g.auto_created).length, [generics])
   const conversionsManquantes = useMemo(() => generics.reduce((s, g) => s + g.refs.filter(r => r.needs_conversion).length, 0), [generics])
   // Dossier des associations : les génériques à conversion manquante d'abord —
   // c'est ce que le gérant vient régler.
@@ -724,9 +851,21 @@ export default function MercurialePage() {
       <div key={r.id} className="flex items-center gap-3 px-4 py-2.5 flex-wrap">
         <div className="flex-1 min-w-[220px]">
           <p className="text-sm font-semibold text-gray-900">{r.name}</p>
-          <p className="text-[11px] text-gray-400">{r.supplier_name || '—'}{r.article_code ? ` · ${r.article_code}` : ''}</p>
+          <p className="text-[11px] text-gray-400">{nomFournisseur(r.supplier_name) || '—'}{r.article_code ? ` · ${r.article_code}` : ''}</p>
         </div>
-        <span className="text-xs text-gray-500 tabular">{r.last_price_ht !== null ? `${fmtEuro(Number(r.last_price_ht))}${r.unit ? ` / ${r.unit}` : ''}` : '—'}</span>
+        <span className="text-xs text-gray-500 tabular text-right">
+          {r.last_price_ht !== null ? `${fmtEuro(Number(r.last_price_ht))}${r.unit ? ` / ${r.unit}` : ''}` : '—'}
+          {/* Depuis QUAND, et sur QUELLE facture : c'est ce qui permet de dire
+              « est-ce le même produit ? » sans quitter l'écran. */}
+          {(r.last_seen || r.last_price_date) && (
+            <span className="block text-[10px] text-gray-400">{fmtDate(String(r.last_seen || r.last_price_date))}</span>
+          )}
+        </span>
+        {r.last_invoice_id && (
+          <button onClick={e => { e.stopPropagation(); window.open(`/api/invoices/${r.last_invoice_id}/file`, '_blank') }}
+            title="Ouvrir la facture d'où vient ce prix"
+            className="text-[11px] font-semibold text-pilote hover:underline flex-shrink-0">voir la facture</button>
+        )}
         <button onClick={() => toggleSel(r)}
           className={`flex items-center gap-1.5 text-xs font-bold rounded-lg px-3 py-1.5 transition-all ${isSel ? 'text-white bg-green-600 hover:bg-green-700 shadow-card' : 'text-white bg-pilote hover:bg-pilote-hover shadow-card active:scale-[0.98]'}`}>
           {isSel ? <><Check className="w-3.5 h-3.5" />Sélectionnée</> : <><Link2 className="w-3.5 h-3.5" />Associer</>}
@@ -853,9 +992,23 @@ export default function MercurialePage() {
           <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Articles génériques</p>
           <p className="text-2xl font-extrabold tracking-tight text-gray-900 tabular">{generics.length}</p>
         </div>
+        {/* Le compteur affichait le tableau BRUT — réfs écartées et lignes
+            non-produit comprises — alors que la liste juste en dessous ne montre
+            que les produits à traiter. Le chiffre orange ne pouvait donc jamais
+            tomber à zéro : les taxes et les réfs volontairement écartées y
+            restaient à vie. Il compte maintenant ce que la liste montre, et dit
+            le reste sur une seconde ligne. */}
         <div className="bg-white rounded-2xl border border-gray-100 shadow-card p-5">
           <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Réfs à rapprocher</p>
-          <p className={`text-2xl font-extrabold tracking-tight tabular ${queue.length > 0 ? 'text-amber-600' : 'text-gray-900'}`}>{queue.length}</p>
+          <p className={`text-2xl font-extrabold tracking-tight tabular ${queueCounts.produits > 0 ? 'text-amber-600' : 'text-gray-900'}`}>{queueCounts.produits}</p>
+          {(queueCounts.ecartees > 0 || queueCounts.nonProduit > 0) && (
+            <p className="text-[11px] text-gray-400 mt-0.5">
+              + {[
+                queueCounts.ecartees > 0 ? `${queueCounts.ecartees} écartée${queueCounts.ecartees > 1 ? 's' : ''}` : null,
+                queueCounts.nonProduit > 0 ? `${queueCounts.nonProduit} non-produit` : null,
+              ].filter(Boolean).join(' · ')}
+            </p>
+          )}
         </div>
         {hausses > 0 ? (
           <button onClick={() => { setHausseFilter(v => !v); setView('catalogue') }}
@@ -956,6 +1109,16 @@ export default function MercurialePage() {
             )}
           </button>
         </div>
+        {/* Revue des génériques créés tout seuls. Le badge « Auto » demandait de
+            vérifier nom et unité, mais rien ne permettait ni de les isoler, ni
+            de dire que c'était fait : le compteur ne bougeait jamais. */}
+        {autoAVerifier > 0 && (
+          <button onClick={() => { setAutoFilter(v => !v); setView('catalogue') }}
+            className={`flex items-center gap-1.5 text-xs font-semibold rounded-full px-3.5 py-2 ring-1 transition-colors ${autoFilter ? 'bg-pilote text-white ring-pilote shadow-card' : 'text-pilote bg-white ring-pilote-200 hover:bg-pilote-50'}`}>
+            Auto à vérifier
+            <span className={`text-[10px] font-bold rounded-full px-1.5 py-0.5 tabular ${autoFilter ? 'bg-white/20 text-white' : 'bg-pilote-50 text-pilote'}`}>{autoAVerifier}</span>
+          </button>
+        )}
       </div>
 
       {/* ── Association en cours (sélection par les boutons « Associer ») ── */}
@@ -976,7 +1139,7 @@ export default function MercurialePage() {
                 return (
                   <div key={r.id} className="flex items-center gap-3 bg-gray-50 rounded-lg px-3 py-2 flex-wrap">
                     <span className="text-sm font-semibold text-gray-900 flex-1 min-w-[150px]">{r.name}</span>
-                    <span className="text-[11px] text-gray-400">{r.supplier_name || '—'}</span>
+                    <span className="text-[11px] text-gray-400">{nomFournisseur(r.supplier_name) || '—'}</span>
                     <span className="text-xs text-gray-500 tabular">{r.last_price_ht !== null ? `${fmtEuro(Number(r.last_price_ht))}${r.unit ? ` / ${r.unit}` : ''}` : '—'}</span>
                     {targetBase !== null && (
                       <span className={`flex items-center gap-1.5 text-[11px] rounded-lg px-2 py-1 tabular ${needFactor ? 'text-amber-700 bg-amber-50 ring-1 ring-amber-200' : 'text-gray-400'}`}>
@@ -1058,12 +1221,24 @@ export default function MercurialePage() {
                 <h2 className="text-sm font-extrabold uppercase tracking-wider text-gray-700">À rapprocher</h2>
                 <span className="text-[11px] text-gray-400 tabular">{productRefCount} réf{productRefCount > 1 ? 's' : ''} · {queueGroups.length} produit{queueGroups.length > 1 ? 's' : ''}</span>
               </div>
-              <p className="text-[11px] text-gray-400 mb-3">
-                Les réfs qui ne ressemblent à rien deviennent automatiquement leur propre article générique.
-                Ici : cliquez « Associer » sur deux réfs (ou plus) pour les regrouper, ou utilisez le bouton du groupe.
-              </p>
+              <div className="flex items-center gap-2 flex-wrap mb-3">
+                <p className="text-[11px] text-gray-400 flex-1 min-w-[260px]">
+                  Les réfs qui ne ressemblent à rien deviennent automatiquement leur propre article générique.
+                  Ici : cliquez « Associer » sur deux réfs (ou plus) pour les regrouper, ou utilisez le bouton du groupe.
+                </p>
+                <label className="text-[11px] text-gray-400 flex items-center gap-1.5 flex-shrink-0">
+                  Trier par
+                  <select value={queueSort} onChange={e => setQueueSort(e.target.value as typeof queueSort)}
+                    className="border border-gray-200 rounded-lg px-2 py-1 text-[11px] bg-white text-gray-700 focus:outline-none focus:ring-2 focus:ring-pilote-200">
+                    <option value="montant">prix le plus élevé</option>
+                    <option value="anciennete">le plus ancien</option>
+                    <option value="fournisseur">fournisseur</option>
+                    <option value="refs">nombre de réfs</option>
+                  </select>
+                </label>
+              </div>
               <div className="space-y-3">
-                {queueGroups.map(grp => (
+                {(queueAll ? queueGroups : queueGroups.slice(0, 10)).map(grp => (
                   <div key={grp.stem} className="bg-white rounded-2xl border border-amber-200 shadow-card overflow-hidden">
                     <div className="px-4 py-2.5 bg-amber-50/60 flex items-center gap-3 flex-wrap">
                       <p className="text-sm font-bold text-gray-900 flex-1 min-w-[180px]">
@@ -1091,6 +1266,21 @@ export default function MercurialePage() {
                     </div>
                   </div>
                 ))}
+
+                {/* Au-delà de dix groupes, la file devenait un mur de cartes
+                    empilées : le reste se déplie à la demande. */}
+                {!queueAll && queueGroups.length > 10 && (
+                  <button onClick={() => setQueueAll(true)}
+                    className="w-full flex items-center justify-center gap-1.5 text-xs font-semibold text-gray-500 border-2 border-dashed border-gray-200 rounded-xl py-2.5 hover:border-pilote-200 hover:text-pilote transition-colors">
+                    <ChevronDown className="w-3.5 h-3.5" />Voir les {queueGroups.length - 10} autres produits à rapprocher
+                  </button>
+                )}
+                {queueAll && queueGroups.length > 10 && (
+                  <button onClick={() => setQueueAll(false)}
+                    className="w-full flex items-center justify-center gap-1.5 text-xs font-semibold text-gray-400 rounded-xl py-2 hover:text-pilote transition-colors">
+                    <ChevronRight className="w-3.5 h-3.5" />N&apos;afficher que les dix premiers
+                  </button>
+                )}
 
                 {/* Lignes non-produit (taxes, remises, frais, licences, entretien…) —
                     jamais associées d'office, repliées pour ne pas encombrer */}
@@ -1133,7 +1323,7 @@ export default function MercurialePage() {
                           <div key={r.id} className="flex items-center gap-3 px-4 py-2.5 flex-wrap">
                             <div className="flex-1 min-w-[220px]">
                               <p className="text-sm font-semibold text-gray-500">{r.name}</p>
-                              <p className="text-[11px] text-gray-400">{r.supplier_name || '—'}{r.article_code ? ` · ${r.article_code}` : ''}</p>
+                              <p className="text-[11px] text-gray-400">{nomFournisseur(r.supplier_name) || '—'}{r.article_code ? ` · ${r.article_code}` : ''}</p>
                             </div>
                             <span className="text-xs text-gray-400 tabular">{r.last_price_ht !== null ? `${fmtEuro(Number(r.last_price_ht))}${r.unit ? ` / ${r.unit}` : ''}` : '—'}</span>
                             <button onClick={() => setIgnored(r, false)}
@@ -1214,6 +1404,27 @@ export default function MercurialePage() {
               {filteredGenerics.length === 0 ? (
                 <div className="bg-white rounded-2xl border border-dashed border-gray-200 py-12 text-center">
                   <p className="text-sm font-medium text-gray-500">Aucun article générique{search ? ' ne correspond à la recherche' : ''}</p>
+                  {/* Le mot cherché peut ne vivre que dans une réf PAS ENCORE
+                      rapprochée : le catalogue disparaissait alors sans un mot,
+                      alors que la réponse était dans la file juste à côté. */}
+                  {search && visibleQueue.length > 0 && (
+                    <p className="text-xs text-gray-500 mt-2">
+                      Mais {visibleQueue.length} réf{visibleQueue.length > 1 ? 's' : ''} pas encore rapprochée{visibleQueue.length > 1 ? 's' : ''} correspond{visibleQueue.length > 1 ? 'ent' : ''} à « {search.trim()} » —{' '}
+                      <button onClick={() => setView('associations')} className="font-semibold text-pilote hover:underline">voir dans Associations</button>.
+                    </p>
+                  )}
+                  {search && autoFilter && (
+                    <p className="text-xs text-gray-500 mt-2">
+                      Le filtre « Auto à vérifier » est actif —{' '}
+                      <button onClick={() => setAutoFilter(false)} className="font-semibold text-pilote hover:underline">le retirer</button>.
+                    </p>
+                  )}
+                  {search && hausseFilter && (
+                    <p className="text-xs text-gray-500 mt-2">
+                      Le filtre « Prix en hausse » est actif —{' '}
+                      <button onClick={() => setHausseFilter(false)} className="font-semibold text-pilote hover:underline">le retirer</button>.
+                    </p>
+                  )}
                 </div>
               ) : (
                 <div className="space-y-3">
@@ -1255,7 +1466,7 @@ export default function MercurialePage() {
                           {[...g.refs].sort((a, b) => (b.needs_conversion ? 1 : 0) - (a.needs_conversion ? 1 : 0)).map(r => (
                             <div key={r.id} className="px-4 py-2 flex items-center gap-3 flex-wrap text-xs">
                               <span className="font-semibold text-gray-800 flex-1 min-w-[170px]">{r.name}</span>
-                              <span className="text-gray-400">{r.supplier_name || '—'}</span>
+                              <span className="text-gray-400">{nomFournisseur(r.supplier_name) || '—'}</span>
                               <span className="text-gray-500 tabular">{r.last_price_ht !== null ? `${fmtEuro(Number(r.last_price_ht))}${r.unit ? ` / ${r.unit}` : ''}` : '—'}</span>
                               {r.needs_conversion ? (
                                 <span className="flex items-center gap-1.5 text-[11px] text-amber-700 bg-amber-50 ring-1 ring-amber-200 rounded-lg px-2 py-1 tabular">
@@ -1328,7 +1539,8 @@ export default function MercurialePage() {
                           const isEdit = editId === g.id
                           return (
                             <Fragment key={g.id}>
-                              <tr onClick={() => { setOpenId(isOpen ? null : g.id); setEditId(null); setConfirmDelId(null) }}
+                              <tr id={`generic-${g.id}`}
+                                onClick={() => { setOpenId(isOpen ? null : g.id); setEditId(null); setConfirmDelId(null) }}
                                 className="border-t border-gray-100 hover:bg-gray-50 transition-colors cursor-pointer">
                                 <td className="px-4 py-2.5 text-sm font-semibold text-gray-900">
                                   <span className="inline-flex items-center gap-1.5">
@@ -1421,9 +1633,16 @@ export default function MercurialePage() {
                                         <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
                                           <p className="text-[11px] text-gray-500">
                                             Perte par défaut : <strong className="tabular">{g.default_loss_pct.toLocaleString('fr-FR')} %</strong>
-                                            {g.price_supplier ? <> · dernier prix chez <strong>{g.price_supplier}</strong></> : null}
+                                            {g.price_supplier ? <> · dernier prix chez <strong>{nomFournisseur(g.price_supplier)}</strong></> : null}
                                           </p>
                                           <div className="flex items-center gap-2">
+                                            {g.auto_created && (
+                                              <button onClick={() => validerAuto(g)} disabled={validant === g.id}
+                                                title="Le nom et l'unité sont bons : retirer le marqueur « Auto »"
+                                                className="flex items-center gap-1 text-xs font-semibold text-green-700 rounded-lg px-2.5 py-1.5 hover:bg-green-50 disabled:opacity-50">
+                                                <Check className="w-3 h-3" />{validant === g.id ? 'Validation…' : 'Vu, c’est bon'}
+                                              </button>
+                                            )}
                                             <button onClick={() => startEdit(g)} className="flex items-center gap-1 text-xs font-semibold text-pilote rounded-lg px-2.5 py-1.5 hover:bg-pilote-50"><Pencil className="w-3 h-3" />Modifier</button>
                                             <button onClick={() => removeGeneric(g)}
                                               className={`flex items-center gap-1 text-xs font-semibold rounded-lg px-2.5 py-1.5 transition-colors ${confirmDelId === g.id ? 'text-white bg-red-600 hover:bg-red-700' : 'text-red-600 hover:bg-red-50'}`}>
@@ -1451,6 +1670,12 @@ export default function MercurialePage() {
                                             </div>
                                             <p className="text-[11px] text-gray-400">
                                               {g.points_12m} prix relevé{g.points_12m > 1 ? 's' : ''} sur 12 mois · en € / {unitLabel(g.base_unit)}
+                                              {/* Le min/max porte sur les 12 mois entiers, la courbe sur ses 40
+                                                  derniers changements : sans cette phrase, un « Min » absent du
+                                                  dessin passait pour une erreur de lecture. */}
+                                              {g.history_tronque && g.history_tronque > 0
+                                                ? <> · la courbe montre les {g.history.length} derniers changements ({g.history_tronque} plus anciens hors du dessin — le min/max, lui, couvre les 12 mois)</>
+                                                : null}
                                             </p>
                                           </div>
                                         ) : (
@@ -1516,6 +1741,17 @@ export default function MercurialePage() {
                                                     dernier mouvement : {delta! > 0 ? '+' : '−'}{fmtEuro(Math.abs(delta!))} / {unitLabel(g.base_unit)}
                                                   </span>
                                                 )}
+                                                {/* D'où à où, et chez qui : un changement de fournisseur est la
+                                                    cause la plus fréquente d'un saut de prix — le taire rendait
+                                                    l'écart incompréhensible. */}
+                                                {hasImpact && g.prev_price_ht !== null && g.price_ht !== null && (
+                                                  <span className="text-[11px] text-gray-500 tabular">
+                                                    {fmtEuro(g.prev_price_ht)}{g.prev_price_supplier ? ` chez ${nomFournisseur(g.prev_price_supplier)}` : ''}
+                                                    {' → '}
+                                                    {fmtEuro(g.price_ht)}{g.price_supplier ? ` chez ${nomFournisseur(g.price_supplier)}` : ''}
+                                                    {g.prev_price_date ? ` (depuis le ${fmtDate(g.prev_price_date)})` : ''}
+                                                  </span>
+                                                )}
                                               </div>
                                               <div className="divide-y divide-gray-50">
                                                 {g.recipes_used.map(u => {
@@ -1552,7 +1788,7 @@ export default function MercurialePage() {
                                             {g.refs.map(r => (
                                               <div key={r.id} className="flex items-center gap-3 text-xs bg-white border border-gray-100 rounded-lg px-3 py-2 flex-wrap">
                                                 <span className="font-semibold text-gray-800 flex-1 min-w-[180px]">{r.name}</span>
-                                                <span className="text-gray-400">{r.supplier_name || '—'}</span>
+                                                <span className="text-gray-400">{nomFournisseur(r.supplier_name) || '—'}</span>
                                                 <span className="text-gray-500 tabular">
                                                   {r.last_price_ht !== null ? `${fmtEuro(Number(r.last_price_ht))}${r.unit ? ` / ${r.unit}` : ''}` : '—'}
                                                 </span>

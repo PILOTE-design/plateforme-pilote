@@ -109,6 +109,10 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
       category: g.category === 'emballage' ? 'emballage' as const : 'ingredient' as const,
       default_loss_pct: Number(g.default_loss_pct) || 0,
       price_ht: null,
+      // La fiche ATELIER ne porte volontairement aucun prix : la date n'a donc
+      // rien à y faire non plus (le champ existe depuis que la fiche à l'écran
+      // affiche l'âge de chaque prix).
+      price_date: null,
     }]))
     const costed = costIngredients((ings || []) as IngredientRow[], new Map(), genericById)
     const steps = parseStoredSteps(recipe.fabrication_steps)
