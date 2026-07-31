@@ -75,12 +75,14 @@ function fmtMin(m: number): string {
 }
 
 export default function FichePanel({
-  recipe, employees, generics, onEditFull, onSaved, onClose,
+  recipe, employees, generics, target = null, onEditFull, onSaved, onClose,
 }: {
   recipe: FicheRecipe
   employees: FicheEmployee[]
   /** Articles génériques de la mercuriale — pour l'ajout d'ingrédient sur place */
   generics: FicheGeneric[]
+  /** Cible de marge de la catégorie de la fiche (R-A) — null : pas de cible posée */
+  target?: number | null
   /** Ouvre l'édition complète (modale sur la liste, ?edit= en pleine page) */
   onEditFull: () => void
   /** Appelé après un enregistrement réussi (étapes, paliers, prix, ingrédients) */
@@ -132,6 +134,18 @@ export default function FichePanel({
 
   const coutMatiere = (c?.matiere_ht ?? 0) + (c?.emballage_ht ?? 0)
   const coutUnite = c ? (c.par_unite_ht ?? c.total_ht) : null
+  // Coût matière (« food cost ») : part de la matière SEULE dans le PV HT d'une
+  // unité — calculable uniquement quand rendement et prix de vente sont connus.
+  const foodCostPct = c && c.pv_unitaire_ht !== null && c.pv_unitaire_ht > 0 && baseQty > 0
+    ? Math.round(((c.matiere_ht / baseQty) / c.pv_unitaire_ht) * 100)
+    : null
+  // Couleur de la marge : contre la CIBLE de la catégorie si elle existe,
+  // sinon les repères historiques 50/30.
+  const margeColor = c === null || c.marge_pct === null
+    ? 'text-gray-900'
+    : target != null
+      ? (c.marge_pct >= target ? 'text-green-600' : c.marge_pct >= target - 10 ? 'text-orange-500' : 'text-red-600')
+      : (c.marge_pct >= 50 ? 'text-green-600' : c.marge_pct >= 30 ? 'text-orange-500' : 'text-red-600')
   // Coût du palier : matière ×ratio (linéaire), MO ×multiple (économie d'échelle)
   const moScaled = c?.labor_rate_ht != null ? round2(scaledMinutes / 60 * c.labor_rate_ht) : 0
   const coutScaled = round2(coutMatiere * ratio + moScaled)
@@ -283,7 +297,10 @@ export default function FichePanel({
               <p className="text-xl font-extrabold tracking-tight text-white tabular mt-1">
                 {c.par_unite_ht !== null ? fmtEuro(c.par_unite_ht) : fmtEuro(c.total_ht)}
               </p>
-              <p className="text-[11px] text-pilote-200 mt-0.5">{c.par_unite_ht !== null ? `/ ${recipe.yield_unit || 'unité'}` : '/ batch'}</p>
+              <p className="text-[11px] text-pilote-200 mt-0.5 tabular">
+                {c.par_unite_ht !== null ? `/ ${recipe.yield_unit || 'unité'}` : '/ batch'}
+                {foodCostPct !== null ? ` · matière ${foodCostPct} % du PV HT` : ''}
+              </p>
             </div>
 
             <div className="rounded-2xl bg-white border border-gray-100 shadow-card p-4 group cursor-pointer hover:border-pilote-200 transition-colors"
@@ -310,11 +327,12 @@ export default function FichePanel({
 
             <div className="rounded-2xl bg-white border border-gray-100 shadow-card p-4">
               <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Taux de marge</p>
-              <p className={`text-xl font-extrabold tracking-tight tabular mt-1 ${c.marge_pct === null ? 'text-gray-900' : c.marge_pct >= 50 ? 'text-green-600' : c.marge_pct >= 30 ? 'text-orange-500' : 'text-red-600'}`}>
+              <p className={`text-xl font-extrabold tracking-tight tabular mt-1 ${margeColor}`}>
                 {c.marge_pct !== null ? `${c.marge_pct.toLocaleString('fr-FR')} %` : '—'}
               </p>
               <p className="text-[11px] text-gray-400 mt-0.5 tabular">
                 {c.pv_unitaire_ht !== null && c.par_unite_ht !== null ? `marge ${fmtEuro(c.pv_unitaire_ht - c.par_unite_ht)}` : 'du PV HT'}
+                {target != null ? ` · cible ${target.toLocaleString('fr-FR')} %` : ''}
               </p>
             </div>
 
