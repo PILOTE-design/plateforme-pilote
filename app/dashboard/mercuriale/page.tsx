@@ -48,6 +48,9 @@ type Ref = {
   suggested_generic_id: string | null
 }
 
+/** Point d'historique : date de facture + prix payé, à l'unité de base */
+type PricePoint = { d: string; p: number }
+
 type Generic = {
   id: string
   name: string
@@ -60,7 +63,25 @@ type Generic = {
   price_date: string | null
   price_supplier: string | null
   variation_pct: number | null
+  /** Prix payés sur 12 mois (inflexions, 40 points max) — réfs utilisables seulement */
+  history: PricePoint[]
+  points_12m: number
+  min_12m: number | null
+  max_12m: number | null
   refs: Ref[]
+}
+
+/** Un changement de prix constaté entre deux factures d'une même réf (30 j) */
+type Move = {
+  date: string
+  generic_id: string
+  generic_name: string
+  base_unit: 'kg' | 'piece'
+  ref_name: string
+  supplier_name: string | null
+  old_base: number
+  new_base: number
+  pct: number | null
 }
 
 type PendingInvoice = {
@@ -103,11 +124,37 @@ function Variation({ pct }: { pct: number | null }) {
     </span>
   )}
 
+/** Courbe d'historique d'un générique : x = rang du point (une inflexion par
+ *  changement de prix), y = prix à l'unité de base. Trait navy, dernier prix
+ *  marqué en orange — l'unique accent de la ligne. */
+function Sparkline({ points }: { points: PricePoint[] }) {
+  const W = 240, H = 48, PAD = 5
+  const ps = points.map(x => x.p)
+  const min = Math.min(...ps), max = Math.max(...ps)
+  const span = max - min
+  const X = (i: number) => (points.length < 2 ? W / 2 : PAD + (i / (points.length - 1)) * (W - PAD * 2))
+  const Y = (p: number) => (span === 0 ? H / 2 : H - PAD - ((p - min) / span) * (H - PAD * 2))
+  const d = ps.map((p, i) => `${i === 0 ? 'M' : 'L'}${X(i).toFixed(1)},${Y(p).toFixed(1)}`).join(' ')
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-12" role="img" aria-label="Historique du prix sur 12 mois">
+      {points.length >= 2 && (
+        <path d={d} fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="text-pilote" />
+      )}
+      <circle cx={X(points.length - 1)} cy={Y(ps[ps.length - 1] ?? 0)} r={3.5} className="fill-pilote-orange" />
+    </svg>
+  )
+}
+
 export default function MercurialePage() {
   const { toast } = useToast()
   const [generics, setGenerics] = useState<Generic[]>([])
   const [queue, setQueue] = useState<Ref[]>([])
   const [pending, setPending] = useState<PendingInvoice[]>([])
+  const [moves, setMoves] = useState<Move[]>([])
+  const [movesTotal, setMovesTotal] = useState(0)
+  const [movesOpen, setMovesOpen] = useState(false)
+  // KPI « Prix en hausse » cliquable : restreint le catalogue aux génériques en hausse
+  const [hausseFilter, setHausseFilter] = useState(false)
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [view, setView] = useState<'catalogue' | 'associations'>('catalogue')
@@ -149,6 +196,8 @@ export default function MercurialePage() {
       setGenerics(Array.isArray(data.generics) ? data.generics : [])
       setQueue(Array.isArray(data.queue) ? data.queue : [])
       setPending(Array.isArray(data.pending) ? data.pending : [])
+      setMoves(Array.isArray(data.moves) ? data.moves : [])
+      setMovesTotal(Number(data.moves_total) || 0)
     }
     setLoading(false)
   }, [])
@@ -311,7 +360,7 @@ export default function MercurialePage() {
     }
     let ok = 0, ko = 0
     for (const r of selRefs) {
-      const v = parseFloat((factors[r.id] ?? '').replace(',', '.'))
+      const v = parseFloat((factors[r.id] ??  '').replace(',', '.'))
       const res = await fetch(`/api/articles/${r.id}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ generic_id: genericId, conversion_factor: v > 0 ? v : null }),
@@ -494,11 +543,13 @@ export default function MercurialePage() {
 
   const filteredGenerics = useMemo(() => {
     const q = search.trim().toLowerCase()
-    if (!q) return generics
-    return generics.filter(g =>
+    let list = generics
+    if (hausseFilter) list = list.filter(g => (g.variation_pct ?? 0) > 0)
+    if (!q) return list
+    return list.filter(g =>
       g.name.toLowerCase().includes(q)
       || g.refs.some(r => r.name.toLowerCase().includes(q) || (r.supplier_name || '').toLowerCase().includes(q)))
-  }, [generics, search])
+  }, [generics, search, hausseFilter])
 
   const filteredQueue = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -618,11 +669,59 @@ export default function MercurialePage() {
           <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Réfs à rapprocher</p>
           <p className={`text-2xl font-extrabold tracking-tight tabular ${queue.length > 0 ? 'text-amber-600' : 'text-gray-900'}`}>{queue.length}</p>
         </div>
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-card p-5">
-          <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Prix en hausse</p>
-          <p className={`text-2xl font-extrabold tracking-tight tabular ${hausses > 0 ? 'text-red-600' : 'text-gray-900'}`}>{hausses}</p>
-        </div>
+        {hausses > 0 ? (
+          <button onClick={() => { setHausseFilter(v => !v); setView('catalogue') }}
+            className={`text-left bg-white rounded-2xl border shadow-card p-5 transition-all hover:shadow-card-hover ${hausseFilter ? 'border-pilote-200 ring-2 ring-pilote-200' : 'border-gray-100'}`}>
+            <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Prix en hausse</p>
+            <p className="text-2xl font-extrabold tracking-tight tabular text-red-600">{hausses}</p>
+            <p className="text-[11px] text-gray-400 mt-0.5">{hausseFilter ? 'filtre actif — cliquer pour tout revoir' : 'cliquer pour filtrer le catalogue'}</p>
+          </button>
+        ) : (
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-card p-5">
+            <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Prix en hausse</p>
+            <p className="text-2xl font-extrabold tracking-tight tabular text-gray-900">0</p>
+          </div>
+        )}
       </div>
+
+      {/* ── Mouvements de prix — chaque changement constaté sur 30 jours ── */}
+      {moves.length > 0 && (
+        <div className="mb-6 bg-white rounded-2xl border border-gray-100 shadow-card overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-100 flex items-baseline gap-2 flex-wrap">
+            <h2 className="text-sm font-extrabold uppercase tracking-wider text-gray-700">Mouvements de prix</h2>
+            <span className="text-[11px] text-gray-400 tabular">
+              30 derniers jours · {movesTotal} changement{movesTotal > 1 ? 's' : ''}
+              {movesTotal > moves.length ? ` (les ${moves.length} plus récents affichés)` : ''}
+            </span>
+          </div>
+          <div className="divide-y divide-gray-50">
+            {(movesOpen ? moves : moves.slice(0, 5)).map((m, i) => (
+              <button key={`${m.generic_id}-${m.date}-${i}`}
+                onClick={() => { setView('catalogue'); setHausseFilter(false); setOpenId(m.generic_id); setEditId(null) }}
+                title="Ouvrir cet article au catalogue"
+                className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-gray-50 transition-colors flex-wrap">
+                <span className="text-[11px] text-gray-400 tabular w-16 flex-shrink-0">{fmtDate(m.date)}</span>
+                <span className="flex-1 min-w-[180px]">
+                  <span className="text-sm font-bold text-gray-900">{m.generic_name}</span>
+                  <span className="block text-[11px] text-gray-400 truncate">{m.ref_name}{m.supplier_name ? ` · ${m.supplier_name}` : ''}</span>
+                </span>
+                <span className="text-xs text-gray-500 tabular">
+                  {fmtEuro(m.old_base)} <span className="text-gray-300">→</span>{' '}
+                  <span className={`font-bold ${m.new_base > m.old_base ? 'text-red-600' : 'text-green-600'}`}>{fmtEuro(m.new_base)}</span>
+                  <span className="text-gray-400"> / {unitLabel(m.base_unit)}</span>
+                </span>
+                <Variation pct={m.pct} />
+              </button>
+            ))}
+          </div>
+          {moves.length > 5 && (
+            <button onClick={() => setMovesOpen(v => !v)}
+              className="w-full px-4 py-2 text-[11px] font-semibold text-pilote hover:bg-pilote-50 transition-colors border-t border-gray-100 flex items-center justify-center gap-1">
+              {movesOpen ? <>Replier <ChevronDown className="w-3 h-3 rotate-180" /></> : <>Afficher les {moves.length - 5} autres <ChevronDown className="w-3 h-3" /></>}
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Recherche + bascule Catalogue / Associations */}
       <div className="mb-5 flex items-center gap-3 flex-wrap">
@@ -1092,6 +1191,35 @@ export default function MercurialePage() {
                                             </button>
                                           </div>
                                         </div>
+                                        {/* Historique 12 mois : la courbe des prix payés, min/max — ou l'absence assumée */}
+                                        {g.history.length >= 2 ? (
+                                          <div className="mb-2.5 bg-white border border-gray-100 rounded-xl px-3.5 py-2.5 flex items-center gap-6 flex-wrap">
+                                            <div className="w-60 flex-shrink-0">
+                                              <Sparkline points={g.history} />
+                                              <div className="flex justify-between text-[10px] text-gray-400 tabular mt-0.5">
+                                                <span>{fmtDate(g.history[0].d)}</span>
+                                                <span>{fmtDate(g.history[g.history.length - 1].d)}</span>
+                                              </div>
+                                            </div>
+                                            <div>
+                                              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Min 12 mois</p>
+                                              <p className="text-sm font-extrabold text-gray-900 tabular">{g.min_12m !== null ? fmtEuro(g.min_12m) : '—'}</p>
+                                            </div>
+                                            <div>
+                                              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Max 12 mois</p>
+                                              <p className="text-sm font-extrabold text-gray-900 tabular">{g.max_12m !== null ? fmtEuro(g.max_12m) : '—'}</p>
+                                            </div>
+                                            <p className="text-[11px] text-gray-400">
+                                              {g.points_12m} prix relevé{g.points_12m > 1 ? 's' : ''} sur 12 mois · en € / {unitLabel(g.base_unit)}
+                                            </p>
+                                          </div>
+                                        ) : (
+                                          <p className="mb-2.5 text-[11px] text-gray-400">
+                                            {g.points_12m > 0
+                                              ? <>Prix stable : {g.points_12m} prix relevé{g.points_12m > 1 ? 's' : ''} sur 12 mois, aucun changement — la courbe apparaîtra au premier mouvement.</>
+                                              : <>Pas encore d&apos;historique — la courbe des prix se construit à chaque facture lue.</>}
+                                          </p>
+                                        )}
                                         {g.refs.length === 0 ? (
                                           <p className="text-xs text-gray-400">Aucune réf fournisseur rattachée.</p>
                                         ) : (
