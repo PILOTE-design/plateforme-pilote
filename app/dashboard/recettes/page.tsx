@@ -9,7 +9,7 @@
 // ou une embauche, et toutes les fiches se recalculent.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChefHat, Plus, X, Search, AlertTriangle, Clock, ShoppingBasket, Package } from 'lucide-react'
+import { ChefHat, Plus, X, Search, AlertTriangle, Clock, ShoppingBasket, Package, Check } from 'lucide-react'
 import Link from 'next/link'
 import { useToast } from '@/components/ui/toast'
 import { useConfirm } from '@/components/ui/confirm-dialog'
@@ -54,9 +54,20 @@ type Recipe = {
   cost: RecipeCost
 }
 
+/** Cible de marge posée par le client pour une catégorie de fiches (R-A) */
+type Target = { category: string; target_marge_pct: number }
+
 const fmtEuro = (n: number) => n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'
 const unitFr = (u: string | null) => (u === 'piece' ? 'pièce' : u || '')
 const EMPTY_ING = (): IngredientDraft => ({ generic_id: null, article_id: null, label: '', quantity: '', qty_unit: null, unit: null, loss_pct: '0', manual_price_ht: '', legacy_price: null })
+
+/** Couleur d'une marge : jugée contre la CIBLE de sa catégorie quand elle
+ *  existe (vert ≥ cible, orange à moins de 10 pts sous la cible, rouge sinon),
+ *  sinon contre les repères historiques 50/30. */
+const margeTone = (marge: number, target: number | null) => {
+  if (target !== null) return marge >= target ? 'text-green-600' : marge >= target - 10 ? 'text-orange-500' : 'text-red-600'
+  return marge >= 50 ? 'text-green-600' : marge >= 30 ? 'text-orange-500' : 'text-red-600'
+}
 
 // Catégories proposées — les trois métiers de la maison. Le champ reste libre :
 // une catégorie inconnue crée simplement sa propre section.
@@ -70,6 +81,10 @@ export default function RecettesPage() {
   const [generics, setGenerics] = useState<Generic[]>([])
   const [employees, setEmployees] = useState<Employee[]>([])
   const [laborRate, setLaborRate] = useState<number | null>(null)
+  const [targets, setTargets] = useState<Target[]>([])
+  // Cible en cours d'édition dans un en-tête de section (une seule à la fois)
+  const [editTarget, setEditTarget] = useState<{ cat: string; value: string } | null>(null)
+  const [targetSaving, setTargetSaving] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
 
@@ -97,6 +112,7 @@ export default function RecettesPage() {
       setLaborRate(rec.labor_rate_ht ?? null)
       setGenerics(Array.isArray(rec.generics) ? rec.generics : [])
       setEmployees(Array.isArray(rec.employees) ? rec.employees : [])
+      setTargets(Array.isArray(rec.targets) ? rec.targets : [])
     }
     setLoading(false)
   }, [])
@@ -216,6 +232,43 @@ export default function RecettesPage() {
     return [...set].sort((a, b) => a.localeCompare(b, 'fr'))
   }, [recipes])
 
+  const targetByCat = useMemo(() => new Map(targets.map(t => [t.category, t.target_marge_pct])), [targets])
+
+  // Bandeau de pilotage : calculé sur TOUTES les fiches (jamais sur le filtre
+  // en cours). Une fiche sans marge calculable n'entre pas dans la moyenne.
+  const stats = useMemo(() => {
+    const chiffrees = recipes.filter(r => r.cost.marge_pct !== null)
+    const margeMoyenne = chiffrees.length > 0
+      ? chiffrees.reduce((s, r) => s + (r.cost.marge_pct as number), 0) / chiffrees.length
+      : null
+    const sousCible = recipes.filter(r => {
+      const t = targetByCat.get(catLabel(r.category))
+      return t !== undefined && r.cost.marge_pct !== null && r.cost.marge_pct < t
+    })
+    const prixManquants = recipes.filter(r => r.cost.prix_manquants > 0).length
+    return { chiffrees: chiffrees.length, margeMoyenne, sousCible, prixManquants, hasTargets: targets.length > 0 }
+  }, [recipes, targetByCat, targets])
+
+  /** Pose (ou retire, champ vide) la cible de marge d'une catégorie */
+  async function saveTarget(cat: string) {
+    if (targetSaving || !editTarget) return
+    const raw = editTarget.value.trim().replace(',', '.')
+    setTargetSaving(true)
+    const res = await fetch('/api/recipe-targets', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ category: cat, target_marge_pct: raw === '' ? null : parseFloat(raw) }),
+    }).catch(() => null)
+    const data = res ? await res.json().catch(() => null) : null
+    setTargetSaving(false)
+    if (res?.ok) {
+      setEditTarget(null)
+      toast(raw === ''
+        ? { variant: 'info', title: `Cible retirée pour « ${cat} »`, description: 'Sans cible, la marge de ces fiches n’est plus jugée.' }
+        : { variant: 'success', title: `Cible « ${cat} » : ${raw.replace('.', ',')} %` })
+      load()
+    } else toast({ variant: 'error', title: data?.error || 'Enregistrement impossible', description: data?.error ? undefined : 'Réessayez.' })
+  }
+
   /** Ouvre la fiche en encadré sur la page (ou la ferme si déjà ouverte) */
   function openFiche(id: string) {
     setOpenId(prev => {
@@ -319,6 +372,49 @@ export default function RecettesPage() {
     setPickerRow(null)
   }
 
+  /** Carte d'une fiche — partagée entre les sections par catégorie et la
+   *  section « À retravailler » (bordure d'alerte). La marge se juge contre
+   *  la cible de sa catégorie quand elle existe. */
+  const ficheCard = (r: Recipe, alerte = false) => {
+    const t = targetByCat.get(catLabel(r.category)) ?? null
+    return (
+      <button key={r.id} onClick={() => openFiche(r.id)}
+        className={`text-left bg-white rounded-2xl border shadow-card p-5 hover:shadow-card-hover hover:-translate-y-0.5 transition-all ${alerte ? 'border-red-200' : 'border-gray-100'}`}>
+        <div className="flex items-start justify-between gap-2 mb-3">
+          <p className="text-sm font-bold text-gray-900 leading-snug">{r.name}</p>
+          {r.category && <span className="text-[10px] font-semibold uppercase tracking-wider text-pilote bg-pilote-50 rounded-lg px-1.5 py-0.5 flex-shrink-0">{r.category}</span>}
+        </div>
+        <p className="text-2xl font-extrabold tracking-tight text-gray-900 tabular">
+          {r.cost.par_unite_ht !== null ? fmtEuro(r.cost.par_unite_ht) : fmtEuro(r.cost.total_ht)}
+          <span className="text-xs font-semibold text-gray-400 ml-1.5">
+            {r.cost.par_unite_ht !== null ? `/ ${r.yield_unit || 'unité'}` : '/ batch'}
+          </span>
+        </p>
+        <div className="mt-2 space-y-0.5 text-[11px] text-gray-500 tabular">
+          <p><ShoppingBasket className="w-3 h-3 inline mr-1 text-gray-400" />Matière {fmtEuro(r.cost.matiere_ht)}</p>
+          {r.cost.emballage_ht > 0 && <p><Package className="w-3 h-3 inline mr-1 text-gray-400" />Emballage {fmtEuro(r.cost.emballage_ht)}</p>}
+          <p><Clock className="w-3 h-3 inline mr-1 text-gray-400" />Main-d&apos;œuvre {fmtEuro(r.cost.main_oeuvre_ht)} ({(r.cost.total_minutes ?? r.labor_minutes).toLocaleString('fr-FR')} min{r.employee_id && employees.find(e => e.id === r.employee_id) ? ` · ${employees.find(e => e.id === r.employee_id)!.name}` : ''})</p>
+        </div>
+        <div className="mt-3 pt-3 border-t border-gray-100 flex items-center gap-2 flex-wrap">
+          {r.cost.marge_pct !== null && (
+            <span className={`text-xs font-bold tabular ${margeTone(r.cost.marge_pct, t)}`}>
+              marge {r.cost.marge_pct.toLocaleString('fr-FR')} %
+            </span>
+          )}
+          {t !== null && r.cost.marge_pct !== null && (
+            <span className="text-xs text-gray-400 tabular">cible {t.toLocaleString('fr-FR')} %</span>
+          )}
+          {r.cost.coefficient !== null && <span className="text-xs text-gray-400 tabular">coef ×{r.cost.coefficient.toLocaleString('fr-FR')}</span>}
+          {r.cost.prix_manquants > 0 && (
+            <span className="text-[11px] font-semibold text-amber-600">
+              {r.cost.prix_manquants} prix manquant{r.cost.prix_manquants > 1 ? 's' : ''} — marge non calculable
+            </span>
+          )}
+        </div>
+      </button>
+    )
+  }
+
   return (
     <div className="p-6 md:p-8 max-w-6xl mx-auto">
       {/* En-tête */}
@@ -344,6 +440,47 @@ export default function RecettesPage() {
         <div className="mb-6 bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 flex items-center gap-2 text-sm text-amber-800">
           <AlertTriangle className="w-4 h-4 flex-shrink-0" />
           <span>Aucun taux horaire exploitable : la main-d&apos;œuvre compte pour 0 €. Renseignez vos employés (taux horaire) dans le <Link href="/dashboard/planning" className="font-bold underline">planning</Link>.</span>
+        </div>
+      )}
+
+      {/* ── Pilotage : la santé des fiches d'un coup d'œil ── */}
+      {!loading && recipes.length > 0 && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          <div className="rounded-2xl bg-pilote p-5 shadow-card">
+            <p className="text-[11px] font-semibold text-pilote-200 uppercase tracking-wider mb-1.5">Marge moyenne</p>
+            <p className="text-2xl font-extrabold tracking-tight text-white tabular">
+              {stats.margeMoyenne !== null ? `${(Math.round(stats.margeMoyenne * 10) / 10).toLocaleString('fr-FR')} %` : '—'}
+            </p>
+            <p className="text-[11px] text-pilote-200 mt-0.5">
+              {stats.chiffrees > 0 ? `sur ${stats.chiffrees} fiche${stats.chiffrees > 1 ? 's' : ''} chiffrée${stats.chiffrees > 1 ? 's' : ''}` : 'aucune fiche avec PV et coût'}
+            </p>
+          </div>
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-card p-5">
+            <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Fiches</p>
+            <p className="text-2xl font-extrabold tracking-tight text-gray-900 tabular">{recipes.length}</p>
+            <p className="text-[11px] text-gray-400 mt-0.5">
+              {stats.chiffrees < recipes.length ? `${recipes.length - stats.chiffrees} sans marge (PV ou coût manquant)` : 'toutes chiffrées'}
+            </p>
+          </div>
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-card p-5">
+            <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Sous la cible</p>
+            {stats.hasTargets ? (
+              <>
+                <p className={`text-2xl font-extrabold tracking-tight tabular ${stats.sousCible.length > 0 ? 'text-red-600' : 'text-green-600'}`}>{stats.sousCible.length}</p>
+                <p className="text-[11px] text-gray-400 mt-0.5">{stats.sousCible.length > 0 ? 'à retravailler, listées ci-dessous' : 'toutes les cibles sont tenues'}</p>
+              </>
+            ) : (
+              <>
+                <p className="text-2xl font-extrabold tracking-tight tabular text-gray-300">—</p>
+                <p className="text-[11px] text-gray-400 mt-0.5">posez une cible de marge par catégorie (« + cible de marge »)</p>
+              </>
+            )}
+          </div>
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-card p-5">
+            <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Prix manquants</p>
+            <p className={`text-2xl font-extrabold tracking-tight tabular ${stats.prixManquants > 0 ? 'text-amber-600' : 'text-gray-900'}`}>{stats.prixManquants}</p>
+            <p className="text-[11px] text-gray-400 mt-0.5">{stats.prixManquants > 0 ? `fiche${stats.prixManquants > 1 ? 's' : ''} au coût sous-estimé` : 'tous les ingrédients ont un prix'}</p>
+          </div>
         </div>
       )}
 
@@ -408,6 +545,7 @@ export default function RecettesPage() {
               recipe={r as unknown as FicheRecipe}
               employees={employees}
               generics={generics}
+              target={targetByCat.get(catLabel(r.category)) ?? null}
               onEditFull={() => openEdit(r)}
               onSaved={load}
               onClose={() => setOpenId(null)}
@@ -437,46 +575,56 @@ export default function RecettesPage() {
         </div>
       ) : (
         <div className="space-y-8">
-          {grouped.map(([cat, list]) => (
-            <section key={cat}>
+          {/* ── À retravailler : les fiches sous la cible de leur catégorie ── */}
+          {stats.sousCible.length > 0 && !search.trim() && catFilter === null && (
+            <section>
               <div className="flex items-baseline gap-2 mb-3">
-                <h2 className="text-sm font-extrabold uppercase tracking-wider text-gray-700 capitalize">{cat}</h2>
-                <span className="text-[11px] text-gray-400 tabular">{list.length} fiche{list.length > 1 ? 's' : ''}</span>
+                <h2 className="text-sm font-extrabold uppercase tracking-wider text-red-600">À retravailler</h2>
+                <span className="text-[11px] text-gray-400 tabular">
+                  {stats.sousCible.length} fiche{stats.sousCible.length > 1 ? 's' : ''} sous la cible de marge de sa catégorie — la plus basse d&apos;abord
+                </span>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {list.map(r => (
-            <button key={r.id} onClick={() => openFiche(r.id)}
-              className="text-left bg-white rounded-2xl border border-gray-100 shadow-card p-5 hover:shadow-card-hover hover:-translate-y-0.5 transition-all">
-              <div className="flex items-start justify-between gap-2 mb-3">
-                <p className="text-sm font-bold text-gray-900 leading-snug">{r.name}</p>
-                {r.category && <span className="text-[10px] font-semibold uppercase tracking-wider text-pilote bg-pilote-50 rounded-lg px-1.5 py-0.5 flex-shrink-0">{r.category}</span>}
+                {[...stats.sousCible]
+                  .sort((a, b) => (a.cost.marge_pct ?? 0) - (b.cost.marge_pct ?? 0))
+                  .map(r => ficheCard(r, true))}
               </div>
-              <p className="text-2xl font-extrabold tracking-tight text-gray-900 tabular">
-                {r.cost.par_unite_ht !== null ? fmtEuro(r.cost.par_unite_ht) : fmtEuro(r.cost.total_ht)}
-                <span className="text-xs font-semibold text-gray-400 ml-1.5">
-                  {r.cost.par_unite_ht !== null ? `/ ${r.yield_unit || 'unité'}` : '/ batch'}
-                </span>
-              </p>
-              <div className="mt-2 space-y-0.5 text-[11px] text-gray-500 tabular">
-                <p><ShoppingBasket className="w-3 h-3 inline mr-1 text-gray-400" />Matière {fmtEuro(r.cost.matiere_ht)}</p>
-                {r.cost.emballage_ht > 0 && <p><Package className="w-3 h-3 inline mr-1 text-gray-400" />Emballage {fmtEuro(r.cost.emballage_ht)}</p>}
-                <p><Clock className="w-3 h-3 inline mr-1 text-gray-400" />Main-d&apos;œuvre {fmtEuro(r.cost.main_oeuvre_ht)} ({(r.cost.total_minutes ?? r.labor_minutes).toLocaleString('fr-FR')} min{r.employee_id && employees.find(e => e.id === r.employee_id) ? ` · ${employees.find(e => e.id === r.employee_id)!.name}` : ''})</p>
-              </div>
-              <div className="mt-3 pt-3 border-t border-gray-100 flex items-center gap-2 flex-wrap">
-                {r.cost.marge_pct !== null && (
-                  <span className={`text-xs font-bold tabular ${r.cost.marge_pct >= 50 ? 'text-green-600' : r.cost.marge_pct >= 30 ? 'text-orange-500' : 'text-red-600'}`}>
-                    marge {r.cost.marge_pct.toLocaleString('fr-FR')} %
+            </section>
+          )}
+          {grouped.map(([cat, list]) => (
+            <section key={cat}>
+              <div className="flex items-center gap-2 mb-3 flex-wrap">
+                <h2 className="text-sm font-extrabold uppercase tracking-wider text-gray-700 capitalize">{cat}</h2>
+                <span className="text-[11px] text-gray-400 tabular">{list.length} fiche{list.length > 1 ? 's' : ''}</span>
+                {/* Cible de marge de la catégorie — posée, modifiée ou retirée sur place */}
+                {cat !== 'sans catégorie' && (editTarget?.cat === cat ? (
+                  <span className="inline-flex items-center gap-1 bg-white border border-pilote-200 rounded-full pl-2.5 pr-1 py-0.5">
+                    <span className="text-[11px] text-gray-400">cible</span>
+                    <input autoFocus inputMode="decimal" value={editTarget.value}
+                      onChange={e => setEditTarget(p => (p ? { ...p, value: e.target.value } : p))}
+                      onKeyDown={e => { if (e.key === 'Enter') saveTarget(cat); if (e.key === 'Escape') setEditTarget(null) }}
+                      placeholder="55"
+                      className="w-10 text-xs tabular focus:outline-none" />
+                    <span className="text-[11px] text-gray-400">%</span>
+                    <button onClick={() => saveTarget(cat)} disabled={targetSaving}
+                      className="w-5 h-5 rounded-full bg-pilote text-white flex items-center justify-center disabled:opacity-50" title="Enregistrer (champ vide = retirer la cible)">
+                      <Check className="w-3 h-3" />
+                    </button>
+                    <button onClick={() => setEditTarget(null)}
+                      className="w-5 h-5 rounded-full text-gray-400 hover:bg-gray-100 flex items-center justify-center" title="Annuler">
+                      <X className="w-3 h-3" />
+                    </button>
                   </span>
-                )}
-                {r.cost.coefficient !== null && <span className="text-xs text-gray-400 tabular">coef ×{r.cost.coefficient.toLocaleString('fr-FR')}</span>}
-                {r.cost.prix_manquants > 0 && (
-                  <span className="text-[11px] font-semibold text-amber-600">
-                    {r.cost.prix_manquants} prix manquant{r.cost.prix_manquants > 1 ? 's' : ''} — marge non calculable
-                  </span>
-                )}
-              </div>
-            </button>
+                ) : (
+                  <button onClick={() => setEditTarget({ cat, value: targetByCat.has(cat) ? String(targetByCat.get(cat)).replace('.', ',') : '' })}
+                    title="Cible de marge de la catégorie — les fiches en dessous remontent dans « À retravailler ». Vider le champ pour la retirer."
+                    className="text-[11px] font-semibold text-pilote bg-pilote-50 hover:bg-pilote-100 rounded-full px-2.5 py-0.5 transition-colors tabular">
+                    {targetByCat.has(cat) ? `cible ${Number(targetByCat.get(cat)).toLocaleString('fr-FR')} %` : '+ cible de marge'}
+                  </button>
                 ))}
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {list.map(r => ficheCard(r))}
               </div>
             </section>
           ))}
