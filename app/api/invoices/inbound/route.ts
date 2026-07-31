@@ -5,6 +5,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/server'
+import { resolveClientId } from '@/lib/resolve-client-id'
 import { loadSupplierCategories, rememberedCategory } from '@/lib/supplier-memory'
 import { weekForInvoice } from '@/lib/invoice-week'
 import Anthropic from '@anthropic-ai/sdk'
@@ -43,20 +44,19 @@ export async function POST(request: NextRequest) {
 
   const { data: profile } = await serviceSupabase
     .from('profiles')
-    .select('user_id')
+    .select('user_id, delivery_email')
     .eq('billing_forward_id', forwardId)
     .eq('billing_email_verified', true)
     .maybeSingle()
 
   if (!profile) return NextResponse.json({ error: 'Profil non trouvé ou email non vérifié' }, { status: 404 })
 
-  const { data: clientRow } = await serviceSupabase
-    .from('clients')
-    .select('id')
-    .eq('client_user_id', profile.user_id)
-    .maybeSingle()
+  // resolveClientId (user_id puis email) — delivery_email est le même champ que
+  // celui qui a servi à créer la fiche client à l'onboarding. Le lookup direct
+  // client_user_id perdait les factures du second login d'une boutique.
+  const clientId = await resolveClientId(serviceSupabase, String(profile.user_id), (profile as { delivery_email?: string | null }).delivery_email ?? null)
 
-  if (!clientRow) return NextResponse.json({ error: 'Client introuvable' }, { status: 404 })
+  if (!clientId) return NextResponse.json({ error: 'Client introuvable' }, { status: 404 })
 
   // Extraire le contenu de l'email
   const subject   = body.subject   || body.Subject   || ''
@@ -130,7 +130,7 @@ Si montant HT absent, déduire de TTC : HT = TTC / 1.{tva_rate/100+1}`
   // « DAVID MASTER SAS » est classé avec « DAVID MASTER ».
   let category: string = invoiceData.category || 'autre'
   const supplierName = String(invoiceData.supplier_name).trim()
-  const supplierMemory = await loadSupplierCategories(serviceSupabase, clientRow.id)
+  const supplierMemory = await loadSupplierCategories(serviceSupabase, clientId)
   const remembered = rememberedCategory(supplierMemory, supplierName)
   const memoryApplied = Boolean(remembered && remembered !== category)
   if (remembered) category = remembered
@@ -138,7 +138,7 @@ Si montant HT absent, déduire de TTC : HT = TTC / 1.{tva_rate/100+1}`
   const { data: invoice, error } = await serviceSupabase
     .from('invoices')
     .insert({
-      client_id:      clientRow.id,
+      client_id:      clientId,
       week_number:    week,
       year,
       // Toujours importée « à vérifier » : ne compte dans la marge qu'après

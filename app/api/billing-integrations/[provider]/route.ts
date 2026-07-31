@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
+import { resolveClientId } from '@/lib/resolve-client-id'
 
 export async function DELETE(
   _req: NextRequest,
@@ -10,13 +11,14 @@ export async function DELETE(
   if (!user) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
 
   const service = createServiceClient()
-  const { data: clientRow } = await service
-    .from('clients').select('id').eq('client_user_id', user.id).maybeSingle()
-  if (!clientRow) return NextResponse.json({ error: 'Client introuvable' }, { status: 404 })
+  // resolveClientId (user_id puis email) — le lookup direct client_user_id
+  // excluait le second login d'une boutique (fiche rattachée à un seul compte)
+  const clientId = await resolveClientId(service, user.id, user.email)
+  if (!clientId) return NextResponse.json({ error: 'Client introuvable' }, { status: 404 })
 
   await service.from('billing_integrations')
     .delete()
-    .eq('client_id', clientRow.id)
+    .eq('client_id', clientId)
     .eq('provider', params.provider)
 
   return NextResponse.json({ success: true })
