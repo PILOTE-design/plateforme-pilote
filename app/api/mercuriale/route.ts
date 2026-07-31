@@ -62,6 +62,9 @@ export async function GET() {
       .limit(1000),
     // Points de prix sur 12 mois (variation, historique, mouvements) — la date
     // vient de la facture ; un prix en quarantaine (unit_price_ht NULL) est absent
+    // Les lignes SANS prix (quarantaine) sont lues elles aussi : sans elles, on
+    // ne peut pas dire à quel article il manque un prix À CAUSE d'un refus de
+    // lecture — l'écran affichait « pas de prix » pour quatre causes opposées.
     service.from('invoice_lines')
       .select('article_id, unit_price_ht, invoice_id, invoices!inner(invoice_date)')
       .eq('client_id', clientId)
@@ -100,6 +103,21 @@ export async function GET() {
       .eq('client_id', clientId)
       .not('generic_id', 'is', null),
   ])
+
+  // Lignes en QUARANTAINE par réf : un prix a été lu sur la facture mais refusé
+  // par les garde-fous. C'est une cause d'absence de prix radicalement différente
+  // de « jamais facturé », et le boucher doit pouvoir les distinguer.
+  const { data: quarantaine } = await service.from('invoice_lines')
+    .select('article_id')
+    .eq('client_id', clientId)
+    .is('unit_price_ht', null)
+    .not('article_id', 'is', null)
+    .limit(2000)
+  const quarantaineParArticle = new Map<string, number>()
+  for (const q of (quarantaine || []) as any[]) {
+    const k = String(q.article_id)
+    quarantaineParArticle.set(k, (quarantaineParArticle.get(k) || 0) + 1)
+  }
 
   // Variation : deux derniers prix unitaires distincts par réf, datés par la facture
   const pointsByArticle = new Map<string, { date: string; price: number; invoiceId: string | null }[]>()
@@ -244,10 +262,26 @@ export async function GET() {
     // chiffrer l'impact du dernier mouvement côté page.
     const bestConv = best && best.conversion_factor !== null && Number(best.conversion_factor) > 0 ? Number(best.conversion_factor) : 1
 
+    // POURQUOI ce générique n'a-t-il pas de prix ? Quatre causes distinctes,
+    // qui appelaient chacune une action différente et s'affichaient toutes
+    // « pas de prix ». On les nomme.
+    const prixEnQuarantaine = refs.reduce((n, r) => n + (quarantaineParArticle.get(String(r.id)) || 0), 0)
+    const price_missing_reason: string | null = best && best.price_base !== null
+      ? null
+      : refs.length === 0
+        ? 'aucune_ref'
+        : refs.some(r => r.needs_conversion)
+          ? 'conversion'
+          : prixEnQuarantaine > 0
+            ? 'quarantaine'
+            : 'jamais_facture'
+
     return {
       ...g,
       default_loss_pct: Number(g.default_loss_pct) || 0,
       refs_count: refs.length,
+      prix_quarantaine: prixEnQuarantaine,
+      price_missing_reason,
       price_ht: best ? best.price_base : null,
       price_date: best ? best.last_price_date : null,
       price_supplier: best ? best.supplier_name : null,
