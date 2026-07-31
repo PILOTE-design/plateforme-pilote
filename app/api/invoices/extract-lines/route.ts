@@ -53,12 +53,18 @@ function parseDate(s: string): string | null {
 /** Le PDF → lignes produits + dates, format pipe (une ligne par article, robuste
  *  aux JSON mal fermés). L'IA n'effectue AUCUN calcul : les montants sont relus
  *  tels quels et vérifiés en code contre le total connu de la facture. */
-async function extractLines(pdfText: string, totalHT: number): Promise<{
-  lines: ExtractedLine[]; delivery_date: string | null; due_date: string | null; nature: 'matiere' | 'hors_matiere'
-}> {
-  const r = await anthropic.messages.create({
-    model: 'claude-haiku-4-5-20251001', max_tokens: 3000,
-    messages: [{ role: 'user', content: `Voici le texte d'une facture fournisseur de boucherie. Total HT connu : ${totalHT.toFixed(2)} EUR.
+const TEXTE_MAX = 60000   // au-delà, le texte est découpé en tranches, jamais coupé net
+const LIGNES_MAX = 400    // plafond de sécurité, atteint = signalé (jamais silencieux)
+
+/** Une passe d'extraction sur un morceau de texte. `tronque` dit si la RÉPONSE
+ *  de l'IA a été coupée par le plafond de tokens — auquel cas il manque des
+ *  lignes, et la facture ne doit surtout pas être déclarée incohérente sur
+ *  cette base : c'est notre lecture qui est incomplète, pas le document. */
+/** Le prompt d'extraction — partagé par la lecture TEXTE et la lecture IMAGE :
+ *  les deux doivent produire exactement le même format, sinon les garde-fous
+ *  déterministes en aval ne s'appliquent pas de la même façon. */
+function promptExtraction(totalHT: number, pdfText: string): string {
+  return `Voici le texte d'une facture fournisseur de boucherie. Total HT connu : ${totalHT.toFixed(2)} EUR.
 COMMENCE par qualifier la facture :
 NATURE|matiere      si elle facture des ingrédients alimentaires ou des consommables de production (viande, charcuterie, épicerie, boissons, emballages, barquettes…)
 NATURE|hors_matiere si elle facture autre chose : matériel, équipement, entretien, services, logiciels, abonnements, avantages salariés, énergie, transport seul, honoraires.
@@ -84,11 +90,13 @@ Règles STRICTES :
 - Point décimal. Une ligne L| par article, remises et consignes comprises (montants négatifs autorisés).
 - Ignorer les sous-totaux, totaux, TVA récapitulative, frais de port SI déjà comptés ailleurs.
 - LIVRAISON = date de LIVRAISON de la marchandise (mentions « livré le », « date de livraison », « expédition », « bon de livraison / BL »). ECHEANCE = date limite de PAIEMENT (« à régler avant le », « échéance », « date d'échéance », « payable au »). Ces deux dates sont DIFFÉRENTES : ne jamais recopier l'échéance en LIVRAISON. Si une seule figure sur la facture, ne renseigner QUE celle-là. Format AAAA-MM-JJ, ligne absente si introuvable.
+${pdfText ? `\nTexte de la facture :\n${pdfText}` : '\nLa facture est le document joint : lis-le directement.'}`
+}
 
-Texte de la facture :
-${pdfText.slice(0, 15000)}` }],
-  })
-  const raw = r.content[0]?.type === 'text' ? r.content[0].text : ''
+/** Analyse la réponse de l'IA (format pipe) — commune aux deux modes de lecture. */
+function parseReponse(raw: string): {
+  lines: ExtractedLine[]; delivery_date: string | null; due_date: string | null; nature: 'matiere' | 'hors_matiere'
+} {
   const lines: ExtractedLine[] = []
   let delivery_date: string | null = null
   let due_date: string | null = null
@@ -114,7 +122,90 @@ ${pdfText.slice(0, 15000)}` }],
       tva_rate: parseNum(p[6] ?? ''),
     })
   }
-  return { lines: lines.slice(0, 120), delivery_date, due_date, nature }
+  return { lines: lines.slice(0, LIGNES_MAX), delivery_date, due_date, nature }
+}
+
+/** Une passe d'extraction sur un morceau de TEXTE. `tronque` dit si la réponse
+ *  de l'IA a été coupée par le plafond de tokens — auquel cas il manque des
+ *  lignes, et la facture ne doit surtout pas être déclarée incohérente sur
+ *  cette base : c'est notre lecture qui est incomplète, pas le document. */
+async function extractLines(pdfText: string, totalHT: number): Promise<{
+  lines: ExtractedLine[]; delivery_date: string | null; due_date: string | null
+  nature: 'matiere' | 'hors_matiere'; tronque: boolean
+}> {
+  const r = await anthropic.messages.create({
+    // 3000 tokens plafonnaient la sortie vers 80-110 lignes : au-delà la réponse
+    // était coupée en silence, la somme ne bouclait plus, et TOUTE la facture
+    // partait en quarantaine. Le budget suit désormais le plafond de lignes.
+    model: 'claude-haiku-4-5-20251001', max_tokens: 16000,
+    messages: [{ role: 'user', content: promptExtraction(totalHT, pdfText) }],
+  })
+  const raw = r.content[0]?.type === 'text' ? r.content[0].text : ''
+  return { ...parseReponse(raw), tronque: r.stop_reason === 'max_tokens' }
+}
+
+/** Lecture complète d'un document, quelle que soit sa longueur.
+ *  Une facture récapitulative de viande dépasse largement 15 000 caractères :
+ *  couper le texte revenait à perdre les dernières lignes ET à faire échouer le
+ *  contrôle de cohérence, donc à jeter les prix des lignes correctement lues.
+ *  Ici le texte est découpé en tranches sur des frontières de ligne, chaque
+ *  tranche est extraite, et les résultats sont concaténés. */
+async function extractLinesLong(pdfText: string, totalHT: number) {
+  if (pdfText.length <= TEXTE_MAX) return extractLines(pdfText, totalHT)
+
+  const morceaux: string[] = []
+  let reste = pdfText
+  while (reste.length > 0) {
+    if (reste.length <= TEXTE_MAX) { morceaux.push(reste); break }
+    const coupe = reste.lastIndexOf('\n', TEXTE_MAX)
+    const at = coupe > TEXTE_MAX / 2 ? coupe : TEXTE_MAX
+    morceaux.push(reste.slice(0, at))
+    reste = reste.slice(at)
+  }
+
+  const lines: ExtractedLine[] = []
+  let delivery_date: string | null = null
+  let due_date: string | null = null
+  let nature: 'matiere' | 'hors_matiere' = 'matiere'
+  let tronque = false
+  for (const [i, m] of morceaux.entries()) {
+    const r = await extractLines(m, totalHT)
+    lines.push(...r.lines)
+    if (r.delivery_date && !delivery_date) delivery_date = r.delivery_date
+    if (r.due_date && !due_date) due_date = r.due_date
+    // La nature se juge sur la PREMIÈRE tranche : c'est là que vit l'en-tête
+    if (i === 0) nature = r.nature
+    if (r.tronque) tronque = true
+  }
+  return { lines: lines.slice(0, LIGNES_MAX), delivery_date, due_date, nature, tronque }
+}
+
+/** Lecture d'un PDF SANS couche texte (scan, photo) : le document est envoyé
+ *  tel quel à l'IA, qui le regarde au lieu de lire un texte inexistant.
+ *  Chemin de REPLI, jamais nominal : il ne se déclenche que sur les documents
+ *  dont on a mesuré qu'ils n'ont pas de texte, donc le surcoût reste borné aux
+ *  fournisseurs qui envoient des scans. Si le modèle n'accepte pas le document,
+ *  l'appel lève — et l'appelant marque « scan illisible » avec le motif, ce qui
+ *  reste très supérieur à l'« erreur » muette d'avant. */
+async function extractLinesVision(buffer: Buffer, totalHT: number): Promise<{
+  lines: ExtractedLine[]; delivery_date: string | null; due_date: string | null
+  nature: 'matiere' | 'hors_matiere'; tronque: boolean
+}> {
+  const r = await anthropic.messages.create({
+    model: 'claude-haiku-4-5-20251001', max_tokens: 16000,
+    messages: [{
+      role: 'user',
+      content: [
+        {
+          type: 'document',
+          source: { type: 'base64', media_type: 'application/pdf', data: buffer.toString('base64') },
+        } as unknown as { type: 'text'; text: string },
+        { type: 'text', text: promptExtraction(totalHT, '') },
+      ],
+    }],
+  })
+  const raw = r.content[0]?.type === 'text' ? r.content[0].text : ''
+  return { ...parseReponse(raw), tronque: r.stop_reason === 'max_tokens' }
 }
 
 export async function POST(request: NextRequest) {
@@ -136,7 +227,7 @@ export async function POST(request: NextRequest) {
    *  boucher, qui doit pouvoir décider quoi faire sans lire du code. */
   const marquer = async (
     invoiceId: string,
-    status: 'done' | 'partial' | 'error' | 'no_file' | 'hors_matiere',
+    status: 'done' | 'partial' | 'error' | 'no_file' | 'hors_matiere' | 'scan_illisible',
     motif: string | null,
     extra: Record<string, unknown> = {},
   ) => {
@@ -211,11 +302,44 @@ export async function POST(request: NextRequest) {
 
     // 2. Extraction des lignes
     const totalHT = parseFloat(String(invoice.amount_ht || 0)) || 0
-    const { lines, delivery_date, due_date, nature } = await extractLines(pdfText, totalHT)
+
+    // SCAN OU PHOTO ? Un PDF sans couche texte rend zéro item par coordonnées et
+    // une chaîne vide par pdf-parse. On l'envoyait quand même à l'IA, qui ne
+    // pouvait rien produire, et la facture finissait « erreur » sans explication.
+    // C'est la signature d'un fournisseur entier à 0 % (LA VIANDE CHAUNOISE :
+    // 8 factures, 16 325 €, aucune lue). On mesure d'abord, on bascule ensuite
+    // sur une lecture VISION du document — le PDF lui-même, pas son texte.
+    const lettres = (pdfText.match(/[A-Za-zÀ-ÿ]/g) || []).length
+    const sansTexte = lettres < 200
+    let luEnVision = false
+    let extraction: Awaited<ReturnType<typeof extractLinesLong>>
+    if (sansTexte) {
+      try {
+        extraction = await extractLinesVision(buffer, totalHT)
+        luEnVision = true
+      } catch (visionErr) {
+        const d = visionErr instanceof Error ? visionErr.message : String(visionErr)
+        await marquer(invoice.id, 'scan_illisible',
+          `Ce PDF ne contient pas de texte (${lettres} lettres lues) : c'est un scan ou une photo. La lecture image a échoué elle aussi (${d.slice(0, 200)}). Demandez au fournisseur une facture PDF native — c'est gratuit et définitif.`)
+        return NextResponse.json({ error: 'PDF sans texte exploitable (scan) — lecture image indisponible.' }, { status: 422 })
+      }
+    } else {
+      extraction = await extractLinesLong(pdfText, totalHT)
+    }
+    const { lines, delivery_date, due_date, nature, tronque } = extraction
 
     // Étage 3 — la nature lue sur le PDF lui-même. C'est lui qui rattrape les
     // catégories fausses du connecteur (des factures de viande arrivent en
     // « frais_divers ») : le document tranche, pas l'étiquette.
+    // Un document illisible n'est PAS une qualification métier : sans texte ni
+    // vision exploitable, on ne conclut jamais « hors matière » — sinon le
+    // verrou fournisseur gèle toutes ses factures suivantes sans les lire.
+    if (nature === 'hors_matiere' && lines.length === 0 && luEnVision && totalHT > 500) {
+      await marquer(invoice.id, 'error',
+        `Document lu en image mais aucun article reconnu, sur une facture de ${totalHT.toFixed(2)} € : trop gros pour être classé « hors matière » sans preuve. À vérifier à la main.`)
+      return NextResponse.json({ error: 'Lecture image sans résultat sur une facture significative.' }, { status: 422 })
+    }
+
     if (nature === 'hors_matiere') {
       await service.from('invoice_lines').delete().eq('invoice_id', invoice.id).eq('client_id', clientId)
       const patch: Record<string, unknown> = {}
@@ -225,7 +349,9 @@ export async function POST(request: NextRequest) {
     }
 
     if (lines.length === 0) {
-      await marquer(invoice.id, 'error', `Aucune ligne d'article reconnue sur ce PDF (${pdfText.trim().length} caractères de texte lus). Si le document est un scan ou une photo, demandez un PDF natif au fournisseur.`)
+      await marquer(invoice.id, 'error', luEnVision
+        ? `Aucune ligne d'article reconnue à la lecture image de ce scan. Demandez au fournisseur une facture PDF native.`
+        : `Aucune ligne d'article reconnue sur ce PDF (${pdfText.trim().length} caractères de texte lus, ${lettres} lettres).`)
       return NextResponse.json({ error: 'Aucune ligne reconnue sur ce PDF.' }, { status: 422 })
     }
 
@@ -237,12 +363,31 @@ export async function POST(request: NextRequest) {
     //     doit égaler le montant (sinon l'un des deux est mal lu). C'est ce prix
     //     unitaire qui devient le point de mercuriale — on ne le publie que vérifié.
     const somme = lines.reduce((s, l) => s + l.amount_ht, 0)
-    const coherent = totalHT > 0 && Math.abs(somme - totalHT) / totalHT <= 0.03
+    // AVOIRS : un avoir a un total NÉGATIF. `totalHT > 0` le déclarait donc
+    // toujours incohérent, quelle que soit la qualité de la lecture, et tous ses
+    // prix partaient en quarantaine. On compare l'écart signé à une base absolue.
+    const base = Math.abs(totalHT)
+    const ecartAbs = Math.abs(somme - totalHT)
+    // Plancher d'un euro : une facture de 30 € tombait pour 0,95 € d'arrondi.
+    const coherent = base > 0 && ecartAbs <= Math.max(1, base * 0.03)
+    // Une facture n'est jugée MAL LUE DANS SON ENSEMBLE qu'au-delà d'un écart
+    // massif. Entre les deux, le contrôle qui compte est celui de la LIGNE
+    // (qté × PU = montant) : punir vingt lignes justes pour la faute d'une
+    // seule mettait 15 % des prix au rebut sans raison.
+    const factureSuspecte = base <= 0 || ecartAbs > Math.max(50, base * 0.15) || tronque
     const ligneVerifiee = (l: ExtractedLine): boolean => {
       if (l.unit_price_ht != null && l.quantity != null && l.quantity !== 0) {
         return Math.abs(l.quantity * l.unit_price_ht - l.amount_ht) <= Math.max(0.05, Math.abs(l.amount_ht) * 0.01)
       }
       return true // pas de contradiction vérifiable (prix seul, ou dérivé de la quantité)
+    }
+    /** Un prix DÉRIVÉ (montant ÷ quantité) n'est pas un prix lu : il n'est
+     *  retenu que si l'unité facturée est exploitable. Sans unité, la quantité
+     *  peut être un nombre de colis pour un montant au kilo — et la mercuriale
+     *  publierait un prix faux sans le moindre signal. */
+    const uniteExploitable = (u: string | null): boolean => {
+      const t = normText(u ?? '')
+      return t !== '' && !/^[-+]?[0-9]/.test(t)
     }
 
     // 4. Rattachement aux articles — par code fournisseur, sinon libellé normalisé.
@@ -262,12 +407,17 @@ export async function POST(request: NextRequest) {
     for (const l of lines) {
       const nameKey = normText(l.designation)
       let art = (l.article_code && byCode.get(l.article_code)) || byName.get(nameKey) || null
-      const unitPrice = l.unit_price_ht ?? (l.quantity && l.quantity > 0 ? +(l.amount_ht / l.quantity).toFixed(4) : null)
-      // QUARANTAINE : un prix ne devient un point de mercuriale que si la facture
-      // boucle ET la ligne est vérifiée. Sinon l'article est rattaché SANS prix,
-      // et la ligne stockée SANS prix — « prix manquant » signalé plutôt qu'un
-      // prix douteux publié en silence (mercuriale ET coût des recettes protégés).
-      const promouvoir = coherent && ligneVerifiee(l) && unitPrice !== null
+      const prixLu = l.unit_price_ht
+      const prixDerive = prixLu === null && l.quantity && l.quantity > 0 && uniteExploitable(l.unit)
+        ? +(l.amount_ht / l.quantity).toFixed(4)
+        : null
+      const unitPrice = prixLu ?? prixDerive
+      // QUARANTAINE : un prix ne devient un point de mercuriale que si la LIGNE
+      // se recoupe (qté × PU = montant) et que la facture n'est pas massivement
+      // fausse. Le seuil de 3 % ne condamne plus l'ensemble : il alerte, le
+      // contrôle ligne à ligne tranche. Sinon l'article est rattaché SANS prix —
+      // « prix manquant » signalé plutôt qu'un prix douteux publié en silence.
+      const promouvoir = !factureSuspecte && ligneVerifiee(l) && unitPrice !== null
       if (unitPrice !== null) { if (promouvoir) prixPromus++; else prixQuarantaine++ }
       const prixRetenu = promouvoir ? unitPrice : null
 
@@ -317,14 +467,26 @@ export async function POST(request: NextRequest) {
     // 6. Statut + dates lues sur le PDF (jamais d'écrasement d'une valeur déjà posée).
     // 'done' seulement si la facture boucle ET aucun prix en quarantaine ; sinon
     // 'partial' : les lignes sont gardées, mais des prix restent à valider.
-    const complet = coherent && prixQuarantaine === 0
+    // « Lue complètement » exige au moins UN prix publié : une facture dont
+    // aucune ligne n'a de prix calculable passait pour un succès (quarantaine
+    // à zéro) alors qu'elle n'apportait rien à la mercuriale.
+    const complet = coherent && !tronque && prixQuarantaine === 0 && prixPromus > 0
     // Motif d'une lecture PARTIELLE : les deux chiffres qui expliquent tout —
     // l'écart somme/total et le nombre de prix écartés — étaient jusqu'ici
     // calculés, renvoyés dans le JSON, puis perdus. Ils sont maintenant écrits.
     const ecart = +(somme - totalHT).toFixed(2)
     const motifPartiel = complet ? null : [
+      tronque
+        ? `La réponse de lecture a été coupée : il manque des lignes en fin de facture. Les prix ne sont pas publiés tant que la lecture n'est pas entière.`
+        : null,
+      luEnVision
+        ? `Document sans texte lu en image (scan) — vérifiez les montants avant de valider.`
+        : null,
       !coherent
-        ? `La somme des lignes lues (${somme.toFixed(2)} €) ne boucle pas sur le total de la facture (${totalHT.toFixed(2)} €) : ${ecart > 0 ? '+' : ''}${ecart.toFixed(2)} €.`
+        ? `La somme des lignes lues (${somme.toFixed(2)} €) ne boucle pas sur le total de la facture (${totalHT.toFixed(2)} €) : ${ecart > 0 ? '+' : ''}${ecart.toFixed(2)} €.${factureSuspecte ? ' Écart trop important : aucun prix retenu.' : ' Écart limité : les lignes qui se recoupent ont quand même donné leur prix.'}`
+        : null,
+      prixPromus === 0 && prixQuarantaine === 0 && rows.length > 0
+        ? `Aucune ligne ne porte de prix unitaire exploitable : rien à publier dans la mercuriale.`
         : null,
       prixQuarantaine > 0
         ? `${prixQuarantaine} prix écarté${prixQuarantaine > 1 ? 's' : ''} : non vérifiable${prixQuarantaine > 1 ? 's' : ''} contre le montant de la ligne, donc non publié${prixQuarantaine > 1 ? 's' : ''} dans la mercuriale.`
