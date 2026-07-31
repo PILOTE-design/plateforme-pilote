@@ -22,6 +22,8 @@ export type PayrollEmployee = {
   hourly_rate: string | number | null
   contract_hours: number | string | null
   charges_patronales?: string | number | null
+  /** Semaines payées NON travaillées par an (CP, fériés chômés, RCR) — taux productif */
+  weeks_off_per_year?: string | number | null
   is_minor?: boolean | null
   is_gerant?: boolean | null
 }
@@ -31,7 +33,7 @@ export type PayrollEntry = Record<string, unknown> & { employee_id: string }
 
 /** Colonnes à sélectionner dans `employees` pour alimenter ce moteur */
 export const PAYROLL_EMPLOYEE_COLUMNS =
-  'id, name, hourly_rate, contract_hours, charges_patronales, is_minor, is_gerant'
+  'id, name, hourly_rate, contract_hours, charges_patronales, weeks_off_per_year, is_minor, is_gerant'
 
 /** Colonnes à sélectionner dans `planning_entries` pour alimenter ce moteur */
 export const PAYROLL_ENTRY_COLUMNS =
@@ -139,6 +141,22 @@ export function chargeMultiplier(emp: PayrollEmployee): number {
   const absent = emp.charges_patronales === null || emp.charges_patronales === undefined
   const pct = absent ? (emp.is_gerant ? 0 : 45) : num(emp.charges_patronales)
   return 1 + pct / 100
+}
+
+/** Semaines payées non travaillées par an, à défaut de réglage : 5 semaines de
+ *  CP + ~2 semaines de fériés chômés. Réglable par salarié (fiche RH). */
+export const DEFAULT_WEEKS_OFF = 7
+
+/** Facteur « heure PRODUITE » : une année est payée 52 semaines mais travaillée
+ *  52 − N (CP, fériés chômés, RCR). Le coût d'une heure réellement travaillée
+ *  vaut donc taux payé × 52/(52 − N) — c'est LE taux pour coster un travail
+ *  produit (fiches recettes, production). La PAIE (planning, week-economics)
+ *  reste sur les heures payées : ne jamais lui appliquer ce facteur. */
+export function productiveFactor(emp: PayrollEmployee): number {
+  const raw = emp.weeks_off_per_year
+  const w = raw === null || raw === undefined ? DEFAULT_WEEKS_OFF : num(raw)
+  const weeks = Number.isFinite(w) && w >= 0 && w <= 45 ? w : DEFAULT_WEEKS_OFF
+  return 52 / (52 - weeks)
 }
 
 /** Coût BRUT d'une ligne de planning (avant charges patronales) — CCN 992 */

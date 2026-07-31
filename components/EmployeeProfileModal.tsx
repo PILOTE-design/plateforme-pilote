@@ -15,6 +15,8 @@ export interface EmployeeProfile {
   contract_hours: number
   cp_initial: number
   charges_patronales: number
+  /** Semaines payées non travaillées / an (CP, fériés chômés, RCR) — taux productif des fiches */
+  weeks_off_per_year: number
   hs_cumules: number
   // Champs RH
   position: string | null
@@ -80,6 +82,7 @@ export default function EmployeeProfileModal({ employee, onClose, onSaved }: Pro
           contract_hours:     form.contract_hours,
           cp_initial:         form.cp_initial,
           charges_patronales: form.charges_patronales,
+          weeks_off_per_year: form.weeks_off_per_year,
           hs_cumules:         form.hs_cumules,
           position:           form.position || null,
           hire_date:          form.hire_date || null,
@@ -128,6 +131,10 @@ export default function EmployeeProfileModal({ employee, onClose, onSaved }: Pro
 
   // Coût réel/h chargé
   const coutCharge = form.hourly_rate * (1 + (form.charges_patronales ?? 45) / 100)
+  // Taux PRODUCTIF : le coût d'une heure réellement travaillée (52 semaines
+  // payées ÷ semaines travaillées) — celui que les fiches recettes utilisent
+  const weeksOff = Number.isFinite(form.weeks_off_per_year) && form.weeks_off_per_year >= 0 && form.weeks_off_per_year <= 45 ? form.weeks_off_per_year : 7
+  const coutProductif = coutCharge * 52 / (52 - weeksOff)
 
   return (
     <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
@@ -272,11 +279,27 @@ export default function EmployeeProfileModal({ employee, onClose, onSaved }: Pro
                   className="h-9 text-sm"
                 />
               </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1" title="CP, fériés chômés, RCR — sert au taux productif des fiches recettes">Semaines non travaillées / an</label>
+                <Input
+                  type="number"
+                  min={0} max={20} step={0.5}
+                  value={form.weeks_off_per_year ?? 7}
+                  onChange={e => set('weeks_off_per_year', Math.min(20, Math.max(0, parseFloat(e.target.value) || 0)))}
+                  className="h-9 text-sm"
+                />
+              </div>
               <div className="col-span-2">
-                <div className="flex items-center gap-2 bg-orange-50 border border-orange-100 rounded-lg px-3 py-2">
+                <div className="flex items-center gap-2 flex-wrap bg-orange-50 border border-orange-100 rounded-lg px-3 py-2">
                   <span className="text-xs text-orange-700">Coût réel employeur :</span>
                   <span className="text-sm font-bold text-orange-800">{coutCharge.toFixed(2)} €/h chargé</span>
                   <span className="text-xs text-orange-500 ml-auto">({form.hourly_rate.toFixed(2)} € brut × {(1 + (form.charges_patronales ?? 45) / 100).toFixed(2)})</span>
+                </div>
+                <div className="mt-1.5 flex items-center gap-2 flex-wrap bg-pilote-50 border border-pilote-100 rounded-lg px-3 py-2"
+                  title="Une année est payée 52 semaines mais travaillée 52 moins les semaines d'absence : le coût d'une heure réellement produite est plus élevé que celui d'une heure payée. C'est ce taux que les fiches recettes et la production utilisent — la paie du planning reste sur les heures payées.">
+                  <span className="text-xs text-pilote-800">Coût de l&apos;heure travaillée (fiches recettes) :</span>
+                  <span className="text-sm font-bold text-pilote-800 tabular">{coutProductif.toFixed(2)} €/h productif</span>
+                  <span className="text-xs text-pilote ml-auto tabular">(chargé × 52 ÷ {(52 - weeksOff).toFixed(1).replace('.0', '')} sem. travaillées)</span>
                 </div>
               </div>
               <div>

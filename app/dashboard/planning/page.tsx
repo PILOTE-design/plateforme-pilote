@@ -94,6 +94,7 @@ type Employee = {
   position?: string | null; hire_date?: string | null; contract_end_date?: string | null
   phone?: string | null; email?: string | null; notes?: string | null
   is_minor?: boolean; charges_patronales?: number; hs_cumules?: number
+  weeks_off_per_year?: number
   is_gerant?: boolean; receive_planning_email?: boolean
 }
 type PlanningEntry = {
@@ -1032,7 +1033,7 @@ export default function PlanningPage() {
                             <p
                               className="text-sm font-semibold text-gray-900 leading-tight truncate cursor-pointer hover:text-pilote transition-colors"
                               title="Ouvrir la fiche employé"
-                              onClick={e => { e.stopPropagation(); setProfileEmp({ ...emp, charges_patronales: emp.charges_patronales ?? 45, hs_cumules: emp.hs_cumules ?? 0, position: emp.position ?? null, hire_date: emp.hire_date ?? null, contract_end_date: emp.contract_end_date ?? null, phone: emp.phone ?? null, email: emp.email ?? null, notes: emp.notes ?? null, is_minor: emp.is_minor ?? false, is_gerant: emp.is_gerant ?? false, receive_planning_email: emp.receive_planning_email ?? true, cp_initial: emp.cp_initial ?? 0 }) }}
+                              onClick={e => { e.stopPropagation(); setProfileEmp({ ...emp, charges_patronales: emp.charges_patronales ?? 45, weeks_off_per_year: emp.weeks_off_per_year ?? 7, hs_cumules: emp.hs_cumules ?? 0, position: emp.position ?? null, hire_date: emp.hire_date ?? null, contract_end_date: emp.contract_end_date ?? null, phone: emp.phone ?? null, email: emp.email ?? null, notes: emp.notes ?? null, is_minor: emp.is_minor ?? false, is_gerant: emp.is_gerant ?? false, receive_planning_email: emp.receive_planning_email ?? true, cp_initial: emp.cp_initial ?? 0 }) }}
                             >{emp.name}</p>
                             {alerts.length > 0 && (
                               <span title={alerts.join('\n')} className="flex-shrink-0">
