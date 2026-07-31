@@ -660,7 +660,7 @@ export default function FichePanel({
         <div className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-1.5 text-xs text-gray-500">
           <span className="flex items-center gap-1.5"><Users className="w-3.5 h-3.5 text-gray-400" />
             Fabriqué par <span className="font-semibold text-gray-700">{employeeName ?? 'taux moyen de l’équipe'}</span>
-            {c?.labor_rate_ht != null && <span className="tabular">· {fmtEuro(c.labor_rate_ht)}/h chargé</span>}
+            {c?.labor_rate_ht != null && <span className="tabular">· {fmtEuro(c.labor_rate_ht)}/h productif</span>}
           </span>
           {recipe.notes && <span className="text-gray-500">Notes : <span className="text-gray-700">{recipe.notes}</span></span>}
           <span className="text-gray-400">Nom, production, TVA, employé et ingrédients se modifient via « Modifier la fiche ».</span>
