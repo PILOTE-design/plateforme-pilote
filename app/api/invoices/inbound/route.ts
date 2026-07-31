@@ -116,8 +116,13 @@ Si montant HT absent, déduire de TTC : HT = TTC / 1.{tva_rate/100+1}`
   // Semaine d'imputation : livraison si l'IA l'a lue, sinon date de facture ;
   // repli sur la date de facture parsée SEULEMENT si aucune date exploitable (la
   // facture reste « à vérifier », donc hors marge tant qu'elle n'est pas validée).
-  const { week, year } = weekForInvoice(invoiceData.delivery_date ?? null, invoiceData.invoice_date ?? null)
-    ?? getISOWeek(invoiceDate)
+  // L'échéance de paiement est passée en 3e argument : une date de livraison qui
+  // lui est égale (confusion classique de l'IA) est écartée par le garde-fou.
+  const { week, year } = weekForInvoice(
+    invoiceData.delivery_date ?? null,
+    invoiceData.invoice_date ?? null,
+    invoiceData.due_date ?? null,
+  ) ?? getISOWeek(invoiceDate)
 
   const amountHT  = parseFloat(invoiceData.amount_ht)  || 0
   const tvaRate   = parseFloat(invoiceData.tva_rate)   || 20
