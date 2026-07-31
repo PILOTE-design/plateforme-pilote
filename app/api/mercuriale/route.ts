@@ -163,7 +163,16 @@ export async function GET() {
     const needs_conversion = base !== null && kind !== null && kind !== base && !hasConv
     const conv = hasConv ? Number(a.conversion_factor) : 1
     const price_base = last !== null && !needs_conversion ? last / conv : null
-    return { ...a, last_price_ht: last, previous_price, variation_pct, price_base, needs_conversion }
+    // La FACTURE d'où vient le dernier prix : sans elle, impossible de trancher
+    // « est-ce le même produit ? » depuis la file de rapprochement — alors que
+    // les lignes de mouvement ouvrent la facture depuis #154.
+    return {
+      ...a,
+      last_price_ht: last,
+      previous_price, variation_pct, price_base, needs_conversion,
+      last_invoice_id: pts[0]?.invoiceId ?? null,
+      last_seen: pts[0]?.date ?? a.last_price_date ?? null,
+    }
   })
 
   // Regroupement sous les génériques ; le prix du générique = la réf au dernier
@@ -217,12 +226,14 @@ export async function GET() {
     // Historique 12 mois : les prix PAYÉS (toutes réfs utilisables confondues,
     // ramenés à l'unité de base), triés par date de facture. Une réf sans
     // conversion d'unité n'y entre pas — même règle que le prix du jour.
-    const points: { d: string; p: number }[] = []
+    // Le FOURNISSEUR voyage avec chaque point : c'est lui qui permet de dire
+    // « 12,40 € chez Aubret → 13,90 € chez Metro » plutôt qu'un écart anonyme.
+    const points: { d: string; p: number; s: string | null }[] = []
     for (const r of refs) {
       if (r.needs_conversion) continue
       const conv = r.conversion_factor !== null && Number(r.conversion_factor) > 0 ? Number(r.conversion_factor) : 1
       const rpts = (pointsByArticle.get(r.id) || []).slice().sort((a, b) => a.date.localeCompare(b.date))
-      for (const pt of rpts) points.push({ d: pt.date, p: round4(pt.price / conv) })
+      for (const pt of rpts) points.push({ d: pt.date, p: round4(pt.price / conv), s: r.supplier_name ?? null })
       // Mouvements : chaque changement de prix de CETTE réf daté des 30 derniers jours
       for (let i = 1; i < rpts.length; i++) {
         const prev = rpts[i - 1], cur = rpts[i]
@@ -246,10 +257,11 @@ export async function GET() {
     }
     points.sort((a, b) => a.d.localeCompare(b.d))
     // La courbe se contente des inflexions : les prix identiques consécutifs
-    // sont regroupés, et seuls les 40 derniers points voyagent vers la page.
+    // sont regroupés. Les points voyagent AVEC leur date — la page les place
+    // désormais sur un axe de temps, plus sur leur rang (M11).
     const history: { d: string; p: number }[] = []
     for (const pt of points) {
-      if (history.length === 0 || history[history.length - 1].p !== pt.p) history.push(pt)
+      if (history.length === 0 || history[history.length - 1].p !== pt.p) history.push({ d: pt.d, p: pt.p })
     }
 
     // Fiches utilisatrices, la plus grosse consommatrice d'abord
@@ -268,9 +280,33 @@ export async function GET() {
           })
           .sort((a, b) => b.qty_brute - a.qty_brute)
       : []
-    // Prix précédent du générique (celui de sa meilleure réf, converti) — pour
-    // chiffrer l'impact du dernier mouvement côté page.
-    const bestConv = best && best.conversion_factor !== null && Number(best.conversion_factor) > 0 ? Number(best.conversion_factor) : 1
+    // Prix PRÉCÉDENT DU GÉNÉRIQUE — toutes réfs confondues (M10).
+    //
+    // C'était jusqu'ici le prix précédent de la seule MEILLEURE RÉF. Quand le
+    // dernier achat change de fournisseur, le prix du jour saute mais le prix
+    // « précédent » restait celui du nouveau fournisseur — souvent identique.
+    // Le bloc « impact sur les fiches recettes » annonçait alors zéro impact
+    // PRÉCISÉMENT quand le coût venait de bouger, et le KPI « prix en hausse »
+    // ratait le mouvement. On lit maintenant la série du générique : le dernier
+    // prix payé AVANT celui du jour et DIFFÉRENT de lui, quel que soit le
+    // fournisseur — avec son nom, pour que l'écran puisse dire chez qui.
+    const prixJour = best ? best.price_base : null
+    const dateJour = best ? String(best.last_price_date || '') : ''
+    let prevPoint: { d: string; p: number; s: string | null } | null = null
+    if (prixJour !== null) {
+      for (let i = points.length - 1; i >= 0; i--) {
+        const pt = points[i]
+        if (dateJour && pt.d > dateJour) continue   // postérieur au prix affiché
+        if (pt.p === prixJour) continue             // même prix : pas un mouvement
+        prevPoint = pt
+        break
+      }
+    }
+    // Variation DU GÉNÉRIQUE (et non de sa meilleure réf) : c'est elle qui
+    // alimente le KPI « prix en hausse » et le filtre du catalogue.
+    const variationGenerique = prixJour !== null && prevPoint !== null && prevPoint.p !== 0
+      ? Math.round(((prixJour - prevPoint.p) / prevPoint.p) * 1000) / 10
+      : null
 
     // POURQUOI ce générique n'a-t-il pas de prix ? Quatre causes distinctes,
     // qui appelaient chacune une action différente et s'affichaient toutes
@@ -295,9 +331,17 @@ export async function GET() {
       price_ht: best ? best.price_base : null,
       price_date: best ? best.last_price_date : null,
       price_supplier: best ? best.supplier_name : null,
-      variation_pct: best ? best.variation_pct : null,
-      prev_price_ht: best && best.previous_price !== null ? round4(best.previous_price / bestConv) : null,
+      variation_pct: variationGenerique,
+      /** Variation de la seule meilleure réf — conservée pour le détail par réf */
+      variation_ref_pct: best ? best.variation_pct : null,
+      prev_price_ht: prevPoint ? prevPoint.p : null,
+      prev_price_supplier: prevPoint ? prevPoint.s : null,
+      prev_price_date: prevPoint ? prevPoint.d : null,
       history: history.slice(-40),
+      /** Nombre de points écartés par le plafond d'affichage de la courbe :
+       *  sans lui, le « Min 12 mois » pouvait porter sur un prix absent du
+       *  dessin, sans que rien ne le signale (M11). */
+      history_tronque: Math.max(0, history.length - 40),
       points_12m: points.length,
       min_12m: points.length > 0 ? Math.min(...points.map(x => x.p)) : null,
       max_12m: points.length > 0 ? Math.max(...points.map(x => x.p)) : null,
