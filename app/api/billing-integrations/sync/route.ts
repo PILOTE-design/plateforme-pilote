@@ -72,6 +72,7 @@ export async function POST(req: NextRequest) {
     const syncResult = await prov.fetchWeekInvoices(integ.api_token, from, to, integ.company_id)
 
     let syncError: string | null = syncResult.error ?? null
+    let pdfInfo: string | null = null
     let imported = 0
 
     if (syncResult.success && syncResult.invoices.length > 0) {
@@ -116,7 +117,15 @@ export async function POST(req: NextRequest) {
         // Échéance, statut de paiement, PDF stocké — updates ciblés post-upsert
         // (cf. lib/billing-providers/enrich). Non bloquant : les montants sont déjà là.
         try {
-          await enrichInvoicesAfterSync(service, clientId, enriched)
+          // Le bilan de l'enrichissement était calculé puis JETÉ : impossible de
+          // savoir si les PDF de la semaine étaient bien arrivés. Il est désormais
+          // remonté dans le diagnostic de synchro.
+          const bilan = await enrichInvoicesAfterSync(service, clientId, enriched)
+          if (bilan) {
+            const manquants = (bilan.echecs ?? 0) + (bilan.sansUrl ?? 0)
+            pdfInfo = `${bilan.pdfs} PDF archivé${bilan.pdfs > 1 ? 's' : ''}`
+              + (manquants > 0 ? ` · ${manquants} manquant${manquants > 1 ? 's' : ''}` : '')
+          }
         } catch (e) { console.error('Enrichissement factures:', e) }
       }
     }
@@ -127,7 +136,7 @@ export async function POST(req: NextRequest) {
       last_sync_at:     new Date().toISOString(),
       last_sync_status: ok ? 'success' : 'error',
       // En succès, on stocke l'éventuel diagnostic (champs de date côté API) — non bloquant
-      last_sync_error:  syncError ?? syncResult.debug ?? null,
+      last_sync_error:  syncError ?? [pdfInfo, syncResult.debug].filter(Boolean).join(' · ') ?? null,
       invoices_synced:  imported,
       updated_at:       new Date().toISOString(),
     }).eq('id', integ.id)
