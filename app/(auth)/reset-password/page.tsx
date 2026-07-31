@@ -22,10 +22,35 @@ export default function ResetPasswordPage() {
 
   useEffect(() => {
     const supabase = createClient()
-    supabase.auth.getSession().then(({ data }) => {
+
+    async function init() {
+      const tokenHash = new URLSearchParams(window.location.search).get('token_hash')
+
+      // Nouveau flux « maison » : le lien reçu par email porte un token_hash de
+      // récupération. On l'échange contre une session ICI (verifyOtp), sans jamais
+      // dépendre du redirect_to / de la Site URL de Supabase.
+      if (tokenHash) {
+        const { error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type: 'recovery' })
+        if (!error) {
+          setReady(true)
+          setChecking(false)
+          return
+        }
+        // Jeton déjà consommé (rafraîchissement de la page) mais session encore
+        // active → on laisse continuer plutôt que d'afficher « lien expiré » à tort.
+        const { data } = await supabase.auth.getSession()
+        setReady(!!data.session)
+        setChecking(false)
+        return
+      }
+
+      // Repli : ancien lien passé par /auth/callback (session déjà posée).
+      const { data } = await supabase.auth.getSession()
       setReady(!!data.session)
       setChecking(false)
-    })
+    }
+
+    init()
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
       if (session) {
         setReady(true)
