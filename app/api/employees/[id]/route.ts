@@ -20,7 +20,7 @@ export async function PATCH(
   const body = await req.json() as Record<string, unknown>
   const allowed = [
     'name', 'hourly_rate', 'contract_type', 'contract_hours', 'cp_initial',
-    'charges_patronales', 'hs_cumules',
+    'charges_patronales', 'hs_cumules', 'weeks_off_per_year',
     // Champs RH
     'position', 'hire_date', 'contract_end_date', 'phone', 'email', 'notes', 'is_minor',
     // Gérant (pas de majoration HS) + envoi du planning par email activable/désactivable
