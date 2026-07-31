@@ -22,6 +22,7 @@ import { resolveClientId } from '@/lib/resolve-client-id'
 import { normalizeSupplierName, supplierSociete, societeKey } from '@/lib/supplier-memory'
 import { normText } from '@/lib/postes'
 import { pdfToLines } from '@/lib/pdf-lines'
+import { plausibleDelivery } from '@/lib/invoice-week'
 import Anthropic from '@anthropic-ai/sdk'
 
 export const maxDuration = 60
@@ -82,7 +83,7 @@ Règles STRICTES :
 - UNITE = kg, pièce, colis, L… telle qu'écrite.
 - Point décimal. Une ligne L| par article, remises et consignes comprises (montants négatifs autorisés).
 - Ignorer les sous-totaux, totaux, TVA récapitulative, frais de port SI déjà comptés ailleurs.
-- LIVRAISON = date de livraison (ou d'expédition/BL) si présente, ECHEANCE = date limite de paiement si présente. Format AAAA-MM-JJ, ligne absente si introuvable.
+- LIVRAISON = date de LIVRAISON de la marchandise (mentions « livré le », « date de livraison », « expédition », « bon de livraison / BL »). ECHEANCE = date limite de PAIEMENT (« à régler avant le », « échéance », « date d'échéance », « payable au »). Ces deux dates sont DIFFÉRENTES : ne jamais recopier l'échéance en LIVRAISON. Si une seule figure sur la facture, ne renseigner QUE celle-là. Format AAAA-MM-JJ, ligne absente si introuvable.
 
 Texte de la facture :
 ${pdfText.slice(0, 15000)}` }],
@@ -296,7 +297,15 @@ export async function POST(request: NextRequest) {
     // 'partial' : les lignes sont gardées, mais des prix restent à valider.
     const complet = coherent && prixQuarantaine === 0
     const patch: Record<string, unknown> = { lines_status: complet ? 'done' : 'partial' }
-    if (delivery_date && !invoice.delivery_date) patch.delivery_date = delivery_date
+    // GARDE-FOU DATES (31/07) : une date de livraison lue par l'IA n'est écrite
+    // que si elle est PLAUSIBLE — jamais l'échéance de paiement recopiée, jamais
+    // une date hors de la fenêtre autour de la facture. Mesuré en prod : 10
+    // livraisons fausses sur 61, dont 8 égales à l'échéance. Une date écartée
+    // laisse la colonne vide : l'imputation retombe sur la date de facture
+    // (déterministe) au lieu de partir dans une autre semaine.
+    const echeance = due_date ?? (invoice.due_date as string | null) ?? null
+    const livraisonRetenue = plausibleDelivery(delivery_date, invoice.invoice_date as string | null, echeance)
+    if (livraisonRetenue && !invoice.delivery_date) patch.delivery_date = livraisonRetenue
     if (due_date && !invoice.due_date) patch.due_date = due_date
     await service.from('invoices').update(patch).eq('id', invoice.id)
 
