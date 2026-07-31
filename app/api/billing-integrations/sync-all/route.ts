@@ -11,6 +11,14 @@ import { loadSupplierCategories, rememberedCategory } from '@/lib/supplier-memor
 import { enrichInvoicesAfterSync } from '@/lib/billing-providers/enrich'
 import { weekForInvoice } from '@/lib/invoice-week'
 
+// Le cron itère sur TOUTES les intégrations : appel du connecteur, classification
+// IA, puis téléchargement des PDF quatre par quatre. Sans plafond déclaré, la
+// route retombait sur le défaut de la plateforme et pouvait être tuée en cours
+// de route — les factures étaient insérées, les PDF restants perdus (leur URL
+// expire en 30 min), et rien ne l'indiquait puisque la mise à jour finale du
+// statut n'était jamais atteinte. C'est un producteur direct de factures sans PDF.
+export const maxDuration = 300
+
 function getWeekBounds(weekNumber: number, year: number): [Date, Date] {
   const jan4 = new Date(Date.UTC(year, 0, 4))
   const dow = jan4.getUTCDay() || 7
@@ -77,6 +85,7 @@ async function runSyncAll(req: NextRequest) {
     const syncResult = await prov.fetchWeekInvoices(integ.api_token, from, to, integ.company_id)
 
     let syncError: string | null = syncResult.error ?? null
+    let pdfInfo: string | null = null
     let imported = 0
 
     if (syncResult.success && syncResult.invoices.length > 0) {
@@ -129,7 +138,14 @@ async function runSyncAll(req: NextRequest) {
         // Échéance, statut de paiement, PDF stocké — mêmes updates ciblés que la
         // sync manuelle (cf. lib/billing-providers/enrich). Non bloquant.
         try {
-          await enrichInvoicesAfterSync(service, integ.client_id, enriched)
+          // Le bilan était calculé puis jeté : sur le cron, personne ne voyait
+          // que des PDF manquaient à l'appel. Il est désormais consigné.
+          const bilan = await enrichInvoicesAfterSync(service, integ.client_id, enriched)
+          if (bilan) {
+            const manquants = (bilan.echecs ?? 0) + (bilan.sansUrl ?? 0)
+            pdfInfo = `${bilan.pdfs} PDF archivé${bilan.pdfs > 1 ? 's' : ''}`
+              + (manquants > 0 ? ` · ${manquants} manquant${manquants > 1 ? 's' : ''}` : '')
+          }
         } catch (e) { console.error('Enrichissement factures:', e) }
       }
     }
@@ -139,7 +155,7 @@ async function runSyncAll(req: NextRequest) {
     await service.from('billing_integrations').update({
       last_sync_at:     new Date().toISOString(),
       last_sync_status: ok ? 'success' : 'error',
-      last_sync_error:  syncError,
+      last_sync_error:  syncError ?? pdfInfo,
       invoices_synced:  imported,
     }).eq('id', integ.id)
 

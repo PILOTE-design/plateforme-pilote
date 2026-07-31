@@ -18,8 +18,9 @@ export async function enrichInvoicesAfterSync(
   service: Service,
   clientId: string,
   invoices: ProviderInvoice[],
-): Promise<{ pdfs: number; updated: number }> {
+): Promise<{ pdfs: number; updated: number; echecs: number; sansUrl: number }> {
   let pdfs = 0
+  let echecs = 0, sansUrl = 0
   let updated = 0
   const CHUNK = 4 // téléchargements de PDF en parallèle — budget 60 s de la sync
 
@@ -40,6 +41,11 @@ export async function enrichInvoicesAfterSync(
       if (inv.payment_status && inv.payment_status !== row.payment_status) patch.payment_status = inv.payment_status
       if (inv.external_id) patch.external_id = inv.external_id
 
+      if (!inv.file_url && !row.file_path) {
+        // Pennylane n'a pas renvoyé d'URL de fichier : à compter, sinon on ne
+        // sait pas distinguer « pas de PDF chez eux » d'un échec de notre côté.
+        sansUrl++
+      }
       if (inv.file_url && !row.file_path) {
         try {
           const res = await fetch(inv.file_url, { signal: AbortSignal.timeout(10000) })
@@ -49,10 +55,16 @@ export async function enrichInvoicesAfterSync(
             const { error } = await service.storage.from('invoice-files')
               .upload(path, buf, { contentType: 'application/pdf', upsert: true })
             if (!error) { patch.file_path = path; pdfs++ }
+            else { echecs++; console.error('[enrich] archivage PDF impossible', inv.invoice_number, error.message) }
+          } else {
+            // 403 = URL expirée (30 min chez Pennylane) : la cause la plus
+            // fréquente des factures sans document, jusqu'ici totalement muette.
+            echecs++
+            console.error('[enrich] telechargement PDF refuse', inv.invoice_number, res.status)
           }
-        } catch {
-          // Pas de PDF cette fois : l'extraction marquera no_file. La sync, elle,
-          // n'échoue JAMAIS pour un fichier — les montants sont déjà en base.
+        } catch (e) {
+          echecs++
+          console.error('[enrich] telechargement PDF impossible', inv.invoice_number, e instanceof Error ? e.message : String(e))
         }
       }
 
@@ -62,5 +74,5 @@ export async function enrichInvoicesAfterSync(
       }
     }))
   }
-  return { pdfs, updated }
+  return { pdfs, updated, echecs, sansUrl }
 }
