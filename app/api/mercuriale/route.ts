@@ -9,6 +9,14 @@
 // en tête de GET). Ne restent en file que les réfs qui se ressemblent — même
 // tronc de libellé entre elles ou avec un générique existant (suggestion).
 // Le prix d'un générique = dernier prix connu parmi ses réfs, converti.
+// Depuis M-A (31/07) la réponse porte aussi la SURVEILLANCE des prix :
+//   · `history` par générique — les prix payés sur 12 mois (points des réfs
+//     utilisables, ramenés à l'unité de base), min/max sur la fenêtre ;
+//   · `moves` — les CHANGEMENTS de prix des 30 derniers jours (par réf : deux
+//     factures consécutives à prix différent), pour la section « Mouvements ».
+// Seuls les prix VÉRIFIÉS participent (un prix en quarantaine a
+// unit_price_ht NULL et n'apparaît jamais ici) ; une réf sans conversion
+// d'unité reste exclue — mêmes règles que le prix du jour, rien d'inventé.
 import { NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { resolveClientId } from '@/lib/resolve-client-id'
@@ -30,6 +38,12 @@ export async function GET() {
   // pour que la réponse reflète l'état à jour. Idempotent, silencieux à vide.
   await ensureAutoGenerics(service, clientId)
 
+  // Fenêtres de surveillance : l'historique se lit sur 12 mois glissants, les
+  // mouvements sur 30 jours. Dates au format facture (YYYY-MM-DD).
+  const isoDay = (t: number) => new Date(t).toISOString().slice(0, 10)
+  const cutoff12m = isoDay(Date.now() - 365 * 86400000)
+  const cutoff30j = isoDay(Date.now() - 30 * 86400000)
+
   const [{ data: generics }, { data: articles }, { data: pricePoints }, { data: pending }] = await Promise.all([
     service.from('generic_articles')
       .select('id, name, base_unit, category, default_loss_pct, auto_created')
@@ -40,12 +54,14 @@ export async function GET() {
       .eq('client_id', clientId)
       .order('updated_at', { ascending: false })
       .limit(1000),
-    // Points de prix récents (pour la variation) — la date vient de la facture
+    // Points de prix sur 12 mois (variation, historique, mouvements) — la date
+    // vient de la facture ; un prix en quarantaine (unit_price_ht NULL) est absent
     service.from('invoice_lines')
       .select('article_id, unit_price_ht, invoices!inner(invoice_date)')
       .eq('client_id', clientId)
       .not('article_id', 'is', null)
       .not('unit_price_ht', 'is', null)
+      .gte('invoices.invoice_date', cutoff12m)
       .order('created_at', { ascending: false })
       .limit(2000),
     // File d'attente d'extraction : PDF présent, lignes jamais lues (ou échec à
@@ -113,10 +129,51 @@ export async function GET() {
     }
   }
 
+  // Mouvements de prix des 30 derniers jours, collectés générique par générique
+  // (par réf : deux factures consécutives à prix différent = un mouvement).
+  const moves: any[] = []
+  const round4 = (n: number) => Math.round(n * 10000) / 10000
+
   const genericsOut = (generics || []).map((g: any) => {
     const refs = (refsByGeneric.get(g.id) || [])
       .sort((x, y) => String(y.last_price_date || '').localeCompare(String(x.last_price_date || '')))
     const best = refs.find(r => r.price_base !== null) || null
+
+    // Historique 12 mois : les prix PAYÉS (toutes réfs utilisables confondues,
+    // ramenés à l'unité de base), triés par date de facture. Une réf sans
+    // conversion d'unité n'y entre pas — même règle que le prix du jour.
+    const points: { d: string; p: number }[] = []
+    for (const r of refs) {
+      if (r.needs_conversion) continue
+      const conv = r.conversion_factor !== null && Number(r.conversion_factor) > 0 ? Number(r.conversion_factor) : 1
+      const rpts = (pointsByArticle.get(r.id) || []).slice().sort((a, b) => a.date.localeCompare(b.date))
+      for (const pt of rpts) points.push({ d: pt.date, p: round4(pt.price / conv) })
+      // Mouvements : chaque changement de prix de CETTE réf daté des 30 derniers jours
+      for (let i = 1; i < rpts.length; i++) {
+        const prev = rpts[i - 1], cur = rpts[i]
+        if (cur.price !== prev.price && cur.date >= cutoff30j) {
+          moves.push({
+            date: cur.date,
+            generic_id: g.id,
+            generic_name: g.name,
+            base_unit: g.base_unit === 'piece' ? 'piece' : 'kg',
+            ref_name: r.name,
+            supplier_name: r.supplier_name ?? null,
+            old_base: round4(prev.price / conv),
+            new_base: round4(cur.price / conv),
+            pct: prev.price !== 0 ? Math.round(((cur.price - prev.price) / prev.price) * 1000) / 10 : null,
+          })
+        }
+      }
+    }
+    points.sort((a, b) => a.d.localeCompare(b.d))
+    // La courbe se contente des inflexions : les prix identiques consécutifs
+    // sont regroupés, et seuls les 40 derniers points voyagent vers la page.
+    const history: { d: string; p: number }[] = []
+    for (const pt of points) {
+      if (history.length === 0 || history[history.length - 1].p !== pt.p) history.push(pt)
+    }
+
     return {
       ...g,
       default_loss_pct: Number(g.default_loss_pct) || 0,
@@ -125,9 +182,18 @@ export async function GET() {
       price_date: best ? best.last_price_date : null,
       price_supplier: best ? best.supplier_name : null,
       variation_pct: best ? best.variation_pct : null,
+      history: history.slice(-40),
+      points_12m: points.length,
+      min_12m: points.length > 0 ? Math.min(...points.map(x => x.p)) : null,
+      max_12m: points.length > 0 ? Math.max(...points.map(x => x.p)) : null,
       refs,
     }
   })
+
+  // Les mouvements les plus récents d'abord (à date égale, le plus fort écart) ;
+  // la réponse est plafonnée mais annonce le total — jamais de troncature muette.
+  moves.sort((a, b) => String(b.date).localeCompare(String(a.date)) || Math.abs(b.pct ?? 0) - Math.abs(a.pct ?? 0))
+  const movesOut = moves.slice(0, 50)
 
   // File « À rapprocher » : chaque réf restante porte sa clé de rapprochement
   // (deux premiers mots significatifs), une suggestion si un générique existant
@@ -147,5 +213,11 @@ export async function GET() {
     }
   })
 
-  return NextResponse.json({ generics: genericsOut, queue: queueOut, pending: pending || [] })
+  return NextResponse.json({
+    generics: genericsOut,
+    queue: queueOut,
+    pending: pending || [],
+    moves: movesOut,
+    moves_total: moves.length,
+  })
 }
