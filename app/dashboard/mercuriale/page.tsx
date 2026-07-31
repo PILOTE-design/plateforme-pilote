@@ -80,6 +80,10 @@ type Generic = {
   max_12m: number | null
   /** Prix précédent (dernière valeur différente) — pour chiffrer l'impact */
   prev_price_ht: number | null
+  /** Nombre de prix lus sur facture mais REFUSÉS par les garde-fous */
+  prix_quarantaine: number
+  /** Pourquoi il n'y a pas de prix — chaque cause appelle une action différente */
+  price_missing_reason: 'aucune_ref' | 'conversion' | 'quarantaine' | 'jamais_facture' | null
   recipes_count: number
   recipes_used: RecipeUse[]
   refs: Ref[]
@@ -115,6 +119,16 @@ type PendingInvoice = {
 
 const fmtEuro = (n: number) => n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'
 const fmtQty = (n: number) => n.toLocaleString('fr-FR', { maximumFractionDigits: 3 })
+
+/** « Pas de prix » a quatre causes qui appellent quatre gestes différents.
+ *  Les nommer, c'est la différence entre un écran qui constate et un écran
+ *  qui dit quoi faire. */
+const MOTIF_PRIX: Record<string, { court: string; quoi_faire: string }> = {
+  aucune_ref:      { court: 'aucune réf rattachée',   quoi_faire: 'Rattachez une réf fournisseur à cet article depuis la file « À rapprocher ».' },
+  conversion:      { court: 'conversion manquante',   quoi_faire: 'Une réf est facturée dans une autre unité : indiquez sa conversion dans l’onglet Associations.' },
+  quarantaine:     { court: 'prix refusés à la lecture', quoi_faire: 'Des prix ont été lus mais écartés faute de vérification. Relancez la lecture de la facture concernée.' },
+  jamais_facture:  { court: 'jamais facturé',         quoi_faire: 'Aucune facture lue ne porte encore cet article — le prix arrivera à la prochaine lecture.' },
+}
 const fmtDate = (s: string | null) => (s ? new Date(s + 'T00:00:00Z').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }) : '—')
 const unitLabel = (u: 'kg' | 'piece') => (u === 'kg' ? 'kg' : 'pièce')
 const titleize = (s: string) => { const t = s.trim().replace(/\s+/g, ' '); return t ? t.charAt(0).toUpperCase() + t.slice(1).toLowerCase() : t }
@@ -1200,7 +1214,11 @@ export default function MercurialePage() {
                         )}
                         <span className="text-[11px] text-gray-400">/ {unitLabel(g.base_unit)}</span>
                         <span className="flex-1" />
-                        <span className="text-xs font-bold text-gray-900 tabular">{g.price_ht !== null ? `${fmtEuro(Number(g.price_ht))} / ${unitLabel(g.base_unit)}` : 'pas de prix'}</span>
+                        <span className="text-xs font-bold text-gray-900 tabular" title={g.price_ht === null && g.price_missing_reason ? MOTIF_PRIX[g.price_missing_reason]?.quoi_faire : undefined}>
+                          {g.price_ht !== null
+                            ? `${fmtEuro(Number(g.price_ht))} / ${unitLabel(g.base_unit)}`
+                            : <span className="text-amber-600">pas de prix — {MOTIF_PRIX[g.price_missing_reason ?? 'jamais_facture']?.court}</span>}
+                        </span>
                         <select value={mergeSel[g.id] ?? ''} onChange={e => setMergeSel(p => ({ ...p, [g.id]: e.target.value }))}
                           className="text-[11px] border border-gray-200 rounded-lg px-1.5 py-1 bg-white max-w-[150px] text-gray-500 focus:outline-none focus:ring-2 focus:ring-pilote-200">
                           <option value="">Fusionner dans…</option>
@@ -1311,6 +1329,12 @@ export default function MercurialePage() {
                                 </td>
                                 <td className="px-4 py-2.5 text-right">
                                   <span className="text-sm font-bold text-gray-900 tabular">{g.price_ht !== null ? fmtEuro(Number(g.price_ht)) : '—'}</span>
+                                  {g.price_ht === null && g.price_missing_reason && (
+                                    <span className="block text-[10px] font-semibold text-amber-600" title={MOTIF_PRIX[g.price_missing_reason]?.quoi_faire}>
+                                      {MOTIF_PRIX[g.price_missing_reason]?.court}
+                                      {g.prix_quarantaine > 0 && g.price_missing_reason === 'quarantaine' ? ` (${g.prix_quarantaine})` : ''}
+                                    </span>
+                                  )}
                                   {(() => {
                                     const alt = cheaperAlt(g)
                                     return alt ? (
