@@ -360,7 +360,7 @@ export default function MercurialePage() {
     }
     let ok = 0, ko = 0
     for (const r of selRefs) {
-      const v = parseFloat((factors[r.id] ??  '').replace(',', '.'))
+      const v = parseFloat((factors[r.id] ?? '').replace(',', '.'))
       const res = await fetch(`/api/articles/${r.id}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ generic_id: genericId, conversion_factor: v > 0 ? v : null }),
