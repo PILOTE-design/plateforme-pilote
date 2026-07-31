@@ -17,6 +17,7 @@ export default function FicheRecettePage() {
   const [recipe, setRecipe] = useState<FicheRecipe | null>(null)
   const [employees, setEmployees] = useState<FicheEmployee[]>([])
   const [generics, setGenerics] = useState<FicheGeneric[]>([])
+  const [target, setTarget] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
 
   const load = useCallback(async () => {
@@ -25,6 +26,10 @@ export default function FicheRecettePage() {
     setRecipe(r ?? null)
     setEmployees(Array.isArray(data?.employees) ? data.employees : [])
     setGenerics(Array.isArray(data?.generics) ? data.generics : [])
+    // Cible de marge de la catégorie de la fiche (même normalisation que la liste)
+    const cat = (r?.category ?? '').trim().toLowerCase()
+    const t = (Array.isArray(data?.targets) ? data.targets : []).find((x: { category: string }) => x.category === cat)
+    setTarget(t ? Number(t.target_marge_pct) : null)
     setLoading(false)
   }, [params.id])
   useEffect(() => { load() }, [load])
@@ -50,6 +55,7 @@ export default function FicheRecettePage() {
           recipe={recipe}
           employees={employees}
           generics={generics}
+          target={target}
           onEditFull={() => router.push(`/dashboard/recettes?edit=${recipe.id}`)}
           onSaved={load}
         />

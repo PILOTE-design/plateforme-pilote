@@ -1,7 +1,8 @@
 // Fiches recettes — liste avec coûts calculés, et création.
 //
 // GET  → { recipes: [{ ...recette, ingredients: [...], cost: RecipeCost }],
-//          labor_rate_ht, generics: [...], employees: [{ id, name, loaded_rate }] }
+//          labor_rate_ht, generics: [...], employees: [{ id, name, loaded_rate }],
+//          targets: [{ category, target_marge_pct }] }   ← cibles de marge par catégorie (R-A)
 // POST → { name, category?, yield_qty?, yield_unit?, labor_minutes?, employee_id?,
 //          selling_price_ttc?, tva_rate?, notes?,
 //          ingredients: [{ generic_id?, article_id?, label, quantity, qty_unit?, loss_pct?, unit?, manual_price_ht? }] }
@@ -29,14 +30,15 @@ export async function GET() {
 
   const service = createServiceClient()
   const clientId = await resolveClientId(service, user.id, user.email)
-  if (!clientId) return NextResponse.json({ recipes: [], labor_rate_ht: null, generics: [], employees: [] })
+  if (!clientId) return NextResponse.json({ recipes: [], labor_rate_ht: null, generics: [], employees: [], targets: [] })
 
-  const [{ data: recipes }, { data: ingredients }, { data: employees }, { data: articles }, { data: generics }] = await Promise.all([
+  const [{ data: recipes }, { data: ingredients }, { data: employees }, { data: articles }, { data: generics }, { data: targets }] = await Promise.all([
     service.from('recipes').select('*').eq('client_id', clientId).eq('active', true).order('name'),
     service.from('recipe_ingredients').select('*').eq('client_id', clientId).order('position'),
     service.from('employees').select(PAYROLL_EMPLOYEE_COLUMNS).eq('client_id', clientId),
     service.from('articles').select('id, unit, last_price_ht, last_price_date, generic_id, conversion_factor').eq('client_id', clientId),
     service.from('generic_articles').select('id, name, base_unit, category, default_loss_pct').eq('client_id', clientId).eq('active', true).order('name'),
+    service.from('recipe_targets').select('category, target_marge_pct').eq('client_id', clientId),
   ])
 
   const emps = (employees || []) as unknown as PayrollEmployee[]
@@ -63,6 +65,7 @@ export async function GET() {
   return NextResponse.json({
     recipes: out,
     labor_rate_ht: averageRate,
+    targets: (targets || []).map((t: any) => ({ category: String(t.category), target_marge_pct: Number(t.target_marge_pct) })),
     generics: [...genericById.values()],
     employees: emps
       .map(e => {
