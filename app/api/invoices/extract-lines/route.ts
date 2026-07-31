@@ -23,6 +23,7 @@ import { normalizeSupplierName, supplierSociete, societeKey } from '@/lib/suppli
 import { normText } from '@/lib/postes'
 import { pdfToLines } from '@/lib/pdf-lines'
 import { plausibleDelivery } from '@/lib/invoice-week'
+import { lireFacturX } from '@/lib/facturx'
 // Le MOTEUR d'extraction vit dans lib/ — un module de route n'exporte que ses
 // verbes HTTP, et la route d'évaluation doit pouvoir rejouer exactement le même
 // code sur un texte archivé (cf. lib/invoice-extract).
@@ -74,6 +75,213 @@ export async function POST(request: NextRequest) {
     .eq('id', invoice_id).eq('client_id', clientId).maybeSingle()
   if (!invoice) return NextResponse.json({ error: 'Facture introuvable' }, { status: 404 })
 
+    // ── PUBLICATION : garde-fous puis écriture. Chemin UNIQUE, partagé par la
+    // lecture structurée (facture électronique), la lecture texte et la lecture
+    // image. Dupliquer la quarantaine par chemin serait le meilleur moyen de la
+    // voir diverger — et un prix douteux publié d'un côté seulement.
+    // Fonction FLÉCHÉE et non déclaration : une déclaration est hoistée, donc
+    // TypeScript la suppose appelable avant le contrôle « facture introuvable »
+    // et perd la certitude que `invoice` existe. Une const affectée ici garde
+    // l'affinage de type — et le compilateur reste un filet, pas une gêne.
+    const publierLignes = async (
+      lines: ExtractedLine[],
+      ctx: {
+        mode: string
+        delivery_date: string | null
+        due_date: string | null
+        tronque: boolean
+        luEnVision?: boolean
+        motifSuffixe?: string
+      },
+    ) => {
+      const { delivery_date, due_date, tronque } = ctx
+      const luEnVision = ctx.luEnVision === true
+      const totalHT = parseFloat(String(invoice.amount_ht || 0)) || 0
+      // 3. Garde-fous déterministes de la lecture, à DEUX niveaux :
+      //   · FACTURE : la somme des lignes doit boucler sur le total (à 3 %). Un total
+      //     inconnu (0) n'est PLUS un laissez-passer — sans total, rien n'est
+      //     vérifiable, donc on ne promeut aucun prix.
+      //   · LIGNE : quand quantité ET prix unitaire figurent tous deux, leur produit
+      //     doit égaler le montant (sinon l'un des deux est mal lu). C'est ce prix
+      //     unitaire qui devient le point de mercuriale — on ne le publie que vérifié.
+      const somme = lines.reduce((s, l) => s + l.amount_ht, 0)
+      // AVOIRS : un avoir a un total NÉGATIF. `totalHT > 0` le déclarait donc
+      // toujours incohérent, quelle que soit la qualité de la lecture, et tous ses
+      // prix partaient en quarantaine. On compare l'écart signé à une base absolue.
+      const base = Math.abs(totalHT)
+      const ecartAbs = Math.abs(somme - totalHT)
+      // Plancher d'un euro : une facture de 30 € tombait pour 0,95 € d'arrondi.
+      const coherent = base > 0 && ecartAbs <= Math.max(1, base * 0.03)
+      // Une facture n'est jugée MAL LUE DANS SON ENSEMBLE qu'au-delà d'un écart
+      // massif. Entre les deux, le contrôle qui compte est celui de la LIGNE
+      // (qté × PU = montant) : punir vingt lignes justes pour la faute d'une
+      // seule mettait 15 % des prix au rebut sans raison.
+      const factureSuspecte = base <= 0 || ecartAbs > Math.max(50, base * 0.15) || tronque
+      /** L'ASSIETTE du prix unitaire : ce par quoi il faut le multiplier pour
+       *  retomber sur le montant de la ligne.
+       *
+       *  Sur une facture de boucherie, la ligne aligne le nombre de colis, le
+       *  poids et le prix au kilo — et c'est le POIDS qui porte le prix, pas le
+       *  nombre de colis. Tant que le format ne connaissait qu'une quantité,
+       *  « 2 pièces × 14,97 €/kg » était comparé à 224,73 € : le contrôle
+       *  échouait, et un prix parfaitement lu partait en quarantaine. Mesuré le
+       *  31/07 : 32 prix refusés sur des factures dont la somme des lignes
+       *  tombait pourtant au centime près. */
+      const assiette = (l: ExtractedLine): number | null =>
+        l.weight_kg != null && l.weight_kg > 0 ? l.weight_kg
+          : (l.quantity != null && l.quantity !== 0 ? l.quantity : null)
+
+      const ligneVerifiee = (l: ExtractedLine): boolean => {
+        const base = assiette(l)
+        if (l.unit_price_ht != null && base !== null) {
+          return Math.abs(base * l.unit_price_ht - l.amount_ht) <= Math.max(0.05, Math.abs(l.amount_ht) * 0.01)
+        }
+        return true // pas de contradiction vérifiable (prix seul, ou dérivé de la quantité)
+      }
+      /** Un prix DÉRIVÉ (montant ÷ quantité) n'est pas un prix lu : il n'est
+       *  retenu que si l'unité facturée est exploitable. Sans unité, la quantité
+       *  peut être un nombre de colis pour un montant au kilo — et la mercuriale
+       *  publierait un prix faux sans le moindre signal. */
+      const uniteExploitable = (u: string | null): boolean => {
+        const t = normText(u ?? '')
+        return t !== '' && !/^[-+]?[0-9]/.test(t)
+      }
+
+      // 4. Rattachement aux articles — par code fournisseur, sinon libellé normalisé.
+      const supplierKey = normalizeSupplierName(supplierSociete(invoice.supplier_name || '')) || ''
+      const { data: existing } = await service.from('articles')
+        .select('id, article_code, name_key, last_price_date, price_count')
+        .eq('client_id', clientId).eq('supplier_key', supplierKey)
+      const byCode = new Map<string, any>()
+      const byName = new Map<string, any>()
+      for (const a of existing || []) {
+        if (a.article_code) byCode.set(String(a.article_code), a)
+        else byName.set(String(a.name_key), a)
+      }
+
+      const rows: any[] = []
+      let prixPromus = 0, prixQuarantaine = 0
+      for (const l of lines) {
+        const nameKey = normText(l.designation)
+        let art = (l.article_code && byCode.get(l.article_code)) || byName.get(nameKey) || null
+        const prixLu = l.unit_price_ht
+        // Un poids facturé est une assiette SÛRE : il est en kilos par définition,
+        // donc le prix qu'on en déduit est un prix au kilo — pas besoin que
+        // l'unité de la ligne soit exploitable, elle ne décide de rien ici.
+        const prixDerive = prixLu !== null ? null
+          : l.weight_kg != null && l.weight_kg > 0
+            ? +(l.amount_ht / l.weight_kg).toFixed(4)
+            : l.quantity && l.quantity > 0 && uniteExploitable(l.unit)
+              ? +(l.amount_ht / l.quantity).toFixed(4)
+              : null
+        const unitPrice = prixLu ?? prixDerive
+        // QUARANTAINE : un prix ne devient un point de mercuriale que si la LIGNE
+        // se recoupe (qté × PU = montant) et que la facture n'est pas massivement
+        // fausse. Le seuil de 3 % ne condamne plus l'ensemble : il alerte, le
+        // contrôle ligne à ligne tranche. Sinon l'article est rattaché SANS prix —
+        // « prix manquant » signalé plutôt qu'un prix douteux publié en silence.
+        const promouvoir = !factureSuspecte && ligneVerifiee(l) && unitPrice !== null
+        if (unitPrice !== null) { if (promouvoir) prixPromus++; else prixQuarantaine++ }
+        const prixRetenu = promouvoir ? unitPrice : null
+
+        if (!art && nameKey) {
+          const { data: created } = await service.from('articles').insert({
+            client_id: clientId, name: l.designation, name_key: nameKey, unit: l.unit,
+            supplier_key: supplierKey, supplier_name: invoice.supplier_name,
+            article_code: l.article_code,
+            last_price_ht: prixRetenu,
+            last_price_date: promouvoir ? invoice.invoice_date : null,
+            price_count: promouvoir ? 1 : 0,
+          }).select('id, article_code, name_key, last_price_date, price_count').single()
+          if (created) {
+            art = created
+            if (created.article_code) byCode.set(String(created.article_code), created)
+            else byName.set(String(created.name_key), created)
+          }
+        } else if (art && promouvoir) {
+          // Dernier prix : seule une facture plus récente (ou du même jour) le remplace.
+          const patch: Record<string, unknown> = { price_count: (art.price_count || 0) + 1, updated_at: new Date().toISOString() }
+          if (!art.last_price_date || invoice.invoice_date >= art.last_price_date) {
+            patch.last_price_ht = unitPrice
+            patch.last_price_date = invoice.invoice_date
+          }
+          await service.from('articles').update(patch).eq('id', art.id)
+          art.price_count = (art.price_count || 0) + 1
+        }
+        // Une ligne non promue laisse l'article INCHANGÉ (son prix précédent reste).
+
+        rows.push({
+          client_id: clientId, invoice_id: invoice.id, article_id: art?.id ?? null,
+          designation: l.designation, article_code: l.article_code, quantity: l.quantity,
+          unit: l.unit,
+          // Le poids facturé est CONSERVÉ tel que lu : c'est lui qui porte le prix
+          // au kilo, et sans lui la ligne redeviendrait invérifiable à la relecture.
+          weight_kg: l.weight_kg,
+          // Prix en quarantaine = null : la mercuriale prend le point de prix le plus
+          // récent depuis invoice_lines ; un prix non vérifié n'en est pas un.
+          unit_price_ht: prixRetenu,
+          amount_ht: l.amount_ht, tva_rate: l.tva_rate ?? invoice.tva_rate,
+        })
+      }
+
+      // 5. Remplacement atomique des lignes de CETTE facture (ré-extraction incluse)
+      const { error: delErr } = await service.from('invoice_lines').delete().eq('invoice_id', invoice.id).eq('client_id', clientId)
+      if (delErr) throw new Error(`Purge des anciennes lignes : ${delErr.message}`)
+      const { error: insErr } = await service.from('invoice_lines').insert(rows)
+      if (insErr) throw new Error(`Insertion des lignes : ${insErr.message}`)
+
+      // 6. Statut + dates lues sur le PDF (jamais d'écrasement d'une valeur déjà posée).
+      // 'done' seulement si la facture boucle ET aucun prix en quarantaine ; sinon
+      // 'partial' : les lignes sont gardées, mais des prix restent à valider.
+      // « Lue complètement » exige au moins UN prix publié : une facture dont
+      // aucune ligne n'a de prix calculable passait pour un succès (quarantaine
+      // à zéro) alors qu'elle n'apportait rien à la mercuriale.
+      const complet = coherent && !tronque && prixQuarantaine === 0 && prixPromus > 0
+      // Motif d'une lecture PARTIELLE : les deux chiffres qui expliquent tout —
+      // l'écart somme/total et le nombre de prix écartés — étaient jusqu'ici
+      // calculés, renvoyés dans le JSON, puis perdus. Ils sont maintenant écrits.
+      const ecart = +(somme - totalHT).toFixed(2)
+      const motifPartiel = complet ? null : [
+        tronque
+          ? `La réponse de lecture a été coupée : il manque des lignes en fin de facture. Les prix ne sont pas publiés tant que la lecture n'est pas entière.`
+          : null,
+        luEnVision
+          ? `Document sans texte lu en image (scan) — vérifiez les montants avant de valider.`
+          : null,
+        !coherent
+          ? `La somme des lignes lues (${somme.toFixed(2)} €) ne boucle pas sur le total de la facture (${totalHT.toFixed(2)} €) : ${ecart > 0 ? '+' : ''}${ecart.toFixed(2)} €.${factureSuspecte ? ' Écart trop important : aucun prix retenu.' : ' Écart limité : les lignes qui se recoupent ont quand même donné leur prix.'}`
+          : null,
+        prixPromus === 0 && prixQuarantaine === 0 && rows.length > 0
+          ? `Aucune ligne ne porte de prix unitaire exploitable : rien à publier dans la mercuriale.`
+          : null,
+        prixQuarantaine > 0
+          ? `${prixQuarantaine} prix écarté${prixQuarantaine > 1 ? 's' : ''} : non vérifiable${prixQuarantaine > 1 ? 's' : ''} contre le montant de la ligne, donc non publié${prixQuarantaine > 1 ? 's' : ''} dans la mercuriale.`
+          : null,
+        `${rows.length} ligne${rows.length > 1 ? 's' : ''} conservée${rows.length > 1 ? 's' : ''}, ${prixPromus} prix retenu${prixPromus > 1 ? 's' : ''}.`,
+      ].filter(Boolean).join(' ')
+      const patch: Record<string, unknown> = {}
+      // GARDE-FOU DATES (31/07) : une date de livraison lue par l'IA n'est écrite
+      // que si elle est PLAUSIBLE — jamais l'échéance de paiement recopiée, jamais
+      // une date hors de la fenêtre autour de la facture. Mesuré en prod : 10
+      // livraisons fausses sur 61, dont 8 égales à l'échéance. Une date écartée
+      // laisse la colonne vide : l'imputation retombe sur la date de facture
+      // (déterministe) au lieu de partir dans une autre semaine.
+      const echeance = due_date ?? (invoice.due_date as string | null) ?? null
+      const livraisonRetenue = plausibleDelivery(delivery_date, invoice.invoice_date as string | null, echeance)
+      if (livraisonRetenue && !invoice.delivery_date) patch.delivery_date = livraisonRetenue
+      if (due_date && !invoice.due_date) patch.due_date = due_date
+        patch.lines_mode = ctx.mode
+        const motifFinal = [ctx.motifSuffixe, motifPartiel].filter(Boolean).join(' ') || null
+        await marquer(invoice.id, complet ? 'done' : 'partial', motifFinal, patch)
+
+        return NextResponse.json({
+          success: true, status: complet ? 'done' : 'partial', mode: ctx.mode,
+          lines: rows.length, prix_promus: prixPromus, prix_en_quarantaine: prixQuarantaine,
+          somme: +somme.toFixed(2), total_facture: totalHT,
+          motif: motifFinal,
+        })
+    }
+
   // ── Reconnaissance en trois étages : seules les factures de MATIÈRE (ingrédients,
   // consommables de production) nourrissent la mercuriale. ──
   // Étage 1 — déterministe : une charge fixe (loyer, logiciel, leasing, assurance…)
@@ -117,6 +325,43 @@ export async function POST(request: NextRequest) {
     // Lecture PAR COORDONNÉES (colonnes séparées) ; repli sur le texte plat de
     // pdf-parse seulement si le PDF résiste. C'est ce texte propre qui est donné
     // à l'IA, au lieu du texte plat qui colle « 12.4kg5.8071.92 ».
+    // ── FACTURE ÉLECTRONIQUE : le document se lit, il ne se devine pas ──
+    // Depuis le 1er septembre 2026, un PDF ordinaire ne compte plus comme une
+    // facture électronique : le document doit porter ses données STRUCTURÉES.
+    // Quand elles sont là, la quantité, l'unité, le prix et le montant de chaque
+    // ligne sont des champs nommés — et l'unité est normalisée (KGM = kilo,
+    // H87 = pièce), ce qui supprime d'un coup le problème du colis compté pour
+    // un kilo. Zéro requête IA, zéro quarantaine, un résultat reproductible.
+    const facturx = lireFacturX(buffer)
+    if (facturx && facturx.lines.length > 0) {
+      const totalXml = facturx.total_ht
+      const totalFacture = parseFloat(String(invoice.amount_ht || 0)) || 0
+      // Le total du XML doit s'accorder avec celui déjà connu de la facture.
+      // S'il diverge, ce n'est pas le bon document : on ne le croit pas sur
+      // parole et on repasse par la lecture ordinaire.
+      const accord = totalXml === null || totalFacture === 0
+        || Math.abs(Math.abs(totalXml) - Math.abs(totalFacture)) <= Math.max(0.05, Math.abs(totalFacture) * 0.01)
+      if (accord) {
+        const lignesXml: ExtractedLine[] = facturx.lines.map(l => ({
+          designation: l.designation,
+          article_code: l.article_code,
+          quantity: l.quantity,
+          unit: l.unit,
+          unit_price_ht: l.unit_price_ht,
+          amount_ht: l.amount_ht,
+          tva_rate: l.tva_rate,
+          weight_kg: l.weight_kg,
+        }))
+        return await publierLignes(lignesXml, {
+          mode: `facturx-${facturx.profil}`,
+          delivery_date: facturx.delivery_date,
+          due_date: facturx.due_date,
+          tronque: false,
+          motifSuffixe: `Lu dans les données structurées de la facture électronique (${facturx.profil.toUpperCase()}) — sans interprétation.`,
+        })
+      }
+    }
+
     const coordLines = await pdfToLines(buffer)
     let pdfText: string
     if (coordLines.length > 0) {
@@ -194,186 +439,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Aucune ligne reconnue sur ce PDF.' }, { status: 422 })
     }
 
-    // 3. Garde-fous déterministes de la lecture, à DEUX niveaux :
-    //   · FACTURE : la somme des lignes doit boucler sur le total (à 3 %). Un total
-    //     inconnu (0) n'est PLUS un laissez-passer — sans total, rien n'est
-    //     vérifiable, donc on ne promeut aucun prix.
-    //   · LIGNE : quand quantité ET prix unitaire figurent tous deux, leur produit
-    //     doit égaler le montant (sinon l'un des deux est mal lu). C'est ce prix
-    //     unitaire qui devient le point de mercuriale — on ne le publie que vérifié.
-    const somme = lines.reduce((s, l) => s + l.amount_ht, 0)
-    // AVOIRS : un avoir a un total NÉGATIF. `totalHT > 0` le déclarait donc
-    // toujours incohérent, quelle que soit la qualité de la lecture, et tous ses
-    // prix partaient en quarantaine. On compare l'écart signé à une base absolue.
-    const base = Math.abs(totalHT)
-    const ecartAbs = Math.abs(somme - totalHT)
-    // Plancher d'un euro : une facture de 30 € tombait pour 0,95 € d'arrondi.
-    const coherent = base > 0 && ecartAbs <= Math.max(1, base * 0.03)
-    // Une facture n'est jugée MAL LUE DANS SON ENSEMBLE qu'au-delà d'un écart
-    // massif. Entre les deux, le contrôle qui compte est celui de la LIGNE
-    // (qté × PU = montant) : punir vingt lignes justes pour la faute d'une
-    // seule mettait 15 % des prix au rebut sans raison.
-    const factureSuspecte = base <= 0 || ecartAbs > Math.max(50, base * 0.15) || tronque
-    /** L'ASSIETTE du prix unitaire : ce par quoi il faut le multiplier pour
-     *  retomber sur le montant de la ligne.
-     *
-     *  Sur une facture de boucherie, la ligne aligne le nombre de colis, le
-     *  poids et le prix au kilo — et c'est le POIDS qui porte le prix, pas le
-     *  nombre de colis. Tant que le format ne connaissait qu'une quantité,
-     *  « 2 pièces × 14,97 €/kg » était comparé à 224,73 € : le contrôle
-     *  échouait, et un prix parfaitement lu partait en quarantaine. Mesuré le
-     *  31/07 : 32 prix refusés sur des factures dont la somme des lignes
-     *  tombait pourtant au centime près. */
-    const assiette = (l: ExtractedLine): number | null =>
-      l.weight_kg != null && l.weight_kg > 0 ? l.weight_kg
-        : (l.quantity != null && l.quantity !== 0 ? l.quantity : null)
-
-    const ligneVerifiee = (l: ExtractedLine): boolean => {
-      const base = assiette(l)
-      if (l.unit_price_ht != null && base !== null) {
-        return Math.abs(base * l.unit_price_ht - l.amount_ht) <= Math.max(0.05, Math.abs(l.amount_ht) * 0.01)
-      }
-      return true // pas de contradiction vérifiable (prix seul, ou dérivé de la quantité)
-    }
-    /** Un prix DÉRIVÉ (montant ÷ quantité) n'est pas un prix lu : il n'est
-     *  retenu que si l'unité facturée est exploitable. Sans unité, la quantité
-     *  peut être un nombre de colis pour un montant au kilo — et la mercuriale
-     *  publierait un prix faux sans le moindre signal. */
-    const uniteExploitable = (u: string | null): boolean => {
-      const t = normText(u ?? '')
-      return t !== '' && !/^[-+]?[0-9]/.test(t)
-    }
-
-    // 4. Rattachement aux articles — par code fournisseur, sinon libellé normalisé.
-    const supplierKey = normalizeSupplierName(supplierSociete(invoice.supplier_name || '')) || ''
-    const { data: existing } = await service.from('articles')
-      .select('id, article_code, name_key, last_price_date, price_count')
-      .eq('client_id', clientId).eq('supplier_key', supplierKey)
-    const byCode = new Map<string, any>()
-    const byName = new Map<string, any>()
-    for (const a of existing || []) {
-      if (a.article_code) byCode.set(String(a.article_code), a)
-      else byName.set(String(a.name_key), a)
-    }
-
-    const rows: any[] = []
-    let prixPromus = 0, prixQuarantaine = 0
-    for (const l of lines) {
-      const nameKey = normText(l.designation)
-      let art = (l.article_code && byCode.get(l.article_code)) || byName.get(nameKey) || null
-      const prixLu = l.unit_price_ht
-      // Un poids facturé est une assiette SÛRE : il est en kilos par définition,
-      // donc le prix qu'on en déduit est un prix au kilo — pas besoin que
-      // l'unité de la ligne soit exploitable, elle ne décide de rien ici.
-      const prixDerive = prixLu !== null ? null
-        : l.weight_kg != null && l.weight_kg > 0
-          ? +(l.amount_ht / l.weight_kg).toFixed(4)
-          : l.quantity && l.quantity > 0 && uniteExploitable(l.unit)
-            ? +(l.amount_ht / l.quantity).toFixed(4)
-            : null
-      const unitPrice = prixLu ?? prixDerive
-      // QUARANTAINE : un prix ne devient un point de mercuriale que si la LIGNE
-      // se recoupe (qté × PU = montant) et que la facture n'est pas massivement
-      // fausse. Le seuil de 3 % ne condamne plus l'ensemble : il alerte, le
-      // contrôle ligne à ligne tranche. Sinon l'article est rattaché SANS prix —
-      // « prix manquant » signalé plutôt qu'un prix douteux publié en silence.
-      const promouvoir = !factureSuspecte && ligneVerifiee(l) && unitPrice !== null
-      if (unitPrice !== null) { if (promouvoir) prixPromus++; else prixQuarantaine++ }
-      const prixRetenu = promouvoir ? unitPrice : null
-
-      if (!art && nameKey) {
-        const { data: created } = await service.from('articles').insert({
-          client_id: clientId, name: l.designation, name_key: nameKey, unit: l.unit,
-          supplier_key: supplierKey, supplier_name: invoice.supplier_name,
-          article_code: l.article_code,
-          last_price_ht: prixRetenu,
-          last_price_date: promouvoir ? invoice.invoice_date : null,
-          price_count: promouvoir ? 1 : 0,
-        }).select('id, article_code, name_key, last_price_date, price_count').single()
-        if (created) {
-          art = created
-          if (created.article_code) byCode.set(String(created.article_code), created)
-          else byName.set(String(created.name_key), created)
-        }
-      } else if (art && promouvoir) {
-        // Dernier prix : seule une facture plus récente (ou du même jour) le remplace.
-        const patch: Record<string, unknown> = { price_count: (art.price_count || 0) + 1, updated_at: new Date().toISOString() }
-        if (!art.last_price_date || invoice.invoice_date >= art.last_price_date) {
-          patch.last_price_ht = unitPrice
-          patch.last_price_date = invoice.invoice_date
-        }
-        await service.from('articles').update(patch).eq('id', art.id)
-        art.price_count = (art.price_count || 0) + 1
-      }
-      // Une ligne non promue laisse l'article INCHANGÉ (son prix précédent reste).
-
-      rows.push({
-        client_id: clientId, invoice_id: invoice.id, article_id: art?.id ?? null,
-        designation: l.designation, article_code: l.article_code, quantity: l.quantity,
-        unit: l.unit,
-        // Le poids facturé est CONSERVÉ tel que lu : c'est lui qui porte le prix
-        // au kilo, et sans lui la ligne redeviendrait invérifiable à la relecture.
-        weight_kg: l.weight_kg,
-        // Prix en quarantaine = null : la mercuriale prend le point de prix le plus
-        // récent depuis invoice_lines ; un prix non vérifié n'en est pas un.
-        unit_price_ht: prixRetenu,
-        amount_ht: l.amount_ht, tva_rate: l.tva_rate ?? invoice.tva_rate,
-      })
-    }
-
-    // 5. Remplacement atomique des lignes de CETTE facture (ré-extraction incluse)
-    const { error: delErr } = await service.from('invoice_lines').delete().eq('invoice_id', invoice.id).eq('client_id', clientId)
-    if (delErr) throw new Error(`Purge des anciennes lignes : ${delErr.message}`)
-    const { error: insErr } = await service.from('invoice_lines').insert(rows)
-    if (insErr) throw new Error(`Insertion des lignes : ${insErr.message}`)
-
-    // 6. Statut + dates lues sur le PDF (jamais d'écrasement d'une valeur déjà posée).
-    // 'done' seulement si la facture boucle ET aucun prix en quarantaine ; sinon
-    // 'partial' : les lignes sont gardées, mais des prix restent à valider.
-    // « Lue complètement » exige au moins UN prix publié : une facture dont
-    // aucune ligne n'a de prix calculable passait pour un succès (quarantaine
-    // à zéro) alors qu'elle n'apportait rien à la mercuriale.
-    const complet = coherent && !tronque && prixQuarantaine === 0 && prixPromus > 0
-    // Motif d'une lecture PARTIELLE : les deux chiffres qui expliquent tout —
-    // l'écart somme/total et le nombre de prix écartés — étaient jusqu'ici
-    // calculés, renvoyés dans le JSON, puis perdus. Ils sont maintenant écrits.
-    const ecart = +(somme - totalHT).toFixed(2)
-    const motifPartiel = complet ? null : [
-      tronque
-        ? `La réponse de lecture a été coupée : il manque des lignes en fin de facture. Les prix ne sont pas publiés tant que la lecture n'est pas entière.`
-        : null,
-      luEnVision
-        ? `Document sans texte lu en image (scan) — vérifiez les montants avant de valider.`
-        : null,
-      !coherent
-        ? `La somme des lignes lues (${somme.toFixed(2)} €) ne boucle pas sur le total de la facture (${totalHT.toFixed(2)} €) : ${ecart > 0 ? '+' : ''}${ecart.toFixed(2)} €.${factureSuspecte ? ' Écart trop important : aucun prix retenu.' : ' Écart limité : les lignes qui se recoupent ont quand même donné leur prix.'}`
-        : null,
-      prixPromus === 0 && prixQuarantaine === 0 && rows.length > 0
-        ? `Aucune ligne ne porte de prix unitaire exploitable : rien à publier dans la mercuriale.`
-        : null,
-      prixQuarantaine > 0
-        ? `${prixQuarantaine} prix écarté${prixQuarantaine > 1 ? 's' : ''} : non vérifiable${prixQuarantaine > 1 ? 's' : ''} contre le montant de la ligne, donc non publié${prixQuarantaine > 1 ? 's' : ''} dans la mercuriale.`
-        : null,
-      `${rows.length} ligne${rows.length > 1 ? 's' : ''} conservée${rows.length > 1 ? 's' : ''}, ${prixPromus} prix retenu${prixPromus > 1 ? 's' : ''}.`,
-    ].filter(Boolean).join(' ')
-    const patch: Record<string, unknown> = {}
-    // GARDE-FOU DATES (31/07) : une date de livraison lue par l'IA n'est écrite
-    // que si elle est PLAUSIBLE — jamais l'échéance de paiement recopiée, jamais
-    // une date hors de la fenêtre autour de la facture. Mesuré en prod : 10
-    // livraisons fausses sur 61, dont 8 égales à l'échéance. Une date écartée
-    // laisse la colonne vide : l'imputation retombe sur la date de facture
-    // (déterministe) au lieu de partir dans une autre semaine.
-    const echeance = due_date ?? (invoice.due_date as string | null) ?? null
-    const livraisonRetenue = plausibleDelivery(delivery_date, invoice.invoice_date as string | null, echeance)
-    if (livraisonRetenue && !invoice.delivery_date) patch.delivery_date = livraisonRetenue
-    if (due_date && !invoice.due_date) patch.due_date = due_date
-    await marquer(invoice.id, complet ? 'done' : 'partial', motifPartiel, patch)
-
-    return NextResponse.json({
-      success: true, status: complet ? 'done' : 'partial',
-      lines: rows.length, prix_promus: prixPromus, prix_en_quarantaine: prixQuarantaine,
-      somme: +somme.toFixed(2), total_facture: totalHT,
-      motif: motifPartiel,
+    return await publierLignes(lines, {
+      mode: luEnVision ? 'vision' : 'texte',
+      delivery_date, due_date, tronque, luEnVision,
     })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
