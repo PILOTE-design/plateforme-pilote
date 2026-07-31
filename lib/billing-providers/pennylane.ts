@@ -80,15 +80,30 @@ function pickInvoiceDate(inv: any): string | null {
 function mapInvoice(inv: any, fallbackDate: string): ProviderInvoice {
   // Schéma v2 confirmé : currency_amount_before_tax = HT, currency_amount = TTC, currency_tax = TVA.
   // Les montants peuvent être NÉGATIFS (avoirs) — ils viennent en déduction des achats.
-  const ht  = parseFloat(
-    inv.currency_amount_before_tax ?? inv.amount_before_tax ?? inv.pre_tax_amount ??
-    inv.currency_amount ?? inv.amount ?? 0
-  )
-  const ttc = parseFloat(
-    inv.currency_amount ?? inv.amount ??
-    inv.currency_tax_inclusive_amount ?? inv.tax_inclusive_amount ?? 0
-  )
-  const tva = ht !== 0 ? Math.round(Math.abs((ttc - ht) / ht) * 1000) / 10 : 20
+  // MONTANTS — on ne DÉRIVE plus le HT du TTC (31/07). L'ancien repli faisait
+  // prendre au HT la valeur TTC quand le champ manquait : l'achat était alors
+  // surévalué de 5,5 à 20 %, et surtout les lignes lues en HT étaient comparées
+  // à un total TTC — écart mécanique au-dessus du seuil, donc 100 % des prix du
+  // fournisseur en quarantaine. Mieux vaut un montant absent, signalé, qu'un
+  // montant plausible et faux.
+  const num = (v: unknown): number | null => {
+    if (v === null || v === undefined || v === '') return null
+    const n = parseFloat(String(v))
+    return Number.isFinite(n) ? n : null
+  }
+  const htLu  = num(inv.currency_amount_before_tax) ?? num(inv.amount_before_tax) ?? num(inv.pre_tax_amount)
+  const ttcLu = num(inv.currency_amount) ?? num(inv.amount) ?? num(inv.currency_tax_inclusive_amount) ?? num(inv.tax_inclusive_amount)
+  const taxeLue = num(inv.currency_tax) ?? num(inv.tax)
+  // HT absent mais TVA connue : la soustraction est exacte, pas une supposition
+  const ht  = htLu ?? (ttcLu !== null && taxeLue !== null ? Math.round((ttcLu - taxeLue) * 100) / 100 : 0)
+  const ttc = ttcLu ?? (htLu !== null && taxeLue !== null ? Math.round((htLu + taxeLue) * 100) / 100 : 0)
+  // Taux de TVA : calculé seulement s'il tombe sur un taux réel du métier.
+  // Sinon null — une TVA à 100 % (cas TTC nul) se recopiait sur chaque ligne.
+  const TAUX_PLAUSIBLES = [0, 2.1, 5.5, 10, 20]
+  const tvaCalc = ht !== 0 && ttc !== 0 ? Math.round(Math.abs((ttc - ht) / ht) * 1000) / 10 : null
+  const tva = tvaCalc !== null
+    ? (TAUX_PLAUSIBLES.find(t => Math.abs(t - tvaCalc) <= 0.6) ?? tvaCalc)
+    : 20
   const supplierName = inv.supplier?.name ?? inv.third_party?.name ?? inv.vendor?.name ?? inv.label ?? 'Fournisseur inconnu'
   const category     = guessCategory(`${supplierName} ${inv.label ?? ''}`)
 
@@ -109,7 +124,9 @@ function mapInvoice(inv: any, fallbackDate: string): ProviderInvoice {
     invoice_date:   pickInvoiceDate(inv) ?? fallbackDate,
     amount_ht:      ht,
     tva_rate:       tva,
-    amount_ttc:     ttc || +(ht * 1.2).toFixed(2),
+    // Plus de TTC reconstruit à 20 % en dur sur une facture de viande à 5,5 % :
+    // sans TTC lisible, on renvoie le HT (le TTC ne sert à aucun calcul de marge).
+    amount_ttc:     ttc || ht,
     category,
     external_id:    String(inv.id ?? ''),
     due_date:       dueDate,
@@ -158,7 +175,17 @@ export const pennylane: BillingProvider = {
       let serverFiltered = true
       try {
         data = await apiFetch(token, `/supplier_invoices?limit=100&filter=${filter}`)
-      } catch {
+      } catch (e) {
+        // Le repli n'a de sens que si le FILTRE est refusé (4xx de structure).
+        // Sur un 429, un 5xx ou un timeout, basculer en non filtré revenait à
+        // demander les 100 dernières factures : si la semaine visée est plus
+        // ancienne, elle n'y est pas, et on renvoyait « aucune facture » avec
+        // un succès. Une panne réseau ne doit jamais ressembler à une semaine vide.
+        const msg = String(e)
+        const structurel = /Pennylane 4(00|22)/.test(msg)
+        if (!structurel) {
+          return { success: false, invoices: [], error: `Pennylane injoignable ou en erreur : ${msg.slice(0, 200)}` }
+        }
         serverFiltered = false
         data = await apiFetch(token, `/supplier_invoices?limit=100&sort=-date`)
       }
@@ -178,9 +205,11 @@ export const pennylane: BillingProvider = {
       }
 
       // Avoirs inclus (montants négatifs) — seuls les montants nuls sont écartés
-      let mapped = items.map((inv: any) => mapInvoice(inv, dateFrom)).filter((i: ProviderInvoice) => i.amount_ht !== 0)
+      let mapped = items.map((inv: any) => mapInvoice(inv, dateFrom))
+        .filter((i: ProviderInvoice) => Number.isFinite(i.amount_ht) && i.amount_ht !== 0)
 
       if (!serverFiltered) {
+        const brut = mapped.length
         mapped = mapped.filter((i: ProviderInvoice) => {
           if (i.is_fixed_charge) {
             if (!i.invoice_date) return true
@@ -190,6 +219,14 @@ export const pennylane: BillingProvider = {
           if (!i.invoice_date) return true
           return i.invoice_date >= dateFrom && i.invoice_date <= dateTo
         })
+        // Liste pleine + zéro retenue = la semaine demandée est probablement
+        // hors des 100 dernières factures. On le dit plutôt que de conclure.
+        if (mapped.length === 0 && brut >= 100) {
+          return {
+            success: false, invoices: [],
+            error: `Filtre serveur indisponible et la semaine du ${dateFrom} n'est pas dans les 100 dernières factures : impossible de conclure. Réessayez.`,
+          }
+        }
       }
 
       return { success: true, invoices: mapped }
