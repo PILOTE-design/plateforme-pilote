@@ -20,7 +20,8 @@
 // La lecture des factures se déclenche ici (une facture à la fois).
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ShoppingBasket, FileSearch, TrendingUp, TrendingDown, Search, RefreshCw, Link2, ChevronDown, ChevronRight, Pencil, Trash2, Unlink, X, Check, AlertTriangle, Sparkles } from 'lucide-react'
+import Link from 'next/link'
+import { ShoppingBasket, FileSearch, TrendingUp, TrendingDown, Search, RefreshCw, Link2, ChevronDown, ChevronRight, Pencil, Trash2, Unlink, X, Check, AlertTriangle, Sparkles, ChefHat } from 'lucide-react'
 import { useToast } from '@/components/ui/toast'
 import { guessBaseUnit, unitKind } from '@/lib/mercuriale-auto'
 
@@ -51,6 +52,15 @@ type Ref = {
 /** Point d'historique : date de facture + prix payé, à l'unité de base */
 type PricePoint = { d: string; p: number }
 
+/** Fiche recette utilisatrice d'un générique — quantité BRUTE par batch */
+type RecipeUse = {
+  id: string
+  name: string
+  qty_brute: number
+  yield_qty: number | null
+  yield_unit: string | null
+}
+
 type Generic = {
   id: string
   name: string
@@ -68,6 +78,10 @@ type Generic = {
   points_12m: number
   min_12m: number | null
   max_12m: number | null
+  /** Prix précédent (dernière valeur différente) — pour chiffrer l'impact */
+  prev_price_ht: number | null
+  recipes_count: number
+  recipes_used: RecipeUse[]
   refs: Ref[]
 }
 
@@ -93,6 +107,7 @@ type PendingInvoice = {
 }
 
 const fmtEuro = (n: number) => n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'
+const fmtQty = (n: number) => n.toLocaleString('fr-FR', { maximumFractionDigits: 3 })
 const fmtDate = (s: string | null) => (s ? new Date(s + 'T00:00:00Z').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }) : '—')
 const unitLabel = (u: 'kg' | 'piece') => (u === 'kg' ? 'kg' : 'pièce')
 const titleize = (s: string) => { const t = s.trim().replace(/\s+/g, ' '); return t ? t.charAt(0).toUpperCase() + t.slice(1).toLowerCase() : t }
@@ -594,6 +609,7 @@ export default function MercurialePage() {
   /** Âge du dernier prix en jours — au-delà de 30 j, le catalogue le signale */
   const priceAge = (d: string | null) => (d ? Math.floor((Date.now() - new Date(d + 'T00:00:00Z').getTime()) / 86400000) : null)
   const refsAssociees = useMemo(() => generics.reduce((s, g) => s + g.refs.length, 0), [generics])
+  const recipesCountByGeneric = useMemo(() => new Map(generics.map(g => [g.id, g.recipes_count])), [generics])
 
   /** Ligne d'une réf en file : « Associer » l'ajoute à l'association en cours */
   const renderRef = (r: Ref) => {
@@ -710,6 +726,11 @@ export default function MercurialePage() {
                   <span className={`font-bold ${m.new_base > m.old_base ? 'text-red-600' : 'text-green-600'}`}>{fmtEuro(m.new_base)}</span>
                   <span className="text-gray-400"> / {unitLabel(m.base_unit)}</span>
                 </span>
+                {(recipesCountByGeneric.get(m.generic_id) ?? 0) > 0 && (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-pilote bg-pilote-50 rounded-full px-2 py-0.5 tabular" title="Fiches recettes qui utilisent cet article — impact détaillé dans la ligne dépliée du catalogue">
+                    <ChefHat className="w-3 h-3" />{recipesCountByGeneric.get(m.generic_id)} fiche{(recipesCountByGeneric.get(m.generic_id) ?? 0) > 1 ? 's' : ''}
+                  </span>
+                )}
                 <Variation pct={m.pct} />
               </button>
             ))}
@@ -1102,6 +1123,7 @@ export default function MercurialePage() {
                           <th className="px-4 py-2.5 text-right">Au</th>
                           <th className="px-4 py-2.5 text-right">Variation</th>
                           <th className="px-4 py-2.5 text-right">Réfs</th>
+                          <th className="px-4 py-2.5 text-right">Fiches</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1138,10 +1160,15 @@ export default function MercurialePage() {
                                   {g.refs_count}
                                   {g.refs.some(r => r.needs_conversion) && <AlertTriangle className="w-3 h-3 text-amber-500 inline ml-1" />}
                                 </td>
+                                <td className="px-4 py-2.5 text-right text-xs tabular">
+                                  {g.recipes_count > 0
+                                    ? <span className="font-semibold text-pilote">{g.recipes_count}</span>
+                                    : <span className="text-gray-300">—</span>}
+                                </td>
                               </tr>
                               {isOpen && (
                                 <tr className="bg-gray-50/60">
-                                  <td colSpan={7} className="px-4 py-3">
+                                  <td colSpan={8} className="px-4 py-3">
                                     {isEdit ? (
                                       <div className="grid grid-cols-1 md:grid-cols-5 gap-3 items-end" onClick={e => e.stopPropagation()}>
                                         <div className="md:col-span-2">
@@ -1219,6 +1246,52 @@ export default function MercurialePage() {
                                               ? <>Prix stable : {g.points_12m} prix relevé{g.points_12m > 1 ? 's' : ''} sur 12 mois, aucun changement — la courbe apparaîtra au premier mouvement.</>
                                               : <>Pas encore d&apos;historique — la courbe des prix se construit à chaque facture lue.</>}
                                           </p>
+                                        )}
+                                        {/* Impact sur les fiches recettes : Δprix × quantité brute, par batch et par unité produite */}
+                                        {g.recipes_used.length > 0 ? (() => {
+                                          const delta = g.price_ht !== null && g.prev_price_ht !== null
+                                            ? Math.round((g.price_ht - g.prev_price_ht) * 10000) / 10000
+                                            : null
+                                          const hasImpact = delta !== null && delta !== 0
+                                          return (
+                                            <div className="mb-2.5 bg-white border border-gray-100 rounded-xl overflow-hidden">
+                                              <div className="px-3.5 py-2 bg-gray-50/80 flex items-center gap-2 flex-wrap">
+                                                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
+                                                  <ChefHat className="w-3 h-3" />Utilisé dans {g.recipes_used.length} fiche{g.recipes_used.length > 1 ? 's' : ''} recette{g.recipes_used.length > 1 ? 's' : ''}
+                                                </p>
+                                                {hasImpact && (
+                                                  <span className={`text-[11px] font-bold tabular ${delta! > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                                                    dernier mouvement : {delta! > 0 ? '+' : '−'}{fmtEuro(Math.abs(delta!))} / {unitLabel(g.base_unit)}
+                                                  </span>
+                                                )}
+                                              </div>
+                                              <div className="divide-y divide-gray-50">
+                                                {g.recipes_used.map(u => {
+                                                  const impact = hasImpact ? delta! * u.qty_brute : null
+                                                  const perUnit = impact !== null && u.yield_qty !== null && u.yield_qty > 0 ? impact / u.yield_qty : null
+                                                  return (
+                                                    <div key={u.id} className="px-3.5 py-2 flex items-center gap-3 flex-wrap text-xs">
+                                                      <Link href={`/dashboard/recettes/${u.id}`} className="font-semibold text-pilote hover:underline flex-1 min-w-[150px]">{u.name}</Link>
+                                                      <span className="text-gray-400 tabular">{fmtQty(u.qty_brute)} {unitLabel(g.base_unit)} brut / batch</span>
+                                                      {impact !== null && Math.abs(impact) >= 0.005 && (
+                                                        <span className={`font-bold tabular ${impact > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                                                          {impact > 0 ? '+' : '−'}{fmtEuro(Math.abs(impact))} / batch
+                                                          {perUnit !== null && Math.abs(perUnit) >= 0.005 ? ` · ${impact > 0 ? '+' : '−'}${fmtEuro(Math.abs(perUnit))} / ${u.yield_unit || 'unité'}` : ''}
+                                                        </span>
+                                                      )}
+                                                    </div>
+                                                  )
+                                                })}
+                                              </div>
+                                              {hasImpact && (
+                                                <p className="px-3.5 py-1.5 text-[10px] text-gray-400 border-t border-gray-50">
+                                                  Impact matière seule (Δprix × quantité brute de la fiche) — le coût complet à jour est sur chaque fiche.
+                                                </p>
+                                              )}
+                                            </div>
+                                          )
+                                        })() : (
+                                          <p className="mb-2.5 text-[11px] text-gray-400">Utilisé dans aucune fiche recette pour l&apos;instant.</p>
                                         )}
                                         {g.refs.length === 0 ? (
                                           <p className="text-xs text-gray-400">Aucune réf fournisseur rattachée.</p>
