@@ -401,3 +401,84 @@ export function buildGenericMap(
   }
   return map
 }
+
+// ── Coût matière dans le temps ────────────────────────────────────────────
+// La question d'Otami — « la rentabilité de ce produit se dégrade-t-elle ? » —
+// se répond en relisant la fiche AUX PRIX D'HIER : mêmes quantités brutes,
+// prix mercuriale à la date demandée. Tout est relu, rien n'est stocké.
+
+/** Série de prix d'un générique : points datés (date de facture), à l'unité de
+ *  base, triés par date croissante. */
+export type GenericPriceSeries = { d: string; p: number }[]
+
+/** Construit les séries de prix PAR GÉNÉRIQUE depuis les lignes de factures
+ *  VÉRIFIÉES (une ligne en quarantaine a unit_price_ht NULL et n'arrive jamais
+ *  ici). Mêmes règles que le prix du jour : réf d'unité incompatible sans
+ *  facteur de conversion exclue, prix ÷ facteur. */
+export function buildGenericPriceSeries(
+  generics: Array<Record<string, unknown>>,
+  articles: Array<Record<string, unknown>>,
+  points: Array<{ article_id: string | null; unit_price_ht: unknown; date: string | null }>,
+): Map<string, GenericPriceSeries> {
+  const baseById = new Map<string, 'kg' | 'piece'>(
+    generics.map(g => [String(g.id), g.base_unit === 'piece' ? 'piece' : 'kg']),
+  )
+  // Réfs utilisables : rattachées à un générique, conversion posée si l'unité diverge
+  const usable = new Map<string, { gid: string; conv: number }>()
+  for (const a of articles) {
+    const gid = a.generic_id as string | null
+    if (!gid) continue
+    const hasConv = a.conversion_factor != null && Number(a.conversion_factor) > 0
+    const base = baseById.get(gid)
+    const kind = unitKind(a.unit as string | null | undefined)
+    if (base && kind !== null && kind !== base && !hasConv) continue
+    usable.set(String(a.id), { gid, conv: hasConv ? Number(a.conversion_factor) : 1 })
+  }
+  const out = new Map<string, GenericPriceSeries>()
+  for (const p of points) {
+    if (!p.article_id || !p.date) continue
+    const u = usable.get(String(p.article_id))
+    if (!u) continue
+    const raw = parseFloat(String(p.unit_price_ht))
+    if (!Number.isFinite(raw)) continue
+    const arr = out.get(u.gid) || []
+    arr.push({ d: p.date, p: round4(raw / u.conv) })
+    out.set(u.gid, arr)
+  }
+  for (const arr of out.values()) arr.sort((a, b) => a.d.localeCompare(b.d))
+  return out
+}
+
+/** Prix d'un générique à une date : le dernier point daté ≤ d, null si aucun. */
+export function priceAtDate(series: GenericPriceSeries | undefined, d: string): number | null {
+  if (!series || series.length === 0) return null
+  let found: number | null = null
+  for (const pt of series) {
+    if (pt.d <= d) found = pt.p
+    else break
+  }
+  return found
+}
+
+/** Coût matière (+ emballage) d'une fiche à une date passée : les lignes au
+ *  prix MERCURIALE sont relues au prix de la date, le reste (prix manuel, réf
+ *  héritée, ligne sans prix) reste constant. Renvoie null si une ligne
+ *  mercuriale n'a pas de prix connu à cette date — un point incomparable est
+ *  un TROU assumé, jamais un total partiel silencieux. */
+export function costMatiereAtDate(
+  costed: IngredientCost[],
+  seriesByGeneric: Map<string, GenericPriceSeries>,
+  d: string,
+): number | null {
+  let total = 0
+  for (const line of costed) {
+    if (line.generic_id && line.price_source === 'mercuriale') {
+      const p = priceAtDate(seriesByGeneric.get(line.generic_id), d)
+      if (p === null) return null
+      total += p * line.qty_brute
+    } else {
+      total += line.line_total_ht
+    }
+  }
+  return Math.round(total * 100) / 100
+}

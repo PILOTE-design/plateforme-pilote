@@ -43,6 +43,9 @@ export type FicheCost = {
   par_unite_ht: number | null; prix_manquants: number; labor_rate_ht: number | null
   total_minutes: number
   pv_unitaire_ht: number | null; marge_pct: number | null; coefficient: number | null
+  /** Coût matière (+ emballage) du batch relu aux prix mercuriale de chaque
+   *  jalon (8 lundis ISO + aujourd'hui) — jalons incomplets absents */
+  matiere_series?: { d: string; v: number }[]
 }
 
 export type FicheRecipe = {
@@ -72,6 +75,28 @@ function fmtMin(m: number): string {
   const r = Math.round(m)
   if (r < 60) return `${(Math.round(m * 10) / 10).toLocaleString('fr-FR')} min`
   return `${Math.floor(r / 60)} h ${String(r % 60).padStart(2, '0')}`
+}
+
+const fmtDateFr = (s: string) => new Date(s + 'T00:00:00Z').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', timeZone: 'UTC' })
+
+/** Mini-courbe du coût matière : x = jalon hebdomadaire, y = coût du batch.
+ *  Trait navy, dernier point orange — même langage que la mercuriale. */
+function TrendSpark({ points }: { points: { d: string; v: number }[] }) {
+  const W = 160, H = 36, PAD = 4
+  const vs = points.map(x => x.v)
+  const min = Math.min(...vs), max = Math.max(...vs)
+  const span = max - min
+  const X = (i: number) => (points.length < 2 ? W / 2 : PAD + (i / (points.length - 1)) * (W - PAD * 2))
+  const Y = (v: number) => (span === 0 ? H / 2 : H - PAD - ((v - min) / span) * (H - PAD * 2))
+  const d = vs.map((v, i) => `${i === 0 ? 'M' : 'L'}${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(' ')
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-40 h-9 flex-shrink-0" role="img" aria-label="Coût matière sur les 8 dernières semaines">
+      {points.length >= 2 && (
+        <path d={d} fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="text-pilote" />
+      )}
+      <circle cx={X(points.length - 1)} cy={Y(vs[vs.length - 1] ?? 0)} r={3} className="fill-pilote-orange" />
+    </svg>
+  )
 }
 
 export default function FichePanel({
@@ -350,6 +375,44 @@ export default function FichePanel({
             <span>{c.prix_manquants} ingrédient{c.prix_manquants > 1 ? 's' : ''} sans prix — coût sous-estimé. Le prix arrivera via la <Link href="/dashboard/mercuriale" className="font-bold underline">Mercuriale</Link>.</span>
           </div>
         )}
+
+        {/* ── Coût matière dans le temps : la fiche relue aux prix d'hier ── */}
+        {c && Array.isArray(c.matiere_series) && c.matiere_series.length >= 2 && (() => {
+          const s = c.matiere_series
+          const first = s[0], last = s[s.length - 1]
+          const delta = round2(last.v - first.v)
+          const stable = Math.abs(delta) < 0.005
+          const deltaUnit = baseQty > 0 ? round2(delta / baseQty) : null
+          // Marge qu'aurait la fiche au coût du début de période, à PV inchangé
+          let margeAvant: number | null = null
+          if (!stable && c.pv_unitaire_ht !== null && c.pv_unitaire_ht > 0 && c.par_unite_ht !== null && deltaUnit !== null) {
+            margeAvant = Math.round(((c.pv_unitaire_ht - (c.par_unite_ht - deltaUnit)) / c.pv_unitaire_ht) * 1000) / 10
+          }
+          return (
+            <div className="mb-4 rounded-2xl border border-gray-100 bg-gray-50/60 px-4 py-3 flex items-center gap-4 flex-wrap">
+              <div className="min-w-[240px] flex-1">
+                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Coût matière — 8 dernières semaines</p>
+                <p className="text-xs text-gray-600 mt-1 tabular">
+                  {stable ? (
+                    <>Stable depuis le {fmtDateFr(first.d)} — {fmtEuro(last.v)} le batch, aux prix mercuriale relus à chaque date.</>
+                  ) : (
+                    <>
+                      {fmtEuro(first.v)} le {fmtDateFr(first.d)} → {fmtEuro(last.v)} aujourd&apos;hui :{' '}
+                      <span className={`font-bold ${delta > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                        {delta > 0 ? '+' : '−'}{fmtEuro(Math.abs(delta))} / batch
+                        {deltaUnit !== null && Math.abs(deltaUnit) >= 0.005 ? ` (${delta > 0 ? '+' : '−'}${fmtEuro(Math.abs(deltaUnit))} / ${unitFr(recipe.yield_unit)})` : ''}
+                      </span>
+                      {margeAvant !== null && c.marge_pct !== null && (
+                        <> · à PV inchangé, marge <span className="font-bold tabular">{margeAvant.toLocaleString('fr-FR')} %</span> → <span className={`font-bold tabular ${delta > 0 ? 'text-red-600' : 'text-green-600'}`}>{c.marge_pct.toLocaleString('fr-FR')} %</span></>
+                      )}
+                    </>
+                  )}
+                </p>
+              </div>
+              <TrendSpark points={s} />
+            </div>
+          )
+        })()}
 
         {/* ── Paliers de quantité : pour N produits, temps ×multiple ── */}
         <div className="mb-4 rounded-2xl border border-gray-100 bg-gray-50/60 px-4 py-3">

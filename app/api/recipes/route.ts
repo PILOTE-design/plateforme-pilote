@@ -16,6 +16,7 @@ import { resolveClientId } from '@/lib/resolve-client-id'
 import { PAYROLL_EMPLOYEE_COLUMNS, chargeMultiplier, type PayrollEmployee } from '@/lib/payroll'
 import {
   averageLoadedRate, employeeLoadedRate, buildGenericMap,
+  buildGenericPriceSeries, costMatiereAtDate,
   costIngredients, computeRecipeCost,
   parseIngredients, parseRecipeFields,
   type IngredientRow, type RecipeRow,
@@ -32,13 +33,25 @@ export async function GET() {
   const clientId = await resolveClientId(service, user.id, user.email)
   if (!clientId) return NextResponse.json({ recipes: [], labor_rate_ht: null, generics: [], employees: [], targets: [] })
 
-  const [{ data: recipes }, { data: ingredients }, { data: employees }, { data: articles }, { data: generics }, { data: targets }] = await Promise.all([
+  // Fenêtre d'historique du coût matière : 12 mois de prix de factures VÉRIFIÉS
+  // (un prix en quarantaine a unit_price_ht NULL et n'apparaît jamais ici)
+  const cutoff12m = new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10)
+
+  const [{ data: recipes }, { data: ingredients }, { data: employees }, { data: articles }, { data: generics }, { data: targets }, { data: pricePoints }] = await Promise.all([
     service.from('recipes').select('*').eq('client_id', clientId).eq('active', true).order('name'),
     service.from('recipe_ingredients').select('*').eq('client_id', clientId).order('position'),
     service.from('employees').select(PAYROLL_EMPLOYEE_COLUMNS).eq('client_id', clientId),
     service.from('articles').select('id, unit, last_price_ht, last_price_date, generic_id, conversion_factor').eq('client_id', clientId),
     service.from('generic_articles').select('id, name, base_unit, category, default_loss_pct').eq('client_id', clientId).eq('active', true).order('name'),
     service.from('recipe_targets').select('category, target_marge_pct').eq('client_id', clientId),
+    service.from('invoice_lines')
+      .select('article_id, unit_price_ht, invoices!inner(invoice_date)')
+      .eq('client_id', clientId)
+      .not('article_id', 'is', null)
+      .not('unit_price_ht', 'is', null)
+      .gte('invoices.invoice_date', cutoff12m)
+      .order('created_at', { ascending: false })
+      .limit(2000),
   ])
 
   const emps = (employees || []) as unknown as PayrollEmployee[]
@@ -56,10 +69,45 @@ export async function GET() {
     byRecipe.set(ing.recipe_id, arr)
   }
 
+  // Coût matière dans le temps : séries de prix par générique, puis relecture de
+  // chaque fiche aux lundis des 8 dernières semaines ISO + aujourd'hui. Un jalon
+  // où un prix mercuriale manque est un TROU (null filtré), jamais un total
+  // partiel. Fiches sans ligne mercuriale : pas de série (rien ne varie).
+  const seriesByGeneric = buildGenericPriceSeries(
+    (generics || []) as Record<string, unknown>[],
+    (articles || []) as Record<string, unknown>[],
+    ((pricePoints || []) as any[]).map(p => ({
+      article_id: p.article_id ?? null,
+      unit_price_ht: p.unit_price_ht,
+      date: p.invoices?.invoice_date ?? null,
+    })),
+  )
+  const mondayOf = (t: Date) => {
+    const d = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate()))
+    const dow = d.getUTCDay() || 7
+    d.setUTCDate(d.getUTCDate() - dow + 1)
+    return d
+  }
+  const m0 = mondayOf(new Date())
+  const jalons: string[] = []
+  for (let i = 7; i >= 0; i--) {
+    const d = new Date(m0)
+    d.setUTCDate(m0.getUTCDate() - 7 * i)
+    jalons.push(d.toISOString().slice(0, 10))
+  }
+  const todayIso = new Date().toISOString().slice(0, 10)
+  if (jalons[jalons.length - 1] !== todayIso) jalons.push(todayIso)
+
   const out = (recipes || []).map((r: RecipeRow & Record<string, unknown>) => {
     const costed = costIngredients(byRecipe.get(r.id) || [], priceByArticle, genericById)
     const rate = employeeLoadedRate(emps, r.employee_id as string | null) ?? averageRate
-    return { ...r, ingredients: costed, cost: computeRecipeCost(r, costed, rate) }
+    const hasMercuriale = costed.some(l => l.generic_id && l.price_source === 'mercuriale')
+    const matiere_series = hasMercuriale
+      ? jalons
+          .map(d => ({ d, v: costMatiereAtDate(costed, seriesByGeneric, d) }))
+          .filter((x): x is { d: string; v: number } => x.v !== null)
+      : []
+    return { ...r, ingredients: costed, cost: { ...computeRecipeCost(r, costed, rate), matiere_series } }
   })
 
   return NextResponse.json({

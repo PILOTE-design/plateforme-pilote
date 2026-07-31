@@ -43,6 +43,8 @@ type RecipeCost = {
   matiere_ht: number; emballage_ht: number; main_oeuvre_ht: number; total_ht: number; par_unite_ht: number | null
   prix_manquants: number; labor_rate_ht: number | null; total_minutes: number
   pv_unitaire_ht: number | null; marge_pct: number | null; coefficient: number | null
+  /** Coût matière du batch relu aux prix mercuriale des 8 dernières semaines */
+  matiere_series?: { d: string; v: number }[]
 }
 
 type Recipe = {
