@@ -108,6 +108,9 @@ type PendingInvoice = {
   invoice_date: string
   amount_ht: number | string
   lines_status: string | null
+  /** Motif de l'échec ou de la lecture partielle, en clair (lot 1) */
+  lines_error: string | null
+  lines_checked_at: string | null
 }
 
 const fmtEuro = (n: number) => n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'
@@ -180,6 +183,9 @@ export default function MercurialePage() {
   const [processing, setProcessing] = useState(false)
   const [progress, setProgress] = useState({ done: 0, total: 0, errors: 0 })
   const stopRef = useRef(false)
+  // Motifs d'échec / de lecture partielle (lot 1) : dépliables, relisibles un par un
+  const [showMotifs, setShowMotifs] = useState(false)
+  const [relisant, setRelisant] = useState<string | null>(null)
 
   // ── ASSOCIATION PAR SÉLECTION : « Associer » sur une réf l'ajoute au lot,
   // « Associer » sur une autre l'ajoute aussi ; tout part vers le même générique.
@@ -251,6 +257,27 @@ export default function MercurialePage() {
     toast(errors === 0
       ? { variant: 'success', title: detail.join(' · '), description: 'Les réfs sans ressemblance s’associent toutes seules ; les autres arrivent dans « À rapprocher ».' }
       : { variant: 'error', title: detail.join(' · '), description: 'Les factures en échec peuvent être relancées.' })
+    load()
+  }
+
+  /** Relit UNE facture — sans motif enregistré, une facture en échec était une
+   *  impasse : on ne pouvait ni comprendre, ni réessayer sans tout relancer. */
+  async function relire(inv: PendingInvoice) {
+    if (relisant || processing) return
+    setRelisant(inv.id)
+    const res = await fetch('/api/invoices/extract-lines', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ invoice_id: inv.id }),
+    }).catch(() => null)
+    const data = res ? await res.json().catch(() => null) : null
+    setRelisant(null)
+    if (res?.ok) {
+      toast(data?.status === 'done'
+        ? { variant: 'success', title: `${inv.supplier_name} : lecture complète`, description: `${data?.prix_promus ?? 0} prix retenus.` }
+        : { variant: 'info', title: `${inv.supplier_name} : ${data?.status === 'hors_matiere' ? 'écartée (hors matière)' : 'lecture encore incomplète'}`, description: data?.motif || data?.reason || undefined })
+    } else {
+      toast({ variant: 'error', title: `${inv.supplier_name} : lecture en échec`, description: data?.error || 'Réessayez.' })
+    }
     load()
   }
 
@@ -689,28 +716,69 @@ export default function MercurialePage() {
         </button>
       </div>
 
-      {/* File d'attente d'extraction */}
-      {pending.length > 0 && (
-        <div className="mb-6 bg-pilote-50 border border-pilote-200 rounded-xl px-4 py-3 flex items-center gap-3 flex-wrap">
-          <FileSearch className="w-4 h-4 text-pilote flex-shrink-0" />
-          <p className="text-sm text-pilote-800 flex-1 min-w-[200px]">
-            <strong>{pending.length} facture{pending.length > 1 ? 's' : ''}</strong> avec PDF en attente de lecture.
-            Seule la matière première entre dans la mercuriale ; les réfs sans ressemblance s&apos;associent toutes seules.
-          </p>
-          {processing ? (
-            <div className="flex items-center gap-3">
-              <span className="text-xs font-semibold text-pilote tabular">{progress.done} / {progress.total}{progress.errors > 0 ? ` · ${progress.errors} échec${progress.errors > 1 ? 's' : ''}` : ''}</span>
-              <button onClick={() => { stopRef.current = true }}
-                className="text-xs font-bold text-pilote underline">Arrêter</button>
+      {/* File d'attente d'extraction — jamais lues ET relectures (partial, error) */}
+      {pending.length > 0 && (() => {
+        const neuves = pending.filter(p => !p.lines_status)
+        const arelire = pending.filter(p => !!p.lines_status)
+        return (
+        <div className="mb-6 bg-pilote-50 border border-pilote-200 rounded-xl px-4 py-3">
+          <div className="flex items-center gap-3 flex-wrap">
+            <FileSearch className="w-4 h-4 text-pilote flex-shrink-0" />
+            <p className="text-sm text-pilote-800 flex-1 min-w-[200px]">
+              <strong>{pending.length} facture{pending.length > 1 ? 's' : ''}</strong> à lire
+              {arelire.length > 0 ? <> — dont <strong>{arelire.length} à relire</strong> (lecture incomplète ou en échec)</> : null}.
+              Seule la matière première entre dans la mercuriale ; les réfs sans ressemblance s&apos;associent toutes seules.
+            </p>
+            {processing ? (
+              <div className="flex items-center gap-3">
+                <span className="text-xs font-semibold text-pilote tabular">{progress.done} / {progress.total}{progress.errors > 0 ? ` · ${progress.errors} échec${progress.errors > 1 ? 's' : ''}` : ''}</span>
+                <button onClick={() => { stopRef.current = true }}
+                  className="text-xs font-bold text-pilote underline">Arrêter</button>
+              </div>
+            ) : (
+              <button onClick={processQueue}
+                className="text-xs font-bold text-white bg-pilote hover:bg-pilote-hover rounded-lg px-3.5 py-2 shadow-card active:scale-[0.98] transition-all">
+                Lire les {neuves.length > 0 && arelire.length > 0 ? `${pending.length} ` : ''}factures
+              </button>
+            )}
+          </div>
+
+          {/* Ce qui a coincé, et pourquoi — dépliable, avec relecture à l'unité */}
+          {arelire.length > 0 && (
+            <div className="mt-2.5 border-t border-pilote-200/70 pt-2">
+              <button onClick={() => setShowMotifs(v => !v)}
+                className="flex items-center gap-1.5 text-[11px] font-bold text-pilote hover:underline">
+                {showMotifs ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                Voir pourquoi {arelire.length > 1 ? 'ces lectures ont coincé' : 'cette lecture a coincé'}
+              </button>
+              {showMotifs && (
+                <div className="mt-1.5 space-y-1">
+                  {arelire.map(p => (
+                    <div key={p.id} className="bg-white rounded-lg px-3 py-2 flex items-start gap-3 flex-wrap">
+                      <span className="text-[11px] text-gray-400 tabular flex-shrink-0 w-16">{fmtDate(p.invoice_date)}</span>
+                      <span className="flex-1 min-w-[180px]">
+                        <span className="text-xs font-semibold text-gray-900">{p.supplier_name}</span>
+                        <span className="block text-[11px] text-gray-500 leading-snug">
+                          {p.lines_error || (p.lines_status === 'error' ? 'Échec sans motif enregistré — relancez la lecture pour en obtenir un.' : 'Lecture incomplète.')}
+                        </span>
+                      </span>
+                      <span className="flex items-center gap-2 flex-shrink-0">
+                        <button onClick={() => window.open(`/api/invoices/${p.id}/file`, '_blank')}
+                          className="text-[11px] font-semibold text-gray-500 hover:text-pilote underline">voir la facture</button>
+                        <button onClick={() => relire(p)} disabled={processing || relisant === p.id}
+                          className="text-[11px] font-bold text-white bg-pilote hover:bg-pilote-hover rounded-lg px-2.5 py-1 shadow-card disabled:opacity-50">
+                          {relisant === p.id ? 'Lecture…' : 'Relire'}
+                        </button>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
-          ) : (
-            <button onClick={processQueue}
-              className="text-xs font-bold text-white bg-pilote hover:bg-pilote-hover rounded-lg px-3.5 py-2 shadow-card active:scale-[0.98] transition-all">
-              Lire les factures
-            </button>
           )}
         </div>
-      )}
+        )
+      })()}
 
       {/* KPIs */}
       <div className="grid grid-cols-3 gap-4 mb-6">

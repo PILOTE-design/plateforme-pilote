@@ -73,12 +73,18 @@ export async function GET() {
     // File d'attente d'extraction : PDF présent, lignes jamais lues (ou échec à
     // retenter). Les CHARGES FIXES sont exclues d'office ; le reste passe par la
     // reconnaissance de nature à l'extraction — la CATÉGORIE n'est pas fiable.
+    // File de lecture (lot 1, 31/07) : jusqu'ici seules les factures JAMAIS
+    // tentées ou en erreur y entraient. Une facture lue PARTIELLEMENT — 17 en
+    // prod, 41 prix en quarantaine — n'était donc jamais relue : corriger le
+    // prompt ou le seuil ne débloquait rien, la facture restait figée. Idem
+    // pour un `no_file` à qui on vient de poser un PDF. Les quatre états
+    // relisables sont maintenant dans la file, les jamais-lues d'abord.
     service.from('invoices')
-      .select('id, supplier_name, invoice_date, amount_ht, lines_status')
+      .select('id, supplier_name, invoice_date, amount_ht, lines_status, lines_error, lines_checked_at')
       .eq('client_id', clientId)
       .eq('is_fixed_charge', false)
       .not('file_path', 'is', null)
-      .or('lines_status.is.null,lines_status.eq.error')
+      .or('lines_status.is.null,lines_status.eq.error,lines_status.eq.no_file,lines_status.eq.partial')
       .order('invoice_date', { ascending: false })
       .limit(200),
   ])
@@ -280,10 +286,17 @@ export async function GET() {
     }
   })
 
+  // Les factures jamais lues passent devant : ce sont celles qui apportent des
+  // prix neufs. Les relectures (partial, error) suivent, la plus récente d'abord.
+  const rang = (s: string | null) => (s === null ? 0 : s === 'error' ? 1 : s === 'no_file' ? 2 : 3)
+  const pendingOut = [...(pending || [])].sort((a: any, b: any) =>
+    rang(a.lines_status) - rang(b.lines_status)
+    || String(b.invoice_date || '').localeCompare(String(a.invoice_date || '')))
+
   return NextResponse.json({
     generics: genericsOut,
     queue: queueOut,
-    pending: pending || [],
+    pending: pendingOut,
     moves: movesOut,
     moves_total: moves.length,
   })
