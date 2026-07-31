@@ -63,7 +63,7 @@ export async function GET() {
     // Points de prix sur 12 mois (variation, historique, mouvements) — la date
     // vient de la facture ; un prix en quarantaine (unit_price_ht NULL) est absent
     service.from('invoice_lines')
-      .select('article_id, unit_price_ht, invoices!inner(invoice_date)')
+      .select('article_id, unit_price_ht, invoice_id, invoices!inner(invoice_date)')
       .eq('client_id', clientId)
       .not('article_id', 'is', null)
       .not('unit_price_ht', 'is', null)
@@ -96,12 +96,12 @@ export async function GET() {
   ])
 
   // Variation : deux derniers prix unitaires distincts par réf, datés par la facture
-  const pointsByArticle = new Map<string, { date: string; price: number }[]>()
+  const pointsByArticle = new Map<string, { date: string; price: number; invoiceId: string | null }[]>()
   for (const p of (pricePoints || []) as any[]) {
     const date = p.invoices?.invoice_date
     if (!p.article_id || !date) continue
     const arr = pointsByArticle.get(p.article_id) || []
-    arr.push({ date, price: parseFloat(p.unit_price_ht) })
+    arr.push({ date, price: parseFloat(p.unit_price_ht), invoiceId: p.invoice_id ? String(p.invoice_id) : null })
     pointsByArticle.set(p.article_id, arr)
   }
 
@@ -168,6 +168,10 @@ export async function GET() {
 
   // Mouvements de prix des 30 derniers jours, collectés générique par générique
   // (par réf : deux factures consécutives à prix différent = un mouvement).
+  // ANOMALIE : un saut de ±25 % ou plus entre deux factures d'une même réf est
+  // marqué « à vérifier » — repère de SIGNALEMENT, pas un verdict (une promo ou
+  // un effet de saison existent) ; la page pose la question et ouvre la facture.
+  const ANOMALIE_PCT = 25
   const moves: any[] = []
   const round4 = (n: number) => Math.round(n * 10000) / 10000
 
@@ -189,6 +193,7 @@ export async function GET() {
       for (let i = 1; i < rpts.length; i++) {
         const prev = rpts[i - 1], cur = rpts[i]
         if (cur.price !== prev.price && cur.date >= cutoff30j) {
+          const pct = prev.price !== 0 ? Math.round(((cur.price - prev.price) / prev.price) * 1000) / 10 : null
           moves.push({
             date: cur.date,
             generic_id: g.id,
@@ -198,7 +203,9 @@ export async function GET() {
             supplier_name: r.supplier_name ?? null,
             old_base: round4(prev.price / conv),
             new_base: round4(cur.price / conv),
-            pct: prev.price !== 0 ? Math.round(((cur.price - prev.price) / prev.price) * 1000) / 10 : null,
+            pct,
+            invoice_id: cur.invoiceId,
+            anomalie: pct !== null && Math.abs(pct) >= ANOMALIE_PCT,
           })
         }
       }
