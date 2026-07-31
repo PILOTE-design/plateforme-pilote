@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { PROVIDERS } from '@/lib/billing-providers'
+import { resolveClientId } from '@/lib/resolve-client-id'
+
+// Résolution de compte : resolveClientId (user_id PUIS email), comme partout.
+// Le lookup direct `client_user_id` renvoyait « Client introuvable » aux
+// boutiques à deux logins — la fiche n'est rattachée qu'à UN user_id, le
+// second compte n'est reconnu que par son email (bug clé API du 31/07).
 
 // GET — liste les intégrations du client connecté
 export async function GET() {
@@ -10,15 +16,13 @@ export async function GET() {
 
   const service = createServiceClient()
 
-  // Résoudre client_id
-  const { data: clientRow } = await service
-    .from('clients').select('id').eq('client_user_id', user.id).maybeSingle()
-  if (!clientRow) return NextResponse.json([])
+  const clientId = await resolveClientId(service, user.id, user.email)
+  if (!clientId) return NextResponse.json([])
 
   const { data } = await service
     .from('billing_integrations')
     .select('provider, is_active, last_sync_at, last_sync_status, last_sync_error, invoices_synced, company_id')
-    .eq('client_id', clientRow.id)
+    .eq('client_id', clientId)
 
   // Masquer le token, retourner les métadonnées + erreur lisible
   return NextResponse.json(data ?? [])
@@ -37,9 +41,8 @@ export async function POST(req: NextRequest) {
 
   const service = createServiceClient()
 
-  const { data: clientRow } = await service
-    .from('clients').select('id').eq('client_user_id', user.id).maybeSingle()
-  if (!clientRow) return NextResponse.json({ error: 'Client introuvable' }, { status: 404 })
+  const clientId = await resolveClientId(service, user.id, user.email)
+  if (!clientId) return NextResponse.json({ error: 'Client introuvable' }, { status: 404 })
 
   // Tester la connexion avant de sauvegarder
   const prov = PROVIDERS[provider]
@@ -47,7 +50,7 @@ export async function POST(req: NextRequest) {
   if (!ok) return NextResponse.json({ error: `Connexion ${prov.name} échouée — vérifiez votre token` }, { status: 422 })
 
   const { error } = await service.from('billing_integrations').upsert({
-    client_id:  clientRow.id,
+    client_id:  clientId,
     provider,
     api_token,
     company_id: company_id || null,
