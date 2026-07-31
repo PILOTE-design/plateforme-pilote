@@ -17,6 +17,12 @@
 // Seuls les prix VÉRIFIÉS participent (un prix en quarantaine a
 // unit_price_ht NULL et n'apparaît jamais ici) ; une réf sans conversion
 // d'unité reste exclue — mêmes règles que le prix du jour, rien d'inventé.
+// Depuis M-C : chaque générique porte aussi ses FICHES RECETTES utilisatrices
+// (`recipes_used` — quantité BRUTE par batch, perte comprise) et le prix
+// précédent (`prev_price_ht`) pour chiffrer l'impact d'un mouvement : la page
+// affiche Δprix × quantité brute, en € par batch et par unité produite.
+// L'impact est de l'arithmétique sur les prix de la mercuriale — AUCUN moteur
+// de coût dupliqué ici (le coût complet reste calculé par lib/recipes).
 import { NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { resolveClientId } from '@/lib/resolve-client-id'
@@ -77,6 +83,18 @@ export async function GET() {
       .limit(200),
   ])
 
+  // Fiches recettes utilisatrices — pour « utilisé dans N fiches » et l'impact
+  // d'un mouvement de prix (Δprix × quantité brute). Lignes génériques seulement.
+  const [{ data: recipesRows }, { data: recipeIngs }] = await Promise.all([
+    service.from('recipes')
+      .select('id, name, yield_qty, yield_unit')
+      .eq('client_id', clientId).eq('active', true),
+    service.from('recipe_ingredients')
+      .select('recipe_id, generic_id, quantity, qty_unit, loss_pct')
+      .eq('client_id', clientId)
+      .not('generic_id', 'is', null),
+  ])
+
   // Variation : deux derniers prix unitaires distincts par réf, datés par la facture
   const pointsByArticle = new Map<string, { date: string; price: number }[]>()
   for (const p of (pricePoints || []) as any[]) {
@@ -129,6 +147,25 @@ export async function GET() {
     }
   }
 
+  // Quantité BRUTE d'un générique par fiche (perte comprise, en unité de base) :
+  // brut = net ÷ (1 − perte), g ramenés en kg. Plusieurs lignes d'une même fiche
+  // sur le même générique s'additionnent.
+  const recipesById = new Map<string, any>((recipesRows || []).map((r: any) => [String(r.id), r]))
+  const usageByGeneric = new Map<string, Map<string, number>>()
+  for (const ing of (recipeIngs || []) as any[]) {
+    const gid = String(ing.generic_id)
+    const base = baseByGenericId.get(gid)
+    if (!base || !recipesById.has(String(ing.recipe_id))) continue
+    const qty = Number(ing.quantity) || 0
+    if (qty <= 0) continue
+    const qtyBase = base === 'kg' && ing.qty_unit === 'g' ? qty / 1000 : qty
+    const loss = Math.min(99, Math.max(0, Number(ing.loss_pct) || 0))
+    const brut = qtyBase / (1 - loss / 100)
+    const m = usageByGeneric.get(gid) || new Map<string, number>()
+    m.set(String(ing.recipe_id), (m.get(String(ing.recipe_id)) || 0) + brut)
+    usageByGeneric.set(gid, m)
+  }
+
   // Mouvements de prix des 30 derniers jours, collectés générique par générique
   // (par réf : deux factures consécutives à prix différent = un mouvement).
   const moves: any[] = []
@@ -174,6 +211,26 @@ export async function GET() {
       if (history.length === 0 || history[history.length - 1].p !== pt.p) history.push(pt)
     }
 
+    // Fiches utilisatrices, la plus grosse consommatrice d'abord
+    const usage = usageByGeneric.get(String(g.id))
+    const recipes_used = usage
+      ? [...usage.entries()]
+          .map(([rid, brut]) => {
+            const rec = recipesById.get(rid)
+            return {
+              id: rid,
+              name: String(rec.name),
+              qty_brute: Math.round(brut * 1000) / 1000,
+              yield_qty: rec.yield_qty !== null && rec.yield_qty !== undefined ? Number(rec.yield_qty) : null,
+              yield_unit: rec.yield_unit ?? null,
+            }
+          })
+          .sort((a, b) => b.qty_brute - a.qty_brute)
+      : []
+    // Prix précédent du générique (celui de sa meilleure réf, converti) — pour
+    // chiffrer l'impact du dernier mouvement côté page.
+    const bestConv = best && best.conversion_factor !== null && Number(best.conversion_factor) > 0 ? Number(best.conversion_factor) : 1
+
     return {
       ...g,
       default_loss_pct: Number(g.default_loss_pct) || 0,
@@ -182,10 +239,13 @@ export async function GET() {
       price_date: best ? best.last_price_date : null,
       price_supplier: best ? best.supplier_name : null,
       variation_pct: best ? best.variation_pct : null,
+      prev_price_ht: best && best.previous_price !== null ? round4(best.previous_price / bestConv) : null,
       history: history.slice(-40),
       points_12m: points.length,
       min_12m: points.length > 0 ? Math.min(...points.map(x => x.p)) : null,
       max_12m: points.length > 0 ? Math.max(...points.map(x => x.p)) : null,
+      recipes_count: recipes_used.length,
+      recipes_used,
       refs,
     }
   })
