@@ -13,7 +13,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { resolveClientId } from '@/lib/resolve-client-id'
-import { PAYROLL_EMPLOYEE_COLUMNS, chargeMultiplier, type PayrollEmployee } from '@/lib/payroll'
+import { PAYROLL_EMPLOYEE_COLUMNS, chargeMultiplier, productiveFactor, type PayrollEmployee } from '@/lib/payroll'
 import {
   averageLoadedRate, employeeLoadedRate, buildGenericMap,
   buildGenericPriceSeries, costMatiereAtDate,
@@ -119,7 +119,9 @@ export async function GET() {
       .map(e => {
         const er = e as unknown as Record<string, unknown>
         const h = Number(er.hourly_rate) || 0
-        return { id: String(er.id), name: String(er.name ?? ''), loaded_rate: h > 0 ? Math.round(h * chargeMultiplier(e) * 100) / 100 : null }
+        // Taux PRODUCTIF (chargé × 52/(52 − semaines non travaillées)) — le même
+        // que celui du moteur de coût, pour que le menu annonce ce qui sera compté
+        return { id: String(er.id), name: String(er.name ?? ''), loaded_rate: h > 0 ? Math.round(h * chargeMultiplier(e) * productiveFactor(e) * 100) / 100 : null }
       })
       .sort((a, b) => a.name.localeCompare(b.name, 'fr')),
   })
