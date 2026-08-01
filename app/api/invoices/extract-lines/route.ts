@@ -29,7 +29,7 @@ import { lireFacturX } from '@/lib/facturx'
 // code sur un texte archivé (cf. lib/invoice-extract).
 import {
   PROMPT_LIGNES_VERSION, TEXTE_MAX,
-  extractLinesLong, extractLinesVision,
+  extractLinesVision, lireTexteAvecReprise, sommeLignes,
   type ExtractedLine,
 } from '@/lib/invoice-extract'
 
@@ -428,7 +428,7 @@ export async function POST(request: NextRequest) {
     }).eq('id', invoice.id)
 
     let luEnVision = false
-    let extraction: Awaited<ReturnType<typeof extractLinesLong>>
+    let extraction: { lines: ExtractedLine[]; delivery_date: string | null; due_date: string | null; nature: 'matiere' | 'hors_matiere'; tronque: boolean }
     let passe = sansTexte ? 'vision' : 'texte'
     let tentatives = 1
     if (sansTexte) {
@@ -442,72 +442,34 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'PDF sans texte exploitable (scan) — lecture image indisponible.' }, { status: 422 })
       }
     } else {
-      extraction = await extractLinesLong(pdfText, totalHT)
+      // Passes 1 et 2 (texte, puis reprise avec l'écart nommé) : dans lib/, pour
+      // que la route de MESURE rejoue exactement le même chemin. Un garde-fou
+      // qui ne teste pas la chaîne réelle ne garde rien.
+      const lecture = await lireTexteAvecReprise(pdfText, totalHT)
+      extraction = lecture
+      passe = lecture.passe
+      tentatives = lecture.tentatives
 
-      // ── PASSES DE SECOURS ───────────────────────────────────────────────────
-      //
-      // Une lecture qui ne BOUCLE pas sur le total n'est plus une fatalité. Le
-      // total, lui, ne vient pas de nous : c'est celui de la comptabilité. Il
-      // sert donc d'arbitre — et tant qu'il n'est pas atteint, on retente
-      // AUTREMENT, jamais deux fois pareil.
-      //
-      //   1. texte    — la lecture nominale ;
-      //   2. reprise  — le MÊME texte, avec l'écart nommé au centime et le sens
-      //                 de l'erreur (excédent = ligne en trop, manque = ligne
-      //                 oubliée). C'est ce qui distingue une seconde chance d'un
-      //                 coup de dés ;
-      //   3. vision   — le document REGARDÉ au lieu d'être lu. Rattrape les
-      //                 couches texte abîmées, où les caractères ressortent
-      //                 espacés (« F A : 0 . 8 8 ») et où aucune relecture du
-      //                 même texte ne peut aider.
-      //
-      // L'arbitre est de l'ARITHMÉTIQUE, pas une seconde IA : on garde la
-      // première lecture qui boucle au centime, sinon celle dont l'écart est le
-      // plus petit — à écart égal, celle qui donne le plus de prix exploitables.
-      // Aucune passe ne peut donc dégrader le résultat : au pire elle ne gagne pas.
-      const boucleExact = (ls: ExtractedLine[]) =>
-        Math.abs(ls.reduce((s, l) => s + l.amount_ht, 0) - totalHT) <= 0.02
-
-      if (totalHT !== 0 && extraction.lines.length > 0 && !boucleExact(extraction.lines)) {
-        const score = (ls: ExtractedLine[]) => ({
-          ecart: Math.abs(ls.reduce((s, l) => s + l.amount_ht, 0) - totalHT),
-          prix: ls.filter(l => l.unit_price_ht !== null).length,
-        })
-        let meilleur = { extraction, passe, score: score(extraction.lines) }
-        // Photographie de la PREMIÈRE lecture : c'est elle que la reprise doit
-        // corriger. La capturer explicitement évite qu'une évolution du code ne
-        // fasse un jour repartir la reprise d'un résultat déjà remplacé.
-        const premiere = extraction.lines.map(l => ({ designation: l.designation, amount_ht: l.amount_ht }))
-        const sommePremiere = premiere.reduce((s, l) => s + l.amount_ht, 0)
-
-        const candidats: { nom: string; run: () => Promise<typeof extraction> }[] = [
-          {
-            nom: 'reprise',
-            run: () => extractLinesLong(pdfText, totalHT, { somme: sommePremiere, lignes: premiere }),
-          },
-          { nom: 'vision', run: () => extractLinesVision(buffer, totalHT) },
-        ]
-
-        for (const c of candidats) {
-          if (meilleur.score.ecart <= 0.02) break
-          tentatives++
-          try {
-            const essai = await c.run()
-            if (essai.lines.length === 0) continue
-            const s = score(essai.lines)
-            const mieux = s.ecart < meilleur.score.ecart - 0.005
-              || (Math.abs(s.ecart - meilleur.score.ecart) <= 0.005 && s.prix > meilleur.score.prix)
-            if (mieux) meilleur = { extraction: essai, passe: c.nom, score: s }
-          } catch (e) {
-            // Une passe de secours qui échoue ne casse rien : on garde la
-            // meilleure lecture obtenue jusque-là et on le dit dans le motif.
-            console.error(`[extract-lines] passe ${c.nom} indisponible:`, e instanceof Error ? e.message : e)
-          }
+      // Passe 3 — le document REGARDÉ au lieu d'être lu. Elle vit ici parce
+      // qu'elle a besoin du PDF, que le corpus archivé ne contient pas. Elle
+      // rattrape les couches texte abîmées, où les caractères ressortent espacés
+      // (« F A : 0 . 8 8 ») et où aucune relecture du même texte ne peut aider.
+      const ecartDe = (ls: ExtractedLine[]) => Math.abs(sommeLignes(ls) - totalHT)
+      if (totalHT !== 0 && extraction.lines.length > 0 && ecartDe(extraction.lines) > 0.02) {
+        tentatives++
+        try {
+          const vu = await extractLinesVision(buffer, totalHT)
+          const nbPrix = (ls: ExtractedLine[]) => ls.filter(l => l.unit_price_ht !== null).length
+          const avant = ecartDe(extraction.lines)
+          const apres = ecartDe(vu.lines)
+          const mieux = vu.lines.length > 0 && (
+            apres < avant - 0.005
+            || (Math.abs(apres - avant) <= 0.005 && nbPrix(vu.lines) > nbPrix(extraction.lines))
+          )
+          if (mieux) { extraction = vu; passe = 'vision'; luEnVision = true }
+        } catch (e) {
+          console.error('[extract-lines] lecture image indisponible:', e instanceof Error ? e.message : e)
         }
-
-        extraction = meilleur.extraction
-        passe = meilleur.passe
-        if (passe === 'vision') luEnVision = true
       }
     }
     const { lines, delivery_date, due_date, nature, tronque } = extraction

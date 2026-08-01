@@ -283,3 +283,58 @@ export async function extractLinesVision(buffer: Buffer, totalHT: number): Promi
   const raw = r.content[0]?.type === 'text' ? r.content[0].text : ''
   return { ...parseReponse(raw), tronque: r.stop_reason === 'max_tokens' }
 }
+
+/** Somme des montants d'une lecture — l'unique chiffre que le total de la
+ *  facture peut arbitrer. */
+export const sommeLignes = (ls: ExtractedLine[]) => ls.reduce((s, l) => s + l.amount_ht, 0)
+
+export type LectureTexte = Awaited<ReturnType<typeof extractLinesLong>> & {
+  /** Quelle passe a produit la lecture retenue */
+  passe: 'texte' | 'reprise'
+  /** Combien de passes ont été tentées (1 = bon du premier coup) */
+  tentatives: number
+}
+
+/**
+ * Lecture d'un texte de facture AVEC sa passe de secours textuelle.
+ *
+ * Ce module est partagé par la ROUTE de lecture et la ROUTE DE MESURE, et c'est
+ * tout l'intérêt : le jour où le secours n'a existé que dans la route, la mesure
+ * rejouait la première passe et se déclarait satisfaite — elle validait une
+ * chaîne que la production n'utilisait plus. Un garde-fou qui ne teste pas le
+ * chemin réel ne garde rien.
+ *
+ * La troisième passe — regarder le document en image — reste dans la route :
+ * elle a besoin du PDF, que le corpus archivé ne contient pas.
+ *
+ * L'arbitre est arithmétique. On garde la première lecture qui boucle au
+ * centime ; sinon celle dont l'écart est le plus petit ; à écart égal, celle qui
+ * porte le plus de prix exploitables. La reprise ne peut donc pas dégrader le
+ * résultat — au pire elle ne gagne pas.
+ */
+export async function lireTexteAvecReprise(pdfText: string, totalHT: number): Promise<LectureTexte> {
+  const p1 = await extractLinesLong(pdfText, totalHT)
+  // Sans total connu il n'y a pas d'arbitre : reprendre serait tirer à pile ou face.
+  if (totalHT === 0 || p1.lines.length === 0) return { ...p1, passe: 'texte', tentatives: 1 }
+
+  const ecart1 = Math.abs(sommeLignes(p1.lines) - totalHT)
+  if (ecart1 <= 0.02) return { ...p1, passe: 'texte', tentatives: 1 }
+
+  const prix = (ls: ExtractedLine[]) => ls.filter(l => l.unit_price_ht !== null).length
+  try {
+    const p2 = await extractLinesLong(pdfText, totalHT, {
+      somme: sommeLignes(p1.lines),
+      lignes: p1.lines.map(l => ({ designation: l.designation, amount_ht: l.amount_ht })),
+    })
+    if (p2.lines.length > 0) {
+      const ecart2 = Math.abs(sommeLignes(p2.lines) - totalHT)
+      const mieux = ecart2 < ecart1 - 0.005
+        || (Math.abs(ecart2 - ecart1) <= 0.005 && prix(p2.lines) > prix(p1.lines))
+      if (mieux) return { ...p2, passe: 'reprise', tentatives: 2 }
+    }
+  } catch (e) {
+    // Une reprise indisponible ne casse rien : la première lecture reste valable.
+    console.error('[invoice-extract] reprise indisponible:', e instanceof Error ? e.message : e)
+  }
+  return { ...p1, passe: 'texte', tentatives: 2 }
+}

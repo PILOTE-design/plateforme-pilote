@@ -38,6 +38,8 @@ type Bouclage = {
   boucle: boolean
   lignes: number
   prix: number
+  passe: string
+  tentatives: number
 }
 
 type Reponse = {
@@ -197,6 +199,11 @@ export default function InvoiceEvalPage() {
                     <p className="text-sm font-bold text-gray-900 flex-1 min-w-[180px]">{b.fournisseur}</p>
                     <span className="text-xs text-gray-400 tabular">{b.date ?? '—'}</span>
                     <span className="text-xs text-gray-500 tabular">{b.lignes} lignes · {b.prix} prix</span>
+                    {b.tentatives > 1 && (
+                      <span className="text-[10px] font-semibold uppercase tracking-wider text-orange-700 bg-orange-50 rounded px-1.5 py-0.5">
+                        {b.passe === 'reprise' ? 'sauvée à la reprise' : `${b.tentatives} essais`}
+                      </span>
+                    )}
                     <span className="text-xs text-gray-400 tabular">total {b.total.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} €</span>
                     <span className={`text-xs tabular ${Math.abs(b.somme_avant - b.total) <= 0.02 ? 'text-gray-400' : 'text-gray-400 line-through'}`}>
                       {b.somme_avant.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} €
