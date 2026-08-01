@@ -16,7 +16,7 @@ import Anthropic from '@anthropic-ai/sdk'
 /** Version du prompt d'extraction. À INCRÉMENTER à chaque modification : c'est
  *  elle qui permet de dire « avant / après » sur le corpus, et donc de refuser
  *  un changement qui dégrade au lieu de le découvrir en production. */
-export const PROMPT_LIGNES_VERSION = '2026-08-01-c-colonnes'
+export const PROMPT_LIGNES_VERSION = '2026-08-01-d-libelle-seul'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || 'MISSING_ANTHROPIC_KEY' })
 
@@ -96,6 +96,7 @@ Règles STRICTES :
 - MONTANT_HT = le montant HT tel qu'ÉCRIT sur la ligne, celui de la dernière colonne monétaire. Il figure TEL QUEL dans le texte. Ne le recalcule JAMAIS, sous aucun prétexte.
 - N'ajuste JAMAIS un montant pour qu'il colle à QUANTITE × PRIX_UNITAIRE. Sur ces factures le produit ne tombe très souvent PAS juste, parce que le prix est au kilo et la quantité en colis. Ce n'est pas une erreur à corriger : c'est exactement pour ça que la colonne POIDS_KG existe. Recopie chaque nombre à sa place et laisse-les en désaccord apparent.
 - TAUX_TVA = un taux en pourcentage (5.5, 10, 20). Un « 1 », « 2 » ou « 3 » en fin de ligne est un code de TVA du fournisseur : laisse alors TAUX_TVA vide.
+- DESIGNATION = le libellé de l'article SEUL. N'y inclus jamais les nombres qui l'entourent dans le texte : ni le nombre de colis, ni le poids, ni le prix. « 2.0 kg FILET DE POULET S/ATMO » se note FILET DE POULET S/ATMO. Ces nombres ont leurs colonnes.
 - CODE = référence article du fournisseur si présente, sinon vide.
 - QUANTITE et PRIX_UNITAIRE_HT vides s'ils ne figurent pas sur la facture — ne JAMAIS les inventer.
 - UNITE = kg, pièce, colis, L… telle qu'écrite.
@@ -156,6 +157,12 @@ export async function extractLines(pdfText: string, totalHT: number): Promise<{
     // était coupée en silence, la somme ne bouclait plus, et TOUTE la facture
     // partait en quarantaine. Le budget suit désormais le plafond de lignes.
     model: 'claude-haiku-4-5-20251001', max_tokens: 16000,
+    // Lire une facture n'est pas un exercice de style : c'est de la
+    // transcription. À température par défaut, deux lectures du MÊME texte
+    // donnaient deux résultats — mesuré le 01/08, où une facture est passée de
+    // 100 % à 18 % d'un rejeu à l'autre sans qu'une ligne de code ait bougé.
+    // Une mesure qui varie toute seule ne prouve rien.
+    temperature: 0,
     messages: [{ role: 'user', content: promptExtraction(totalHT, pdfText) }],
   })
   const raw = r.content[0]?.type === 'text' ? r.content[0].text : ''
@@ -211,6 +218,8 @@ export async function extractLinesVision(buffer: Buffer, totalHT: number): Promi
 }> {
   const r = await anthropic.messages.create({
     model: 'claude-haiku-4-5-20251001', max_tokens: 16000,
+    // Même raison qu'en lecture texte : transcription, pas création.
+    temperature: 0,
     messages: [{
       role: 'user',
       content: [
