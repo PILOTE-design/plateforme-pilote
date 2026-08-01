@@ -33,7 +33,10 @@ import {
   type ExtractedLine,
 } from '@/lib/invoice-extract'
 
-export const maxDuration = 60
+// Jusqu'à trois passes de lecture pour une facture qui résiste (texte, reprise,
+// image) : 60 s n'y suffisent plus. 300 s est le plafond réel de la plateforme,
+// et la lecture reste déclenchée à la main, une facture à la fois.
+export const maxDuration = 300
 
 
 export async function POST(request: NextRequest) {
@@ -92,6 +95,11 @@ export async function POST(request: NextRequest) {
         tronque: boolean
         luEnVision?: boolean
         motifSuffixe?: string
+        /** Quelle passe a produit cette lecture, et combien ont été tentées.
+         *  Sans ça, impossible de dire combien de factures ne passent QUE grâce
+         *  au secours — donc impossible de savoir s'il sert à quelque chose. */
+        passe?: string
+        tentatives?: number
       },
     ) => {
       const { delivery_date, due_date, tronque } = ctx
@@ -286,7 +294,15 @@ export async function POST(request: NextRequest) {
       if (livraisonRetenue && !invoice.delivery_date) patch.delivery_date = livraisonRetenue
       if (due_date && !invoice.due_date) patch.due_date = due_date
         patch.lines_mode = ctx.mode
-        const motifFinal = [ctx.motifSuffixe, motifPartiel].filter(Boolean).join(' ') || null
+        patch.lines_pass = ctx.passe ?? ctx.mode
+        patch.lines_attempts = ctx.tentatives ?? 1
+        // Le boucher doit savoir qu'une facture n'est passée qu'au rattrapage :
+        // c'est le signe d'un fournisseur dont la mise en page nous résiste, et
+        // donc le premier endroit à regarder quand un prix semble étrange.
+        const mentionPasse = (ctx.tentatives ?? 1) > 1
+          ? `Lue au ${ctx.tentatives}e essai (${ctx.passe === 'vision' ? 'lecture du document en image' : 'relecture avec l’écart signalé'}).`
+          : null
+        const motifFinal = [ctx.motifSuffixe, mentionPasse, motifPartiel].filter(Boolean).join(' ') || null
         await marquer(invoice.id, complet ? 'done' : 'partial', motifFinal, patch)
 
         return NextResponse.json({
@@ -373,6 +389,7 @@ export async function POST(request: NextRequest) {
           due_date: facturx.due_date,
           tronque: false,
           motifSuffixe: `Lu dans les données structurées de la facture électronique (${facturx.profil.toUpperCase()}) — sans interprétation.`,
+          passe: 'facturx', tentatives: 1,
         })
       }
     }
@@ -412,6 +429,8 @@ export async function POST(request: NextRequest) {
 
     let luEnVision = false
     let extraction: Awaited<ReturnType<typeof extractLinesLong>>
+    let passe = sansTexte ? 'vision' : 'texte'
+    let tentatives = 1
     if (sansTexte) {
       try {
         extraction = await extractLinesVision(buffer, totalHT)
@@ -424,6 +443,72 @@ export async function POST(request: NextRequest) {
       }
     } else {
       extraction = await extractLinesLong(pdfText, totalHT)
+
+      // ── PASSES DE SECOURS ───────────────────────────────────────────────────
+      //
+      // Une lecture qui ne BOUCLE pas sur le total n'est plus une fatalité. Le
+      // total, lui, ne vient pas de nous : c'est celui de la comptabilité. Il
+      // sert donc d'arbitre — et tant qu'il n'est pas atteint, on retente
+      // AUTREMENT, jamais deux fois pareil.
+      //
+      //   1. texte    — la lecture nominale ;
+      //   2. reprise  — le MÊME texte, avec l'écart nommé au centime et le sens
+      //                 de l'erreur (excédent = ligne en trop, manque = ligne
+      //                 oubliée). C'est ce qui distingue une seconde chance d'un
+      //                 coup de dés ;
+      //   3. vision   — le document REGARDÉ au lieu d'être lu. Rattrape les
+      //                 couches texte abîmées, où les caractères ressortent
+      //                 espacés (« F A : 0 . 8 8 ») et où aucune relecture du
+      //                 même texte ne peut aider.
+      //
+      // L'arbitre est de l'ARITHMÉTIQUE, pas une seconde IA : on garde la
+      // première lecture qui boucle au centime, sinon celle dont l'écart est le
+      // plus petit — à écart égal, celle qui donne le plus de prix exploitables.
+      // Aucune passe ne peut donc dégrader le résultat : au pire elle ne gagne pas.
+      const boucleExact = (ls: ExtractedLine[]) =>
+        Math.abs(ls.reduce((s, l) => s + l.amount_ht, 0) - totalHT) <= 0.02
+
+      if (totalHT !== 0 && extraction.lines.length > 0 && !boucleExact(extraction.lines)) {
+        const score = (ls: ExtractedLine[]) => ({
+          ecart: Math.abs(ls.reduce((s, l) => s + l.amount_ht, 0) - totalHT),
+          prix: ls.filter(l => l.unit_price_ht !== null).length,
+        })
+        let meilleur = { extraction, passe, score: score(extraction.lines) }
+        // Photographie de la PREMIÈRE lecture : c'est elle que la reprise doit
+        // corriger. La capturer explicitement évite qu'une évolution du code ne
+        // fasse un jour repartir la reprise d'un résultat déjà remplacé.
+        const premiere = extraction.lines.map(l => ({ designation: l.designation, amount_ht: l.amount_ht }))
+        const sommePremiere = premiere.reduce((s, l) => s + l.amount_ht, 0)
+
+        const candidats: { nom: string; run: () => Promise<typeof extraction> }[] = [
+          {
+            nom: 'reprise',
+            run: () => extractLinesLong(pdfText, totalHT, { somme: sommePremiere, lignes: premiere }),
+          },
+          { nom: 'vision', run: () => extractLinesVision(buffer, totalHT) },
+        ]
+
+        for (const c of candidats) {
+          if (meilleur.score.ecart <= 0.02) break
+          tentatives++
+          try {
+            const essai = await c.run()
+            if (essai.lines.length === 0) continue
+            const s = score(essai.lines)
+            const mieux = s.ecart < meilleur.score.ecart - 0.005
+              || (Math.abs(s.ecart - meilleur.score.ecart) <= 0.005 && s.prix > meilleur.score.prix)
+            if (mieux) meilleur = { extraction: essai, passe: c.nom, score: s }
+          } catch (e) {
+            // Une passe de secours qui échoue ne casse rien : on garde la
+            // meilleure lecture obtenue jusque-là et on le dit dans le motif.
+            console.error(`[extract-lines] passe ${c.nom} indisponible:`, e instanceof Error ? e.message : e)
+          }
+        }
+
+        extraction = meilleur.extraction
+        passe = meilleur.passe
+        if (passe === 'vision') luEnVision = true
+      }
     }
     const { lines, delivery_date, due_date, nature, tronque } = extraction
 
@@ -457,6 +542,7 @@ export async function POST(request: NextRequest) {
     return await publierLignes(lines, {
       mode: luEnVision ? 'vision' : 'texte',
       delivery_date, due_date, tronque, luEnVision,
+      passe, tentatives,
     })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
