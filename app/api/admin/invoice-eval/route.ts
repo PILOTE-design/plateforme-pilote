@@ -27,6 +27,8 @@ import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { isAdminEmail } from '@/lib/admins'
 import { PROMPT_LIGNES_VERSION, lireTexteAvecReprise } from '@/lib/invoice-extract'
 import { compareFacture, aggregerFactures, type CasFacture, type LigneFacture } from '@/lib/invoice-eval'
+import { choisirExemples, consigneExemples } from '@/lib/invoice-layouts'
+import { normalizeSupplierName, supplierSociete } from '@/lib/supplier-memory'
 
 export const dynamic = 'force-dynamic'
 // Un rejeu appelle l'IA une fois par facture, et la route en traite deux séries :
@@ -58,7 +60,7 @@ export async function POST(request: NextRequest) {
   // Cas candidats : un texte source archivé et des lignes en base. La lecture
   // image n'est pas rejouable depuis un texte — elle est comptée à part.
   const { data: candidats } = await service.from('invoices')
-    .select('id, supplier_name, invoice_date, amount_ht, lines_source_text, lines_mode, lines_prompt_version')
+    .select('id, client_id, supplier_name, invoice_date, amount_ht, lines_source_text, lines_mode, lines_prompt_version')
     .not('lines_source_text', 'is', null)
     .eq('lines_mode', 'texte')
     .order('invoice_date', { ascending: false })
@@ -128,7 +130,11 @@ export async function POST(request: NextRequest) {
   for (const inv of aTraiter) {
     const ref = refParFacture.get(String(inv.id)) || []
     try {
-      const { lines } = await lireTexteAvecReprise(String(inv.lines_source_text || ''), num(inv.amount_ht) ?? 0)
+      const texte = String(inv.lines_source_text || '')
+      const ex = consigneExemples(await choisirExemples(
+        service, String(inv.client_id ?? ''), normalizeSupplierName(supplierSociete(String(inv.supplier_name || ''))) || '', texte,
+      ).catch(() => []))
+      const { lines } = await lireTexteAvecReprise(texte, num(inv.amount_ht) ?? 0, ex)
       cas.push(compareFacture(
         String(inv.id),
         String(inv.supplier_name ?? ''),
@@ -152,7 +158,11 @@ export async function POST(request: NextRequest) {
     const ref = refParFacture.get(String(inv.id)) || []
     const total = num(inv.amount_ht) ?? 0
     try {
-      const { lines, passe, tentatives } = await lireTexteAvecReprise(String(inv.lines_source_text || ''), total)
+      const texte = String(inv.lines_source_text || '')
+      const ex = consigneExemples(await choisirExemples(
+        service, String(inv.client_id ?? ''), normalizeSupplierName(supplierSociete(String(inv.supplier_name || ''))) || '', texte,
+      ).catch(() => []))
+      const { lines, passe, tentatives } = await lireTexteAvecReprise(texte, total, ex)
       const somme = lines.reduce((s, l) => s + (l.amount_ht || 0), 0)
       const ecart = Math.round((somme - total) * 100) / 100
       bouclage.push({
