@@ -158,12 +158,16 @@ export async function POST(request: NextRequest) {
     lignes_obtenues: corpus.lignes_obtenues,
     prix_exploitables_rejeu: corpus.prix_exploitables,
     prix_exploitables_reference: prixRefs,
+    prix_gagnes: corpus.prix_gagnes,
+    prix_perdus: corpus.prix_perdus,
     echecs,
     par_cas: corpus.par_cas.map(c => ({
       fournisseur: c.fournisseur, date: c.date,
       exactitude: Math.round(c.exactitude * 1000) / 10,
       lignes: `${c.lignes_obtenues}/${c.lignes_attendues}`,
       prix_exploitables: c.prix_exploitables,
+      prix_gagnes: c.prix_gagnes,
+      prix_perdus: c.prix_perdus,
       divergences: c.divergences.slice(0, 8),
     })),
     message: restants > 0
