@@ -16,7 +16,7 @@ import Anthropic from '@anthropic-ai/sdk'
 /** Version du prompt d'extraction. À INCRÉMENTER à chaque modification : c'est
  *  elle qui permet de dire « avant / après » sur le corpus, et donc de refuser
  *  un changement qui dégrade au lieu de le découvrir en production. */
-export const PROMPT_LIGNES_VERSION = '2026-08-01-d-libelle-seul'
+export const PROMPT_LIGNES_VERSION = '2026-08-01-e-entete'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || 'MISSING_ANTHROPIC_KEY' })
 
@@ -92,14 +92,26 @@ se lit : L|SAUCISSON SEC ROND D'AUVERGNE|000233|3|kg|22.550|90.27|5.5|4.003
 Le MONTANT est 90,27 — le nombre de la colonne « Montant HT », PAS 3 × 22,550 = 67,65.
 Le dernier nombre (1) est un code de TVA interne, pas un taux : ne le recopie jamais en TAUX_TVA.
 
+Autre disposition, tout aussi fréquente, avec un en-tête différent :
+« Désignation | GENCOD | T | Article | Nombre | Poids | P. U. HT | TVA | Montant HT »
+« AGNEAU ENTIER CARC  388888 311001 9  1  1  21,800  13,000  1  283,40 »
+se lit : L|AGNEAU ENTIER CARC|311001|1|kg|13.000|283.40||21.800
+21,800 kg × 13,000 €/kg = 283,40 : ici c'est le POIDS qui porte le prix, et le « 1 » juste avant le montant est un code de TVA.
+Sur cette même facture, « ECHINE PORC A/P A/OS CARC  388888 403000 2  1  2  14,600  5,000  1 » se termine sans montant :
+la colonne « Montant HT » est VIDE. Cette ligne ne doit PAS être écrite — son montant est porté par la ligne suivante.
+
 Règles STRICTES :
-- MONTANT_HT = le montant HT tel qu'ÉCRIT sur la ligne, celui de la dernière colonne monétaire. Il figure TEL QUEL dans le texte. Ne le recalcule JAMAIS, sous aucun prétexte.
+- COMMENCE par repérer la ligne d'en-tête des colonnes (« Désignation … Montant HT ») : c'est elle qui dit quel nombre est quoi. L'ordre des colonnes change d'un fournisseur à l'autre — le montant n'est pas toujours le dernier nombre de la ligne.
+- MONTANT_HT = le montant HT tel qu'ÉCRIT sur la ligne, dans la colonne « Montant HT ». Il figure TEL QUEL dans le texte. Ne le recalcule JAMAIS, sous aucun prétexte.
+- Si la colonne « Montant HT » est VIDE pour une ligne, N'ÉCRIS PAS cette ligne. Ne remplace jamais un montant absent par un autre nombre de la ligne — ni le poids, ni le prix, ni le nombre de pièces. Une ligne sans montant est un détail d'une autre ligne, pas un article facturé.
+- Pour VÉRIFIER que tu as identifié la bonne colonne — jamais pour calculer — le montant doit valoir le poids × le prix unitaire, ou le nombre de pièces × le prix unitaire. Si aucun des deux ne tombe, tu t'es probablement trompé de colonne : relis l'en-tête. Si tu ne trouves pas mieux, recopie quand même le nombre de la colonne « Montant HT » sans le modifier.
+- PRIX_UNITAIRE_HT : ne le laisse pas vide quand une colonne « P.U. » ou « Prix unitaire » est écrite sur la ligne. C'est le prix qui alimente la mercuriale.
 - N'ajuste JAMAIS un montant pour qu'il colle à QUANTITE × PRIX_UNITAIRE. Sur ces factures le produit ne tombe très souvent PAS juste, parce que le prix est au kilo et la quantité en colis. Ce n'est pas une erreur à corriger : c'est exactement pour ça que la colonne POIDS_KG existe. Recopie chaque nombre à sa place et laisse-les en désaccord apparent.
 - TAUX_TVA = un taux en pourcentage (5.5, 10, 20). Un « 1 », « 2 » ou « 3 » en fin de ligne est un code de TVA du fournisseur : laisse alors TAUX_TVA vide.
 - DESIGNATION = le libellé de l'article SEUL. N'y inclus jamais les nombres qui l'entourent dans le texte : ni le nombre de colis, ni le poids, ni le prix. « 2.0 kg FILET DE POULET S/ATMO » se note FILET DE POULET S/ATMO. Ces nombres ont leurs colonnes.
 - CODE = référence article du fournisseur si présente, sinon vide.
 - QUANTITE et PRIX_UNITAIRE_HT vides s'ils ne figurent pas sur la facture — ne JAMAIS les inventer.
-- UNITE = kg, pièce, colis, L… telle qu'écrite.
+- UNITE = kg, pièce, colis, L… telle qu'écrite. JAMAIS un nombre : si la seule chose qui pourrait passer pour une unité est un chiffre (1, 2, 3 — c'est un code de TVA), laisse UNITE vide. Une unité illisible met la référence en attente ; une unité inventée publie un prix faux.
 - POIDS_KG : ces factures portent SOUVENT DEUX nombres par ligne — le nombre de colis (ou de pièces) ET le poids facturé. Quand c'est le cas, mets le nombre de colis en QUANTITE et le POIDS EN KILOS dans POIDS_KG, et le prix au kilo en PRIX_UNITAIRE_HT. Exemple : « 2 pce · 15,012 kg · 14,97 €/kg · 224,73 € » donne QUANTITE=2, POIDS_KG=15.012, PRIX_UNITAIRE_HT=14.97.
 - POIDS_KG reste VIDE si la facture ne montre qu'un seul nombre (la quantité EST le poids, ou l'article se vend à la pièce). Ne jamais le déduire ni le calculer : uniquement s'il est ÉCRIT.
 - Point décimal. Une ligne L| par article, remises et consignes comprises (montants négatifs autorisés).
