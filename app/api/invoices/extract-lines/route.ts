@@ -127,16 +127,31 @@ export async function POST(request: NextRequest) {
        *  échouait, et un prix parfaitement lu partait en quarantaine. Mesuré le
        *  31/07 : 32 prix refusés sur des factures dont la somme des lignes
        *  tombait pourtant au centime près. */
-      const assiette = (l: ExtractedLine): number | null =>
-        l.weight_kg != null && l.weight_kg > 0 ? l.weight_kg
-          : (l.quantity != null && l.quantity !== 0 ? l.quantity : null)
+      /** L'assiette n'est PAS toujours le poids. Sur la même facture DAVID
+       *  MASTER, la colonne « UF » vaut KG sur une ligne et PI sur la suivante :
+       *  « SAUCISSON … KG 3 4,003 22,550 90,27 » se recoupe sur le POIDS
+       *  (4,003 × 22,55 = 90,27), tandis que « ASPIC … PI 12 1,080 1,760 21,12 »
+       *  se recoupe sur les PIÈCES (12 × 1,76 = 21,12) et pas du tout sur son
+       *  poids. Préférer aveuglément le poids rejetait la seconde.
+       *
+       *  On ne devine donc pas l'assiette : on essaie les deux et on retient
+       *  celle qui TOMBE JUSTE. C'est plus sûr qu'une règle — le recoupement
+       *  lui-même désigne la bonne colonne. */
+      const assietteQuiTombeJuste = (l: ExtractedLine): number | null => {
+        if (l.unit_price_ht == null) return null
+        const tol = Math.max(0.05, Math.abs(l.amount_ht) * 0.01)
+        for (const c of [l.weight_kg, l.quantity]) {
+          if (c == null || c === 0) continue
+          if (Math.abs(c * l.unit_price_ht - l.amount_ht) <= tol) return c
+        }
+        return null
+      }
 
       const ligneVerifiee = (l: ExtractedLine): boolean => {
-        const base = assiette(l)
-        if (l.unit_price_ht != null && base !== null) {
-          return Math.abs(base * l.unit_price_ht - l.amount_ht) <= Math.max(0.05, Math.abs(l.amount_ht) * 0.01)
-        }
-        return true // pas de contradiction vérifiable (prix seul, ou dérivé de la quantité)
+        if (l.unit_price_ht == null) return true // rien à contredire
+        const aUneAssiette = (l.weight_kg != null && l.weight_kg !== 0) || (l.quantity != null && l.quantity !== 0)
+        if (!aUneAssiette) return true // prix seul : pas de contradiction vérifiable
+        return assietteQuiTombeJuste(l) !== null
       }
       /** Un prix DÉRIVÉ (montant ÷ quantité) n'est pas un prix lu : il n'est
        *  retenu que si l'unité facturée est exploitable. Sans unité, la quantité

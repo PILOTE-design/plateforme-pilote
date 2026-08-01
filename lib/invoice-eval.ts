@@ -66,6 +66,11 @@ export type CasFacture = {
   /** Lignes de la relecture portant un prix unitaire qui se recoupe avec le
    *  montant : ce sont elles qui alimenteraient la mercuriale. */
   prix_exploitables: number
+  /** Prix que la référence n'avait PAS et que la relecture trouve. C'est le but
+   *  poursuivi, pas une faute — voir le commentaire de `champ`. */
+  prix_gagnes: number
+  /** Prix que la référence avait et que la relecture PERD. Régression franche. */
+  prix_perdus: number
   divergences: EcartChamp[]
 }
 
@@ -77,6 +82,8 @@ export type CorpusFactures = {
   lignes_attendues: number
   lignes_obtenues: number
   prix_exploitables: number
+  prix_gagnes: number
+  prix_perdus: number
   par_cas: CasFacture[]
 }
 
@@ -89,6 +96,37 @@ function champ(nom: string, attendu: number | null, obtenu: number | null, eps: 
   }
   const ecart = Math.abs(obtenu - attendu)
   return { champ: nom, attendu, obtenu, ecart: +ecart.toFixed(4), ok: ecart <= eps }
+}
+
+/**
+ * Le prix unitaire ne se compare PAS comme un montant, et le premier rejeu l'a
+ * démontré : le 01/08, la mesure a rendu 57,5 % d'exactitude alors que le
+ * changement testé faisait exactement ce qu'on lui demandait. Sur les 31 écarts
+ * comptés, une vingtaine étaient des « attendu — / relu 13,42 » : un prix que
+ * l'ancienne lecture avait mis en quarantaine et que la nouvelle retrouve.
+ *
+ * Compter ça comme une faute revient à faire punir par le garde-fou l'unique
+ * amélioration qu'il est chargé de valider — et à rendre le 100 % inatteignable
+ * précisément quand on progresse. Trois cas, donc, et un seul est une faute :
+ *   · la référence n'avait pas de prix, la relecture en trouve un → GAIN ;
+ *   · la référence en avait un, la relecture le perd            → PERTE (faute) ;
+ *   · les deux en ont un et ils diffèrent                       → FAUTE.
+ *
+ * Les montants et les quantités, eux, restent comparés strictement : un montant
+ * qui bouge sur une facture dont on sait la somme juste est toujours une
+ * régression, jamais un progrès.
+ */
+function champPrix(nom: string, attendu: number | null, obtenu: number | null): { ecart: EcartChamp | null; gagne: boolean; perdu: boolean } {
+  if (attendu === null && obtenu === null) return { ecart: null, gagne: false, perdu: false }
+  if (attendu === null && obtenu !== null) return { ecart: null, gagne: true, perdu: false }
+  if (attendu !== null && obtenu === null) {
+    return { ecart: { champ: `${nom} — prix PERDU`, attendu, obtenu: null, ecart: attendu, ok: false }, gagne: false, perdu: true }
+  }
+  const ecart = Math.abs((obtenu as number) - (attendu as number))
+  return {
+    ecart: { champ: `${nom} — prix unitaire`, attendu, obtenu, ecart: +ecart.toFixed(4), ok: ecart <= EPS_PRIX },
+    gagne: false, perdu: false,
+  }
 }
 
 /** Un prix unitaire est EXPLOITABLE quand il se recoupe avec le montant de la
@@ -124,6 +162,7 @@ export function compareFacture(
   }
 
   const consommees = new Set<LigneFacture>()
+  let prixGagnes = 0, prixPerdus = 0
   for (const a of attendu) {
     const k = normText(a.designation)
     // Un même libellé peut revenir plusieurs fois sur une facture (deux lots du
@@ -147,7 +186,10 @@ export function compareFacture(
           : o.quantity)
       : null
     champs.push(champ(`${nom} — quantité`, a.quantity, qObtenue, EPS_QUANTITE))
-    champs.push(champ(`${nom} — prix unitaire`, a.unit_price_ht, o ? o.unit_price_ht : null, EPS_PRIX))
+    const p = champPrix(nom, a.unit_price_ht, o ? o.unit_price_ht : null)
+    if (p.ecart) champs.push(p.ecart)
+    if (p.gagne) prixGagnes++
+    if (p.perdu) prixPerdus++
   }
   // Lignes inventées : présentes à la relecture, absentes de la référence.
   for (const o of obtenu) {
@@ -166,6 +208,8 @@ export function compareFacture(
     exacts,
     exactitude: champs.length ? exacts / champs.length : 1,
     prix_exploitables: obtenu.filter(prixExploitable).length,
+    prix_gagnes: prixGagnes,
+    prix_perdus: prixPerdus,
     divergences: champs.filter(c => !c.ok),
   }
 }
@@ -183,6 +227,8 @@ export function aggregerFactures(cas: CasFacture[]): CorpusFactures {
     lignes_attendues: cas.reduce((s, c) => s + c.lignes_attendues, 0),
     lignes_obtenues: cas.reduce((s, c) => s + c.lignes_obtenues, 0),
     prix_exploitables: cas.reduce((s, c) => s + c.prix_exploitables, 0),
+    prix_gagnes: cas.reduce((s, c) => s + c.prix_gagnes, 0),
+    prix_perdus: cas.reduce((s, c) => s + c.prix_perdus, 0),
     par_cas: cas,
   }
 }
