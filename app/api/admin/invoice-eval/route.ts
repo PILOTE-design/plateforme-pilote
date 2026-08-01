@@ -25,7 +25,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { isAdminEmail } from '@/lib/admins'
-import { PROMPT_LIGNES_VERSION, extractLinesLong } from '@/lib/invoice-extract'
+import { PROMPT_LIGNES_VERSION, lireTexteAvecReprise } from '@/lib/invoice-extract'
 import { compareFacture, aggregerFactures, type CasFacture, type LigneFacture } from '@/lib/invoice-eval'
 
 export const dynamic = 'force-dynamic'
@@ -122,13 +122,13 @@ export async function POST(request: NextRequest) {
   const aTraiter = eligibles.slice(0, lot)
   const aBoucler = nonBouclantes.slice(0, lot)
   const cas: CasFacture[] = []
-  const bouclage: { fournisseur: string; date: string | null; total: number; somme_avant: number; somme_apres: number; ecart: number; boucle: boolean; lignes: number; prix: number }[] = []
+  const bouclage: { fournisseur: string; date: string | null; total: number; somme_avant: number; somme_apres: number; ecart: number; boucle: boolean; lignes: number; prix: number; passe: string; tentatives: number }[] = []
   const echecs: { facture: string; motif: string }[] = []
 
   for (const inv of aTraiter) {
     const ref = refParFacture.get(String(inv.id)) || []
     try {
-      const { lines } = await extractLinesLong(String(inv.lines_source_text || ''), num(inv.amount_ht) ?? 0)
+      const { lines } = await lireTexteAvecReprise(String(inv.lines_source_text || ''), num(inv.amount_ht) ?? 0)
       cas.push(compareFacture(
         String(inv.id),
         String(inv.supplier_name ?? ''),
@@ -152,7 +152,7 @@ export async function POST(request: NextRequest) {
     const ref = refParFacture.get(String(inv.id)) || []
     const total = num(inv.amount_ht) ?? 0
     try {
-      const { lines } = await extractLinesLong(String(inv.lines_source_text || ''), total)
+      const { lines, passe, tentatives } = await lireTexteAvecReprise(String(inv.lines_source_text || ''), total)
       const somme = lines.reduce((s, l) => s + (l.amount_ht || 0), 0)
       const ecart = Math.round((somme - total) * 100) / 100
       bouclage.push({
@@ -166,6 +166,9 @@ export async function POST(request: NextRequest) {
         boucle: Math.abs(ecart) <= 0.02,
         lignes: lines.length,
         prix: lines.filter(l => l.unit_price_ht !== null).length,
+        // Quelle passe a sauvé la lecture, et en combien d'essais : sans ça, on
+        // ne saurait pas si le secours sert ou si la première passe suffisait.
+        passe, tentatives,
       })
     } catch (e) {
       echecs.push({ facture: String(inv.supplier_name ?? inv.id), motif: e instanceof Error ? e.message.slice(0, 160) : 'rejeu impossible' })
