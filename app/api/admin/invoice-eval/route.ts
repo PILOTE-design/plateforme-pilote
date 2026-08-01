@@ -29,10 +29,13 @@ import { PROMPT_LIGNES_VERSION, extractLinesLong } from '@/lib/invoice-extract'
 import { compareFacture, aggregerFactures, type CasFacture, type LigneFacture } from '@/lib/invoice-eval'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 60
+// Un rejeu appelle l'IA une fois par facture, et la route en traite deux séries :
+// les cas de référence et les factures qui ne bouclaient pas. 60 s n'y suffisent
+// plus. Le plafond réel de la plateforme est de 300 s — écran d'administration
+// lancé à la main, jamais sur le chemin d'un boucher.
+export const maxDuration = 300
 
-/** Un rejeu = un appel IA par facture. Six tiennent dans la fenêtre ; au-delà,
- *  la route rend ce qu'elle a en disant combien il reste. */
+/** Un rejeu = un appel IA par facture, dans chacune des deux séries. */
 const LOT_DEFAUT = 6
 
 const num = (v: unknown): number | null => {
@@ -106,8 +109,20 @@ export async function POST(request: NextRequest) {
     return Math.abs(somme - total) <= 0.02
   })
 
+  // Les factures qui NE bouclaient PAS ne peuvent pas servir de référence ligne
+  // à ligne — mais elles ont une vérité tout aussi solide : leur TOTAL, qui
+  // vient du connecteur comptable, pas de notre lecture. On les rejoue donc
+  // aussi, et on regarde si la nouvelle lecture les fait boucler.
+  //
+  // Sans ça, les seules factures mesurées étaient celles qu'on lisait déjà bien,
+  // et les cas les plus abîmés — LA VIANDE CHAUNOISE en tête, 16 325 € sur huit
+  // factures dont aucune lue correctement — restaient hors de portée du garde-fou.
+  const nonBouclantes = liste.filter(i => !eligibles.some(e => String(e.id) === String(i.id)))
+
   const aTraiter = eligibles.slice(0, lot)
+  const aBoucler = nonBouclantes.slice(0, lot)
   const cas: CasFacture[] = []
+  const bouclage: { fournisseur: string; date: string | null; total: number; somme_avant: number; somme_apres: number; ecart: number; boucle: boolean; lignes: number; prix: number }[] = []
   const echecs: { facture: string; motif: string }[] = []
 
   for (const inv of aTraiter) {
@@ -128,6 +143,30 @@ export async function POST(request: NextRequest) {
           weight_kg: l.weight_kg,
         })),
       ))
+    } catch (e) {
+      echecs.push({ facture: String(inv.supplier_name ?? inv.id), motif: e instanceof Error ? e.message.slice(0, 160) : 'rejeu impossible' })
+    }
+  }
+
+  for (const inv of aBoucler) {
+    const ref = refParFacture.get(String(inv.id)) || []
+    const total = num(inv.amount_ht) ?? 0
+    try {
+      const { lines } = await extractLinesLong(String(inv.lines_source_text || ''), total)
+      const somme = lines.reduce((s, l) => s + (l.amount_ht || 0), 0)
+      const ecart = Math.round((somme - total) * 100) / 100
+      bouclage.push({
+        fournisseur: String(inv.supplier_name ?? ''),
+        date: (inv.invoice_date as string) ?? null,
+        total: Math.round(total * 100) / 100,
+        somme_avant: Math.round(ref.reduce((s, l) => s + l.amount_ht, 0) * 100) / 100,
+        somme_apres: Math.round(somme * 100) / 100,
+        ecart,
+        // Même tolérance qu'à la lecture : deux centimes, pas un pourcentage.
+        boucle: Math.abs(ecart) <= 0.02,
+        lignes: lines.length,
+        prix: lines.filter(l => l.unit_price_ht !== null).length,
+      })
     } catch (e) {
       echecs.push({ facture: String(inv.supplier_name ?? inv.id), motif: e instanceof Error ? e.message.slice(0, 160) : 'rejeu impossible' })
     }
@@ -160,6 +199,9 @@ export async function POST(request: NextRequest) {
     prix_exploitables_reference: prixRefs,
     prix_gagnes: corpus.prix_gagnes,
     prix_perdus: corpus.prix_perdus,
+    bouclage,
+    bouclage_reparees: bouclage.filter(b => b.boucle).length,
+    bouclage_total: bouclage.length,
     echecs,
     par_cas: corpus.par_cas.map(c => ({
       fournisseur: c.fournisseur, date: c.date,
