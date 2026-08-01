@@ -285,8 +285,11 @@ export default function MercurialePage() {
   const [showNonProduct, setShowNonProduct] = useState(false)
   const [showIgnored, setShowIgnored] = useState(false)
 
-  const load = useCallback(async () => {
-    setLoading(true)
+  const load = useCallback(async (opts?: { silencieux?: boolean }) => {
+    // Un rafraîchissement SILENCIEUX garde les chiffres à l'écran pendant qu'il
+    // travaille. Repasser par l'écran de chargement après chaque micro-action
+    // faisait clignoter toute la page pour un facteur de conversion saisi.
+    if (!opts?.silencieux) setLoading(true)
     const data = await fetch('/api/mercuriale', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).catch(() => null)
     if (data) {
       setGenerics(Array.isArray(data.generics) ? data.generics : [])
@@ -297,8 +300,21 @@ export default function MercurialePage() {
       setSansPdf(Number(data.sans_pdf) || 0)
       setLectureIncomplete(typeof data.lecture_incomplete === 'string' ? data.lecture_incomplete : null)
     }
-    setLoading(false)
+    if (!opts?.silencieux) setLoading(false)
   }, [])
+
+  // Un GET /api/mercuriale rejoue l'association automatique, lit quatre tables
+  // paginées et reconstruit l'historique douze mois de chaque générique. Le
+  // déclencher après CHAQUE micro-action, c'était neuf rechargements complets
+  // pour neuf conversions réglées à la suite, et trente-six pour écarter
+  // trente-six réfs une par une. Les demandes rapprochées sont désormais fondues
+  // en un seul rafraîchissement, silencieux : l'écran reste lisible pendant.
+  const differeRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const rafraichirBientot = useCallback(() => {
+    if (differeRef.current) clearTimeout(differeRef.current)
+    differeRef.current = setTimeout(() => { differeRef.current = null; load({ silencieux: true }) }, 1200)
+  }, [load])
+  useEffect(() => () => { if (differeRef.current) clearTimeout(differeRef.current) }, [])
 
   useEffect(() => { load() }, [load])
 
@@ -393,7 +409,7 @@ export default function MercurialePage() {
     } else {
       toast({ variant: 'error', title: `${inv.supplier_name} : lecture en échec`, description: data?.error || 'Réessayez.' })
     }
-    load()
+    rafraichirBientot()
   }
 
   // ── Sélection ──────────────────────────────────────
@@ -452,24 +468,55 @@ export default function MercurialePage() {
     })
   }
 
+  /** Envoie un lot de réfs vers /api/articles/bulk et rend compte NOMMÉMENT.
+   *  Un échec anonyme ne se rattrape pas : les réfs réussies quittent la file,
+   *  et plus rien ne dit lesquelles restent à faire. Ici, celles qui échouent
+   *  restent sélectionnées, prêtes pour un second essai. */
+  async function envoyerLot(
+    demandes: { id: string; conversion_factor?: number | null }[],
+    corps: Record<string, unknown>,
+    libelle: (n: number) => string,
+    resélectionnerLesÉchecs = true,
+  ): Promise<boolean> {
+    const res = await fetch('/api/articles/bulk', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...corps, refs: demandes }),
+    }).catch(() => null)
+    const data = res ? await res.json().catch(() => null) : null
+    if (!res?.ok) {
+      toast({ variant: 'error', title: data?.error || 'Enregistrement impossible', description: 'Aucune réf n’a été modifiée.' })
+      return false
+    }
+    const echecs: { id: string; name: string; motif: string }[] = Array.isArray(data?.echecs) ? data.echecs : []
+    const traitees = Number(data?.traitees) || 0
+    if (echecs.length === 0) {
+      toast({ variant: 'success', title: libelle(traitees) })
+      return true
+    }
+    // Les échecs redeviennent la sélection en cours : le second essai ne demande
+    // ni tri ni mémoire. C'est la seule façon de rendre « relancez sur les réfs
+    // restantes » exécutable — les réussies, elles, ont quitté la file.
+    if (resélectionnerLesÉchecs) setSelIds(echecs.map(e => e.id))
+    const noms = echecs.map(e => e.name || e.id).slice(0, 4).join(', ')
+    toast({
+      variant: 'error',
+      title: `${libelle(traitees)} · ${echecs.length} en échec`,
+      description: `${noms}${echecs.length > 4 ? ` et ${echecs.length - 4} autre${echecs.length - 4 > 1 ? 's' : ''}` : ''} — ${echecs[0].motif}. Ces réfs restent sélectionnées.`,
+    })
+    return false
+  }
+
   /** Associe directement des réfs à un générique (toutes compatibles, facteur 1) */
   async function assocDirect(refs: Ref[], genericId: string, genericName: string) {
     if (selSaving) return
     setSelSaving(true)
-    let ok = 0, ko = 0
-    for (const r of refs) {
-      const res = await fetch(`/api/articles/${r.id}`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ generic_id: genericId }),
-      }).catch(() => null)
-      if (res?.ok) ok++
-      else ko++
-    }
+    await envoyerLot(
+      refs.map(r => ({ id: r.id })),
+      { generic_id: genericId },
+      n => `${n} réf${n > 1 ? 's' : ''} associée${n > 1 ? 's' : ''} à « ${genericName} »`,
+    )
     setSelSaving(false)
-    toast(ko === 0
-      ? { variant: 'success', title: `${ok} réf${ok > 1 ? 's' : ''} associée${ok > 1 ? 's' : ''} à « ${genericName} »` }
-      : { variant: 'error', title: `${ok} associée${ok > 1 ? 's' : ''}, ${ko} en échec`, description: 'Relancez sur les réfs restantes.' })
-    load()
+    rafraichirBientot()
   }
 
   /** Bouton de groupe « Tout associer à X » : direct si toutes les unités sont
@@ -520,25 +567,26 @@ export default function MercurialePage() {
       }
       genericId = data.generic.id
       genericName = name
+      // La cible bascule sur le générique QUI VIENT D'ÊTRE CRÉÉ. Sans ça, un
+      // second essai après un échec partiel repartait sur « nouveau » et créait
+      // un doublon du même article.
+      setSelTarget(t => ({ ...t, choice: String(genericId) }))
     } else {
       genericName = generics.find(g => g.id === genericId)?.name ?? ''
     }
-    let ok = 0, ko = 0
-    for (const r of selRefs) {
-      const v = parseFloat((factors[r.id] ?? '').replace(',', '.'))
-      const res = await fetch(`/api/articles/${r.id}`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ generic_id: genericId, conversion_factor: v > 0 ? v : null }),
-      }).catch(() => null)
-      if (res?.ok) ok++
-      else ko++
-    }
+    const tout = await envoyerLot(
+      selRefs.map(r => {
+        const v = parseFloat((factors[r.id] ?? '').replace(',', '.'))
+        return { id: r.id, conversion_factor: v > 0 ? v : null }
+      }),
+      { generic_id: genericId },
+      n => `${n} réf${n > 1 ? 's' : ''} associée${n > 1 ? 's' : ''} à « ${genericName} »`,
+    )
     setSelSaving(false)
-    toast(ko === 0
-      ? { variant: 'success', title: `${ok} réf${ok > 1 ? 's' : ''} associée${ok > 1 ? 's' : ''} à « ${genericName} »` }
-      : { variant: 'error', title: `${ok} associée${ok > 1 ? 's' : ''}, ${ko} en échec`, description: 'Relancez sur les réfs restantes.' })
-    clearSel()
-    load()
+    // La sélection n'est vidée que si TOUT est passé : sinon `envoyerLot` y a
+    // laissé les réfs en échec, et les effacer reviendrait à les perdre.
+    if (tout) clearSel()
+    rafraichirBientot()
   }
 
   // ── Dossier des associations : réglages sur les réfs rattachées ──
@@ -548,7 +596,7 @@ export default function MercurialePage() {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ generic_id: null }),
     }).catch(() => null)
-    if (res?.ok) { toast({ variant: 'success', title: `« ${refName} » renvoyée dans la file « À rapprocher »` }); load() }
+    if (res?.ok) { toast({ variant: 'success', title: `« ${refName} » renvoyée dans la file « À rapprocher »` }); rafraichirBientot() }
     else toast({ variant: 'error', title: 'Dissociation impossible' })
   }
 
@@ -560,7 +608,17 @@ export default function MercurialePage() {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ generic_id: genericId, conversion_factor: v }),
     }).catch(() => null)
-    if (res?.ok) { toast({ variant: 'success', title: 'Conversion enregistrée — prix pris en compte' }); load() }
+    if (res?.ok) {
+      toast({ variant: 'success', title: 'Conversion enregistrée — prix pris en compte' })
+      // La réf cesse tout de suite d'être signalée « conversion manquante » :
+      // régler neuf conversions à la suite ne doit pas coûter neuf attentes.
+      setGenerics(prev => prev.map(g => g.id !== genericId ? g : {
+        ...g,
+        refs: g.refs.map(x => x.id === r.id ? { ...x, conversion_factor: v, needs_conversion: false } : x),
+      }))
+      setFixDrafts(prev => { const n = { ...prev }; delete n[r.id]; return n })
+      rafraichirBientot()
+    }
     else toast({ variant: 'error', title: 'Enregistrement impossible' })
   }
 
@@ -643,23 +701,23 @@ export default function MercurialePage() {
         ? { variant: 'info', title: `« ${r.name} » écartée`, description: 'Restaurable depuis « Réfs écartées » en bas de file.' }
         : { variant: 'success', title: `« ${r.name} » remise dans la file` })
       if (ignored) setSelIds(prev => prev.filter(x => x !== r.id))
-      load()
+      // Bascule immédiate dans la file : écarter trente-six réfs une par une ne
+      // doit pas déclencher trente-six reconstructions de l'historique.
+      setQueue(prev => prev.map(x => x.id === r.id ? { ...x, ignored } : x))
+      rafraichirBientot()
     } else toast({ variant: 'error', title: 'Action impossible' })
   }
 
   /** Écarte tout un groupe de réfs d'un coup */
   async function ignoreGroup(refs: Ref[]) {
-    let ok = 0
-    for (const r of refs) {
-      const res = await fetch(`/api/articles/${r.id}`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ignored: true }),
-      }).catch(() => null)
-      if (res?.ok) ok++
-    }
     setSelIds(prev => prev.filter(id => !refs.some(r => r.id === id)))
-    toast({ variant: 'info', title: `${ok} réf${ok > 1 ? 's' : ''} écartée${ok > 1 ? 's' : ''}`, description: 'Restaurables depuis « Réfs écartées » en bas de file.' })
-    load()
+    await envoyerLot(
+      refs.map(r => ({ id: r.id })),
+      { ignored: true },
+      n => `${n} réf${n > 1 ? 's' : ''} écartée${n > 1 ? 's' : ''} — restaurables en bas de file`,
+      false,
+    )
+    rafraichirBientot()
   }
 
   /** Déplace une réf vers un autre générique (conversion remise à zéro) */
@@ -670,7 +728,7 @@ export default function MercurialePage() {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ generic_id: genericId, conversion_factor: null }),
     }).catch(() => null)
-    if (res?.ok) { toast({ variant: 'success', title: `« ${r.name} » déplacée vers « ${g.name} »` }); load() }
+    if (res?.ok) { toast({ variant: 'success', title: `« ${r.name} » déplacée vers « ${g.name} »` }); rafraichirBientot() }
     else toast({ variant: 'error', title: 'Déplacement impossible' })
   }
 
@@ -691,7 +749,17 @@ export default function MercurialePage() {
     setSaving(false)
     if (!res?.ok) { toast({ variant: 'error', title: data?.error || 'Modification impossible' }); return }
     setEditId(null)
-    load()
+    // Le nom corrigé s'affiche sans attendre — et le badge « Auto » tombe, la
+    // route le pose dès qu'une modification aboutit.
+    setGenerics(prev => prev.map(x => x.id !== g.id ? x : {
+      ...x,
+      name: edit.name.trim() || x.name,
+      base_unit: edit.base_unit,
+      category: edit.category,
+      default_loss_pct: Number(edit.loss.replace(',', '.')) || 0,
+      auto_created: false,
+    }))
+    rafraichirBientot()
   }
 
   /** « Vu, c'est bon » sur un générique créé automatiquement : le badge tombe.
@@ -891,7 +959,7 @@ export default function MercurialePage() {
             <p className="text-sm text-gray-500 mt-1">Vos articles génériques, au kg ou à la pièce — chaque réf fournisseur s&apos;y rattache</p>
           </div>
         </div>
-        <button onClick={load} disabled={loading}
+        <button onClick={() => load()} disabled={loading}
           className="flex items-center gap-1.5 text-xs font-semibold text-pilote border border-pilote-200 rounded-xl px-3 py-2 hover:bg-pilote-50 transition-colors disabled:opacity-50">
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />Actualiser
         </button>
