@@ -101,8 +101,8 @@ export const LIGNES_MAX = 400    // plafond de sécurité, atteint = signalé (j
 /** Le prompt d'extraction — partagé par la lecture TEXTE et la lecture IMAGE :
  *  les deux doivent produire exactement le même format, sinon les garde-fous
  *  déterministes en aval ne s'appliquent pas de la même façon. */
-export function promptExtraction(totalHT: number, pdfText: string, reprise?: RepriseInfo): string {
-  return `${reprise ? consigneReprise(reprise, totalHT) : ''}Voici le texte d'une facture fournisseur de boucherie. Total HT connu : ${totalHT.toFixed(2)} EUR.
+export function promptExtraction(totalHT: number, pdfText: string, reprise?: RepriseInfo, exemples?: string): string {
+  return `${exemples || ''}${reprise ? consigneReprise(reprise, totalHT) : ''}Voici le texte d'une facture fournisseur de boucherie. Total HT connu : ${totalHT.toFixed(2)} EUR.
 COMMENCE par qualifier la facture :
 NATURE|matiere      si elle facture des ingrédients alimentaires ou des consommables de production (viande, charcuterie, épicerie, boissons, emballages, barquettes…)
 NATURE|hors_matiere si elle facture autre chose : matériel, équipement, entretien, services, logiciels, abonnements, avantages salariés, énergie, transport seul, honoraires.
@@ -197,7 +197,7 @@ export function parseReponse(raw: string): {
  *  de l'IA a été coupée par le plafond de tokens — auquel cas il manque des
  *  lignes, et la facture ne doit surtout pas être déclarée incohérente sur
  *  cette base : c'est notre lecture qui est incomplète, pas le document. */
-export async function extractLines(pdfText: string, totalHT: number, reprise?: RepriseInfo): Promise<{
+export async function extractLines(pdfText: string, totalHT: number, reprise?: RepriseInfo, exemples?: string): Promise<{
   lines: ExtractedLine[]; delivery_date: string | null; due_date: string | null
   nature: 'matiere' | 'hors_matiere'; tronque: boolean
 }> {
@@ -212,7 +212,7 @@ export async function extractLines(pdfText: string, totalHT: number, reprise?: R
     // 100 % à 18 % d'un rejeu à l'autre sans qu'une ligne de code ait bougé.
     // Une mesure qui varie toute seule ne prouve rien.
     temperature: 0,
-    messages: [{ role: 'user', content: promptExtraction(totalHT, pdfText, reprise) }],
+    messages: [{ role: 'user', content: promptExtraction(totalHT, pdfText, reprise, exemples) }],
   })
   const raw = r.content[0]?.type === 'text' ? r.content[0].text : ''
   return { ...parseReponse(raw), tronque: r.stop_reason === 'max_tokens' }
@@ -224,8 +224,8 @@ export async function extractLines(pdfText: string, totalHT: number, reprise?: R
  *  contrôle de cohérence, donc à jeter les prix des lignes correctement lues.
  *  Ici le texte est découpé en tranches sur des frontières de ligne, chaque
  *  tranche est extraite, et les résultats sont concaténés. */
-export async function extractLinesLong(pdfText: string, totalHT: number, reprise?: RepriseInfo) {
-  if (pdfText.length <= TEXTE_MAX) return extractLines(pdfText, totalHT, reprise)
+export async function extractLinesLong(pdfText: string, totalHT: number, reprise?: RepriseInfo, exemples?: string) {
+  if (pdfText.length <= TEXTE_MAX) return extractLines(pdfText, totalHT, reprise, exemples)
 
   const morceaux: string[] = []
   let reste = pdfText
@@ -243,7 +243,7 @@ export async function extractLinesLong(pdfText: string, totalHT: number, reprise
   let nature: 'matiere' | 'hors_matiere' = 'matiere'
   let tronque = false
   for (const [i, m] of morceaux.entries()) {
-    const r = await extractLines(m, totalHT, reprise)
+    const r = await extractLines(m, totalHT, reprise, exemples)
     lines.push(...r.lines)
     if (r.delivery_date && !delivery_date) delivery_date = r.delivery_date
     if (r.due_date && !due_date) due_date = r.due_date
@@ -312,8 +312,8 @@ export type LectureTexte = Awaited<ReturnType<typeof extractLinesLong>> & {
  * porte le plus de prix exploitables. La reprise ne peut donc pas dégrader le
  * résultat — au pire elle ne gagne pas.
  */
-export async function lireTexteAvecReprise(pdfText: string, totalHT: number): Promise<LectureTexte> {
-  const p1 = await extractLinesLong(pdfText, totalHT)
+export async function lireTexteAvecReprise(pdfText: string, totalHT: number, exemples?: string): Promise<LectureTexte> {
+  const p1 = await extractLinesLong(pdfText, totalHT, undefined, exemples)
   // Sans total connu il n'y a pas d'arbitre : reprendre serait tirer à pile ou face.
   if (totalHT === 0 || p1.lines.length === 0) return { ...p1, passe: 'texte', tentatives: 1 }
 
@@ -325,7 +325,7 @@ export async function lireTexteAvecReprise(pdfText: string, totalHT: number): Pr
     const p2 = await extractLinesLong(pdfText, totalHT, {
       somme: sommeLignes(p1.lines),
       lignes: p1.lines.map(l => ({ designation: l.designation, amount_ht: l.amount_ht })),
-    })
+    }, exemples)
     if (p2.lines.length > 0) {
       const ecart2 = Math.abs(sommeLignes(p2.lines) - totalHT)
       const mieux = ecart2 < ecart1 - 0.005
