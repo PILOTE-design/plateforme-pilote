@@ -51,6 +51,43 @@ export function parseDate(s: string): string | null {
   return m[1] ? `${m[1]}-${m[2]}-${m[3]}` : `${m[6]}-${m[5]}-${m[4]}`
 }
 
+/** Ce qu'une première lecture a produit, quand elle n'a pas bouclé. Sert à
+ *  fabriquer la consigne de REPRISE : on ne redemande pas la même chose en
+ *  espérant mieux, on dit précisément ce qui cloche. */
+export type RepriseInfo = {
+  /** Somme des montants de la lecture précédente */
+  somme: number
+  /** Libellé = montant, tels que lus au coup précédent */
+  lignes: { designation: string; amount_ht: number }[]
+}
+
+/** La consigne de reprise. Nommer l'écart AU CENTIME et le sens de l'erreur est
+ *  ce qui distingue une seconde chance d'un simple coup de dés : le modèle sait
+ *  s'il doit chercher une ligne oubliée ou retirer une ligne inventée. */
+function consigneReprise(r: RepriseInfo, totalHT: number): string {
+  const ecart = Math.round((r.somme - totalHT) * 100) / 100
+  const trop = ecart > 0
+  // Au-delà de quarante lignes on NE liste PAS : une liste tronquée se lit comme
+  // une lecture incomplète, et la reprise partirait chercher des lignes qui n'ont
+  // jamais manqué. L'écart chiffré suffit alors à orienter.
+  const listable = r.lignes.length <= 40
+  const liste = listable
+    ? `Tu avais lu ces lignes :\n${r.lignes.map(l => `  ${l.designation} = ${l.amount_ht.toFixed(2)}`).join('\n')}\n`
+    : `Ta lecture précédente comptait ${r.lignes.length} lignes.\n`
+  return `SECONDE LECTURE — la précédente n'est pas bonne, corrige-la.
+
+${liste}Leur somme fait ${r.somme.toFixed(2)} EUR, alors que le total HT de la facture est ${totalHT.toFixed(2)} EUR.
+Il y a donc ${trop ? 'UN EXCÉDENT' : 'UN MANQUE'} de ${Math.abs(ecart).toFixed(2)} EUR.
+
+${trop
+  ? `Un excédent veut dire qu'une ligne est EN TROP. Cherche en priorité : une ligne dont la colonne « Montant HT » est vide et à laquelle tu as attribué un nombre pris ailleurs ; une même ligne comptée deux fois ; un sous-total, un total de page ou un récapitulatif que tu as pris pour un article. Une ligne de ${Math.abs(ecart).toFixed(2)} EUR exactement, ou une paire dont l'écart fait ce montant, est le premier endroit où regarder.`
+  : `Un manque veut dire qu'une ligne MANQUE, ou qu'un montant a été lu trop petit. Cherche en priorité : une ligne de ${Math.abs(ecart).toFixed(2)} EUR ; un article en fin de facture ou sur une seconde page ; des frais de port, une écotaxe, une contribution ou une taxe professionnelle facturés en bas ; un montant dont tu as lu 41,17 au lieu de 141,17.`}
+
+Reprends la facture depuis le début et rends la liste COMPLÈTE et CORRIGÉE — pas seulement la différence. Les mêmes règles s'appliquent : aucun montant recalculé, aucun montant inventé, et surtout n'ajuste pas un montant pour faire tomber le compte. Si tu ne trouves pas l'écart, rends ta meilleure lecture honnête : une somme fausse signalée vaut mieux qu'un chiffre bricolé.
+
+`
+}
+
 /** Le PDF → lignes produits + dates, format pipe (une ligne par article, robuste
  *  aux JSON mal fermés). L'IA n'effectue AUCUN calcul : les montants sont relus
  *  tels quels et vérifiés en code contre le total connu de la facture. */
@@ -64,8 +101,8 @@ export const LIGNES_MAX = 400    // plafond de sécurité, atteint = signalé (j
 /** Le prompt d'extraction — partagé par la lecture TEXTE et la lecture IMAGE :
  *  les deux doivent produire exactement le même format, sinon les garde-fous
  *  déterministes en aval ne s'appliquent pas de la même façon. */
-export function promptExtraction(totalHT: number, pdfText: string): string {
-  return `Voici le texte d'une facture fournisseur de boucherie. Total HT connu : ${totalHT.toFixed(2)} EUR.
+export function promptExtraction(totalHT: number, pdfText: string, reprise?: RepriseInfo): string {
+  return `${reprise ? consigneReprise(reprise, totalHT) : ''}Voici le texte d'une facture fournisseur de boucherie. Total HT connu : ${totalHT.toFixed(2)} EUR.
 COMMENCE par qualifier la facture :
 NATURE|matiere      si elle facture des ingrédients alimentaires ou des consommables de production (viande, charcuterie, épicerie, boissons, emballages, barquettes…)
 NATURE|hors_matiere si elle facture autre chose : matériel, équipement, entretien, services, logiciels, abonnements, avantages salariés, énergie, transport seul, honoraires.
@@ -160,7 +197,7 @@ export function parseReponse(raw: string): {
  *  de l'IA a été coupée par le plafond de tokens — auquel cas il manque des
  *  lignes, et la facture ne doit surtout pas être déclarée incohérente sur
  *  cette base : c'est notre lecture qui est incomplète, pas le document. */
-export async function extractLines(pdfText: string, totalHT: number): Promise<{
+export async function extractLines(pdfText: string, totalHT: number, reprise?: RepriseInfo): Promise<{
   lines: ExtractedLine[]; delivery_date: string | null; due_date: string | null
   nature: 'matiere' | 'hors_matiere'; tronque: boolean
 }> {
@@ -175,7 +212,7 @@ export async function extractLines(pdfText: string, totalHT: number): Promise<{
     // 100 % à 18 % d'un rejeu à l'autre sans qu'une ligne de code ait bougé.
     // Une mesure qui varie toute seule ne prouve rien.
     temperature: 0,
-    messages: [{ role: 'user', content: promptExtraction(totalHT, pdfText) }],
+    messages: [{ role: 'user', content: promptExtraction(totalHT, pdfText, reprise) }],
   })
   const raw = r.content[0]?.type === 'text' ? r.content[0].text : ''
   return { ...parseReponse(raw), tronque: r.stop_reason === 'max_tokens' }
@@ -187,8 +224,8 @@ export async function extractLines(pdfText: string, totalHT: number): Promise<{
  *  contrôle de cohérence, donc à jeter les prix des lignes correctement lues.
  *  Ici le texte est découpé en tranches sur des frontières de ligne, chaque
  *  tranche est extraite, et les résultats sont concaténés. */
-export async function extractLinesLong(pdfText: string, totalHT: number) {
-  if (pdfText.length <= TEXTE_MAX) return extractLines(pdfText, totalHT)
+export async function extractLinesLong(pdfText: string, totalHT: number, reprise?: RepriseInfo) {
+  if (pdfText.length <= TEXTE_MAX) return extractLines(pdfText, totalHT, reprise)
 
   const morceaux: string[] = []
   let reste = pdfText
@@ -206,7 +243,7 @@ export async function extractLinesLong(pdfText: string, totalHT: number) {
   let nature: 'matiere' | 'hors_matiere' = 'matiere'
   let tronque = false
   for (const [i, m] of morceaux.entries()) {
-    const r = await extractLines(m, totalHT)
+    const r = await extractLines(m, totalHT, reprise)
     lines.push(...r.lines)
     if (r.delivery_date && !delivery_date) delivery_date = r.delivery_date
     if (r.due_date && !due_date) due_date = r.due_date
