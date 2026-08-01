@@ -16,7 +16,7 @@ import Anthropic from '@anthropic-ai/sdk'
 /** Version du prompt d'extraction. À INCRÉMENTER à chaque modification : c'est
  *  elle qui permet de dire « avant / après » sur le corpus, et donc de refuser
  *  un changement qui dégrade au lieu de le découvrir en production. */
-export const PROMPT_LIGNES_VERSION = '2026-07-31-b-poids'
+export const PROMPT_LIGNES_VERSION = '2026-08-01-c-colonnes'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || 'MISSING_ANTHROPIC_KEY' })
 
@@ -85,8 +85,17 @@ L|SALADE PIEMONTAISE 2.8KG|3310|1|colis|6.00|16.80|5.5|2.8
 L|BARQUETTE 500G x100|EMB-102|2|colis|18.50|37.00|20|
 L|REMISE COMMERCIALE||||-12.00|-12.00|5.5|
 
+Une ligne de facture porte SOUVENT cinq à sept nombres. Exemple réel, avec son en-tête de colonnes :
+« Code | Désignation | UF | Nb. Pièces | Poids Net | P.U Brut | P.U Net | Montant HT | T »
+« 000233  SAUCISSON SEC ROND D'AUVERGNE  KG  3  4,003  22,550  22,550  90,27  1 »
+se lit : L|SAUCISSON SEC ROND D'AUVERGNE|000233|3|kg|22.550|90.27|5.5|4.003
+Le MONTANT est 90,27 — le nombre de la colonne « Montant HT », PAS 3 × 22,550 = 67,65.
+Le dernier nombre (1) est un code de TVA interne, pas un taux : ne le recopie jamais en TAUX_TVA.
+
 Règles STRICTES :
-- MONTANT_HT = montant HT de la ligne tel qu'écrit sur la facture (jamais recalculé, jamais TTC).
+- MONTANT_HT = le montant HT tel qu'ÉCRIT sur la ligne, celui de la dernière colonne monétaire. Il figure TEL QUEL dans le texte. Ne le recalcule JAMAIS, sous aucun prétexte.
+- N'ajuste JAMAIS un montant pour qu'il colle à QUANTITE × PRIX_UNITAIRE. Sur ces factures le produit ne tombe très souvent PAS juste, parce que le prix est au kilo et la quantité en colis. Ce n'est pas une erreur à corriger : c'est exactement pour ça que la colonne POIDS_KG existe. Recopie chaque nombre à sa place et laisse-les en désaccord apparent.
+- TAUX_TVA = un taux en pourcentage (5.5, 10, 20). Un « 1 », « 2 » ou « 3 » en fin de ligne est un code de TVA du fournisseur : laisse alors TAUX_TVA vide.
 - CODE = référence article du fournisseur si présente, sinon vide.
 - QUANTITE et PRIX_UNITAIRE_HT vides s'ils ne figurent pas sur la facture — ne JAMAIS les inventer.
 - UNITE = kg, pièce, colis, L… telle qu'écrite.
