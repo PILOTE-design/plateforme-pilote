@@ -25,6 +25,21 @@ type Cas = {
   divergences: { champ: string; attendu: number | null; obtenu: number | null; ecart: number }[]
 }
 
+/** Facture dont les lignes NE bouclaient PAS sur le total : pas de référence
+ *  ligne à ligne possible, mais une vérité solide — le total, qui vient de la
+ *  comptabilité. La question posée est simple : la nouvelle lecture boucle-t-elle ? */
+type Bouclage = {
+  fournisseur: string
+  date: string | null
+  total: number
+  somme_avant: number
+  somme_apres: number
+  ecart: number
+  boucle: boolean
+  lignes: number
+  prix: number
+}
+
 type Reponse = {
   ok?: boolean
   prompt_version_courante?: string
@@ -43,6 +58,9 @@ type Reponse = {
   prix_exploitables_reference?: number
   prix_gagnes?: number
   prix_perdus?: number
+  bouclage?: Bouclage[]
+  bouclage_reparees?: number
+  bouclage_total?: number
   echecs?: { facture: string; motif: string }[]
   par_cas?: Cas[]
   message?: string
@@ -155,6 +173,41 @@ export default function InvoiceEvalPage() {
           {res.echecs && res.echecs.length > 0 && (
             <div className="mt-4 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-xs text-amber-900">
               {res.echecs.length} rejeu(x) en échec : {res.echecs.map(e => `${e.facture} (${e.motif})`).join(' · ')}
+            </div>
+          )}
+
+          {res.bouclage && res.bouclage.length > 0 && (
+            <div className="mt-6">
+              <div className="flex items-baseline gap-2 flex-wrap">
+                <h2 className="text-sm font-extrabold text-gray-900">Factures qui ne bouclaient pas</h2>
+                <p className="text-[11px] text-gray-500">
+                  Pas de référence ligne à ligne — mais leur <strong>total</strong> vient de la comptabilité.
+                  La nouvelle lecture les fait-elle boucler ?
+                </p>
+                <span className={`ml-auto text-sm font-extrabold tabular ${res.bouclage_reparees === res.bouclage_total ? 'text-green-600' : (res.bouclage_reparees ?? 0) > 0 ? 'text-orange-500' : 'text-red-600'}`}>
+                  {res.bouclage_reparees} / {res.bouclage_total} réparées
+                </span>
+              </div>
+              <div className="mt-2 space-y-2">
+                {res.bouclage.map((b, i) => (
+                  <div key={i} className="bg-white rounded-2xl border border-gray-100 shadow-card px-4 py-2.5 flex items-center gap-3 flex-wrap">
+                    {b.boucle
+                      ? <CheckCircle2 className="w-4 h-4 text-green-600 flex-shrink-0" />
+                      : <AlertTriangle className="w-4 h-4 text-red-600 flex-shrink-0" />}
+                    <p className="text-sm font-bold text-gray-900 flex-1 min-w-[180px]">{b.fournisseur}</p>
+                    <span className="text-xs text-gray-400 tabular">{b.date ?? '—'}</span>
+                    <span className="text-xs text-gray-500 tabular">{b.lignes} lignes · {b.prix} prix</span>
+                    <span className="text-xs text-gray-400 tabular">total {b.total.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} €</span>
+                    <span className={`text-xs tabular ${Math.abs(b.somme_avant - b.total) <= 0.02 ? 'text-gray-400' : 'text-gray-400 line-through'}`}>
+                      {b.somme_avant.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} €
+                    </span>
+                    <span className={`text-sm font-extrabold tabular ${b.boucle ? 'text-green-600' : 'text-red-600'}`}>
+                      {b.somme_apres.toLocaleString('fr-FR', { minimumFractionDigits: 2 })} €
+                      {!b.boucle && <span className="font-semibold"> ({b.ecart > 0 ? '+' : '−'}{Math.abs(b.ecart).toLocaleString('fr-FR', { minimumFractionDigits: 2 })})</span>}
+                    </span>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
