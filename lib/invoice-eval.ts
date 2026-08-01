@@ -169,9 +169,26 @@ export function compareFacture(
     // même article) : on apparie celui dont le montant est le plus proche, et on
     // ne le réutilise pas.
     const candidats = (parCle.get(k) || []).filter(c => !consommees.has(c))
-    const o = candidats.length === 0 ? null
+    let o = candidats.length === 0 ? null
       : candidats.reduce((best, c) =>
           Math.abs(c.amount_ht - a.amount_ht) < Math.abs(best.amount_ht - a.amount_ht) ? c : best)
+    // RATTRAPAGE DE LIBELLÉ. Une désignation revient parfois sur deux lignes du
+    // PDF (« SALADE PIEMONTAISE JAMBON SUPERIEUR » puis « 2.8KG » en dessous) :
+    // selon la lecture, le complément est repris ou non. Le libellé diffère, la
+    // LIGNE est la même — mesuré le 01/08, où ce seul cas produisait trois
+    // « fautes » sur une facture par ailleurs relue au centime.
+    //
+    // On n'apparie que si le montant coïncide ET qu'un libellé prolonge l'autre :
+    // deux conditions ensemble, jamais le montant seul, qui apparierait deux
+    // articles distincts vendus au même prix.
+    if (!o) {
+      o = obtenu.find(c => {
+        if (consommees.has(c)) return false
+        if (Math.abs(c.amount_ht - a.amount_ht) > EPS_MONTANT) return false
+        const kc = normText(c.designation)
+        return kc !== '' && k !== '' && (kc.startsWith(k) || k.startsWith(kc))
+      }) ?? null
+    }
     if (o) consommees.add(o)
     const nom = a.designation.slice(0, 40)
     champs.push(champ(`${nom} — montant`, a.amount_ht, o ? o.amount_ht : null, EPS_MONTANT))
