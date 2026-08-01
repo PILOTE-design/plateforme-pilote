@@ -73,6 +73,27 @@ export function recipeTotalMinutes(recipe: Pick<RecipeRow, 'labor_minutes' | 'fa
   return Number(recipe.labor_minutes) || 0
 }
 
+/**
+ * Pourquoi la courbe « coût matière — 8 dernières semaines » n'est pas traçable.
+ *
+ * Sans ce motif, le bloc disparaissait purement et simplement. Or une courbe
+ * absente ne se lit pas « je ne sais pas » : elle se lit « le coût n'a pas
+ * bougé » — exactement le contraire de ce que le silence voulait dire. Trois
+ * causes très différentes produisaient la même page vide.
+ *
+ * Rend null quand la courbe est traçable (deux points ou plus).
+ */
+export function motifSerieMatiere(aDeLaMercuriale: boolean, points: number): string | null {
+  if (points >= 2) return null
+  if (!aDeLaMercuriale) {
+    return 'Aucun ingrédient de cette fiche ne tire son prix de la mercuriale : il n’y a rien à relire dans le temps. Les prix saisis à la main et les sous-recettes ne bougent pas d’eux-mêmes.'
+  }
+  if (points === 1) {
+    return 'Un seul relevé de prix sur les huit dernières semaines — il en faut deux pour tracer une évolution. La courbe apparaîtra dès la prochaine facture lue.'
+  }
+  return 'Aucun prix daté sur les huit dernières semaines pour les ingrédients de cette fiche : lisez les factures de la période depuis la Mercuriale.'
+}
+
 export type IngredientRow = {
   id?: string
   generic_id: string | null

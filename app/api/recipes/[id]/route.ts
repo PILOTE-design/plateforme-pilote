@@ -22,7 +22,7 @@ import { resolveClientId } from '@/lib/resolve-client-id'
 import { PAYROLL_EMPLOYEE_COLUMNS, chargeMultiplier, productiveFactor, type PayrollEmployee } from '@/lib/payroll'
 import {
   averageLoadedRate, employeeLoadedRate, buildGenericMap,
-  buildGenericPriceSeries, costMatiereAtDate, buildRecipeCostGraph,
+  buildGenericPriceSeries, costMatiereAtDate, motifSerieMatiere, buildRecipeCostGraph,
   parseIngredients, parseRecipeFields,
   type IngredientRow, type RecipeCost, type RecipeRow,
 } from '@/lib/recipes'
@@ -195,8 +195,11 @@ export async function GET(_request: NextRequest, { params }: { params: { id: str
   const cat = String((row as any).category ?? '').trim().toLowerCase()
   const cible2 = (targets || []).find((t: any) => String(t.category) === cat)
 
+  // Une courbe absente se lit « le coût n'a pas bougé » si rien ne dit pourquoi.
+  const matiere_series_motif = motifSerieMatiere(hasMercuriale, matiere_series.length)
+
   return NextResponse.json({
-    recipe: { ...row, ingredients: costed, cost: { ...cost, matiere_series } },
+    recipe: { ...row, ingredients: costed, cost: { ...cost, matiere_series, matiere_series_motif } },
     labor_rate_ht: averageRate,
     historique_incomplet,
     target: cible2 ? Number((cible2 as any).target_marge_pct) : null,

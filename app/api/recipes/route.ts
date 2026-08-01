@@ -16,7 +16,7 @@ import { resolveClientId } from '@/lib/resolve-client-id'
 import { PAYROLL_EMPLOYEE_COLUMNS, chargeMultiplier, productiveFactor, type PayrollEmployee } from '@/lib/payroll'
 import {
   averageLoadedRate, employeeLoadedRate, buildGenericMap,
-  buildGenericPriceSeries, costMatiereAtDate,
+  buildGenericPriceSeries, costMatiereAtDate, motifSerieMatiere,
   buildRecipeCostGraph,
   parseIngredients, parseRecipeFields,
   type IngredientRow, type RecipeCost, type RecipeRow,
@@ -156,7 +156,9 @@ export async function GET() {
           .map(d => ({ d, v: costMatiereAtDate(costed, seriesByGeneric, d) }))
           .filter((x): x is { d: string; v: number } => x.v !== null)
       : []
-    return { ...r, ingredients: costed, cost: { ...cost, matiere_series } }
+    // Une courbe absente se lit « le coût n'a pas bougé » si rien ne dit pourquoi.
+    const matiere_series_motif = motifSerieMatiere(hasMercuriale, matiere_series.length)
+    return { ...r, ingredients: costed, cost: { ...cost, matiere_series, matiere_series_motif } }
   })
 
   return NextResponse.json({
