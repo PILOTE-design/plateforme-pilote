@@ -24,6 +24,7 @@ import { normText } from '@/lib/postes'
 import { pdfToLines } from '@/lib/pdf-lines'
 import { plausibleDelivery } from '@/lib/invoice-week'
 import { lireFacturX } from '@/lib/facturx'
+import { choisirExemples, consigneExemples, rangerExemple } from '@/lib/invoice-layouts'
 // Le MOTEUR d'extraction vit dans lib/ — un module de route n'exporte que ses
 // verbes HTTP, et la route d'évaluation doit pouvoir rejouer exactement le même
 // code sur un texte archivé (cf. lib/invoice-extract).
@@ -78,6 +79,11 @@ export async function POST(request: NextRequest) {
     .eq('id', invoice_id).eq('client_id', clientId).maybeSingle()
   if (!invoice) return NextResponse.json({ error: 'Facture introuvable' }, { status: 404 })
 
+  // Clé du fournisseur, calculée une fois pour toute la requête : elle sert à
+  // choisir les exemples de mise en page AVANT la lecture, et à ranger la
+  // lecture réussie APRÈS.
+  const cleFournisseur = normalizeSupplierName(supplierSociete(invoice.supplier_name || '')) || ''
+
     // ── PUBLICATION : garde-fous puis écriture. Chemin UNIQUE, partagé par la
     // lecture structurée (facture électronique), la lecture texte et la lecture
     // image. Dupliquer la quarantaine par chemin serait le meilleur moyen de la
@@ -100,6 +106,9 @@ export async function POST(request: NextRequest) {
          *  au secours — donc impossible de savoir s'il sert à quelque chose. */
         passe?: string
         tentatives?: number
+        /** Texte source, quand il y en a un : une lecture qui boucle au centime
+         *  devient l'exemple de référence de ce fournisseur. */
+        texteSource?: string
       },
     ) => {
       const { delivery_date, due_date, tronque } = ctx
@@ -305,6 +314,19 @@ export async function POST(request: NextRequest) {
         const motifFinal = [ctx.motifSuffixe, mentionPasse, motifPartiel].filter(Boolean).join(' ') || null
         await marquer(invoice.id, complet ? 'done' : 'partial', motifFinal, patch)
 
+        // La lecture rejoint la bibliothèque SI elle boucle au centime — c'est
+        // `rangerExemple` qui tranche, sur le total, pas sur notre satisfaction.
+        // Une facture bien lue aujourd'hui aide à lire la suivante du même
+        // fournisseur : c'est le seul apprentissage qui ne peut pas mal tourner,
+        // puisque son unique critère d'entrée vient de la comptabilité.
+        if (ctx.texteSource) {
+          await rangerExemple(service, {
+            clientId, supplierKey: cleFournisseur, invoiceId: String(invoice.id),
+            texte: ctx.texteSource, lignes: lines, totalHT,
+            promptVersion: PROMPT_LIGNES_VERSION,
+          })
+        }
+
         return NextResponse.json({
           success: true, status: complet ? 'done' : 'partial', mode: ctx.mode,
           lines: rows.length, prix_promus: prixPromus, prix_en_quarantaine: prixQuarantaine,
@@ -445,7 +467,14 @@ export async function POST(request: NextRequest) {
       // Passes 1 et 2 (texte, puis reprise avec l'écart nommé) : dans lib/, pour
       // que la route de MESURE rejoue exactement le même chemin. Un garde-fou
       // qui ne teste pas la chaîne réelle ne garde rien.
-      const lecture = await lireTexteAvecReprise(pdfText, totalHT)
+      // BIBLIOTHÈQUE DE MISES EN PAGE : au plus deux exemples déjà vérifiés —
+      // celui du même fournisseur d'abord, puis la disposition la plus proche.
+      // Ce qui fait échouer une lecture est presque toujours la mise en page, et
+      // un exemple juste de la MÊME disposition vaut mieux qu'une règle de plus.
+      const exemples = consigneExemples(
+        await choisirExemples(service, clientId, cleFournisseur, pdfText).catch(() => []),
+      )
+      const lecture = await lireTexteAvecReprise(pdfText, totalHT, exemples)
       extraction = lecture
       passe = lecture.passe
       tentatives = lecture.tentatives
@@ -505,6 +534,7 @@ export async function POST(request: NextRequest) {
       mode: luEnVision ? 'vision' : 'texte',
       delivery_date, due_date, tronque, luEnVision,
       passe, tentatives,
+      texteSource: luEnVision ? undefined : pdfText,
     })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
