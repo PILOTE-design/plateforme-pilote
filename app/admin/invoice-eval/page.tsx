@@ -20,6 +20,8 @@ type Cas = {
   exactitude: number
   lignes: string
   prix_exploitables: number
+  prix_gagnes: number
+  prix_perdus: number
   divergences: { champ: string; attendu: number | null; obtenu: number | null; ecart: number }[]
 }
 
@@ -39,6 +41,8 @@ type Reponse = {
   lignes_obtenues?: number
   prix_exploitables_rejeu?: number
   prix_exploitables_reference?: number
+  prix_gagnes?: number
+  prix_perdus?: number
   echecs?: { facture: string; motif: string }[]
   par_cas?: Cas[]
   message?: string
@@ -108,9 +112,12 @@ export default function InvoiceEvalPage() {
         <>
           <div className="mt-5 grid grid-cols-2 lg:grid-cols-4 gap-3">
             <div className="rounded-2xl bg-pilote p-4 shadow-card">
-              <p className="text-[10px] font-semibold text-pilote-200 uppercase tracking-wider">Exactitude</p>
+              <p className="text-[10px] font-semibold text-pilote-200 uppercase tracking-wider">Fidélité</p>
               <p className="text-2xl font-extrabold tracking-tight text-white tabular mt-1">{pct(res.exactitude)}</p>
-              <p className="text-[11px] text-pilote-200 mt-0.5 tabular">{res.chiffres_justes} / {res.chiffres_compares} chiffres</p>
+              <p className="text-[11px] text-pilote-200 mt-0.5 tabular">
+                {res.chiffres_justes} / {res.chiffres_compares} chiffres
+                {res.prix_perdus ? ` · ${res.prix_perdus} prix perdu${res.prix_perdus > 1 ? 's' : ''}` : ''}
+              </p>
             </div>
             <div className="rounded-2xl bg-white border border-gray-100 shadow-card p-4">
               <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Prix exploitables</p>
@@ -118,6 +125,13 @@ export default function InvoiceEvalPage() {
               <p className={`text-[11px] mt-0.5 tabular font-semibold ${gagne === null || gagne === 0 ? 'text-gray-400' : gagne > 0 ? 'text-green-600' : 'text-red-600'}`}>
                 {gagne === null ? '' : gagne === 0 ? 'identique à la référence' : `${gagne > 0 ? '+' : '−'}${Math.abs(gagne)} vs référence (${res.prix_exploitables_reference})`}
               </p>
+              {(res.prix_gagnes || res.prix_perdus) ? (
+                <p className="text-[11px] text-gray-400 mt-0.5 tabular">
+                  {res.prix_gagnes ? `${res.prix_gagnes} retrouvé${res.prix_gagnes > 1 ? 's' : ''}` : ''}
+                  {res.prix_gagnes && res.prix_perdus ? ' · ' : ''}
+                  {res.prix_perdus ? <span className="text-red-600 font-semibold">{res.prix_perdus} perdu{res.prix_perdus > 1 ? 's' : ''}</span> : null}
+                </p>
+              ) : null}
             </div>
             <div className="rounded-2xl bg-white border border-gray-100 shadow-card p-4">
               <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Lignes relues</p>
@@ -153,7 +167,11 @@ export default function InvoiceEvalPage() {
                     : <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />}
                   <p className="text-sm font-bold text-gray-900 flex-1 min-w-[180px]">{c.fournisseur}</p>
                   <span className="text-xs text-gray-400 tabular">{c.date ?? '—'}</span>
-                  <span className="text-xs text-gray-500 tabular">{c.lignes} lignes · {c.prix_exploitables} prix</span>
+                  <span className="text-xs text-gray-500 tabular">
+                    {c.lignes} lignes · {c.prix_exploitables} prix
+                    {c.prix_gagnes ? <span className="text-green-600 font-semibold"> · +{c.prix_gagnes} retrouvé{c.prix_gagnes > 1 ? 's' : ''}</span> : null}
+                    {c.prix_perdus ? <span className="text-red-600 font-semibold"> · −{c.prix_perdus} perdu{c.prix_perdus > 1 ? 's' : ''}</span> : null}
+                  </span>
                   <span className={`text-sm font-extrabold tabular ${c.exactitude === 100 ? 'text-green-600' : c.exactitude >= 90 ? 'text-orange-500' : 'text-red-600'}`}>
                     {c.exactitude.toLocaleString('fr-FR')} %
                   </span>
