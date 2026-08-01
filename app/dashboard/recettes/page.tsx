@@ -47,6 +47,7 @@ type RecipeCost = {
   pv_unitaire_ht: number | null; marge_pct: number | null; coefficient: number | null
   /** Coût matière du batch relu aux prix mercuriale des 8 dernières semaines */
   matiere_series?: { d: string; v: number }[]
+  matiere_series_motif?: string | null
 }
 
 type Recipe = {
@@ -421,6 +422,52 @@ export default function RecettesPage() {
         }
       : ing))
     setPickerRow(null)
+  }
+
+  /** Crée un article générique SANS quitter la modale, et le choisit aussitôt.
+   *
+   *  Avant : taper « sel nitrité » sur une ligne d'ingrédient ne donnait aucune
+   *  suggestion et aucune issue. Il fallait sortir de la modale — en PERDANT
+   *  toute la saisie en cours —, aller en Mercuriale, créer l'article, revenir,
+   *  et tout retaper. En pleine mise au point d'une terrine, c'est le genre de
+   *  détour qui fait renoncer à la fiche.
+   *
+   *  L'unité est demandée explicitement, jamais devinée : c'est elle qui décide
+   *  si un prix se lit en euros par kilo ou par pièce, et une unité devinée est
+   *  exactement ce qui a publié des prix faux ailleurs dans le produit. */
+  const [creantRow, setCreantRow] = useState<number | null>(null)
+  async function creerGenerique(row: number, nom: string, base_unit: 'kg' | 'piece') {
+    if (creantRow !== null) return
+    const name = nom.trim()
+    if (name.length < 2) return
+    setCreantRow(row)
+    const res = await fetch('/api/generic-articles', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, base_unit, category: 'ingredient' }),
+    }).catch(() => null)
+    const data = res ? await res.json().catch(() => null) : null
+    setCreantRow(null)
+    if (!res?.ok || !data?.generic?.id) {
+      toast({ variant: 'error', title: data?.error || 'Création impossible', description: 'Rien n’a été créé — votre saisie est intacte.' })
+      return
+    }
+    const g: Generic = {
+      id: String(data.generic.id),
+      name: String(data.generic.name ?? name),
+      base_unit: data.generic.base_unit === 'piece' ? 'piece' : 'kg',
+      category: data.generic.category === 'emballage' ? 'emballage' : 'ingredient',
+      default_loss_pct: Number(data.generic.default_loss_pct) || 0,
+      price_ht: null,
+    }
+    setGenerics(prev => [...prev, g])
+    pickGeneric(row, g)
+    toast({
+      variant: 'success', title: `« ${g.name} » créé — ${g.base_unit === 'kg' ? 'au kg' : 'à la pièce'}`,
+      description: 'Aucune facture ne lui donne encore de prix : saisissez un prix de repli, il s’effacera devant le premier prix facturé.',
+    })
+    // Le geste suivant est le prix de repli : on y amène le curseur directement,
+    // sinon la ligne compte pour 0 € et le coefficient reste bloqué.
+    setTimeout(() => document.getElementById(`prix-repli-${row}`)?.focus(), 60)
   }
 
   /** Sous-recette choisie : la ligne vise la fiche entière — quantité en unités
@@ -802,6 +849,11 @@ export default function RecettesPage() {
                       ? recipes.filter(x => x.id !== editId && x.name.toLowerCase().includes(q)).slice(0, 4)
                       : []
                     const isLegacy = !ing.generic_id && !ing.sub_recipe_id && !!ing.article_id
+                    // Création proposée en dernier recours : seulement si rien ne
+                    // porte déjà exactement ce nom (sinon la route refuserait le
+                    // doublon, et l'article existant est déjà dans les suggestions).
+                    const dejaPris = generics.some(x => x.name.trim().toLowerCase() === q)
+                    const peutCreer = pickerRow === i && q.length >= 2 && !ing.generic_id && !ing.sub_recipe_id && !dejaPris
                     return (
                       <div key={i} className="relative">
                         <div className="flex items-center gap-2">
@@ -838,9 +890,9 @@ export default function RecettesPage() {
                           </div>
                           {g ? (
                             g.price_ht !== null ? (
-                              <span className="text-xs text-gray-500 tabular w-24 text-right flex-shrink-0">{fmtEuro(g.price_ht)} / {unitFr(g.base_unit)}</span>
+                              <span className="text-xs text-gray-500 tabular w-24 text-right flex-shrink-0" title={ing.manual_price_ht.trim() ? 'Prix de la mercuriale — il l’emporte sur le prix de repli saisi à la main' : undefined}>{fmtEuro(g.price_ht)} / {unitFr(g.base_unit)}</span>
                             ) : (
-                              <input inputMode="decimal" value={ing.manual_price_ht} title={`Aucun prix facturé — saisissez un prix HT par ${unitFr(g.base_unit)}`}
+                              <input id={`prix-repli-${i}`} inputMode="decimal" value={ing.manual_price_ht} title={`Aucun prix facturé — saisissez un prix HT par ${unitFr(g.base_unit)}`}
                                 onChange={e => setIngs(prev => prev.map((x, j) => j === i ? { ...x, manual_price_ht: e.target.value } : x))}
                                 placeholder={`€/${unitFr(g.base_unit)}`} className="w-24 border border-amber-200 rounded-lg px-2 py-2 text-xs text-right tabular focus:outline-none focus:ring-2 focus:ring-pilote-200" />
                             )
@@ -860,7 +912,19 @@ export default function RecettesPage() {
                         {sub && (
                           <p className="text-[10px] text-pilote mt-0.5 ml-1">Sous-recette — quantité en {sub.yield_unit || 'unités'} de « {sub.name} », coût complet ÷ rendement, relu en continu.</p>
                         )}
-                        {(sugg.length > 0 || suggR.length > 0) && (
+                        {/* Prix de repli DORMANT : un prix saisi à la main disparaissait
+                            de l'écran dès qu'une facture donnait un prix mercuriale — mais
+                            il restait en base, et ressurgissait au premier trou de prix,
+                            des mois plus tard, sans que personne ne l'ait revu. */}
+                        {g && g.price_ht !== null && ing.manual_price_ht.trim() !== '' && (
+                          <p className="text-[10px] text-gray-400 mt-0.5 ml-1 flex items-center gap-1.5 flex-wrap">
+                            <span>Prix de repli saisi à la main : <span className="tabular font-semibold">{ing.manual_price_ht} €</span> / {unitFr(g.base_unit)} — inutilisé tant que la mercuriale a un prix, mais il reprendrait la main si ce prix disparaissait.</span>
+                            <button type="button"
+                              onClick={() => setIngs(prev => prev.map((x, j) => j === i ? { ...x, manual_price_ht: '' } : x))}
+                              className="font-semibold text-pilote hover:underline flex-shrink-0">Effacer</button>
+                          </p>
+                        )}
+                        {(sugg.length > 0 || suggR.length > 0 || peutCreer) && (
                           <div className="absolute z-10 left-0 right-24 mt-1 bg-white border border-gray-200 rounded-lg shadow-card-hover overflow-hidden">
                             {sugg.map(x => (
                               <button key={x.id} onClick={() => pickGeneric(i, x)}
@@ -887,6 +951,26 @@ export default function RecettesPage() {
                                 </span>
                               </button>
                             ))}
+                            {peutCreer && (
+                              <div className={`px-3 py-2 ${sugg.length > 0 || suggR.length > 0 ? 'border-t border-gray-100 bg-gray-50/70' : ''}`}>
+                                <p className="text-[11px] text-gray-500">
+                                  Rien de tel dans vos articles. Créer <span className="font-semibold text-gray-800">« {ing.label.trim()} »</span> —
+                                  {' '}se vend-il au kilo ou à la pièce&nbsp;?
+                                </p>
+                                <div className="flex gap-2 mt-1.5">
+                                  <button type="button" disabled={creantRow !== null}
+                                    onClick={() => creerGenerique(i, ing.label, 'kg')}
+                                    className="flex items-center gap-1 text-xs font-bold text-white bg-pilote hover:bg-pilote-hover rounded-lg px-2.5 py-1.5 disabled:opacity-50 transition-colors">
+                                    <Plus className="w-3 h-3" />au kilo
+                                  </button>
+                                  <button type="button" disabled={creantRow !== null}
+                                    onClick={() => creerGenerique(i, ing.label, 'piece')}
+                                    className="flex items-center gap-1 text-xs font-bold text-pilote border border-pilote-200 hover:bg-pilote-50 rounded-lg px-2.5 py-1.5 disabled:opacity-50 transition-colors">
+                                    <Plus className="w-3 h-3" />à la pièce
+                                  </button>
+                                </div>
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
