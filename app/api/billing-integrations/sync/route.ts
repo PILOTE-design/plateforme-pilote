@@ -7,7 +7,7 @@ import { loadSupplierCategories, rememberedCategory } from '@/lib/supplier-memor
 import { enrichInvoicesAfterSync } from '@/lib/billing-providers/enrich'
 import { weekForInvoice } from '@/lib/invoice-week'
 
-export const maxDuration = 60 // Vercel Pro: 60s max, Hobby: 10s (mieux que défaut)
+export const maxDuration = 60 // Plafond réel : 300 s sur Hobby comme sur Pro (fluid compute). 60 s suffisent pour une semaine de factures.
 
 function getWeekBounds(weekNumber: number, year: number): [Date, Date] {
   const jan4 = new Date(Date.UTC(year, 0, 4))
