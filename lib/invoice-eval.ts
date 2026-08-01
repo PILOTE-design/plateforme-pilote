@@ -172,21 +172,28 @@ export function compareFacture(
     let o = candidats.length === 0 ? null
       : candidats.reduce((best, c) =>
           Math.abs(c.amount_ht - a.amount_ht) < Math.abs(best.amount_ht - a.amount_ht) ? c : best)
-    // RATTRAPAGE DE LIBELLÉ. Une désignation revient parfois sur deux lignes du
-    // PDF (« SALADE PIEMONTAISE JAMBON SUPERIEUR » puis « 2.8KG » en dessous) :
-    // selon la lecture, le complément est repris ou non. Le libellé diffère, la
-    // LIGNE est la même — mesuré le 01/08, où ce seul cas produisait trois
-    // « fautes » sur une facture par ailleurs relue au centime.
+    // RATTRAPAGE DE LIBELLÉ. Le même article ne porte pas toujours le même
+    // libellé d'une lecture à l'autre, sans qu'aucune ligne ne soit fausse :
+    //   · le PDF coupe la désignation en deux (« SALADE PIEMONTAISE JAMBON
+    //     SUPERIEUR », puis « 2.8KG » en dessous) et le complément est repris
+    //     ou non — le libellé s'allonge par la FIN ;
+    //   · le nombre de colis colle au libellé (« 2.0 kg FILET DE POULET
+    //     S/ATMO ») — il s'allonge par le DÉBUT.
+    // Les deux cas ont été mesurés le 01/08, et chacun transformait une ligne
+    // parfaitement relue en « ligne perdue » plus « ligne en trop ».
     //
-    // On n'apparie que si le montant coïncide ET qu'un libellé prolonge l'autre :
-    // deux conditions ensemble, jamais le montant seul, qui apparierait deux
-    // articles distincts vendus au même prix.
+    // On n'apparie que si le montant coïncide au centime ET qu'un libellé
+    // CONTIENT l'autre — deux conditions ensemble, jamais le montant seul, qui
+    // confondrait deux articles distincts vendus au même prix. Le libellé le
+    // plus court doit rester assez long pour ne pas matcher n'importe quoi.
     if (!o) {
       o = obtenu.find(c => {
         if (consommees.has(c)) return false
         if (Math.abs(c.amount_ht - a.amount_ht) > EPS_MONTANT) return false
         const kc = normText(c.designation)
-        return kc !== '' && k !== '' && (kc.startsWith(k) || k.startsWith(kc))
+        if (kc === '' || k === '') return false
+        if (Math.min(kc.length, k.length) < 6) return false
+        return kc.includes(k) || k.includes(kc)
       }) ?? null
     }
     if (o) consommees.add(o)
