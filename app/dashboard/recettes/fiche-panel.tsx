@@ -51,6 +51,8 @@ export type FicheCost = {
   /** Coût matière (+ emballage) du batch relu aux prix mercuriale de chaque
    *  jalon (8 lundis ISO + aujourd'hui) — jalons incomplets absents */
   matiere_series?: { d: string; v: number }[]
+  /** Pourquoi la courbe n'est pas traçable — null quand elle l'est */
+  matiere_series_motif?: string | null
 }
 
 export type FicheRecipe = {
@@ -337,8 +339,18 @@ export default function FichePanel({
   function commitKpi() {
     if (kpiCancelRef.current) { kpiCancelRef.current = false; setEditKpi(null); return }
     if (!editKpi) return
+    const brut = editKpi.value.trim()
     const v = num(editKpi.value)
     setEditKpi(null)
+    // Champ VIDÉ sur le prix de vente = effacement voulu. Auparavant un champ
+    // vide ne faisait rien : retirer un prix posé par erreur imposait de rouvrir
+    // la modale complète, et tant qu'il restait, marge et coefficient affichaient
+    // un verdict calculé sur un chiffre que le boucher venait de désavouer.
+    if (editKpi.field === 'pv' && brut === '') {
+      if (recipe.selling_price_ttc === null) return
+      saveAll({ selling_price_ttc: null })
+      return
+    }
     if (v <= 0) return
     if (editKpi.field === 'pv') {
       if (recipe.selling_price_ttc !== null && Math.abs(v - recipe.selling_price_ttc) < 0.005) return
@@ -559,6 +571,15 @@ export default function FichePanel({
             </div>
           )
         })()}
+
+        {/* Courbe impossible à tracer : DIRE POURQUOI. Un bloc simplement absent
+            se lit « le coût matière n'a pas bougé » — c'est l'inverse du sens. */}
+        {c && (!Array.isArray(c.matiere_series) || c.matiere_series.length < 2) && c.matiere_series_motif && (
+          <div className="mb-4 rounded-2xl border border-gray-100 bg-gray-50/60 px-4 py-3">
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Coût matière — 8 dernières semaines</p>
+            <p className="text-xs text-gray-500 mt-1">{c.matiere_series_motif}</p>
+          </div>
+        )}
 
         {/* Historique tronqué : la courbe est partielle, ou absente faute de
             points. Le silence donnerait à lire « le prix n'a pas bougé ». */}
