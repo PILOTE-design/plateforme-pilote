@@ -6,22 +6,34 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { resolveClientId } from '@/lib/resolve-client-id'
+import { isAdminEmail } from '@/lib/admins'
 import { normText } from '@/lib/postes'
 
 export const dynamic = 'force-dynamic'
 
-async function authClient() {
+/** ENTRETIEN PAR L'ADMINISTRATEUR : une fiche explicitement demandée (corps ou
+ *  paramètre client_id) n'est servie qu'à un administrateur — la session
+ *  d'association des réfs se fait pour le compte des boutiques. Pour tout
+ *  autre compte, c'est un refus net, jamais un repli. */
+async function authClient(ficheDemandee: string | null) {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: NextResponse.json({ error: 'Non authentifié' }, { status: 401 }) }
   const service = createServiceClient()
-  const clientId = await resolveClientId(service, user.id, user.email)
+  let clientId: string | null
+  if (ficheDemandee) {
+    if (!isAdminEmail(user.email)) return { error: NextResponse.json({ error: 'Réservé aux administrateurs' }, { status: 403 }) }
+    clientId = ficheDemandee
+  } else {
+    clientId = await resolveClientId(service, user.id, user.email)
+  }
   if (!clientId) return { error: NextResponse.json({ error: 'Client introuvable' }, { status: 404 }) }
   return { service, clientId }
 }
 
-export async function GET() {
-  const auth = await authClient()
+export async function GET(request: NextRequest) {
+  const fiche = request.nextUrl.searchParams.get('client_id')
+  const auth = await authClient(fiche && fiche.trim() ? fiche.trim() : null)
   if ('error' in auth) return auth.error
   const { service, clientId } = auth
 
@@ -34,11 +46,10 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  const auth = await authClient()
+  const body = await request.json().catch(() => ({} as Record<string, unknown>))
+  const auth = await authClient(typeof body.client_id === 'string' && body.client_id ? String(body.client_id) : null)
   if ('error' in auth) return auth.error
   const { service, clientId } = auth
-
-  const body = await request.json().catch(() => ({} as Record<string, unknown>))
   const name = typeof body.name === 'string' ? body.name.trim() : ''
   if (!name || name.length > 120) return NextResponse.json({ error: 'Nom invalide' }, { status: 400 })
   const base_unit = body.base_unit === 'piece' ? 'piece' : 'kg'
