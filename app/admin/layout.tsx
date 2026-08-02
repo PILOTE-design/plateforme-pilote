@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-import { Users, FileText, Gauge, Radar, Library, LogOut, ArrowLeft, ShieldCheck } from 'lucide-react'
+import { Users, FileText, Gauge, Radar, Library, LogOut, ArrowLeft, ShieldCheck, Activity } from 'lucide-react'
 import { isAdminEmail } from '@/lib/admins'
 
 async function signOut() {
@@ -27,6 +27,13 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           <span className="text-base font-bold text-white">PILOTE Admin</span>
         </div>
         <nav className="flex-1 p-4 space-y-1">
+          <Link
+            href="/admin/fiches-sante"
+            className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-300 hover:bg-gray-800 hover:text-white transition-colors"
+          >
+            <Activity className="w-4 h-4" />
+            Santé des fiches
+          </Link>
           <Link
             href="/admin/clients"
             className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-300 hover:bg-gray-800 hover:text-white transition-colors"
