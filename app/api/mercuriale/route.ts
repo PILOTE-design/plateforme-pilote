@@ -421,6 +421,15 @@ export async function GET() {
     .select('id', { count: 'exact', head: true })
     .eq('client_id', clientId).eq('is_fixed_charge', false).is('file_path', null)
 
+  // FILE DE DOUTE (lot 29) : les classements matière/charge fragiles, à
+  // trancher d'un clic. Le motif dit pourquoi le tri a douté ; le statut dit
+  // dans quel sens il avait penché.
+  const { data: doutes } = await service.from('invoices')
+    .select('id, supplier_name, invoice_date, amount_ht, lines_status, lines_error')
+    .eq('client_id', clientId).eq('nature_doute', true)
+    .order('invoice_date', { ascending: false })
+    .limit(100)
+
   // Troncature ANNONCÉE. Les quatre lectures sont désormais paginées jusqu'à
   // épuisement ; si l'une bute quand même sur son plafond de sécurité ou sur une
   // erreur Supabase, l'écran doit le dire — un catalogue amputé en silence se
@@ -437,6 +446,7 @@ export async function GET() {
     generics: genericsOut,
     queue: queueOut,
     pending: pendingOut,
+    doutes: doutes || [],
     sans_pdf: sansPdf ?? 0,
     moves: movesOut,
     moves_total: moves.length,
