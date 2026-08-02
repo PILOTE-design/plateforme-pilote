@@ -101,12 +101,15 @@ export async function POST(req: NextRequest) {
   }
   const token = String(integ.api_token)
 
-  // Les plus récentes d'abord : ce sont celles dont les prix comptent le plus
+  // Les plus récentes d'abord : ce sont celles dont les prix comptent le plus.
+  // Les factures étiquetées « charge fixe » sont incluses : l'étiquette d'import
+  // se trompe (SOCAVI, DAT-SCHAUB… marquées fixes), et seul le DOCUMENT permet
+  // au tri de trancher — sans PDF, une facture mal étiquetée resterait invisible
+  // de la mercuriale pour toujours.
   const { data: cibles, count } = await service.from('invoices')
     .select('id, supplier_name, invoice_date, amount_ht, external_id', { count: 'exact' })
     .eq('client_id', clientId)
     .is('file_path', null)
-    .eq('is_fixed_charge', false)
     .order('invoice_date', { ascending: false })
     .limit(LOT)
 
