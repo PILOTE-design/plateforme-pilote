@@ -53,10 +53,18 @@ async function admin() {
   if (!user) return { error: NextResponse.json({ error: 'Non authentifié' }, { status: 401 }) }
   if (!isAdminEmail(user.email)) return { error: NextResponse.json({ error: 'Réservé aux administrateurs' }, { status: 403 }) }
   const service = createServiceClient()
+  // Un administrateur n'a pas forcément de fiche client — le compte principal
+  // n'en a aucune, et cette route a exigé une fiche à tort à sa première
+  // version : « Client introuvable » sur l'écran même qui venait d'être livré.
+  // Un import d'exemples PARTAGÉS n'appartient à aucune boucherie ; la fiche,
+  // quand elle existe, ne sert qu'à voir aussi ses exemples moissonnés.
   const clientId = await resolveClientId(service, user.id, user.email)
-  if (!clientId) return { error: NextResponse.json({ error: 'Client introuvable' }, { status: 404 }) }
-  return { service, clientId }
+  return { service, clientId: clientId ?? null }
 }
+
+/** Uuid qui n'existe pas : permet d'interroger la bibliothèque « exemples
+ *  partagés seulement » sans écrire une seconde requête. */
+const AUCUNE_FICHE = '00000000-0000-0000-0000-000000000000'
 
 /** L'inventaire : ce que la bibliothèque sait, et depuis quand. */
 export async function GET() {
@@ -129,7 +137,7 @@ export async function POST(request: NextRequest) {
   // La MÊME chaîne que la production : exemples déjà appris, deux passes texte,
   // puis lecture image si le compte ne tombe toujours pas.
   const exemples = consigneExemples(
-    await choisirExemples(service, clientId, supplierKey, texte).catch(() => []),
+    await choisirExemples(service, clientId ?? AUCUNE_FICHE, supplierKey, texte).catch(() => []),
   )
   const lecture = await lireTexteAvecReprise(texte, total, exemples)
   let lines: ExtractedLine[] = lecture.lines
@@ -174,6 +182,15 @@ export async function POST(request: NextRequest) {
   // Le compte tombe : l'exemple entre, PARTAGÉ — c'est une donation à la
   // plateforme. `rangerExemple` revérifie le bouclage de son côté : la barrière
   // vit dans la bibliothèque, pas seulement ici.
+  // Un exemple partagé sans fiche (client_id null) échappe à l'unicité de
+  // l'upsert — les NULL sont tous distincts pour Postgres. On retire donc
+  // d'abord l'éventuel doublon exact, pour qu'un ré-import remplace au lieu
+  // d'empiler.
+  const signature = signatureEntete(texte)
+  if (clientId === null) {
+    await service.from('invoice_layouts').delete()
+      .is('client_id', null).eq('supplier_key', supplierKey).eq('header_signature', signature)
+  }
   await rangerExemple(service, {
     clientId, supplierKey, invoiceId: null,
     texte: texte.slice(0, TEXTE_MAX), lignes: lines, totalHT: total,
@@ -186,6 +203,6 @@ export async function POST(request: NextRequest) {
     lignes: lines.length,
     prix: lines.filter(l => l.unit_price_ht !== null).length,
     fournisseur: supplierKey,
-    signature: signatureEntete(texte),
+    signature,
   })
 }
