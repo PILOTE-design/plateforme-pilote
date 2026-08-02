@@ -16,7 +16,7 @@ import Anthropic from '@anthropic-ai/sdk'
 /** Version du prompt d'extraction. À INCRÉMENTER à chaque modification : c'est
  *  elle qui permet de dire « avant / après » sur le corpus, et donc de refuser
  *  un changement qui dégrade au lieu de le découvrir en production. */
-export const PROMPT_LIGNES_VERSION = '2026-08-02-g-montant-ttc'
+export const PROMPT_LIGNES_VERSION = '2026-08-02-h-periode'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || 'MISSING_ANTHROPIC_KEY' })
 
@@ -114,6 +114,7 @@ Sinon, extrais CHAQUE ligne d'article facturé. Retourne UNIQUEMENT des lignes a
 NATURE|matiere
 LIVRAISON|2026-07-21
 ECHEANCE|2026-08-20
+PERIODE|2026-07-01|2026-07-31
 L|DESIGNATION|CODE|QUANTITE|UNITE|PRIX_UNITAIRE_HT|MONTANT_HT|TAUX_TVA|POIDS_KG
 
 Exemples :
@@ -157,22 +158,35 @@ Règles STRICTES :
 - Les taxes et contributions FACTURÉES font partie du total HT : cotisation Interbev, équarissage, consigne, contribution transport, frais administratifs, écotaxe… Recopie chacune comme une ligne L| avec son montant tel qu'écrit, MÊME quand elle figure dans un petit tableau à part (« Taxe | Montant ») sous les articles. Exemple : « Interbev boeuf Import autre 0.03 » se note L|INTERBEV BOEUF IMPORT|||||0.03||
 - Ignorer les sous-totaux, totaux de page et TVA récapitulative : un récapitulatif REDIT un montant déjà compté dans les lignes (« Montant total équarissage » qui résume des lignes déjà facturées), alors qu'une taxe facturée S'AJOUTE. Dans le doute, la relecture tranchera : recopie la facture telle qu'elle se présente.
 - LIVRAISON = date de LIVRAISON de la marchandise (mentions « livré le », « date de livraison », « expédition », « bon de livraison / BL »). ECHEANCE = date limite de PAIEMENT (« à régler avant le », « échéance », « date d'échéance », « payable au »). Ces deux dates sont DIFFÉRENTES : ne jamais recopier l'échéance en LIVRAISON. Si une seule figure sur la facture, ne renseigner QUE celle-là. Format AAAA-MM-JJ, ligne absente si introuvable.
+- PERIODE = la période FACTURÉE, quand le document facture une durée : abonnement, loyer, location, assurance, énergie (« période du … au … », « consommation du … au … », « mois de juillet 2026 » = du 2026-07-01 au 2026-07-31). Les deux dates, format AAAA-MM-JJ. Ligne ABSENTE si le document ne facture pas une durée (une livraison de marchandises n'a pas de période). Ne JAMAIS confondre avec l'échéance de paiement ni la date de la facture, et ne jamais deviner : uniquement ce qui est écrit.
 ${pdfText ? `\nTexte de la facture :\n${pdfText}` : '\nLa facture est le document joint : lis-le directement.'}`
 }
 
 /** Analyse la réponse de l'IA (format pipe) — commune aux deux modes de lecture. */
 export function parseReponse(raw: string): {
   lines: ExtractedLine[]; delivery_date: string | null; due_date: string | null; nature: 'matiere' | 'hors_matiere'
+  periode_du: string | null; periode_au: string | null
 } {
   const lines: ExtractedLine[] = []
   let delivery_date: string | null = null
   let due_date: string | null = null
+  let periode_du: string | null = null
+  let periode_au: string | null = null
   let nature: 'matiere' | 'hors_matiere' = 'matiere'
   for (const l of raw.split('\n')) {
     const t = l.trim()
     if (t.startsWith('NATURE|')) { if (t.slice(7).trim() === 'hors_matiere') nature = 'hors_matiere'; continue }
     if (t.startsWith('LIVRAISON|')) { delivery_date = parseDate(t.slice(10)); continue }
     if (t.startsWith('ECHEANCE|')) { due_date = parseDate(t.slice(9)); continue }
+    // La PÉRIODE FACTURÉE d'une charge (abonnement, loyer, énergie) : c'est elle
+    // qui rend le prorata hebdomadaire juste — une facture annuelle répartie sur
+    // 30 jours par défaut gonfle la structure de charges d'un facteur douze.
+    if (t.startsWith('PERIODE|')) {
+      const p = t.slice(8).split('|')
+      periode_du = parseDate(p[0] ?? '')
+      periode_au = parseDate(p[1] ?? '')
+      continue
+    }
     if (!t.startsWith('L|')) continue
     const p = t.slice(2).split('|')
     if (p.length < 6) continue
@@ -193,7 +207,7 @@ export function parseReponse(raw: string): {
       weight_kg: (() => { const w = parseNum(p[7] ?? ''); return w !== null && w > 0 ? w : null })(),
     })
   }
-  return { lines: lines.slice(0, LIGNES_MAX), delivery_date, due_date, nature }
+  return { lines: lines.slice(0, LIGNES_MAX), delivery_date, due_date, nature, periode_du, periode_au }
 }
 
 /** Une passe d'extraction sur un morceau de TEXTE. `tronque` dit si la réponse
@@ -203,6 +217,7 @@ export function parseReponse(raw: string): {
 export async function extractLines(pdfText: string, totalHT: number, reprise?: RepriseInfo, exemples?: string): Promise<{
   lines: ExtractedLine[]; delivery_date: string | null; due_date: string | null
   nature: 'matiere' | 'hors_matiere'; tronque: boolean
+  periode_du: string | null; periode_au: string | null
 }> {
   const r = await anthropic.messages.create({
     // 3000 tokens plafonnaient la sortie vers 80-110 lignes : au-delà la réponse
@@ -243,6 +258,8 @@ export async function extractLinesLong(pdfText: string, totalHT: number, reprise
   const lines: ExtractedLine[] = []
   let delivery_date: string | null = null
   let due_date: string | null = null
+  let periode_du: string | null = null
+  let periode_au: string | null = null
   let nature: 'matiere' | 'hors_matiere' = 'matiere'
   let tronque = false
   for (const [i, m] of morceaux.entries()) {
@@ -250,11 +267,13 @@ export async function extractLinesLong(pdfText: string, totalHT: number, reprise
     lines.push(...r.lines)
     if (r.delivery_date && !delivery_date) delivery_date = r.delivery_date
     if (r.due_date && !due_date) due_date = r.due_date
+    if (r.periode_du && !periode_du) periode_du = r.periode_du
+    if (r.periode_au && !periode_au) periode_au = r.periode_au
     // La nature se juge sur la PREMIÈRE tranche : c'est là que vit l'en-tête
     if (i === 0) nature = r.nature
     if (r.tronque) tronque = true
   }
-  return { lines: lines.slice(0, LIGNES_MAX), delivery_date, due_date, nature, tronque }
+  return { lines: lines.slice(0, LIGNES_MAX), delivery_date, due_date, nature, tronque, periode_du, periode_au }
 }
 
 /** Lecture d'un PDF SANS couche texte (scan, photo) : le document est envoyé
@@ -267,6 +286,7 @@ export async function extractLinesLong(pdfText: string, totalHT: number, reprise
 export async function extractLinesVision(buffer: Buffer, totalHT: number): Promise<{
   lines: ExtractedLine[]; delivery_date: string | null; due_date: string | null
   nature: 'matiere' | 'hors_matiere'; tronque: boolean
+  periode_du: string | null; periode_au: string | null
 }> {
   const r = await anthropic.messages.create({
     model: 'claude-haiku-4-5-20251001', max_tokens: 16000,
