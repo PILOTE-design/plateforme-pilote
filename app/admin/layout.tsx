@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-import { Users, FileText, Gauge, Radar, LogOut, ArrowLeft, ShieldCheck } from 'lucide-react'
+import { Users, FileText, Gauge, Radar, Library, LogOut, ArrowLeft, ShieldCheck } from 'lucide-react'
 import { isAdminEmail } from '@/lib/admins'
 
 async function signOut() {
@@ -54,6 +54,20 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           >
             <Radar className="w-4 h-4" />
             Sonde Pennylane
+          </Link>
+          <Link
+            href="/admin/invoice-eval"
+            className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-300 hover:bg-gray-800 hover:text-white transition-colors"
+          >
+            <Gauge className="w-4 h-4" />
+            Exactitude factures
+          </Link>
+          <Link
+            href="/admin/invoice-layouts"
+            className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-300 hover:bg-gray-800 hover:text-white transition-colors"
+          >
+            <Library className="w-4 h-4" />
+            Bibliothèque factures
           </Link>
           <div className="pt-4 mt-2 border-t border-gray-700">
             <Link
