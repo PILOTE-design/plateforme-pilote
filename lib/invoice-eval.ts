@@ -151,6 +151,25 @@ export function prixExploitable(l: LigneFacture): boolean {
  *  propres règles et n'est pas concerné. */
 const cleLigne = (s: string) => normText(s).replace(/\s+/g, '')
 
+/** Deux libellés qui ne divergent que sur une FENÊTRE d'au plus deux caractères
+ *  désignent la même ligne quand le montant coïncide déjà au centime. Mesuré le
+ *  02/08 sur la même facture AURIBAULT, à la relecture suivante : « AVC RABE » /
+ *  « AVC CRABE » — une lettre avalée par la couche texte du PDF, tous les
+ *  chiffres identiques. Une divergence au MILIEU d'un mot échappe au test
+ *  d'inclusion ; un préfixe et un suffixe communs qui couvrent tout le reste
+ *  bornent l'écart à cette fenêtre — c'est suffisant, et ça ne pardonne rien
+ *  d'autre. Si l'appariement se trompait malgré tout, les chiffres comparés
+ *  ensuite (quantité, prix, montant) trahiraient la confusion : la mesure
+ *  reste une mesure de CHIFFRES, jamais une confiance aveugle au libellé. */
+const memeLibelleAPeuPres = (a: string, b: string): boolean => {
+  const maxLen = Math.max(a.length, b.length)
+  let p = 0
+  while (p < a.length && p < b.length && a[p] === b[p]) p++
+  let s = 0
+  while (s < a.length - p && s < b.length - p && a[a.length - 1 - s] === b[b.length - 1 - s]) s++
+  return p + s >= maxLen - 2
+}
+
 /** Compare les lignes d'une facture à leur relecture. L'appariement se fait sur
  *  le libellé normalisé ; une ligne oubliée comme une ligne inventée comptent
  *  toutes deux comme des fautes. */
@@ -202,7 +221,7 @@ export function compareFacture(
         const kc = cleLigne(c.designation)
         if (kc === '' || k === '') return false
         if (Math.min(kc.length, k.length) < 6) return false
-        return kc.includes(k) || k.includes(kc)
+        return kc.includes(k) || k.includes(kc) || memeLibelleAPeuPres(k, kc)
       }) ?? null
     }
     if (o) consommees.add(o)
