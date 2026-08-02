@@ -24,6 +24,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { resolveClientId } from '@/lib/resolve-client-id'
+import { isAdminEmail } from '@/lib/admins'
+import { nourrirDictionnaire } from '@/lib/association-dictionary'
 
 export const dynamic = 'force-dynamic'
 
@@ -40,11 +42,22 @@ export async function PUT(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
 
-  const service = createServiceClient()
-  const clientId = await resolveClientId(service, user.id, user.email)
-  if (!clientId) return NextResponse.json({ error: 'Client introuvable' }, { status: 404 })
-
   const body = await request.json().catch(() => ({} as Record<string, unknown>))
+
+  const service = createServiceClient()
+  // ENTRETIEN PAR L'ADMINISTRATEUR : un corps { client_id } désigne la fiche à
+  // servir — accepté UNIQUEMENT pour un administrateur (la session
+  // d'association des réfs se fait pour le compte des boutiques). Pour tout
+  // autre compte, c'est un refus net, jamais un repli.
+  const ficheDemandee = typeof body.client_id === 'string' && body.client_id ? String(body.client_id) : null
+  let clientId: string | null
+  if (ficheDemandee) {
+    if (!isAdminEmail(user.email)) return NextResponse.json({ error: 'Réservé aux administrateurs' }, { status: 403 })
+    clientId = ficheDemandee
+  } else {
+    clientId = await resolveClientId(service, user.id, user.email)
+  }
+  if (!clientId) return NextResponse.json({ error: 'Client introuvable' }, { status: 404 })
 
   const modeIgnore = 'ignored' in body && !('generic_id' in body)
   if (!modeIgnore && !('generic_id' in body)) {
@@ -123,6 +136,7 @@ export async function PUT(request: NextRequest) {
   }
 
   let traitees = 0
+  const reussies: string[] = []
   for (const [cle, ids] of Array.from(parFacteur.entries())) {
     const champs = champsPour(cle === 'null' ? null : Number(cle))
     for (let i = 0; i < ids.length; i += CHUNK) {
@@ -133,8 +147,16 @@ export async function PUT(request: NextRequest) {
         for (const id of lot) echecs.push({ id, name: nomParId.get(id) ?? '', motif: error.message.slice(0, 120) })
       } else {
         traitees += lot.length
+        reussies.push(...lot)
       }
     }
+  }
+
+  // Une ASSOCIATION réussie nourrit le dictionnaire plateforme (lot 28) : la
+  // prochaine boutique en héritera. Ni la dissociation ni l'écartement — on
+  // n'apprend que des rapprochements. Jamais bloquant.
+  if (!modeIgnore && genericId !== null && reussies.length > 0) {
+    await nourrirDictionnaire(service, clientId, genericId, reussies)
   }
 
   return NextResponse.json({ success: true, traitees, echecs })
