@@ -139,6 +139,9 @@ export async function POST(request: NextRequest) {
          *  mesuré le 02/08, PENNYLANE (logiciel) « dé-fixée » à tort par cette
          *  voie. */
         corrigerEtiquette?: boolean
+        /** Vrai quand la nature vient du BOUCHER (réponse à un doute) : le
+         *  doute est levé par construction, quel que soit le mode de lecture. */
+        natureImposee?: boolean
       },
     ) => {
       const { delivery_date, due_date, tronque } = ctx
@@ -363,7 +366,18 @@ export async function POST(request: NextRequest) {
           ? `Étiquetée « charge fixe » à l'import, mais le document facture de la matière : étiquette corrigée.`
           : null
         if (corriger) patch.is_fixed_charge = false
-        const motifFinal = [ctx.motifSuffixe, mentionEtiquette, mentionPasse, motifPartiel].filter(Boolean).join(' ') || null
+        // FILE DE DOUTE (lot 29) : une nature « matière » jugée sur une lecture
+        // IMAGE est fragile — mesuré en production, des frais bancaires publiés
+        // comme articles. Le drapeau demande une confirmation d'un clic ; il ne
+        // retire rien (les garde-fous de chiffres ont déjà fait leur travail).
+        // Une lecture texte, une facture électronique ou un verdict du boucher
+        // effacent le doute.
+        const douteMatiere = ctx.natureImposee === true ? false : luEnVision
+        patch.nature_doute = douteMatiere
+        const mentionDoute = douteMatiere
+          ? `Nature (matière) jugée sur une lecture image — confirmez d'un clic que c'est bien de la matière première.`
+          : null
+        const motifFinal = [ctx.motifSuffixe, mentionEtiquette, mentionDoute, mentionPasse, motifPartiel].filter(Boolean).join(' ') || null
         await marquer(invoice.id, complet ? 'done' : 'partial', motifFinal, patch)
 
         // La lecture rejoint la bibliothèque SI elle boucle au centime — c'est
@@ -410,16 +424,24 @@ export async function POST(request: NextRequest) {
   // début (« relancez la lecture »), et qui sans ce drapeau retombait sur le
   // verrou à l'infini. Le document tranche toujours ; on ne force jamais un
   // résultat, seulement une nouvelle audience.
-  const relire = corpsRecu?.relire === true
+  // FILE DE DOUTE (lot 29) : le corps { nature: 'matiere' } porte la réponse
+  // du boucher à un doute — « c'est bien de la matière ». Il implique la
+  // relecture, et le verdict humain l'emporte sur le classement automatique
+  // (jamais sur les garde-fous de chiffres, qui ne se discutent pas).
+  const natureVoulue = corpsRecu?.nature === 'matiere' ? 'matiere' : null
+  const relire = corpsRecu?.relire === true || natureVoulue !== null
   const supKey = societeKey(invoice.supplier_name || '')
   if (supKey && !relire) {
     const { data: histo } = await service.from('invoices')
-      .select('supplier_name, lines_status')
+      .select('supplier_name, lines_status, nature_doute')
       .eq('client_id', clientId)
       .in('lines_status', ['done', 'partial', 'hors_matiere'])
     let dejaHors = false, dejaMatiere = false
     for (const h of histo || []) {
       if (societeKey(h.supplier_name || '') !== supKey) continue
+      // Un doute non tranché ne verrouille RIEN, dans aucun sens : seul un
+      // classement assumé (sans drapeau) fait mémoire fournisseur.
+      if (h.nature_doute === true) continue
       if (h.lines_status === 'hors_matiere') dejaHors = true
       else dejaMatiere = true
     }
@@ -589,7 +611,23 @@ export async function POST(request: NextRequest) {
         }
       }
     }
-    const { lines, delivery_date, due_date, nature, tronque } = extraction
+    const { lines, delivery_date, due_date, tronque } = extraction
+    let nature = extraction.nature
+    let motifNatureImposee: string | undefined
+    // RÉPONSE DU BOUCHER à un doute : « c'est de la matière ». Son verdict
+    // l'emporte sur le classement automatique — mais jamais sur les chiffres :
+    // les lignes publiées passent par les mêmes garde-fous que toujours, et
+    // sans aucune ligne lisible, on le dit au lieu d'inventer.
+    if (natureVoulue === 'matiere' && nature === 'hors_matiere') {
+      if (lines.length === 0) {
+        await marquer(invoice.id, 'error',
+          `Vous avez indiqué que cette facture porte de la matière, mais aucune ligne d'article n'est lisible sur le document. Vérifiez le PDF — s'il s'agit d'un relevé ou d'un échéancier, c'est bien une charge.`,
+          { nature_doute: false })
+        return NextResponse.json({ error: 'Aucune ligne d\'article lisible malgré la nature indiquée.' }, { status: 422 })
+      }
+      nature = 'matiere'
+      motifNatureImposee = `Classée « hors matière » par la lecture automatique, mais vous avez indiqué qu'il s'agit de matière : les lignes lues sont publiées.`
+    }
 
     // Étage 3 — la nature lue sur le PDF lui-même. C'est lui qui rattrape les
     // catégories fausses du connecteur (des factures de viande arrivent en
@@ -634,8 +672,19 @@ export async function POST(request: NextRequest) {
           motifPeriode = ` Période facturée lue sur le document : du ${du} au ${au} (${jours} jours) — part hebdomadaire recalculée.`
         }
       }
-      await marquer(invoice.id, 'hors_matiere', 'Le document lui-même ne porte aucune matière première (matériel, service, abonnement).' + motifPeriode, patch)
-      return NextResponse.json({ success: true, status: 'hors_matiere', reason: 'facture sans matière première (matériel, service, abonnement…)', periode: motifPeriode ? { du, au } : null })
+      // FILE DE DOUTE (lot 29). Deux classes mesurées de « hors matière »
+      // fragiles : la nature jugée sur une LECTURE IMAGE (dérive constatée dans
+      // les deux sens), et une grosse facture — un classement qui sort plus de
+      // 500 € de la mercuriale mérite un œil humain. Le doute ne change pas le
+      // classement (rien n'est publié, comme toujours) : il pose un drapeau que
+      // le boucher tranche d'un clic. Une relecture sereine efface le doute.
+      const douteHors = luEnVision || totalHT > 500
+      patch.nature_doute = douteHors
+      const motifDoute = douteHors
+        ? ` À confirmer d'un clic : ${luEnVision ? 'nature jugée sur une lecture image (scan)' : `facture de ${totalHT.toFixed(2)} € écartée de la mercuriale`}.`
+        : ''
+      await marquer(invoice.id, 'hors_matiere', 'Le document lui-même ne porte aucune matière première (matériel, service, abonnement).' + motifPeriode + motifDoute, patch)
+      return NextResponse.json({ success: true, status: 'hors_matiere', reason: 'facture sans matière première (matériel, service, abonnement…)', periode: motifPeriode ? { du, au } : null, nature_doute: douteHors })
     }
 
     if (lines.length === 0) {
@@ -649,9 +698,12 @@ export async function POST(request: NextRequest) {
       mode: luEnVision ? 'vision' : 'texte',
       delivery_date, due_date, tronque, luEnVision,
       passe, tentatives,
-      motifSuffixe: ttcConverti
-        ? `Montants facturés TVA COMPRISE — convertis en HT ligne par ligne (taux imprimés), somme vérifiée au centime sur le total HT.`
-        : undefined,
+      motifSuffixe: [
+        motifNatureImposee,
+        ttcConverti
+          ? `Montants facturés TVA COMPRISE — convertis en HT ligne par ligne (taux imprimés), somme vérifiée au centime sur le total HT.`
+          : undefined,
+      ].filter(Boolean).join(' ') || undefined,
       // Une lecture CONVERTIE n'entre jamais dans la bibliothèque d'exemples :
       // ses montants HT ne figurent pas dans le texte du document — l'exemple
       // enseignerait au modèle de recalculer, l'inverse de sa consigne.
@@ -659,6 +711,7 @@ export async function POST(request: NextRequest) {
       // Ici — et seulement ici — la nature « matière » vient d'être jugée sur le
       // document lui-même : l'étiquette « charge fixe » peut être corrigée.
       corrigerEtiquette: true,
+      natureImposee: motifNatureImposee !== undefined,
     })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)

@@ -21,7 +21,7 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import { ShoppingBasket, FileSearch, TrendingUp, TrendingDown, Search, RefreshCw, Link2, ChevronDown, ChevronRight, Pencil, Trash2, Unlink, X, Check, AlertTriangle, Sparkles, ChefHat } from 'lucide-react'
+import { ShoppingBasket, FileSearch, TrendingUp, TrendingDown, Search, RefreshCw, Link2, ChevronDown, ChevronRight, Pencil, Trash2, Unlink, X, Check, AlertTriangle, Sparkles, ChefHat, HelpCircle } from 'lucide-react'
 import { useToast } from '@/components/ui/toast'
 import { guessBaseUnit, unitKind } from '@/lib/mercuriale-auto'
 
@@ -125,6 +125,18 @@ type PendingInvoice = {
   /** Motif de l'échec ou de la lecture partielle, en clair (lot 1) */
   lines_error: string | null
   lines_checked_at: string | null
+}
+
+/** Classement matière/charge FRAGILE, à trancher d'un clic (lot 29) : le tri
+ *  pose un drapeau quand sa confiance est faible (nature jugée sur une lecture
+ *  image, grosse facture écartée) au lieu de décider en silence. */
+type DouteInvoice = {
+  id: string
+  supplier_name: string | null
+  invoice_date: string | null
+  amount_ht: number | string | null
+  lines_status: string | null
+  lines_error: string | null
 }
 
 const fmtEuro = (n: number) => n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'
@@ -246,6 +258,9 @@ export default function MercurialePage() {
   // Motifs d'échec / de lecture partielle (lot 1) : dépliables, relisibles un par un
   const [showMotifs, setShowMotifs] = useState(false)
   const [relisant, setRelisant] = useState<string | null>(null)
+  // File de doute matière/charge (lot 29) : classements fragiles, un clic tranche
+  const [doutes, setDoutes] = useState<DouteInvoice[]>([])
+  const [tranchant, setTranchant] = useState<string | null>(null)
   // Rattrapage des PDF manquants (lot 2) : une facture sans PDF n'a ni lignes
   // ni prix — c'est le plus gros gisement de mercuriale inexploitée.
   const [sansPdf, setSansPdf] = useState(0)
@@ -295,6 +310,7 @@ export default function MercurialePage() {
       setGenerics(Array.isArray(data.generics) ? data.generics : [])
       setQueue(Array.isArray(data.queue) ? data.queue : [])
       setPending(Array.isArray(data.pending) ? data.pending : [])
+      setDoutes(Array.isArray(data.doutes) ? data.doutes : [])
       setMoves(Array.isArray(data.moves) ? data.moves : [])
       setMovesTotal(Number(data.moves_total) || 0)
       setSansPdf(Number(data.sans_pdf) || 0)
@@ -410,6 +426,47 @@ export default function MercurialePage() {
       toast({ variant: 'error', title: `${inv.supplier_name} : lecture en échec`, description: data?.error || 'Réessayez.' })
     }
     rafraichirBientot()
+  }
+
+  /** Tranche un doute matière/charge d'un clic (lot 29). « Charge » retire les
+   *  lignes éventuelles et classe hors matière ; « Matière » lève le doute —
+   *  et si la facture avait été écartée, enchaîne la relecture du document
+   *  avec le verdict humain (qui l'emporte sur le classement automatique,
+   *  jamais sur les garde-fous de chiffres). */
+  async function trancherNature(inv: DouteInvoice, nature: 'matiere' | 'hors_matiere') {
+    if (tranchant) return
+    setTranchant(inv.id)
+    const res = await fetch('/api/invoices/confirm-nature', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ invoice_id: inv.id, nature }),
+    }).catch(() => null)
+    const data = res ? await res.json().catch(() => null) : null
+    if (!res?.ok) {
+      setTranchant(null)
+      toast({ variant: 'error', title: `${nomFournisseur(inv.supplier_name)} : verdict non enregistré`, description: data?.error || 'Réessayez.' })
+      return
+    }
+    if (data?.relire_requise) {
+      // La facture avait été écartée : ses lignes n'existent pas encore. On
+      // relit le document en portant le verdict — même geste que « Relire ».
+      const rl = await fetch('/api/invoices/extract-lines', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ invoice_id: inv.id, relire: true, nature: 'matiere' }),
+      }).catch(() => null)
+      const rd = rl ? await rl.json().catch(() => null) : null
+      setTranchant(null)
+      toast(rl?.ok
+        ? { variant: 'success', title: `${nomFournisseur(inv.supplier_name)} : relue comme matière`, description: `${rd?.prix_promus ?? 0} prix retenu${(rd?.prix_promus ?? 0) > 1 ? 's' : ''}.` }
+        : { variant: 'error', title: `${nomFournisseur(inv.supplier_name)} : relecture en échec`, description: rd?.error || 'Réessayez.' })
+    } else {
+      setTranchant(null)
+      toast({
+        variant: 'success',
+        title: `${nomFournisseur(inv.supplier_name)} : ${nature === 'hors_matiere' ? 'confirmée charge' : 'confirmée matière'}`,
+        description: nature === 'hors_matiere' ? 'Ses lignes éventuelles sont retirées de la mercuriale.' : undefined,
+      })
+    }
+    load({ silencieux: true })
   }
 
   // ── Sélection ──────────────────────────────────────
@@ -1053,6 +1110,46 @@ export default function MercurialePage() {
         </div>
         )
       })()}
+
+      {/* File de doute matière/charge (lot 29) — le tri dit quand il n'est pas
+          sûr, et c'est le boucher qui tranche, d'un clic. */}
+      {doutes.length > 0 && (
+        <div className="mb-6 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+          <div className="flex items-center gap-2 mb-2">
+            <HelpCircle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+            <p className="text-sm text-amber-900">
+              <strong>{doutes.length} classement{doutes.length > 1 ? 's' : ''} à confirmer</strong> — la lecture a hésité entre matière première et charge. Votre œil tranche en un clic.
+            </p>
+          </div>
+          <div className="space-y-1">
+            {doutes.map(d => (
+              <div key={d.id} className="bg-white rounded-lg px-3 py-2 flex items-start gap-3 flex-wrap">
+                <span className="text-[11px] text-gray-400 tabular flex-shrink-0 w-16">{fmtDate(d.invoice_date)}</span>
+                <span className="flex-1 min-w-[180px]">
+                  <span className="text-xs font-semibold text-gray-900">{nomFournisseur(d.supplier_name)}</span>
+                  <span className="text-xs text-gray-500 tabular"> · {fmtEuro(Number(d.amount_ht) || 0)}</span>
+                  <span className="block text-[11px] text-gray-500 leading-snug">
+                    {d.lines_status === 'hors_matiere' ? 'Écartée comme charge. ' : 'Lue comme matière. '}
+                    {d.lines_error || ''}
+                  </span>
+                </span>
+                <span className="flex items-center gap-2 flex-shrink-0">
+                  <button onClick={() => window.open(`/api/invoices/${d.id}/file`, '_blank')}
+                    className="text-[11px] font-semibold text-gray-500 hover:text-pilote underline">voir la facture</button>
+                  <button onClick={() => trancherNature(d, 'hors_matiere')} disabled={tranchant !== null}
+                    className="text-[11px] font-bold text-amber-800 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-lg px-2.5 py-1 disabled:opacity-50">
+                    {tranchant === d.id ? '…' : 'C’est une charge'}
+                  </button>
+                  <button onClick={() => trancherNature(d, 'matiere')} disabled={tranchant !== null}
+                    className="text-[11px] font-bold text-white bg-pilote hover:bg-pilote-hover rounded-lg px-2.5 py-1 shadow-card disabled:opacity-50">
+                    {tranchant === d.id ? 'En cours…' : 'C’est de la matière'}
+                  </button>
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* KPIs */}
       <div className="grid grid-cols-3 gap-4 mb-6">
