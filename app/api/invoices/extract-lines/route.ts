@@ -336,7 +336,15 @@ export async function POST(request: NextRequest) {
         const mentionPasse = (ctx.tentatives ?? 1) > 1
           ? `Lue au ${ctx.tentatives}e essai (${ctx.passe === 'vision' ? 'lecture du document en image' : 'relecture avec l’écart signalé'}).`
           : null
-        const motifFinal = [ctx.motifSuffixe, mentionPasse, motifPartiel].filter(Boolean).join(' ') || null
+        // L'étiquette « charge fixe » de l'import est CORRIGÉE par le document :
+        // des lignes de matière publiées prouvent le contraire, et laisser
+        // l'étiquette fausserait les marges, où les charges fixes sont comptées
+        // à part des achats.
+        const mentionEtiquette = invoice.is_fixed_charge
+          ? `Étiquetée « charge fixe » à l'import, mais le document facture de la matière : étiquette corrigée.`
+          : null
+        if (invoice.is_fixed_charge) patch.is_fixed_charge = false
+        const motifFinal = [ctx.motifSuffixe, mentionEtiquette, mentionPasse, motifPartiel].filter(Boolean).join(' ') || null
         await marquer(invoice.id, complet ? 'done' : 'partial', motifFinal, patch)
 
         // La lecture rejoint la bibliothèque SI elle boucle au centime — c'est
@@ -362,11 +370,17 @@ export async function POST(request: NextRequest) {
 
   // ── Reconnaissance en trois étages : seules les factures de MATIÈRE (ingrédients,
   // consommables de production) nourrissent la mercuriale. ──
-  // Étage 1 — déterministe : une charge fixe (loyer, logiciel, leasing, assurance…)
-  // n'est jamais de la matière. Zéro appel IA.
-  if (invoice.is_fixed_charge) {
-    await marquer(invoice.id, 'hors_matiere', 'Charge fixe (loyer, abonnement, assurance…) — jamais de la matière première.')
-    return NextResponse.json({ success: true, status: 'hors_matiere', reason: 'charge fixe' })
+  // Étage 1 — l'étiquette « charge fixe » posée à l'IMPORT n'est plus une
+  // sentence : c'est un INDICE. Mesuré le 02/08 : SOCAVI (1 229 €), DAT-SCHAUB,
+  // DAVID MASTER, AURIBAULT étiquetées « charge fixe » par le classement
+  // d'import — de la viande, jamais lue, invisible de la mercuriale. Le
+  // DOCUMENT tranche, comme partout ailleurs dans cette chaîne. L'étiquette ne
+  // conclut seule que lorsqu'il n'y a PAS de document : une charge prélevée
+  // sans facture n'a rien qui puisse la contredire. Avec un document, on lit —
+  // une fois par fournisseur, le verrou de l'étage 2 fait le reste.
+  if (invoice.is_fixed_charge && !invoice.file_path) {
+    await marquer(invoice.id, 'hors_matiere', 'Charge fixe (loyer, abonnement, assurance…) sans document à lire — jamais de la matière première.')
+    return NextResponse.json({ success: true, status: 'hors_matiere', reason: 'charge fixe sans document' })
   }
 
   // Étage 2 — mémoire fournisseur : si ce fournisseur a déjà été reconnu hors
