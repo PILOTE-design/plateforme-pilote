@@ -484,7 +484,18 @@ export async function POST(request: NextRequest) {
       // rattrape les couches texte abîmées, où les caractères ressortent espacés
       // (« F A : 0 . 8 8 ») et où aucune relecture du même texte ne peut aider.
       const ecartDe = (ls: ExtractedLine[]) => Math.abs(sommeLignes(ls) - totalHT)
-      if (totalHT !== 0 && extraction.lines.length > 0 && ecartDe(extraction.lines) > 0.02) {
+      // Zéro ligne déclenche aussi la passe image — sauf « hors matière » assumé
+      // sur une petite facture, où ne rien lire est le comportement voulu : on ne
+      // paie pas une lecture image pour confirmer chaque abonnement. Une facture
+      // significative (> 500 €) sans aucune ligne, elle, mérite d'être regardée
+      // avant d'être classée — même seuil que le garde-fou d'en dessous.
+      const lignesVides = extraction.lines.length === 0
+      const meriteVision = totalHT !== 0 && (
+        lignesVides
+          ? (extraction.nature === 'matiere' || totalHT > 500)
+          : ecartDe(extraction.lines) > 0.02
+      )
+      if (meriteVision) {
         tentatives++
         try {
           const vu = await extractLinesVision(buffer, totalHT)
