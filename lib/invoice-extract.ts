@@ -16,7 +16,7 @@ import Anthropic from '@anthropic-ai/sdk'
 /** Version du prompt d'extraction. À INCRÉMENTER à chaque modification : c'est
  *  elle qui permet de dire « avant / après » sur le corpus, et donc de refuser
  *  un changement qui dégrade au lieu de le découvrir en production. */
-export const PROMPT_LIGNES_VERSION = '2026-08-02-h-periode'
+export const PROMPT_LIGNES_VERSION = '2026-08-02-i-periode-hors-matiere'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || 'MISSING_ANTHROPIC_KEY' })
 
@@ -107,7 +107,7 @@ COMMENCE par qualifier la facture :
 NATURE|matiere      si elle facture des ingrédients alimentaires ou des consommables de production : viande, charcuterie, épicerie, épices et assaisonnements, boissons, emballages, barquettes, sachets, ficelle, boyaux, papier alimentaire…
 NATURE|hors_matiere UNIQUEMENT si la facture ne porte AUCUN de ces produits : matériel durable, équipement, entretien, services, logiciels, abonnements, avantages salariés, énergie, transport seul, honoraires.
 Une facture MIXTE, ou douteuse, est matiere : ce qui se consomme en produisant nourrit la mercuriale, même si ce n'est pas comestible (une ficelle à rôti est matiere ; une trancheuse ne l'est pas).
-Si NATURE est hors_matiere, n'écris AUCUNE ligne L| — la facture ne nourrit pas la mercuriale.
+Si NATURE est hors_matiere, n'écris AUCUNE ligne L| — la facture ne nourrit pas la mercuriale. Donne TOUT DE MÊME les lignes ECHEANCE et PERIODE quand le document les porte : la période d'une charge sert à répartir son coût dans le temps.
 
 Sinon, extrais CHAQUE ligne d'article facturé. Retourne UNIQUEMENT des lignes aux formats suivants, sans autre texte :
 
