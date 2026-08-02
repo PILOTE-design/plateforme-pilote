@@ -16,7 +16,7 @@ import Anthropic from '@anthropic-ai/sdk'
 /** Version du prompt d'extraction. À INCRÉMENTER à chaque modification : c'est
  *  elle qui permet de dire « avant / après » sur le corpus, et donc de refuser
  *  un changement qui dégrade au lieu de le découvrir en production. */
-export const PROMPT_LIGNES_VERSION = '2026-08-01-e-entete'
+export const PROMPT_LIGNES_VERSION = '2026-08-02-f-taxes-nature'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || 'MISSING_ANTHROPIC_KEY' })
 
@@ -104,8 +104,9 @@ export const LIGNES_MAX = 400    // plafond de sécurité, atteint = signalé (j
 export function promptExtraction(totalHT: number, pdfText: string, reprise?: RepriseInfo, exemples?: string): string {
   return `${exemples || ''}${reprise ? consigneReprise(reprise, totalHT) : ''}Voici le texte d'une facture fournisseur de boucherie. Total HT connu : ${totalHT.toFixed(2)} EUR.
 COMMENCE par qualifier la facture :
-NATURE|matiere      si elle facture des ingrédients alimentaires ou des consommables de production (viande, charcuterie, épicerie, boissons, emballages, barquettes…)
-NATURE|hors_matiere si elle facture autre chose : matériel, équipement, entretien, services, logiciels, abonnements, avantages salariés, énergie, transport seul, honoraires.
+NATURE|matiere      si elle facture des ingrédients alimentaires ou des consommables de production : viande, charcuterie, épicerie, épices et assaisonnements, boissons, emballages, barquettes, sachets, ficelle, boyaux, papier alimentaire…
+NATURE|hors_matiere UNIQUEMENT si la facture ne porte AUCUN de ces produits : matériel durable, équipement, entretien, services, logiciels, abonnements, avantages salariés, énergie, transport seul, honoraires.
+Une facture MIXTE, ou douteuse, est matiere : ce qui se consomme en produisant nourrit la mercuriale, même si ce n'est pas comestible (une ficelle à rôti est matiere ; une trancheuse ne l'est pas).
 Si NATURE est hors_matiere, n'écris AUCUNE ligne L| — la facture ne nourrit pas la mercuriale.
 
 Sinon, extrais CHAQUE ligne d'article facturé. Retourne UNIQUEMENT des lignes aux formats suivants, sans autre texte :
@@ -152,7 +153,8 @@ Règles STRICTES :
 - POIDS_KG : ces factures portent SOUVENT DEUX nombres par ligne — le nombre de colis (ou de pièces) ET le poids facturé. Quand c'est le cas, mets le nombre de colis en QUANTITE et le POIDS EN KILOS dans POIDS_KG, et le prix au kilo en PRIX_UNITAIRE_HT. Exemple : « 2 pce · 15,012 kg · 14,97 €/kg · 224,73 € » donne QUANTITE=2, POIDS_KG=15.012, PRIX_UNITAIRE_HT=14.97.
 - POIDS_KG reste VIDE si la facture ne montre qu'un seul nombre (la quantité EST le poids, ou l'article se vend à la pièce). Ne jamais le déduire ni le calculer : uniquement s'il est ÉCRIT.
 - Point décimal. Une ligne L| par article, remises et consignes comprises (montants négatifs autorisés).
-- Ignorer les sous-totaux, totaux, TVA récapitulative, frais de port SI déjà comptés ailleurs.
+- Les taxes et contributions FACTURÉES font partie du total HT : cotisation Interbev, équarissage, consigne, contribution transport, frais administratifs, écotaxe… Recopie chacune comme une ligne L| avec son montant tel qu'écrit, MÊME quand elle figure dans un petit tableau à part (« Taxe | Montant ») sous les articles. Exemple : « Interbev boeuf Import autre 0.03 » se note L|INTERBEV BOEUF IMPORT|||||0.03||
+- Ignorer les sous-totaux, totaux de page et TVA récapitulative : un récapitulatif REDIT un montant déjà compté dans les lignes (« Montant total équarissage » qui résume des lignes déjà facturées), alors qu'une taxe facturée S'AJOUTE. Dans le doute, la relecture tranchera : recopie la facture telle qu'elle se présente.
 - LIVRAISON = date de LIVRAISON de la marchandise (mentions « livré le », « date de livraison », « expédition », « bon de livraison / BL »). ECHEANCE = date limite de PAIEMENT (« à régler avant le », « échéance », « date d'échéance », « payable au »). Ces deux dates sont DIFFÉRENTES : ne jamais recopier l'échéance en LIVRAISON. Si une seule figure sur la facture, ne renseigner QUE celle-là. Format AAAA-MM-JJ, ligne absente si introuvable.
 ${pdfText ? `\nTexte de la facture :\n${pdfText}` : '\nLa facture est le document joint : lis-le directement.'}`
 }
