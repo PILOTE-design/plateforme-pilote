@@ -164,8 +164,8 @@ export async function POST(request: NextRequest) {
        *  nombre de colis. Tant que le format ne connaissait qu'une quantité,
        *  « 2 pièces × 14,97 €/kg » était comparé à 224,73 € : le contrôle
        *  échouait, et un prix parfaitement lu partait en quarantaine. Mesuré le
-       *  31/07 : 32 prix refusés sur des factures dont la somme tombait au
-       *  centime près. */
+       *  31/07 : 32 prix refusés sur des factures dont la somme des lignes
+       *  tombait pourtant au centime près. */
       /** L'assiette n'est PAS toujours le poids. Sur la même facture DAVID
        *  MASTER, la colonne « UF » vaut KG sur une ligne et PI sur la suivante :
        *  « SAUCISSON … KG 3 4,003 22,550 90,27 » se recoupe sur le POIDS
