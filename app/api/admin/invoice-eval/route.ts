@@ -60,7 +60,7 @@ export async function POST(request: NextRequest) {
   // Cas candidats : un texte source archivé et des lignes en base. La lecture
   // image n'est pas rejouable depuis un texte — elle est comptée à part.
   const { data: candidats } = await service.from('invoices')
-    .select('id, client_id, supplier_name, invoice_date, amount_ht, lines_source_text, lines_mode, lines_prompt_version')
+    .select('id, client_id, supplier_name, invoice_date, amount_ht, amount_ttc, lines_source_text, lines_mode, lines_prompt_version')
     .not('lines_source_text', 'is', null)
     .eq('lines_mode', 'texte')
     .order('invoice_date', { ascending: false })
@@ -134,7 +134,7 @@ export async function POST(request: NextRequest) {
       const ex = consigneExemples(await choisirExemples(
         service, String(inv.client_id ?? ''), normalizeSupplierName(supplierSociete(String(inv.supplier_name || ''))) || '', texte,
       ).catch(() => []))
-      const { lines } = await lireTexteAvecReprise(texte, num(inv.amount_ht) ?? 0, ex)
+      const { lines } = await lireTexteAvecReprise(texte, num(inv.amount_ht) ?? 0, ex, num(inv.amount_ttc) ?? 0)
       cas.push(compareFacture(
         String(inv.id),
         String(inv.supplier_name ?? ''),
@@ -162,7 +162,7 @@ export async function POST(request: NextRequest) {
       const ex = consigneExemples(await choisirExemples(
         service, String(inv.client_id ?? ''), normalizeSupplierName(supplierSociete(String(inv.supplier_name || ''))) || '', texte,
       ).catch(() => []))
-      const { lines, passe, tentatives } = await lireTexteAvecReprise(texte, total, ex)
+      const { lines, passe, tentatives } = await lireTexteAvecReprise(texte, total, ex, num(inv.amount_ttc) ?? 0)
       const somme = lines.reduce((s, l) => s + (l.amount_ht || 0), 0)
       const ecart = Math.round((somme - total) * 100) / 100
       bouclage.push({
