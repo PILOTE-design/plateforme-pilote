@@ -144,8 +144,11 @@ export async function POST(request: NextRequest) {
   let passe: string = lecture.passe
   let tentatives = lecture.tentatives
 
+  // Zéro ligne compte comme un écart de la valeur du total : un document que le
+  // texte ne livre pas (couche abîmée, nature mal jugée) mérite d'être REGARDÉ
+  // avant d'être déclaré illisible — c'est tout le sens du processeur de secours.
   const ecartDe = (ls: ExtractedLine[]) => Math.abs(sommeLignes(ls) - total)
-  if (lines.length > 0 && ecartDe(lines) > 0.02) {
+  if (lines.length === 0 || ecartDe(lines) > 0.02) {
     tentatives++
     try {
       const vu = await extractLinesVision(buffer, total)
