@@ -151,7 +151,9 @@ FIN DES EXEMPLES. La facture à lire commence plus bas.
 export async function rangerExemple(
   service: ServiceClient,
   params: {
-    clientId: string
+    /** Null pour un import d'administrateur sans fiche client : l'exemple est
+     *  alors purement partagé, rattaché à aucune boucherie. */
+    clientId: string | null
     supplierKey: string
     /** Facture d'origine — null pour un exemple importé, qui n'en a pas. */
     invoiceId: string | null
