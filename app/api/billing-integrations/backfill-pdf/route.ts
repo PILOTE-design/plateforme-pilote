@@ -22,6 +22,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { resolveClientId } from '@/lib/resolve-client-id'
+import { isAdminEmail } from '@/lib/admins'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -75,7 +76,19 @@ export async function POST(req: NextRequest) {
   if (!user) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
 
   const service = createServiceClient()
-  const clientId = await resolveClientId(service, user.id, user.email)
+  // ENTRETIEN PAR L'ADMINISTRATEUR : le compte admin n'a pas de fiche, mais il a
+  // la charge de toutes. Un corps { client_id } désigne la fiche à rattraper —
+  // accepté UNIQUEMENT pour un administrateur : pour tout autre compte, demander
+  // une autre fiche est un refus net, jamais un repli silencieux sur la sienne.
+  const corps = await req.json().catch(() => ({} as Record<string, unknown>))
+  const ficheDemandee = typeof corps?.client_id === 'string' && corps.client_id ? corps.client_id : null
+  let clientId: string | null
+  if (ficheDemandee) {
+    if (!isAdminEmail(user.email)) return NextResponse.json({ error: 'Réservé aux administrateurs' }, { status: 403 })
+    clientId = ficheDemandee
+  } else {
+    clientId = await resolveClientId(service, user.id, user.email)
+  }
   if (!clientId) return NextResponse.json({ error: 'Client introuvable' }, { status: 404 })
 
   const { data: integ } = await service.from('billing_integrations')

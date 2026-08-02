@@ -19,6 +19,7 @@ if (typeof globalThis.DOMMatrix === 'undefined') {
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { resolveClientId } from '@/lib/resolve-client-id'
+import { isAdminEmail } from '@/lib/admins'
 import { normalizeSupplierName, supplierSociete, societeKey } from '@/lib/supplier-memory'
 import { normText } from '@/lib/postes'
 import { pdfToLines } from '@/lib/pdf-lines'
@@ -46,7 +47,18 @@ export async function POST(request: NextRequest) {
   if (!user) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
 
   const service = createServiceClient()
-  const clientId = await resolveClientId(service, user.id, user.email)
+  // ENTRETIEN PAR L'ADMINISTRATEUR : même règle que le rattrapage des PDF — un
+  // corps { client_id } désigne la fiche à lire, accepté UNIQUEMENT pour un
+  // administrateur ; pour tout autre compte, c'est un refus net.
+  const corpsRecu = await request.json().catch(() => ({} as Record<string, unknown>))
+  const ficheDemandee = typeof corpsRecu?.client_id === 'string' && corpsRecu.client_id ? String(corpsRecu.client_id) : null
+  let clientId: string | null
+  if (ficheDemandee) {
+    if (!isAdminEmail(user.email)) return NextResponse.json({ error: 'Réservé aux administrateurs' }, { status: 403 })
+    clientId = ficheDemandee
+  } else {
+    clientId = await resolveClientId(service, user.id, user.email)
+  }
   if (!clientId) return NextResponse.json({ error: 'Client introuvable' }, { status: 404 })
 
   /** Écrit l'issue de la lecture AVEC SON MOTIF (lot 1, 31/07).
@@ -71,7 +83,7 @@ export async function POST(request: NextRequest) {
     }).eq('id', invoiceId)
   }
 
-  const { invoice_id } = await request.json().catch(() => ({} as Record<string, unknown>))
+  const invoice_id = corpsRecu?.invoice_id
   if (!invoice_id) return NextResponse.json({ error: 'invoice_id requis' }, { status: 400 })
 
   const { data: invoice } = await service.from('invoices')
