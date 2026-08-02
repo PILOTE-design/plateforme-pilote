@@ -96,9 +96,14 @@ export async function choisirExemples(
   supplierKey: string,
   texte: string,
 ): Promise<ExempleFacture[]> {
+  // Deux gisements : les exemples de CETTE boucherie (moissonnés sur ses propres
+  // factures), et les exemples PARTAGÉS — importés par l'administrateur pour
+  // toute la plateforme. Un extrait moissonné porte les prix d'achat de sa
+  // boucherie : il n'est jamais servi à une autre ; un extrait partagé a été
+  // donné exprès.
   const { data, error } = await service.from('invoice_layouts')
     .select('supplier_key, header_signature, sample_text, sample_output')
-    .eq('client_id', clientId)
+    .or(`client_id.eq.${clientId},shared.eq.true`)
     .order('updated_at', { ascending: false })
     .limit(200)
   if (error || !data || data.length === 0) return []
@@ -148,11 +153,17 @@ export async function rangerExemple(
   params: {
     clientId: string
     supplierKey: string
-    invoiceId: string
+    /** Facture d'origine — null pour un exemple importé, qui n'en a pas. */
+    invoiceId: string | null
     texte: string
     lignes: { designation: string; article_code: string | null; quantity: number | null; unit: string | null; unit_price_ht: number | null; amount_ht: number; tva_rate: number | null; weight_kg: number | null }[]
     totalHT: number
     promptVersion: string
+    /** Vrai pour un exemple DONNÉ à la plateforme (import administrateur) :
+     *  servi à toutes les boucheries. Absent = moissonné, propre à la fiche.
+     *  Sur un exemple existant, l'absence NE retire PAS le partage : l'upsert
+     *  n'écrit que les colonnes fournies. */
+    shared?: boolean
   },
 ): Promise<void> {
   const { lignes, totalHT } = params
@@ -193,6 +204,7 @@ export async function rangerExemple(
       total_ht: totalHT,
       prompt_version: params.promptVersion,
       updated_at: new Date().toISOString(),
+      ...(params.shared === true ? { shared: true } : {}),
     }, { onConflict: 'client_id,supplier_key,header_signature' })
   } catch (e) {
     console.error('[invoice-layouts] rangement impossible:', e instanceof Error ? e.message : e)
