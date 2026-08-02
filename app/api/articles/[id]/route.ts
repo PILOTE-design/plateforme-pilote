@@ -4,25 +4,36 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { resolveClientId } from '@/lib/resolve-client-id'
+import { isAdminEmail } from '@/lib/admins'
+import { nourrirDictionnaire } from '@/lib/association-dictionary'
 
 export const dynamic = 'force-dynamic'
 
-async function authClient() {
+/** ENTRETIEN PAR L'ADMINISTRATEUR : un corps { client_id } désigne la fiche à
+ *  servir — accepté UNIQUEMENT pour un administrateur (la session
+ *  d'association des réfs se fait pour le compte des boutiques). Pour tout
+ *  autre compte, c'est un refus net, jamais un repli. */
+async function authClient(ficheDemandee: string | null) {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return { error: NextResponse.json({ error: 'Non authentifié' }, { status: 401 }) }
   const service = createServiceClient()
-  const clientId = await resolveClientId(service, user.id, user.email)
+  let clientId: string | null
+  if (ficheDemandee) {
+    if (!isAdminEmail(user.email)) return { error: NextResponse.json({ error: 'Réservé aux administrateurs' }, { status: 403 }) }
+    clientId = ficheDemandee
+  } else {
+    clientId = await resolveClientId(service, user.id, user.email)
+  }
   if (!clientId) return { error: NextResponse.json({ error: 'Client introuvable' }, { status: 404 }) }
   return { service, clientId }
 }
 
 export async function PUT(request: NextRequest, { params }: { params: { id: string } }) {
-  const auth = await authClient()
+  const body = await request.json().catch(() => ({} as Record<string, unknown>))
+  const auth = await authClient(typeof body.client_id === 'string' && body.client_id ? String(body.client_id) : null)
   if ('error' in auth) return auth.error
   const { service, clientId } = auth
-
-  const body = await request.json().catch(() => ({} as Record<string, unknown>))
 
   // Écarter / restaurer une réf de la file « À rapprocher » sans l'associer.
   // no_auto accompagne dans les deux sens : une réf écartée puis restaurée se
@@ -65,5 +76,8 @@ export async function PUT(request: NextRequest, { params }: { params: { id: stri
     .update({ generic_id: genericId, conversion_factor })
     .eq('id', params.id).eq('client_id', clientId)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  // Le geste d'association nourrit le dictionnaire plateforme (lot 28) : la
+  // prochaine boutique en héritera. Jamais bloquant.
+  await nourrirDictionnaire(service, clientId, genericId, [params.id])
   return NextResponse.json({ success: true })
 }
