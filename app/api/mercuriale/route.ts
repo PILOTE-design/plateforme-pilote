@@ -27,6 +27,7 @@ import { NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { resolveClientId } from '@/lib/resolve-client-id'
 import { ensureAutoGenerics, stemKey, isNonProduct, unitKind } from '@/lib/mercuriale-auto'
+import { appliquerDictionnaire } from '@/lib/association-dictionary'
 import { fetchAllPages } from '@/lib/fetch-all'
 
 export const dynamic = 'force-dynamic'
@@ -41,8 +42,12 @@ export async function GET() {
   const clientId = await resolveClientId(service, user.id, user.email)
   if (!clientId) return NextResponse.json({ generics: [], queue: [], pending: [] })
 
-  // Association automatique des réfs sans ressemblance — AVANT les lectures,
-  // pour que la réponse reflète l'état à jour. Idempotent, silencieux à vide.
+  // DICTIONNAIRE PLATEFORME (lot 28) d'abord : les associations décidées sur
+  // une boucherie profitent aux suivantes — libellés et facteurs, jamais de
+  // prix. Puis l'association automatique des réfs sans ressemblance. L'ordre
+  // compte : le jugement humain hérité passe avant la mécanique, et une réf
+  // que le dictionnaire vient d'associer n'est plus libre pour la suite.
+  await appliquerDictionnaire(service, clientId)
   await ensureAutoGenerics(service, clientId)
 
   // Fenêtres de surveillance : l'historique se lit sur 12 mois glissants, les
