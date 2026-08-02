@@ -290,11 +290,60 @@ export async function extractLinesVision(buffer: Buffer, totalHT: number): Promi
  *  facture peut arbitrer. */
 export const sommeLignes = (ls: ExtractedLine[]) => ls.reduce((s, l) => s + l.amount_ht, 0)
 
+/**
+ * FACTURES À LIGNES TTC — détection et conversion DÉTERMINISTES.
+ *
+ * Certains fournisseurs (fermes, vente directe) impriment leurs montants de
+ * ligne TVA COMPRISE : la somme des lignes ne peut jamais boucler sur le total
+ * HT, et pire, les prix passeraient gonflés de la TVA si l'écart reste sous les
+ * seuils de suspicion. Le document se trahit arithmétiquement : sa somme tombe
+ * AU CENTIME sur le total TTC de la comptabilité — un arbitre externe, pas une
+ * intuition.
+ *
+ * La conversion n'est JAMAIS l'affaire du modèle (il transcrit, il ne calcule
+ * pas) : elle se fait ici, en code, ligne par ligne, par le taux de TVA ÉCRIT
+ * sur la ligne. Et elle ne s'applique que si le résultat retombe au centime sur
+ * le total HT — sinon on n'a pas compris le document, et on ne touche à rien.
+ * Un taux manquant sur une seule ligne suffit à refuser : convertir au forfait
+ * reviendrait à ajuster les montants pour faire tomber le compte.
+ *
+ * Renvoie les lignes converties, ou null si le document n'est pas un document
+ * TTC (ou ne peut pas être converti honnêtement).
+ */
+export function convertirLignesTTC(lines: ExtractedLine[], totalHT: number, totalTTC: number): ExtractedLine[] | null {
+  if (!totalTTC || totalHT === 0 || lines.length === 0) return null
+  // Sans TVA discernable entre les deux totaux, il n'y a rien à convertir.
+  if (Math.abs(totalTTC - totalHT) < 0.05) return null
+  const somme = sommeLignes(lines)
+  if (Math.abs(somme - totalHT) <= 0.02) return null   // déjà en HT
+  if (Math.abs(somme - totalTTC) > 0.02) return null   // pas en TTC non plus
+  if (lines.some(l => l.tva_rate === null || l.tva_rate < 0)) return null
+
+  let sommeHT = 0
+  const converties = lines.map(l => {
+    const f = 1 + (l.tva_rate as number) / 100
+    const ht = l.amount_ht / f
+    sommeHT += ht
+    return {
+      ...l,
+      amount_ht: Math.round(ht * 100) / 100,
+      unit_price_ht: l.unit_price_ht === null ? null : Math.round((l.unit_price_ht / f) * 10000) / 10000,
+    }
+  })
+  if (Math.abs(sommeHT - totalHT) > 0.02) return null
+  return converties
+}
+
 export type LectureTexte = Awaited<ReturnType<typeof extractLinesLong>> & {
   /** Quelle passe a produit la lecture retenue */
   passe: 'texte' | 'reprise'
   /** Combien de passes ont été tentées (1 = bon du premier coup) */
   tentatives: number
+  /** Vrai si les montants du document étaient en TTC et ont été convertis en
+   *  HT par leur taux — en code, jamais par le modèle. Une lecture convertie ne
+   *  doit PAS devenir un exemple de bibliothèque : ses montants ne figurent pas
+   *  dans le texte, l'exemple enseignerait le recalcul. */
+  ttc: boolean
 }
 
 /**
@@ -314,13 +363,20 @@ export type LectureTexte = Awaited<ReturnType<typeof extractLinesLong>> & {
  * porte le plus de prix exploitables. La reprise ne peut donc pas dégrader le
  * résultat — au pire elle ne gagne pas.
  */
-export async function lireTexteAvecReprise(pdfText: string, totalHT: number, exemples?: string): Promise<LectureTexte> {
+export async function lireTexteAvecReprise(pdfText: string, totalHT: number, exemples?: string, totalTTC = 0): Promise<LectureTexte> {
   const p1 = await extractLinesLong(pdfText, totalHT, undefined, exemples)
   // Sans total connu il n'y a pas d'arbitre : reprendre serait tirer à pile ou face.
-  if (totalHT === 0 || p1.lines.length === 0) return { ...p1, passe: 'texte', tentatives: 1 }
+  if (totalHT === 0 || p1.lines.length === 0) return { ...p1, passe: 'texte', tentatives: 1, ttc: false }
 
   const ecart1 = Math.abs(sommeLignes(p1.lines) - totalHT)
-  if (ecart1 <= 0.02) return { ...p1, passe: 'texte', tentatives: 1 }
+  if (ecart1 <= 0.02) return { ...p1, passe: 'texte', tentatives: 1, ttc: false }
+
+  // AVANT toute reprise : le document est-il simplement écrit en TTC ? La
+  // conversion se joue ici, pas après — sinon la consigne de reprise (« un
+  // excédent de X, cherche une ligne en trop ») pousserait le modèle à SUPPRIMER
+  // une vraie ligne pour faire tomber un compte qui n'a jamais été en HT.
+  const c1 = convertirLignesTTC(p1.lines, totalHT, totalTTC)
+  if (c1) return { ...p1, lines: c1, passe: 'texte', tentatives: 1, ttc: true }
 
   const prix = (ls: ExtractedLine[]) => ls.filter(l => l.unit_price_ht !== null).length
   try {
@@ -329,14 +385,16 @@ export async function lireTexteAvecReprise(pdfText: string, totalHT: number, exe
       lignes: p1.lines.map(l => ({ designation: l.designation, amount_ht: l.amount_ht })),
     }, exemples)
     if (p2.lines.length > 0) {
+      const c2 = convertirLignesTTC(p2.lines, totalHT, totalTTC)
+      if (c2) return { ...p2, lines: c2, passe: 'reprise', tentatives: 2, ttc: true }
       const ecart2 = Math.abs(sommeLignes(p2.lines) - totalHT)
       const mieux = ecart2 < ecart1 - 0.005
         || (Math.abs(ecart2 - ecart1) <= 0.005 && prix(p2.lines) > prix(p1.lines))
-      if (mieux) return { ...p2, passe: 'reprise', tentatives: 2 }
+      if (mieux) return { ...p2, passe: 'reprise', tentatives: 2, ttc: false }
     }
   } catch (e) {
     // Une reprise indisponible ne casse rien : la première lecture reste valable.
     console.error('[invoice-extract] reprise indisponible:', e instanceof Error ? e.message : e)
   }
-  return { ...p1, passe: 'texte', tentatives: 2 }
+  return { ...p1, passe: 'texte', tentatives: 2, ttc: false }
 }

@@ -31,7 +31,7 @@ import { choisirExemples, consigneExemples, rangerExemple } from '@/lib/invoice-
 // code sur un texte archivé (cf. lib/invoice-extract).
 import {
   PROMPT_LIGNES_VERSION, TEXTE_MAX,
-  extractLinesVision, lireTexteAvecReprise, sommeLignes,
+  convertirLignesTTC, extractLinesVision, lireTexteAvecReprise, sommeLignes,
   type ExtractedLine,
 } from '@/lib/invoice-extract'
 
@@ -87,7 +87,7 @@ export async function POST(request: NextRequest) {
   if (!invoice_id) return NextResponse.json({ error: 'invoice_id requis' }, { status: 400 })
 
   const { data: invoice } = await service.from('invoices')
-    .select('id, supplier_name, invoice_date, amount_ht, tva_rate, file_path, delivery_date, due_date, is_fixed_charge')
+    .select('id, supplier_name, invoice_date, amount_ht, amount_ttc, tva_rate, file_path, delivery_date, due_date, is_fixed_charge')
     .eq('id', invoice_id).eq('client_id', clientId).maybeSingle()
   if (!invoice) return NextResponse.json({ error: 'Facture introuvable' }, { status: 404 })
 
@@ -141,11 +141,21 @@ export async function POST(request: NextRequest) {
       const ecartAbs = Math.abs(somme - totalHT)
       // Plancher d'un euro : une facture de 30 € tombait pour 0,95 € d'arrondi.
       const coherent = base > 0 && ecartAbs <= Math.max(1, base * 0.03)
+      // LIGNES RESTÉES EN TTC : la somme tombe au centime sur le total TTC de la
+      // comptabilité, pas sur le HT, et la conversion n'a pas pu se faire (taux
+      // absents des lignes). Sans ce garde-fou, l'écart — égal à la TVA, souvent
+      // sous les seuils — laissait passer des prix GONFLÉS DE LA TVA dans la
+      // mercuriale, en silence. Mesuré sur LA FERME DE RACHOU : +5,5 % par prix.
+      const totalTTCConnu = parseFloat(String(invoice.amount_ttc || 0)) || 0
+      const resteEnTTC = totalTTCConnu !== 0
+        && Math.abs(totalTTCConnu - totalHT) >= 0.05
+        && ecartAbs > 0.02
+        && Math.abs(somme - totalTTCConnu) <= 0.02
       // Une facture n'est jugée MAL LUE DANS SON ENSEMBLE qu'au-delà d'un écart
       // massif. Entre les deux, le contrôle qui compte est celui de la LIGNE
       // (qté × PU = montant) : punir vingt lignes justes pour la faute d'une
       // seule mettait 15 % des prix au rebut sans raison.
-      const factureSuspecte = base <= 0 || ecartAbs > Math.max(50, base * 0.15) || tronque
+      const factureSuspecte = base <= 0 || ecartAbs > Math.max(50, base * 0.15) || tronque || resteEnTTC
       /** L'ASSIETTE du prix unitaire : ce par quoi il faut le multiplier pour
        *  retomber sur le montant de la ligne.
        *
@@ -292,7 +302,10 @@ export async function POST(request: NextRequest) {
         luEnVision
           ? `Document sans texte lu en image (scan) — vérifiez les montants avant de valider.`
           : null,
-        !coherent
+        resteEnTTC
+          ? `Les montants des lignes sont TVA COMPRISE (leur somme tombe sur le total TTC) et les taux de TVA manquent sur les lignes : impossible de convertir en HT. Aucun prix publié — ils seraient gonflés de la TVA.`
+          : null,
+        !coherent && !resteEnTTC
           ? `La somme des lignes lues (${somme.toFixed(2)} €) ne boucle pas sur le total de la facture (${totalHT.toFixed(2)} €) : ${ecart > 0 ? '+' : ''}${ecart.toFixed(2)} €.${factureSuspecte ? ' Écart trop important : aucun prix retenu.' : ' Écart limité : les lignes qui se recoupent ont quand même donné leur prix.'}`
           : null,
         prixPromus === 0 && prixQuarantaine === 0 && rows.length > 0
@@ -440,6 +453,7 @@ export async function POST(request: NextRequest) {
 
     // 2. Extraction des lignes
     const totalHT = parseFloat(String(invoice.amount_ht || 0)) || 0
+    const totalTTC = parseFloat(String(invoice.amount_ttc || 0)) || 0
 
     // SCAN OU PHOTO ? Un PDF sans couche texte rend zéro item par coordonnées et
     // une chaîne vide par pdf-parse. On l'envoyait quand même à l'IA, qui ne
@@ -462,6 +476,7 @@ export async function POST(request: NextRequest) {
     }).eq('id', invoice.id)
 
     let luEnVision = false
+    let ttcConverti = false
     let extraction: { lines: ExtractedLine[]; delivery_date: string | null; due_date: string | null; nature: 'matiere' | 'hors_matiere'; tronque: boolean }
     let passe = sansTexte ? 'vision' : 'texte'
     let tentatives = 1
@@ -469,6 +484,10 @@ export async function POST(request: NextRequest) {
       try {
         extraction = await extractLinesVision(buffer, totalHT)
         luEnVision = true
+        // Un scan peut lui aussi porter des montants TTC : même conversion,
+        // même arbitre (le total TTC de la comptabilité), même code.
+        const enHT = convertirLignesTTC(extraction.lines, totalHT, totalTTC)
+        if (enHT) { extraction = { ...extraction, lines: enHT }; ttcConverti = true }
       } catch (visionErr) {
         const d = visionErr instanceof Error ? visionErr.message : String(visionErr)
         await marquer(invoice.id, 'scan_illisible',
@@ -486,10 +505,11 @@ export async function POST(request: NextRequest) {
       const exemples = consigneExemples(
         await choisirExemples(service, clientId, cleFournisseur, pdfText).catch(() => []),
       )
-      const lecture = await lireTexteAvecReprise(pdfText, totalHT, exemples)
+      const lecture = await lireTexteAvecReprise(pdfText, totalHT, exemples, totalTTC)
       extraction = lecture
       passe = lecture.passe
       tentatives = lecture.tentatives
+      if (lecture.ttc) ttcConverti = true
 
       // Passe 3 — le document REGARDÉ au lieu d'être lu. Elle vit ici parce
       // qu'elle a besoin du PDF, que le corpus archivé ne contient pas. Elle
@@ -511,14 +531,20 @@ export async function POST(request: NextRequest) {
         tentatives++
         try {
           const vu = await extractLinesVision(buffer, totalHT)
+          // La lecture image d'un document TTC rend des lignes TTC : conversion
+          // AVANT l'arbitrage, pour que la comparaison se fasse en HT contre HT.
+          let vuLignes = vu.lines
+          let vuTtc = false
+          const vuHT = convertirLignesTTC(vuLignes, totalHT, totalTTC)
+          if (vuHT) { vuLignes = vuHT; vuTtc = true }
           const nbPrix = (ls: ExtractedLine[]) => ls.filter(l => l.unit_price_ht !== null).length
           const avant = ecartDe(extraction.lines)
-          const apres = ecartDe(vu.lines)
-          const mieux = vu.lines.length > 0 && (
+          const apres = ecartDe(vuLignes)
+          const mieux = vuLignes.length > 0 && (
             apres < avant - 0.005
-            || (Math.abs(apres - avant) <= 0.005 && nbPrix(vu.lines) > nbPrix(extraction.lines))
+            || (Math.abs(apres - avant) <= 0.005 && nbPrix(vuLignes) > nbPrix(extraction.lines))
           )
-          if (mieux) { extraction = vu; passe = 'vision'; luEnVision = true }
+          if (mieux) { extraction = { ...vu, lines: vuLignes }; passe = 'vision'; luEnVision = true; ttcConverti = vuTtc }
         } catch (e) {
           console.error('[extract-lines] lecture image indisponible:', e instanceof Error ? e.message : e)
         }
@@ -557,7 +583,13 @@ export async function POST(request: NextRequest) {
       mode: luEnVision ? 'vision' : 'texte',
       delivery_date, due_date, tronque, luEnVision,
       passe, tentatives,
-      texteSource: luEnVision ? undefined : pdfText,
+      motifSuffixe: ttcConverti
+        ? `Montants facturés TVA COMPRISE — convertis en HT ligne par ligne (taux imprimés), somme vérifiée au centime sur le total HT.`
+        : undefined,
+      // Une lecture CONVERTIE n'entre jamais dans la bibliothèque d'exemples :
+      // ses montants HT ne figurent pas dans le texte du document — l'exemple
+      // enseignerait au modèle de recalculer, l'inverse de sa consigne.
+      texteSource: luEnVision || ttcConverti ? undefined : pdfText,
     })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
