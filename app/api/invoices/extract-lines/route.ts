@@ -42,22 +42,33 @@ export const maxDuration = 300
 
 
 export async function POST(request: NextRequest) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
-
   const service = createServiceClient()
-  // ENTRETIEN PAR L'ADMINISTRATEUR : même règle que le rattrapage des PDF — un
-  // corps { client_id } désigne la fiche à lire, accepté UNIQUEMENT pour un
-  // administrateur ; pour tout autre compte, c'est un refus net.
   const corpsRecu = await request.json().catch(() => ({} as Record<string, unknown>))
   const ficheDemandee = typeof corpsRecu?.client_id === 'string' && corpsRecu.client_id ? String(corpsRecu.client_id) : null
+
+  // LECTURE DE NUIT (lot 27) : le cron quotidien appelle cette route sans
+  // session, porteur du secret de la plateforme. Le jeton se compare côté
+  // serveur et ne sort jamais d'ici. En mode machine la fiche visée doit être
+  // EXPLICITE — un automate n'a pas de fiche « à lui », donc aucun repli.
+  const secret = process.env.CRON_SECRET
+  const estMachine = !!secret && request.headers.get('authorization') === `Bearer ${secret}`
   let clientId: string | null
-  if (ficheDemandee) {
-    if (!isAdminEmail(user.email)) return NextResponse.json({ error: 'Réservé aux administrateurs' }, { status: 403 })
+  if (estMachine) {
+    if (!ficheDemandee) return NextResponse.json({ error: 'client_id requis en mode machine' }, { status: 400 })
     clientId = ficheDemandee
   } else {
-    clientId = await resolveClientId(service, user.id, user.email)
+    // ENTRETIEN PAR L'ADMINISTRATEUR : même règle que le rattrapage des PDF — un
+    // corps { client_id } désigne la fiche à lire, accepté UNIQUEMENT pour un
+    // administrateur ; pour tout autre compte, c'est un refus net.
+    const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
+    if (ficheDemandee) {
+      if (!isAdminEmail(user.email)) return NextResponse.json({ error: 'Réservé aux administrateurs' }, { status: 403 })
+      clientId = ficheDemandee
+    } else {
+      clientId = await resolveClientId(service, user.id, user.email)
+    }
   }
   if (!clientId) return NextResponse.json({ error: 'Client introuvable' }, { status: 404 })
 

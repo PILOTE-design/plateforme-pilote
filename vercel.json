@@ -6,6 +6,10 @@
       "schedule": "0 4 * * 1"
     },
     {
+      "path": "/api/cron/lecture-quotidienne",
+      "schedule": "30 4 * * *"
+    },
+    {
       "path": "/api/planning/send-weekly",
       "schedule": "0 16 * * 0"
     }
