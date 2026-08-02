@@ -121,6 +121,13 @@ export async function POST(request: NextRequest) {
         /** Texte source, quand il y en a un : une lecture qui boucle au centime
          *  devient l'exemple de référence de ce fournisseur. */
         texteSource?: string
+        /** Vrai UNIQUEMENT quand la nature « matière » a été jugée sur le
+         *  document par le modèle (lecture texte ou image). La voie Factur-X
+         *  publie ses lignes structurées SANS juger la nature : elle ne prouve
+         *  rien sur l'étiquette « charge fixe », et ne doit pas la corriger —
+         *  mesuré le 02/08, PENNYLANE (logiciel) « dé-fixée » à tort par cette
+         *  voie. */
+        corrigerEtiquette?: boolean
       },
     ) => {
       const { delivery_date, due_date, tronque } = ctx
@@ -340,10 +347,11 @@ export async function POST(request: NextRequest) {
         // des lignes de matière publiées prouvent le contraire, et laisser
         // l'étiquette fausserait les marges, où les charges fixes sont comptées
         // à part des achats.
-        const mentionEtiquette = invoice.is_fixed_charge
+        const corriger = invoice.is_fixed_charge && ctx.corrigerEtiquette === true
+        const mentionEtiquette = corriger
           ? `Étiquetée « charge fixe » à l'import, mais le document facture de la matière : étiquette corrigée.`
           : null
-        if (invoice.is_fixed_charge) patch.is_fixed_charge = false
+        if (corriger) patch.is_fixed_charge = false
         const motifFinal = [ctx.motifSuffixe, mentionEtiquette, mentionPasse, motifPartiel].filter(Boolean).join(' ') || null
         await marquer(invoice.id, complet ? 'done' : 'partial', motifFinal, patch)
 
@@ -604,6 +612,9 @@ export async function POST(request: NextRequest) {
       // ses montants HT ne figurent pas dans le texte du document — l'exemple
       // enseignerait au modèle de recalculer, l'inverse de sa consigne.
       texteSource: luEnVision || ttcConverti ? undefined : pdfText,
+      // Ici — et seulement ici — la nature « matière » vient d'être jugée sur le
+      // document lui-même : l'étiquette « charge fixe » peut être corrigée.
+      corrigerEtiquette: true,
     })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
