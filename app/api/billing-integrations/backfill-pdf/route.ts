@@ -71,23 +71,33 @@ const cle = (s: string | null | undefined) =>
     .replace(/^(facture|avoir)\s+/, '').replace(/[^a-z0-9]+/g, ' ').trim().slice(0, 18)
 
 export async function POST(req: NextRequest) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
-
   const service = createServiceClient()
-  // ENTRETIEN PAR L'ADMINISTRATEUR : le compte admin n'a pas de fiche, mais il a
-  // la charge de toutes. Un corps { client_id } désigne la fiche à rattraper —
-  // accepté UNIQUEMENT pour un administrateur : pour tout autre compte, demander
-  // une autre fiche est un refus net, jamais un repli silencieux sur la sienne.
   const corps = await req.json().catch(() => ({} as Record<string, unknown>))
   const ficheDemandee = typeof corps?.client_id === 'string' && corps.client_id ? corps.client_id : null
+
+  // LECTURE DE NUIT (lot 27) : le cron quotidien rattrape les PDF sans session,
+  // porteur du secret de la plateforme. En mode machine la fiche visée doit
+  // être EXPLICITE — un automate n'a pas de fiche « à lui », donc aucun repli.
+  const secret = process.env.CRON_SECRET
+  const estMachine = !!secret && req.headers.get('authorization') === `Bearer ${secret}`
   let clientId: string | null
-  if (ficheDemandee) {
-    if (!isAdminEmail(user.email)) return NextResponse.json({ error: 'Réservé aux administrateurs' }, { status: 403 })
+  if (estMachine) {
+    if (!ficheDemandee) return NextResponse.json({ error: 'client_id requis en mode machine' }, { status: 400 })
     clientId = ficheDemandee
   } else {
-    clientId = await resolveClientId(service, user.id, user.email)
+    // ENTRETIEN PAR L'ADMINISTRATEUR : le compte admin n'a pas de fiche, mais il
+    // a la charge de toutes. Un corps { client_id } désigne la fiche à rattraper
+    // — accepté UNIQUEMENT pour un administrateur : pour tout autre compte,
+    // demander une autre fiche est un refus net, jamais un repli silencieux.
+    const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
+    if (ficheDemandee) {
+      if (!isAdminEmail(user.email)) return NextResponse.json({ error: 'Réservé aux administrateurs' }, { status: 403 })
+      clientId = ficheDemandee
+    } else {
+      clientId = await resolveClientId(service, user.id, user.email)
+    }
   }
   if (!clientId) return NextResponse.json({ error: 'Client introuvable' }, { status: 404 })
 
