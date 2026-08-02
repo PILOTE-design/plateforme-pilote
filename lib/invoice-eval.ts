@@ -142,6 +142,15 @@ export function prixExploitable(l: LigneFacture): boolean {
   return Math.abs(base * l.unit_price_ht - l.amount_ht) <= Math.max(0.05, Math.abs(l.amount_ht) * 0.01)
 }
 
+/** Clé d'appariement : le libellé normalisé puis DÉBARRASSÉ de ses espaces.
+ *  Deux lectures du même texte coupent parfois un mot à un endroit différent
+ *  (« SLIMB FLEUR » / « SLIMBFLEUR », mesuré le 02/08 sur AURIBAULT — seul écart
+ *  d'une certification à 94,3 % qui aurait dû dire 100). Un espace interne ne
+ *  distingue jamais deux articles ; il ne doit donc jamais séparer deux lignes.
+ *  Clé du COMPARATEUR uniquement — l'appariement de production (name_key) a ses
+ *  propres règles et n'est pas concerné. */
+const cleLigne = (s: string) => normText(s).replace(/\s+/g, '')
+
 /** Compare les lignes d'une facture à leur relecture. L'appariement se fait sur
  *  le libellé normalisé ; une ligne oubliée comme une ligne inventée comptent
  *  toutes deux comme des fautes. */
@@ -155,7 +164,7 @@ export function compareFacture(
   const champs: EcartChamp[] = []
   const parCle = new Map<string, LigneFacture[]>()
   for (const l of obtenu) {
-    const k = normText(l.designation)
+    const k = cleLigne(l.designation)
     const arr = parCle.get(k) || []
     arr.push(l)
     parCle.set(k, arr)
@@ -164,7 +173,7 @@ export function compareFacture(
   const consommees = new Set<LigneFacture>()
   let prixGagnes = 0, prixPerdus = 0
   for (const a of attendu) {
-    const k = normText(a.designation)
+    const k = cleLigne(a.designation)
     // Un même libellé peut revenir plusieurs fois sur une facture (deux lots du
     // même article) : on apparie celui dont le montant est le plus proche, et on
     // ne le réutilise pas.
@@ -190,7 +199,7 @@ export function compareFacture(
       o = obtenu.find(c => {
         if (consommees.has(c)) return false
         if (Math.abs(c.amount_ht - a.amount_ht) > EPS_MONTANT) return false
-        const kc = normText(c.designation)
+        const kc = cleLigne(c.designation)
         if (kc === '' || k === '') return false
         if (Math.min(kc.length, k.length) < 6) return false
         return kc.includes(k) || k.includes(kc)
