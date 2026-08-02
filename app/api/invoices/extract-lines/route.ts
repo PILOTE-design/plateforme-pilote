@@ -394,8 +394,14 @@ export async function POST(request: NextRequest) {
   // Étage 2 — mémoire fournisseur : si ce fournisseur a déjà été reconnu hors
   // matière et n'a JAMAIS produit de lignes, inutile de relire chaque nouvelle
   // facture (Wiismile revient tous les mois). Un seul appel IA par fournisseur.
+  // Le corps { relire: true } SAUTE ce verrou : c'est la voie de la relecture
+  // volontaire d'UNE facture — celle que le motif du verrou promet depuis le
+  // début (« relancez la lecture »), et qui sans ce drapeau retombait sur le
+  // verrou à l'infini. Le document tranche toujours ; on ne force jamais un
+  // résultat, seulement une nouvelle audience.
+  const relire = corpsRecu?.relire === true
   const supKey = societeKey(invoice.supplier_name || '')
-  if (supKey) {
+  if (supKey && !relire) {
     const { data: histo } = await service.from('invoices')
       .select('supplier_name, lines_status')
       .eq('client_id', clientId)
@@ -499,7 +505,7 @@ export async function POST(request: NextRequest) {
 
     let luEnVision = false
     let ttcConverti = false
-    let extraction: { lines: ExtractedLine[]; delivery_date: string | null; due_date: string | null; nature: 'matiere' | 'hors_matiere'; tronque: boolean }
+    let extraction: { lines: ExtractedLine[]; delivery_date: string | null; due_date: string | null; nature: 'matiere' | 'hors_matiere'; tronque: boolean; periode_du: string | null; periode_au: string | null }
     let passe = sansTexte ? 'vision' : 'texte'
     let tentatives = 1
     if (sansTexte) {
@@ -590,8 +596,35 @@ export async function POST(request: NextRequest) {
       await service.from('invoice_lines').delete().eq('invoice_id', invoice.id).eq('client_id', clientId)
       const patch: Record<string, unknown> = {}
       if (due_date && !invoice.due_date) patch.due_date = due_date
-      await marquer(invoice.id, 'hors_matiere', 'Le document lui-même ne porte aucune matière première (matériel, service, abonnement).', patch)
-      return NextResponse.json({ success: true, status: 'hors_matiere', reason: 'facture sans matière première (matériel, service, abonnement…)' })
+      // PÉRIODE FACTURÉE lue sur le document. Le prorata hebdomadaire des
+      // charges reposait sur une durée DEVINÉE à l'import (30 jours par défaut,
+      // sur le seul nom du fournisseur) : une facture annuelle répartie sur 30
+      // jours gonfle la structure de charges d'un facteur douze. La période lue
+      // est VÉRIFIÉE en code avant d'être écrite — bornes ordonnées, durée
+      // plausible, date de facture au voisinage — et sans période lisible, on
+      // ne touche à rien : jamais de date devinée.
+      let motifPeriode = ''
+      const du = extraction.periode_du
+      const au = extraction.periode_au
+      if (du && au) {
+        const dDu = new Date(du + 'T00:00:00Z').getTime()
+        const dAu = new Date(au + 'T00:00:00Z').getTime()
+        const jours = Math.round((dAu - dDu) / 86400000) + 1
+        const dFact = invoice.invoice_date ? new Date(String(invoice.invoice_date) + 'T00:00:00Z').getTime() : null
+        // Une charge se facture au début de sa période (loyer, abonnement,
+        // parfois d'avance) ou après relevé (énergie) : la date de facture doit
+        // rester au voisinage de la période, sinon la lecture s'est trompée.
+        const auVoisinage = dFact === null || (dFact >= dDu - 45 * 86400000 && dFact <= dAu + 60 * 86400000)
+        const montantCharge = parseFloat(String(invoice.amount_ht || 0)) || 0
+        if (jours >= 1 && jours <= 400 && auVoisinage && montantCharge !== 0) {
+          patch.period_days = jours
+          patch.prorata_ht = Math.round((montantCharge * 7 / jours) * 100) / 100
+          patch.is_fixed_charge = true
+          motifPeriode = ` Période facturée lue sur le document : du ${du} au ${au} (${jours} jours) — part hebdomadaire recalculée.`
+        }
+      }
+      await marquer(invoice.id, 'hors_matiere', 'Le document lui-même ne porte aucune matière première (matériel, service, abonnement).' + motifPeriode, patch)
+      return NextResponse.json({ success: true, status: 'hors_matiere', reason: 'facture sans matière première (matériel, service, abonnement…)', periode: motifPeriode ? { du, au } : null })
     }
 
     if (lines.length === 0) {
