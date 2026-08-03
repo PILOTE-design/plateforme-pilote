@@ -18,6 +18,12 @@ export type RecipeRow = {
   category: string | null
   yield_qty: number | null
   yield_unit: string | null
+  /** Unité de VENTE quand elle diffère de la production (« fabriqué en pièces,
+   *  vendu au kg ») — null : vendu à l'unité produite, comportement historique. */
+  sell_unit?: string | null
+  /** Quantité vendable du batch, exprimée en unité de VENTE (ex. 2,4 pour
+   *  « 6 pièces de 400 g vendues au kg ») — la base de la marge et du coef. */
+  sell_qty?: number | null
   labor_minutes: number
   selling_price_ttc: number | null
   tva_rate: number
@@ -146,6 +152,10 @@ export type RecipeCost = {
   main_oeuvre_ht: number
   total_ht: number
   par_unite_ht: number | null    // total ÷ yield_qty
+  /** Coût par unité de VENTE (total ÷ quantité vendable du batch) — égal à
+   *  par_unite_ht quand la fiche se vend à l'unité produite. C'est LUI que le
+   *  PV, la marge et le coefficient regardent. */
+  par_unite_vente_ht: number | null
   prix_manquants: number         // lignes sans prix mercuriale ni manuel
   labor_rate_ht: number | null   // taux €/h chargé réellement utilisé
   total_minutes: number          // temps du batch : somme des étapes chronométrées, repli labor_minutes
@@ -282,6 +292,12 @@ export function computeRecipeCost(
   const total = round2(matiere + emballage + mo)
   const yieldQty = Number(recipe.yield_qty) || 0
   const parUnite = yieldQty > 0 ? round2(total / yieldQty) : null
+  // Unité de VENTE distincte (fabriqué en pièces, vendu au kg) : le PV se
+  // compare au coût PAR UNITÉ DE VENTE — total ÷ quantité vendable du batch.
+  // Sans unité de vente propre, la base reste l'unité produite.
+  const sellQty = Number(recipe.sell_qty) || 0
+  const venteDistincte = typeof recipe.sell_unit === 'string' && recipe.sell_unit.trim() !== '' && sellQty > 0
+  const parUniteVente = venteDistincte ? round2(total / sellQty) : parUnite
 
   // Un ingrédient sans prix compte pour 0 € : le coût de revient est donc
   // SOUS-évalué, et la marge qui s'en déduit SUR-évaluée. Afficher « 62 % de
@@ -301,7 +317,7 @@ export function computeRecipeCost(
   if (pvTTC > 0) {
     const tva = Number(recipe.tva_rate) || 0
     pvHT = round2(pvTTC / (1 + tva / 100))
-    const coutUnite = parUnite ?? total // sans rendement renseigné, le PV est comparé au batch entier
+    const coutUnite = parUniteVente ?? total // sans rendement renseigné, le PV est comparé au batch entier
     if (pvHT > 0 && coutUnite > 0 && prixManquants === 0) {
       marge = round2(((pvHT - coutUnite) / pvHT) * 100)
       coef = round2(pvHT / coutUnite)
@@ -314,6 +330,7 @@ export function computeRecipeCost(
     main_oeuvre_ht: mo,
     total_ht: total,
     par_unite_ht: parUnite,
+    par_unite_vente_ht: parUniteVente,
     prix_manquants: prixManquants,
     labor_rate_ht: laborRate,
     total_minutes: totalMinutes,
@@ -368,12 +385,22 @@ export function parseRecipeFields(body: Record<string, unknown>): { error?: stri
   const laborMin = Number(body?.labor_minutes)
   const yieldQty = Number(body?.yield_qty)
   const pv = Number(body?.selling_price_ttc)
+  // Unité de vente distincte : l'unité seule ne suffit pas, il faut ce que le
+  // batch REPRÉSENTE dans cette unité — sans ce chiffre, marge et coefficient
+  // seraient calculés sur la mauvaise base (le prix du kilo comparé au coût de
+  // la pièce). On refuse plutôt que de publier un verdict faux.
+  const sellUnit = typeof body?.sell_unit === 'string' && body.sell_unit.trim() ? String(body.sell_unit).trim().slice(0, 20) : null
+  const sellQtyRaw = Number(body?.sell_qty)
+  const sellQty = Number.isFinite(sellQtyRaw) && sellQtyRaw > 0 ? sellQtyRaw : null
+  if (sellUnit && sellQty === null) return { error: `Vendu en ${sellUnit} : indiquez ce que le batch représente dans cette unité (ex. 2,4)` }
   return {
     fields: {
       name,
       category: typeof body?.category === 'string' && body.category ? String(body.category).slice(0, 30) : null,
       yield_qty: Number.isFinite(yieldQty) && yieldQty > 0 ? yieldQty : null,
       yield_unit: typeof body?.yield_unit === 'string' && body.yield_unit ? String(body.yield_unit).slice(0, 20) : null,
+      sell_unit: sellUnit,
+      sell_qty: sellUnit ? sellQty : null,
       labor_minutes: Number.isFinite(laborMin) && laborMin >= 0 ? laborMin : 0,
       selling_price_ttc: Number.isFinite(pv) && pv > 0 ? pv : null,
       tva_rate: Number.isFinite(tva) && tva > 0 && tva <= 20 ? tva : 5.5,
