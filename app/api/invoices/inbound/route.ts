@@ -35,6 +35,13 @@
  *     rejeux sans doublon ;
  *   · même mail livré deux fois : détecté par le marqueur [resend:{email_id}]
  *     dans les notes de la facture déjà créée — on répond « déjà reçue ».
+ *
+ * Cas à part — le CODE DE CONFIRMATION GMAIL (lot 34) : quand le boucher
+ * ajoute son adresse PILOTE comme adresse de transfert automatique, Google
+ * envoie son code de confirmation… ici. Sans relais, la mise en place mourrait
+ * à cette étape. Le code (et le lien « confirmer en un clic ») sont rangés sur
+ * le profil ; l'écran Facturation les affiche, le boucher finit ses trois
+ * clics. Aucune facture n'est créée pour ce mail-là.
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/server'
@@ -291,6 +298,28 @@ export async function POST(request: NextRequest) {
   if (!clientId) {
     console.warn('[inbound] fiche introuvable pour forward_id :', forwardId)
     return NextResponse.json({ ok: false, motif: 'fiche introuvable' })
+  }
+
+  // ── CODE DE CONFIRMATION GMAIL (lot 34) ───────────────────────────────
+  // Le mail de « forwarding-noreply@google.com » n'est pas une facture :
+  // c'est Gmail qui vérifie l'adresse de transfert. Le code vit dans l'OBJET
+  // (déjà porté par le webhook — le relais tient même si l'API contenu
+  // échoue) ; le lien « confirmer en un clic » vit dans le corps, on va le
+  // chercher en plus, sans que son échec ne coûte jamais le code.
+  if (resendEmailId && /forwarding-noreply@google\.com/i.test(String(body?.data?.from ?? ''))) {
+    const objet = String(body?.data?.subject ?? '')
+    let code = (objet.match(/(\d{6,12})/) || [])[1] ?? null
+    let lien: string | null = null
+    const mailConf = await chargerMailResend(resendEmailId)
+    if (!mailConf.erreur) {
+      if (!code) code = (mailConf.texte.match(/(\d{6,12})/) || [])[1] ?? null
+      lien = (mailConf.texte.match(/https:\/\/mail-settings\.google\.com\/[^\s"'<>)\]]+/) || [])[0] ?? null
+    }
+    await serviceSupabase.from('profiles').update({
+      billing_forward_confirmation: { code, lien, objet: objet.slice(0, 160), recu_le: new Date().toISOString() },
+    }).eq('billing_forward_id', forwardId)
+    console.log('[inbound] code de confirmation Gmail relayé pour', forwardId, '— code', code ? 'présent' : 'ABSENT')
+    return NextResponse.json({ ok: true, type: 'confirmation_transfert_gmail', code_present: Boolean(code) })
   }
 
   // ── IDEMPOTENCE : le même mail ne crée jamais deux factures ───────────
