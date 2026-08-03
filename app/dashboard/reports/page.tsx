@@ -5,6 +5,7 @@ import { Plus, FileText } from 'lucide-react'
 import Link from 'next/link'
 import { ReportsTree } from './ReportsTree'
 import { isAdminEmail } from '@/lib/admins'
+import { resolveClientId } from '@/lib/resolve-client-id'
 
 export default async function ReportsPage() {
   const supabase = createClient()
@@ -12,20 +13,20 @@ export default async function ReportsPage() {
   const { data: { user } } = await supabase.auth.getUser()
   const isAdmin = isAdminEmail(user?.email)
 
-  const { data: clientRecord } = await serviceSupabase
-    .from('clients')
-    .select('id')
-    .eq('client_user_id', user?.id ?? '')
-    .maybeSingle()
-  const isClientUser = !!clientRecord
+  // La fiche de l'utilisateur — par la MÊME résolution que tout le reste de
+  // l'application (rattachement direct PUIS email de la fiche). Cette page
+  // faisait un rattachement direct seul : le 2e login d'une boucherie (autre
+  // adresse, même maison) voyait ses rapports « tous disparus » alors qu'ils
+  // n'avaient pas bougé.
+  const clientId = user ? await resolveClientId(serviceSupabase, user.id, user.email ?? null) : null
 
   let reports: { id: string; title: string; file_url: string; file_path: string | null; created_at: string }[] = []
 
-  if (isClientUser && clientRecord) {
+  if (clientId) {
     const { data } = await serviceSupabase
       .from('reports')
       .select('id, title, file_url, file_path, created_at')
-      .eq('client_id', clientRecord.id)
+      .eq('client_id', clientId)
       .order('created_at', { ascending: false })
     reports = data ?? []
   } else {
