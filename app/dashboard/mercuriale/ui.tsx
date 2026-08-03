@@ -1,11 +1,14 @@
 'use client'
 
-// Briques d'affichage de la mercuriale — formats, courbes et blocs de la fiche
-// produit enrichie (lot 41, modèle Otami). Sorties de page.tsx : la page garde
-// la logique (états, appels API, filtres), ce module garde le dessin. Tout ce
-// qui est ici est PUR — des props vers du JSX, aucun état, aucun fetch.
+// Briques d'affichage de la mercuriale — formats, courbes, blocs de la fiche
+// produit enrichie (lot 41) et vue « Rayons » (lot 42), modèle Otami. Sorties
+// de page.tsx : la page garde les états et les appels API, ce module garde le
+// dessin — dérivations d'affichage comprises (regroupements par rayon). Rien
+// ici ne pose d'état persistant ni ne fetch.
 
-import { TrendingUp, TrendingDown } from 'lucide-react'
+import { useMemo } from 'react'
+import { TrendingUp, TrendingDown, Store, ChevronRight } from 'lucide-react'
+import { matchFamilyId, type MarginFamily } from '@/lib/margin-families'
 
 // ── Formats partagés ──────────────────────────────────────
 
@@ -269,6 +272,175 @@ export function BlocHistoriqueAchats({ fiche, baseUnit }: { fiche: FicheDetail |
       {avertissements.length > 0 && (
         <p className="px-3.5 py-1.5 text-[10px] text-gray-400 border-t border-gray-50">{avertissements.join(' · ')}</p>
       )}
+    </div>
+  )
+}
+
+// ── Vue « Rayons » (lot 42, modèle Otami) ─────────────────
+
+/** Produit tel que la vue « Rayons » a besoin de le voir — structurellement
+ *  compatible avec le Generic de la page (typage structurel TS). */
+export type ProduitRayon = {
+  id: string
+  name: string
+  base_unit: 'kg' | 'piece'
+  price_ht: number | null
+  price_date: string | null
+  variation_pct: number | null
+  refs_count: number
+  depense_12m?: number
+  achats_12m?: number
+}
+
+/** La mercuriale par RAYON de la boutique : chaque famille racine du
+ *  référentiel des marges avec sa dépense réelle 12 mois, puis les produits du
+ *  rayon classés par sous-famille et triés par dépense — la navigation
+ *  produits d'Otami (rayon → sous-famille → réf, cumuls € à chaque étage).
+ *  La dépense hors catalogue (réfs pas encore rapprochées) est ANNONCÉE :
+ *  un total par rayon qui la tairait se lirait comme un total complet. */
+export function VueRayons({ produits, familles, search, sel, onSel, onOuvrirProduit, horsCatalogue, onVoirATraiter }: {
+  produits: ProduitRayon[]
+  familles: MarginFamily[]
+  search: string
+  sel: string | null
+  onSel: (nom: string | null) => void
+  onOuvrirProduit: (id: string) => void
+  horsCatalogue: number
+  onVoirATraiter: () => void
+}) {
+  const rayons = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    const retenus = q ? produits.filter(p => p.name.toLowerCase().includes(q)) : produits
+    const famById = new Map(familles.map(f => [f.id, f]))
+    const parRayon = new Map<string, { depense: number; nbRefs: number; achats: number; sections: Map<string, { depense: number; produits: ProduitRayon[] }> }>()
+    for (const p of retenus) {
+      const fid = matchFamilyId(p.name, familles)
+      const fam = fid ? famById.get(fid) ?? null : null
+      const racine = fam ? (fam.parent_id ? famById.get(fam.parent_id)?.name ?? fam.name : fam.name) : 'Autres'
+      const sousTitre = fam && fam.parent_id ? fam.name : ''
+      const r = parRayon.get(racine) || { depense: 0, nbRefs: 0, achats: 0, sections: new Map() }
+      r.depense += p.depense_12m || 0
+      r.nbRefs += p.refs_count
+      r.achats += p.achats_12m || 0
+      const s = r.sections.get(sousTitre) || { depense: 0, produits: [] }
+      s.depense += p.depense_12m || 0
+      s.produits.push(p)
+      r.sections.set(sousTitre, s)
+      parRayon.set(racine, r)
+    }
+    return [...parRayon.entries()].map(([nom, r]) => ({
+      nom,
+      depense: Math.round(r.depense * 100) / 100,
+      nbRefs: r.nbRefs,
+      achats: r.achats,
+      nbProduits: [...r.sections.values()].reduce((s, x) => s + x.produits.length, 0),
+      sections: [...r.sections.entries()]
+        .map(([titre, s]) => ({
+          titre,
+          depense: Math.round(s.depense * 100) / 100,
+          produits: [...s.produits].sort((a, b) => (b.depense_12m || 0) - (a.depense_12m || 0) || a.name.localeCompare(b.name, 'fr')),
+        }))
+        .sort((a, b) => b.depense - a.depense || b.produits.length - a.produits.length || (a.titre || '').localeCompare(b.titre || '', 'fr')),
+    })).sort((a, b) => b.depense - a.depense || b.nbProduits - a.nbProduits || a.nom.localeCompare(b.nom, 'fr'))
+  }, [produits, familles, search])
+
+  const rayonOuvert = sel !== null ? rayons.find(r => r.nom === sel) ?? null : null
+
+  if (rayonOuvert === null) {
+    return (
+      <div>
+        <div className="flex items-baseline gap-2 mb-3">
+          <h2 className="text-sm font-extrabold uppercase tracking-wider text-gray-700">Mes rayons</h2>
+          <span className="text-[11px] text-gray-400 tabular">
+            {rayons.length} rayon{rayons.length > 1 ? 's' : ''} · dépense réelle sur 12 mois, lue sur les factures
+          </span>
+        </div>
+        {rayons.length === 0 ? (
+          <div className="bg-white rounded-2xl border border-dashed border-gray-200 py-14 text-center">
+            <Store className="w-10 h-10 text-gray-300 mx-auto mb-3" />
+            <p className="text-sm font-medium text-gray-500">Aucun rayon{search ? ' ne correspond à la recherche' : ' pour l’instant — ils se remplissent à chaque facture lue'}.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {rayons.map(r => (
+              <button key={r.nom} onClick={() => onSel(r.nom)}
+                className="text-left bg-white rounded-2xl border border-gray-100 shadow-card p-5 hover:shadow-card-hover hover:-translate-y-0.5 transition-all">
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="w-10 h-10 rounded-xl bg-pilote-50 flex items-center justify-center flex-shrink-0">
+                    <span className="text-sm font-extrabold text-pilote">{r.nom.slice(0, 2).toUpperCase()}</span>
+                  </div>
+                  <p className="text-sm font-bold text-gray-900 leading-snug flex-1">{r.nom}</p>
+                </div>
+                <p className="text-2xl font-extrabold tracking-tight text-gray-900 tabular">
+                  {r.depense > 0 ? fmtEuro(r.depense) : '—'}
+                  <span className="text-xs font-semibold text-gray-400 ml-1.5">/ 12 mois</span>
+                </p>
+                <p className="text-[11px] text-gray-500 mt-2 tabular">
+                  {r.nbProduits} produit{r.nbProduits > 1 ? 's' : ''} · {r.nbRefs} réf{r.nbRefs > 1 ? 's' : ''}
+                  {r.achats > 0 ? ` · ${r.achats} achat${r.achats > 1 ? 's' : ''}` : ''}
+                </p>
+              </button>
+            ))}
+          </div>
+        )}
+        {horsCatalogue > 0 && (
+          <p className="mt-4 text-[11px] text-gray-400">
+            + {fmtEuro(horsCatalogue)} d&apos;achats sur 12 mois portés par des réfs pas encore rapprochées — hors rayons tant qu&apos;elles ne sont pas rattachées à un produit.{' '}
+            <button onClick={onVoirATraiter} className="font-semibold text-pilote hover:underline">Les rapprocher</button>
+          </p>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      <div className="flex items-center gap-3 mb-3 flex-wrap">
+        <button onClick={() => onSel(null)}
+          className="flex items-center gap-1 text-xs font-semibold text-pilote hover:underline">
+          <ChevronRight className="w-3.5 h-3.5 rotate-180" />Tous les rayons
+        </button>
+        <h2 className="text-sm font-extrabold uppercase tracking-wider text-gray-700">{rayonOuvert.nom}</h2>
+        <span className="text-[11px] text-gray-400 tabular">
+          {fmtEuro(rayonOuvert.depense)} sur 12 mois · {rayonOuvert.nbProduits} produit{rayonOuvert.nbProduits > 1 ? 's' : ''} · {rayonOuvert.nbRefs} réf{rayonOuvert.nbRefs > 1 ? 's' : ''}
+        </span>
+      </div>
+      {rayonOuvert.sections.map(sec => (
+        <div key={sec.titre || '∅'} className="mb-5">
+          {(rayonOuvert.sections.length > 1 || sec.titre !== '') && (
+            <div className="flex items-baseline gap-2 mb-2">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-gray-400">{sec.titre || 'Sans sous-famille'}</h3>
+              <span className="text-[11px] text-gray-400 tabular">{sec.produits.length} · {fmtEuro(sec.depense)}</span>
+            </div>
+          )}
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-card overflow-hidden divide-y divide-gray-50">
+            {sec.produits.map(p => {
+              const age = priceAge(p.price_date)
+              const vieux = age !== null && age > 30
+              return (
+                <div key={p.id} className="px-4 py-2.5 flex items-center gap-3 flex-wrap text-xs">
+                  <button onClick={() => onOuvrirProduit(p.id)} title="Ouvrir la fiche dans « Prix du jour »"
+                    className="text-sm font-semibold text-gray-900 hover:text-pilote hover:underline text-left flex-1 min-w-[200px]">
+                    {p.name}
+                  </button>
+                  <span className="text-gray-500 tabular w-28 text-right flex-shrink-0">
+                    {p.price_ht !== null ? `${fmtEuro(p.price_ht)} / ${unitLabel(p.base_unit)}` : '—'}
+                  </span>
+                  <span className={`tabular w-24 text-right flex-shrink-0 ${vieux ? 'text-amber-600 font-semibold' : 'text-gray-400'}`}
+                    title={vieux ? `Dernier prix il y a ${age} jours — il a pu bouger depuis` : undefined}>
+                    {fmtDate(p.price_date)}
+                  </span>
+                  <span className="w-16 text-right flex-shrink-0"><Variation pct={p.variation_pct} /></span>
+                  <span className="w-28 text-right flex-shrink-0">
+                    <span className="block font-bold text-gray-900 tabular">{p.depense_12m && p.depense_12m > 0 ? fmtEuro(p.depense_12m) : '—'}</span>
+                    <span className="block text-[10px] text-gray-400 tabular">{p.achats_12m ? `${p.achats_12m} achat${p.achats_12m > 1 ? 's' : ''} / 12 mois` : ''}</span>
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      ))}
     </div>
   )
 }

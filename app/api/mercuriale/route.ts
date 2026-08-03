@@ -80,7 +80,7 @@ export async function GET() {
     // lecture — l'écran affichait « pas de prix » pour quatre causes opposées.
     fetchAllPages<any>(apres => {
       let q = service.from('invoice_lines')
-        .select('id, article_id, unit_price_ht, invoice_id, invoices!inner(invoice_date)')
+        .select('id, article_id, unit_price_ht, quantity, amount_ht, invoice_id, invoices!inner(invoice_date)')
         .eq('client_id', clientId)
         .not('article_id', 'is', null)
         .not('unit_price_ht', 'is', null)
@@ -155,6 +155,27 @@ export async function GET() {
     const arr = pointsByArticle.get(p.article_id) || []
     arr.push({ date, price: parseFloat(p.unit_price_ht), invoiceId: p.invoice_id ? String(p.invoice_id) : null })
     pointsByArticle.set(p.article_id, arr)
+  }
+
+  // Dépense 12 mois par réf (lot 42, vue « Rayons ») : le montant de chaque
+  // ligne de facture — amount_ht tel que lu, repli qté × prix unitaire. Même
+  // périmètre que l'historique des prix : les lignes en quarantaine (prix NULL)
+  // n'y sont pas. L'argent n'a pas besoin de conversion d'unité — les réfs sans
+  // facteur comptent ici, même si leur PRIX reste écarté.
+  const depenseParArticle = new Map<string, { montant: number; lignes: number }>()
+  for (const p of (pricePoints || []) as any[]) {
+    if (!p.article_id) continue
+    const pu = parseFloat(p.unit_price_ht)
+    const qty = p.quantity !== null && p.quantity !== undefined ? Number(p.quantity) : null
+    const brut = p.amount_ht !== null && p.amount_ht !== undefined
+      ? Number(p.amount_ht)
+      : (qty !== null && Number.isFinite(pu) ? qty * pu : null)
+    if (brut === null || !Number.isFinite(brut)) continue
+    const k = String(p.article_id)
+    const cur = depenseParArticle.get(k) || { montant: 0, lignes: 0 }
+    cur.montant += brut
+    cur.lignes += 1
+    depenseParArticle.set(k, cur)
   }
 
   // Garde-fou unités (même règle que lib/recipes.buildGenericMap) : une réf
@@ -234,6 +255,7 @@ export async function GET() {
   // un effet de saison existent) ; la page pose la question et ouvre la facture.
   const ANOMALIE_PCT = 25
   const moves: any[] = []
+  const round2 = (n: number) => Math.round(n * 100) / 100
   const round4 = (n: number) => Math.round(n * 10000) / 10000
 
   const genericsOut = (generics || []).map((g: any) => {
@@ -378,6 +400,9 @@ export async function GET() {
       points_12m: points.length,
       min_12m: points.length > 0 ? Math.min(...points.map(x => x.p)) : null,
       max_12m: points.length > 0 ? Math.max(...points.map(x => x.p)) : null,
+      /** Dépense et nombre d'achats 12 mois, toutes réfs du produit (lot 42) */
+      depense_12m: round2(refs.reduce((s, r) => s + (depenseParArticle.get(String(r.id))?.montant || 0), 0)),
+      achats_12m: refs.reduce((s, r) => s + (depenseParArticle.get(String(r.id))?.lignes || 0), 0),
       recipes_count: recipes_used.length,
       recipes_used,
       refs,
@@ -474,11 +499,17 @@ export async function GET() {
     }))
     .sort((a, b) => b.depense_12m - a.depense_12m)
 
+  // Dépense 12 mois portée par les réfs PAS ENCORE rapprochées : elle n'entre
+  // dans aucun rayon — la vue « Rayons » l'annonce au lieu de la laisser
+  // disparaître (un total par rayon qui tait ce reste se lirait comme complet).
+  const depenseHorsCatalogue = round2(queue.reduce((s: number, a: any) => s + (depenseParArticle.get(String(a.id))?.montant || 0), 0))
+
   return NextResponse.json({
     generics: genericsOut,
     queue: queueOut,
     pending: pendingOut,
     fournisseurs: fournisseursOut,
+    depense_hors_catalogue_12m: depenseHorsCatalogue,
     doutes: doutes || [],
     sans_pdf: sansPdf ?? 0,
     moves: movesOut,

@@ -33,7 +33,7 @@ import { matchFamilyId, type MarginFamily } from '@/lib/margin-families'
 // enrichie du lot 41) — voir ./ui.tsx : la page garde la logique, ui le dessin.
 import {
   fmtEuro, fmtQty, fmtDate, nomFournisseur, unitLabel, priceAge, MOTIF_PRIX,
-  Variation, Sparkline, TuileMoy3Mois, BlocAchatsMensuels, BlocHistoriqueAchats,
+  Variation, Sparkline, TuileMoy3Mois, BlocAchatsMensuels, BlocHistoriqueAchats, VueRayons,
   type PricePoint, type FicheDetail,
 } from './ui'
 
@@ -95,6 +95,9 @@ type Generic = {
   points_12m: number
   min_12m: number | null
   max_12m: number | null
+  /** Dépense et nombre d'achats 12 mois, toutes réfs confondues (lot 42) */
+  depense_12m?: number
+  achats_12m?: number
   /** Prix précédent du GÉNÉRIQUE (dernière valeur différente, toutes réfs) */
   prev_price_ht: number | null
   prev_price_supplier?: string | null
@@ -191,14 +194,18 @@ export default function MercurialePage() {
   const [validant, setValidant] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
-  // Quatre onglets par intention : consulter (prix), par maison (fournisseurs),
-  // agir (traiter), ranger (organiser)
-  const [view, setView] = useState<'prix' | 'traiter' | 'organiser' | 'fournisseurs'>('prix')
+  // Cinq onglets par intention : consulter (prix), par rayon, par maison
+  // (fournisseurs), agir (traiter), ranger (organiser)
+  const [view, setView] = useState<'prix' | 'traiter' | 'organiser' | 'fournisseurs' | 'rayons'>('prix')
   // Vue « Fournisseurs » : dépenses 12 mois par maison (API) + familles de la
   // boutique (référentiel des marges) pour classer chaque catalogue
   const [fournisseurs, setFournisseurs] = useState<FournisseurDepense[]>([])
   const [familles, setFamilles] = useState<MarginFamily[]>([])
   const [fournisseurSel, setFournisseurSel] = useState<string | null>(null)
+  // Vue « Rayons » (lot 42) : rayon ouvert + dépense hors catalogue (réfs pas
+  // encore rapprochées), annoncée sous les cartes plutôt que passée sous silence
+  const [rayonSel, setRayonSel] = useState<string | null>(null)
+  const [depenseHorsCatalogue, setDepenseHorsCatalogue] = useState(0)
   const [processing, setProcessing] = useState(false)
   const [progress, setProgress] = useState({ done: 0, total: 0, errors: 0 })
   const stopRef = useRef(false)
@@ -270,6 +277,7 @@ export default function MercurialePage() {
       setMoves(Array.isArray(data.moves) ? data.moves : [])
       setMovesTotal(Number(data.moves_total) || 0)
       setFournisseurs(Array.isArray(data.fournisseurs) ? data.fournisseurs : [])
+      setDepenseHorsCatalogue(Number(data.depense_hors_catalogue_12m) || 0)
       setSansPdf(Number(data.sans_pdf) || 0)
       setLectureIncomplete(typeof data.lecture_incomplete === 'string' ? data.lecture_incomplete : null)
       // Les fiches enrichies décrivent l'état d'AVANT ce rafraîchissement :
@@ -1202,6 +1210,10 @@ export default function MercurialePage() {
             className={`text-xs font-semibold rounded-full px-3.5 py-1.5 transition-colors ${view === 'prix' ? 'bg-pilote text-white shadow-card' : 'text-pilote hover:bg-pilote-100'}`}>
             Prix du jour
           </button>
+          <button onClick={() => { setView('rayons'); setRayonSel(null) }}
+            className={`text-xs font-semibold rounded-full px-3.5 py-1.5 transition-colors ${view === 'rayons' ? 'bg-pilote text-white shadow-card' : 'text-pilote hover:bg-pilote-100'}`}>
+            Rayons
+          </button>
           <button onClick={() => { setView('fournisseurs'); setFournisseurSel(null) }}
             className={`text-xs font-semibold rounded-full px-3.5 py-1.5 transition-colors ${view === 'fournisseurs' ? 'bg-pilote text-white shadow-card' : 'text-pilote hover:bg-pilote-100'}`}>
             Fournisseurs
@@ -1793,6 +1805,14 @@ export default function MercurialePage() {
                 </div>
               )}
             </div>
+          ) : view === 'rayons' ? (
+            /* ══ Onglet RAYONS (lot 42, modèle Otami) : la dépense réelle 12
+                mois par rayon de la boutique, puis les produits du rayon par
+                sous-famille — regroupements dessinés par ui.VueRayons. ══ */
+            <VueRayons produits={generics} familles={familles} search={search}
+              sel={rayonSel} onSel={setRayonSel}
+              onOuvrirProduit={id => { setView('prix'); setSearch(''); setOpenId(id); setEditId(null) }}
+              horsCatalogue={depenseHorsCatalogue} onVoirATraiter={() => setView('traiter')} />
           ) : view === 'fournisseurs' ? (
             /* ══ Onglet FOURNISSEURS (lot 40, modèle Otami) : la mercuriale de
                 chaque maison — cartes triées par la dépense réelle 12 mois,
