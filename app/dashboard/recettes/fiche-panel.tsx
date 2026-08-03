@@ -45,7 +45,10 @@ export type FicheGeneric = {
 
 export type FicheCost = {
   matiere_ht: number; emballage_ht: number; main_oeuvre_ht: number; total_ht: number
-  par_unite_ht: number | null; prix_manquants: number; labor_rate_ht: number | null
+  par_unite_ht: number | null
+  /** Coût par unité de VENTE — la base du PV, de la marge et du coefficient */
+  par_unite_vente_ht?: number | null
+  prix_manquants: number; labor_rate_ht: number | null
   total_minutes: number
   pv_unitaire_ht: number | null; marge_pct: number | null; coefficient: number | null
   /** Coût matière (+ emballage) du batch relu aux prix mercuriale de chaque
@@ -58,6 +61,8 @@ export type FicheCost = {
 export type FicheRecipe = {
   id: string; name: string; category: string | null
   yield_qty: number | null; yield_unit: string | null
+  /** Vendu dans une AUTRE unité que la production (pièces fabriquées, kg vendus) */
+  sell_unit?: string | null; sell_qty?: number | null
   labor_minutes: number; selling_price_ttc: number | null; tva_rate: number; notes: string | null
   employee_id: string | null
   fabrication_steps?: unknown
@@ -85,6 +90,15 @@ function fmtMin(m: number): string {
 }
 
 const fmtDateFr = (s: string) => new Date(s + 'T00:00:00Z').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', timeZone: 'UTC' })
+
+/** « kg » → « au kg », « pièce » → « à la pièce »… pour les phrases de la fiche */
+const venteEnClair = (u: string) =>
+  u === 'kg' ? 'au kg'
+  : u === 'pièce' ? 'à la pièce'
+  : u === '100 g' ? 'aux 100 g'
+  : u === 'portion' ? 'à la portion'
+  : u === 'litre' ? 'au litre'
+  : `en ${u}`
 
 /** Âge d'une date de prix, en jours pleins. null si la date est illisible. */
 function ageJours(d: string | null | undefined): number | null {
@@ -184,7 +198,12 @@ export default function FichePanel({
   }, { net: 0, brut: 0 }), [recipe])
 
   const coutMatiere = (c?.matiere_ht ?? 0) + (c?.emballage_ht ?? 0)
-  const coutUnite = c ? (c.par_unite_ht ?? c.total_ht) : null
+  // Base du PV et du coefficient : le coût PAR UNITÉ DE VENTE quand la fiche se
+  // vend dans une autre unité que sa production (pièces fabriquées, kg vendus).
+  const coutUnite = c ? (c.par_unite_vente_ht ?? c.par_unite_ht ?? c.total_ht) : null
+  const uniteVente = recipe.sell_unit || recipe.yield_unit || 'unité'
+  // Quantité VENDABLE du batch (en unités de vente), repli : la production
+  const venteQty = recipe.sell_unit && Number(recipe.sell_qty) > 0 ? Number(recipe.sell_qty) : (Number(recipe.yield_qty) || 0)
   // Ingrédients comptés pour ZÉRO dans le coût, nommés. Le moteur refuse déjà de
   // publier marge et coefficient quand il en reste (lib/recipes.ts) ; la
   // conversion coefficient → prix de vente, elle, passait quand même : le coût
@@ -221,8 +240,8 @@ export default function FichePanel({
   const coutIncomplet = (c?.prix_manquants ?? 0) > 0
   // Coût matière (« food cost ») : part de la matière SEULE dans le PV HT d'une
   // unité — calculable uniquement quand rendement et prix de vente sont connus.
-  const foodCostPct = c && c.pv_unitaire_ht !== null && c.pv_unitaire_ht > 0 && baseQty > 0
-    ? Math.round(((c.matiere_ht / baseQty) / c.pv_unitaire_ht) * 100)
+  const foodCostPct = c && c.pv_unitaire_ht !== null && c.pv_unitaire_ht > 0 && venteQty > 0
+    ? Math.round(((c.matiere_ht / venteQty) / c.pv_unitaire_ht) * 100)
     : null
   // Couleur de la marge : contre la CIBLE de la catégorie si elle existe,
   // sinon les repères historiques 50/30.
@@ -252,6 +271,10 @@ export default function FichePanel({
       body: JSON.stringify({
         name: recipe.name, category: recipe.category,
         yield_qty: recipe.yield_qty, yield_unit: recipe.yield_unit,
+        // L'unité de vente DOIT voyager (le PUT remplace les champs) : sans elle,
+        // enregistrer une étape rebasculerait une fiche « vendue au kg » sur
+        // l'unité produite, et sa marge changerait en silence.
+        sell_unit: recipe.sell_unit ?? null, sell_qty: recipe.sell_qty ?? null,
         labor_minutes: recipe.labor_minutes,
         selling_price_ttc: extra && 'selling_price_ttc' in extra ? extra.selling_price_ttc : recipe.selling_price_ttc,
         tva_rate: recipe.tva_rate, notes: recipe.notes, employee_id: recipe.employee_id,
@@ -289,6 +312,7 @@ export default function FichePanel({
         name: `${recipe.name.slice(0, 72).trim()} (copie)`,
         category: recipe.category,
         yield_qty: recipe.yield_qty, yield_unit: recipe.yield_unit,
+        sell_unit: recipe.sell_unit ?? null, sell_qty: recipe.sell_qty ?? null,
         labor_minutes: recipe.labor_minutes,
         // Le PV n'est PAS repris : une variante n'a aucune raison de se vendre
         // au même prix, et un prix hérité en silence est un prix qu'on oublie.
@@ -407,6 +431,7 @@ export default function FichePanel({
           </div>
           <p className="text-xs text-gray-500 mt-0.5">
             {recipe.yield_qty ? `Base : ${fmtQty(recipe.yield_qty)} ${uniteLabel} par batch` : 'Rendement non renseigné'}
+            {recipe.sell_unit && Number(recipe.sell_qty) > 0 ? <>{' · '}vendu {venteEnClair(recipe.sell_unit)} — le batch fait {fmtQty(Number(recipe.sell_qty))} {recipe.sell_unit} vendables</> : null}
             {/* « Prix du jour » sans nuance était une promesse que les données
                 ne tiennent pas toujours : le plus ancien prix de la fiche peut
                 dater de plusieurs mois. On dit lequel, et depuis quand. */}
@@ -451,14 +476,17 @@ export default function FichePanel({
             <div className="rounded-2xl bg-pilote p-4 shadow-card">
               <p className="text-[10px] font-semibold text-pilote-200 uppercase tracking-wider">Coût de revient</p>
               <p className="text-xl font-extrabold tracking-tight text-white tabular mt-1">
-                {c.par_unite_ht !== null ? fmtEuro(c.par_unite_ht) : fmtEuro(c.total_ht)}
+                {coutUnite !== null ? fmtEuro(coutUnite) : fmtEuro(c.total_ht)}
               </p>
               {/* « Matière » désignait deux montants différents à quelques
                   centimètres l'un de l'autre : le total du tableau inclut
                   l'emballage, ce pourcentage l'exclut. Le food cost du métier
-                  exclut l'emballage — c'est donc le libellé qui est précisé. */}
+                  exclut l'emballage — c'est donc le libellé qui est précisé.
+                  Vendu dans une autre unité : le coût affiché est PAR UNITÉ DE
+                  VENTE (la base du PV), l'unité produite reste rappelée. */}
               <p className="text-[11px] text-pilote-200 mt-0.5 tabular">
-                {c.par_unite_ht !== null ? `/ ${recipe.yield_unit || 'unité'}` : '/ batch'}
+                {(c.par_unite_vente_ht ?? c.par_unite_ht) !== null ? `/ ${uniteVente}` : '/ batch'}
+                {recipe.sell_unit && c.par_unite_ht !== null && c.par_unite_vente_ht != null && Math.abs(c.par_unite_ht - c.par_unite_vente_ht) >= 0.005 ? ` · ${fmtEuro(c.par_unite_ht)} / ${unitFr(recipe.yield_unit)}` : ''}
                 {foodCostPct !== null ? ` · matière seule ${foodCostPct} % du PV HT` : ''}
               </p>
             </div>
@@ -471,7 +499,7 @@ export default function FichePanel({
               {editKpi?.field === 'pv' ? kpiInput() : (
                 <p className="text-xl font-extrabold tracking-tight text-gray-900 tabular mt-1">{recipe.selling_price_ttc != null ? fmtEuro(recipe.selling_price_ttc) : '—'}</p>
               )}
-              <p className="text-[11px] text-gray-400 mt-0.5">{c.pv_unitaire_ht !== null ? `${fmtEuro(c.pv_unitaire_ht)} HT` : 'cliquer pour saisir'}</p>
+              <p className="text-[11px] text-gray-400 mt-0.5 tabular">{c.pv_unitaire_ht !== null ? `${fmtEuro(c.pv_unitaire_ht)} HT / ${uniteVente}` : `cliquer pour saisir — / ${uniteVente}`}</p>
             </div>
 
             <div className={`rounded-2xl bg-white border border-gray-100 shadow-card p-4 group transition-colors ${coutIncomplet ? 'cursor-not-allowed' : 'cursor-pointer hover:border-pilote-200'}`}
@@ -501,7 +529,7 @@ export default function FichePanel({
                 {c.marge_pct !== null ? `${c.marge_pct.toLocaleString('fr-FR')} %` : '—'}
               </p>
               <p className="text-[11px] text-gray-400 mt-0.5 tabular">
-                {c.pv_unitaire_ht !== null && c.par_unite_ht !== null ? `marge ${fmtEuro(c.pv_unitaire_ht - c.par_unite_ht)}` : 'du PV HT'}
+                {c.pv_unitaire_ht !== null && coutUnite !== null ? `marge ${fmtEuro(c.pv_unitaire_ht - coutUnite)} / ${uniteVente}` : 'du PV HT'}
                 {target != null ? ` · cible ${target.toLocaleString('fr-FR')} %` : ''}
               </p>
             </div>
@@ -541,10 +569,13 @@ export default function FichePanel({
           const delta = round2(last.v - first.v)
           const stable = Math.abs(delta) < 0.005
           const deltaUnit = baseQty > 0 ? round2(delta / baseQty) : null
-          // Marge qu'aurait la fiche au coût du début de période, à PV inchangé
+          // Marge qu'aurait la fiche au coût du début de période, à PV inchangé —
+          // sur la base de VENTE (celle du PV), pas forcément l'unité produite.
+          const coutVente = c.par_unite_vente_ht ?? c.par_unite_ht
+          const deltaVente = venteQty > 0 ? round2(delta / venteQty) : null
           let margeAvant: number | null = null
-          if (!stable && c.pv_unitaire_ht !== null && c.pv_unitaire_ht > 0 && c.par_unite_ht !== null && deltaUnit !== null) {
-            margeAvant = Math.round(((c.pv_unitaire_ht - (c.par_unite_ht - deltaUnit)) / c.pv_unitaire_ht) * 1000) / 10
+          if (!stable && c.pv_unitaire_ht !== null && c.pv_unitaire_ht > 0 && coutVente != null && deltaVente !== null) {
+            margeAvant = Math.round(((c.pv_unitaire_ht - (coutVente - deltaVente)) / c.pv_unitaire_ht) * 1000) / 10
           }
           return (
             <div className="mb-4 rounded-2xl border border-gray-100 bg-gray-50/60 px-4 py-3 flex items-center gap-4 flex-wrap">
