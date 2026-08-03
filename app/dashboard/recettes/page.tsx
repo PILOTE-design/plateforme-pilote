@@ -43,6 +43,8 @@ type IngredientDraft = {
 
 type RecipeCost = {
   matiere_ht: number; emballage_ht: number; main_oeuvre_ht: number; total_ht: number; par_unite_ht: number | null
+  /** Coût par unité de VENTE — la base du PV, de la marge et du coef */
+  par_unite_vente_ht?: number | null
   prix_manquants: number; labor_rate_ht: number | null; total_minutes: number
   pv_unitaire_ht: number | null; marge_pct: number | null; coefficient: number | null
   /** Coût matière du batch relu aux prix mercuriale des 8 dernières semaines */
@@ -53,6 +55,8 @@ type RecipeCost = {
 type Recipe = {
   id: string; name: string; category: string | null
   yield_qty: number | null; yield_unit: string | null
+  /** Vendu dans une AUTRE unité que la production (pièces fabriquées, kg vendus) */
+  sell_unit?: string | null; sell_qty?: number | null
   labor_minutes: number; selling_price_ttc: number | null; tva_rate: number; notes: string | null
   employee_id: string | null
   /** jsonb des étapes : dès qu'une est chronométrée, c'est LEUR somme qui fait le
@@ -64,6 +68,10 @@ type Recipe = {
 
 /** Cible de marge posée par le client pour une catégorie de fiches (R-A) */
 type Target = { category: string; target_marge_pct: number }
+
+/** Famille de la boutique (référentiel margin_families, kind='vente') —
+ *  alimente le menu déroulant « Catégorie » de la modale. */
+type Famille = { id: string; parent_id: string | null; name: string; position: number }
 
 const fmtEuro = (n: number) => n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'
 const unitFr = (u: string | null) => (u === 'piece' ? 'pièce' : u || '')
@@ -77,10 +85,22 @@ const margeTone = (marge: number, target: number | null) => {
   return marge >= 50 ? 'text-green-600' : marge >= 30 ? 'text-orange-500' : 'text-red-600'
 }
 
-// Catégories proposées — les trois métiers de la maison. Le champ reste libre :
-// une catégorie inconnue crée simplement sa propre section.
-const CATEGORIES_SUGGEREES = ['boucherie', 'charcuterie', 'traiteur']
 const catLabel = (c: string | null) => (c && c.trim() ? c.trim().toLowerCase() : 'sans catégorie')
+
+// Unités de PRODUCTION proposées — « Autre… » garde le champ libre pour les cas
+// qui n'y sont pas (bocaux, plaques…), et l'unité actuelle d'une vieille fiche
+// reste sélectionnable telle quelle.
+const UNITES_PRODUCTION = ['pièces', 'kg', 'g', 'litres', 'portions', 'barquettes']
+
+// Unités de VENTE : un produit fabriqué (ou acheté) à la pièce peut se vendre
+// au kg — le PV, la marge et le coef se calculent alors sur l'unité de VENTE.
+const UNITES_VENTE = [
+  { value: 'kg', label: 'au kg' },
+  { value: '100 g', label: 'aux 100 g' },
+  { value: 'pièce', label: 'à la pièce' },
+  { value: 'portion', label: 'à la portion' },
+  { value: 'litre', label: 'au litre' },
+]
 
 export default function RecettesPage() {
   const { toast } = useToast()
@@ -90,6 +110,8 @@ export default function RecettesPage() {
   const [employees, setEmployees] = useState<Employee[]>([])
   const [laborRate, setLaborRate] = useState<number | null>(null)
   const [targets, setTargets] = useState<Target[]>([])
+  // Familles de la boutique (référentiel des marges) — le menu « Catégorie »
+  const [familles, setFamilles] = useState<Famille[]>([])
   // Historique de prix tronqué côté serveur : les courbes de coût matière sont
   // partielles, et une courbe qui rétrécit se lit comme un prix stable.
   const [historiqueIncomplet, setHistoriqueIncomplet] = useState(false)
@@ -108,7 +130,10 @@ export default function RecettesPage() {
   const panelRef = useRef<HTMLDivElement | null>(null)
   const [show, setShow] = useState(false)
   const [editId, setEditId] = useState<string | null>(null)
-  const [form, setForm] = useState({ name: '', category: '', yield_qty: '', yield_unit: 'pièces', labor_minutes: '', selling_price_ttc: '', tva_rate: '5.5', employee_id: '' })
+  const [form, setForm] = useState({ name: '', category: '', yield_qty: '', yield_unit: 'pièces', sell_unit: '', sell_qty: '', labor_minutes: '', selling_price_ttc: '', tva_rate: '5.5', employee_id: '' })
+  // « Autre… » : catégorie ou unité saisies librement, hors des listes proposées
+  const [catLibre, setCatLibre] = useState(false)
+  const [uniteLibre, setUniteLibre] = useState(false)
   // Coefficient multiplicateur affiché dans la modale — synchronisé avec le PV
   // TTC dans les deux sens (saisir l'un recalcule l'autre) ; seul le PV est stocké.
   const [coefField, setCoefField] = useState('')
@@ -117,7 +142,16 @@ export default function RecettesPage() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    const rec = await fetch('/api/recipes', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).catch(() => null)
+    const [rec, fam] = await Promise.all([
+      fetch('/api/recipes', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch('/api/margin-families', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).catch(() => null),
+    ])
+    if (fam && Array.isArray(fam.families)) {
+      setFamilles(fam.families.map((f: any) => ({
+        id: String(f.id), parent_id: f.parent_id ? String(f.parent_id) : null,
+        name: String(f.name ?? ''), position: Number(f.position) || 0,
+      })))
+    }
     if (rec) {
       setRecipes(Array.isArray(rec.recipes) ? rec.recipes : [])
       setLaborRate(rec.labor_rate_ht ?? null)
@@ -200,8 +234,12 @@ export default function RecettesPage() {
     const mo = previewRate !== null ? minutes / 60 * previewRate : 0
     const total = matiere + emballage + mo
     const yieldQty = parseFloat(form.yield_qty.replace(',', '.')) || 0
-    return { matiere, emballage, mo, minutes, total, parUnite: yieldQty > 0 ? total / yieldQty : null, manquants: sansPrix.length, sansPrix }
-  }, [ings, form.labor_minutes, form.yield_qty, previewRate, genericById, recipeById, etapesChrono])
+    const parUnite = yieldQty > 0 ? total / yieldQty : null
+    // Unité de vente distincte : le coût se rapporte à la quantité VENDABLE du
+    // batch (2,4 kg pour 6 pièces de 400 g) — même règle que le moteur serveur.
+    const sellQty = form.sell_unit ? (parseFloat(form.sell_qty.replace(',', '.')) || 0) : 0
+    return { matiere, emballage, mo, minutes, total, parUnite, parUniteVente: sellQty > 0 ? total / sellQty : parUnite, manquants: sansPrix.length, sansPrix }
+  }, [ings, form.labor_minutes, form.yield_qty, form.sell_unit, form.sell_qty, previewRate, genericById, recipeById, etapesChrono])
 
   // ── PV TTC ↔ coefficient : saisir l'un recalcule l'autre sur le coût de
   // l'aperçu (coût / unité, repli coût du batch). Seul le PV TTC est enregistré.
@@ -212,7 +250,9 @@ export default function RecettesPage() {
   // jamais repris. Le moteur refuse déjà de publier marge et coefficient dans ce
   // cas (lib/recipes.ts) ; la conversion inverse doit refuser pareil.
   const coutIncomplet = preview.manquants > 0
-  const previewCoutUnite = coutIncomplet ? null : (preview.parUnite ?? (preview.total > 0 ? preview.total : null))
+  // Base du coefficient : le coût PAR UNITÉ DE VENTE — une fiche fabriquée en
+  // pièces mais vendue au kg compare son PV au coût du kilo, pas de la pièce.
+  const previewCoutUnite = coutIncomplet ? null : (preview.parUniteVente ?? (preview.total > 0 ? preview.total : null))
   /** Les ingrédients à prix manquant, nommés, pour l'info-bulle et le message */
   const nomsSansPrix = preview.sansPrix.slice(0, 3).join(', ') + (preview.sansPrix.length > 3 ? `, +${preview.sansPrix.length - 3}` : '')
   function onPvChange(v: string) {
@@ -286,6 +326,20 @@ export default function RecettesPage() {
 
   const targetByCat = useMemo(() => new Map(targets.map(t => [t.category, t.target_marge_pct])), [targets])
 
+  // Options du menu « Catégorie » : les familles de la boutique, racines dans
+  // l'ordre du référentiel des marges, sous-familles indentées sous la leur.
+  const optionsFamilles = useMemo(() => {
+    const tri = (a: Famille, b: Famille) => a.position - b.position || a.name.localeCompare(b.name, 'fr')
+    const out: { value: string; label: string }[] = []
+    for (const r of familles.filter(f => !f.parent_id).sort(tri)) {
+      out.push({ value: r.name, label: r.name })
+      for (const c of familles.filter(f => f.parent_id === r.id).sort(tri)) {
+        out.push({ value: c.name, label: `  · ${c.name}` })
+      }
+    }
+    return out
+  }, [familles])
+
   // Bandeau de pilotage : calculé sur TOUTES les fiches (jamais sur le filtre
   // en cours). Une fiche sans marge calculable n'entre pas dans la moyenne.
   const stats = useMemo(() => {
@@ -332,7 +386,9 @@ export default function RecettesPage() {
 
   function openNew() {
     setEditId(null)
-    setForm({ name: '', category: '', yield_qty: '', yield_unit: 'pièces', labor_minutes: '', selling_price_ttc: '', tva_rate: '5.5', employee_id: '' })
+    setForm({ name: '', category: '', yield_qty: '', yield_unit: 'pièces', sell_unit: '', sell_qty: '', labor_minutes: '', selling_price_ttc: '', tva_rate: '5.5', employee_id: '' })
+    setCatLibre(false)
+    setUniteLibre(false)
     setCoefField('')
     setIngs([EMPTY_ING()])
     setShow(true)
@@ -343,9 +399,12 @@ export default function RecettesPage() {
     setForm({
       name: r.name, category: r.category ?? '',
       yield_qty: r.yield_qty != null ? String(r.yield_qty) : '', yield_unit: r.yield_unit ?? 'pièces',
+      sell_unit: r.sell_unit ?? '', sell_qty: r.sell_qty != null ? String(r.sell_qty) : '',
       labor_minutes: String(r.labor_minutes ?? ''), selling_price_ttc: r.selling_price_ttc != null ? String(r.selling_price_ttc) : '',
       tva_rate: String(r.tva_rate ?? '5.5'), employee_id: r.employee_id ?? '',
     })
+    setCatLibre(false)
+    setUniteLibre(false)
     setCoefField(r.cost.coefficient !== null ? String(r.cost.coefficient).replace('.', ',') : '')
     setIngs(r.ingredients.length > 0
       ? r.ingredients.map(i => ({
@@ -373,11 +432,22 @@ export default function RecettesPage() {
       })
       return
     }
+    // Vendu dans une autre unité : sans la quantité vendable du batch, marge et
+    // coef seraient calculés sur la mauvaise base — on demande le chiffre.
+    if (form.sell_unit && !(parseFloat(form.sell_qty.replace(',', '.')) > 0)) {
+      toast({
+        variant: 'error', title: 'Quantité vendable manquante',
+        description: `La fiche se vend en ${form.sell_unit} : indiquez ce que le batch représente dans cette unité (ex. 6 pièces de 400 g → 2,4 kg).`,
+      })
+      return
+    }
     setSaving(true)
     const payload = {
       name: form.name, category: form.category || null,
       yield_qty: form.yield_qty ? parseFloat(form.yield_qty.replace(',', '.')) : null,
       yield_unit: form.yield_unit || null,
+      sell_unit: form.sell_unit || null,
+      sell_qty: form.sell_unit && form.sell_qty ? parseFloat(form.sell_qty.replace(',', '.')) : null,
       labor_minutes: parseFloat(form.labor_minutes.replace(',', '.')) || 0,
       selling_price_ttc: form.selling_price_ttc ? parseFloat(form.selling_price_ttc.replace(',', '.')) : null,
       tva_rate: parseFloat(form.tva_rate.replace(',', '.')) || 5.5,
@@ -501,6 +571,10 @@ export default function RecettesPage() {
             {r.cost.par_unite_ht !== null ? `/ ${r.yield_unit || 'unité'}` : '/ batch'}
           </span>
         </p>
+        {/* Vendu dans une autre unité : le coût qui se compare au PV est celui-là */}
+        {r.sell_unit && r.cost.par_unite_vente_ht != null && r.cost.par_unite_vente_ht !== r.cost.par_unite_ht && (
+          <p className="text-[11px] text-gray-500 tabular">soit {fmtEuro(r.cost.par_unite_vente_ht)} / {r.sell_unit} vendu</p>
+        )}
         <div className="mt-2 space-y-0.5 text-[11px] text-gray-500 tabular">
           <p><ShoppingBasket className="w-3 h-3 inline mr-1 text-gray-400" />Matière {fmtEuro(r.cost.matiere_ht)}</p>
           {r.cost.emballage_ht > 0 && <p><Package className="w-3 h-3 inline mr-1 text-gray-400" />Emballage {fmtEuro(r.cost.emballage_ht)}</p>}
@@ -759,12 +833,28 @@ export default function RecettesPage() {
                   <Input value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} placeholder="Terrine de campagne" />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-gray-700 mb-1">Catégorie</label>
-                  <Input list="recette-categories" value={form.category}
-                    onChange={e => setForm(p => ({ ...p, category: e.target.value }))} placeholder="charcuterie, traiteur…" />
-                  <datalist id="recette-categories">
-                    {[...new Set([...CATEGORIES_SUGGEREES, ...allCats.filter(c => c !== 'sans catégorie')])].map(c => <option key={c} value={c} />)}
-                  </datalist>
+                  <label className="block text-xs font-semibold text-gray-700 mb-1">Catégorie <span className="font-normal text-gray-400">— les familles de la boutique</span></label>
+                  {catLibre ? (
+                    <div className="flex items-center gap-1.5">
+                      <Input autoFocus value={form.category}
+                        onChange={e => setForm(p => ({ ...p, category: e.target.value }))} placeholder="pâtisserie salée…" />
+                      <button type="button" onClick={() => { setCatLibre(false); setForm(p => ({ ...p, category: '' })) }}
+                        title="Revenir à la liste des familles" className="p-2 rounded-lg text-gray-400 hover:bg-gray-100 flex-shrink-0"><X className="w-3.5 h-3.5" /></button>
+                    </div>
+                  ) : (
+                    <select value={form.category}
+                      onChange={e => { if (e.target.value === '__libre__') { setCatLibre(true); setForm(p => ({ ...p, category: '' })) } else setForm(p => ({ ...p, category: e.target.value })) }}
+                      className="w-full h-10 border border-gray-200 rounded-lg px-3 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200 bg-white">
+                      <option value="">Sans catégorie</option>
+                      {optionsFamilles.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      {/* Catégorie héritée d'avant les familles : sélectionnable telle
+                          quelle, jamais perdue en ouvrant la fiche */}
+                      {form.category && !optionsFamilles.some(o => o.value.toLowerCase() === form.category.trim().toLowerCase()) && (
+                        <option value={form.category}>{form.category} (actuelle)</option>
+                      )}
+                      <option value="__libre__">Autre…</option>
+                    </select>
+                  )}
                 </div>
                 <div className="grid grid-cols-2 gap-2">
                   <div>
@@ -773,7 +863,23 @@ export default function RecettesPage() {
                   </div>
                   <div>
                     <label className="block text-xs font-semibold text-gray-700 mb-1">Unité</label>
-                    <Input value={form.yield_unit} onChange={e => setForm(p => ({ ...p, yield_unit: e.target.value }))} placeholder="pièces, kg…" />
+                    {uniteLibre ? (
+                      <div className="flex items-center gap-1.5">
+                        <Input autoFocus value={form.yield_unit} onChange={e => setForm(p => ({ ...p, yield_unit: e.target.value }))} placeholder="bocaux…" />
+                        <button type="button" onClick={() => { setUniteLibre(false); setForm(p => ({ ...p, yield_unit: 'pièces' })) }}
+                          title="Revenir à la liste" className="p-2 rounded-lg text-gray-400 hover:bg-gray-100 flex-shrink-0"><X className="w-3.5 h-3.5" /></button>
+                      </div>
+                    ) : (
+                      <select value={form.yield_unit}
+                        onChange={e => { if (e.target.value === '__libre__') { setUniteLibre(true); setForm(p => ({ ...p, yield_unit: '' })) } else setForm(p => ({ ...p, yield_unit: e.target.value })) }}
+                        className="w-full h-10 border border-gray-200 rounded-lg px-3 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200 bg-white">
+                        {UNITES_PRODUCTION.map(u => <option key={u} value={u}>{u}</option>)}
+                        {form.yield_unit && !UNITES_PRODUCTION.includes(form.yield_unit) && (
+                          <option value={form.yield_unit}>{form.yield_unit} (actuelle)</option>
+                        )}
+                        <option value="__libre__">Autre…</option>
+                      </select>
+                    )}
                   </div>
                 </div>
                 <div>
@@ -791,9 +897,34 @@ export default function RecettesPage() {
                     <Input inputMode="decimal" value={form.labor_minutes} onChange={e => setForm(p => ({ ...p, labor_minutes: e.target.value }))} placeholder="45" />
                   )}
                 </div>
+                {/* Vendu dans quelle unité ? Un produit fabriqué en pièces peut se
+                    vendre au kg : la quantité vendable du batch fait la conversion,
+                    et PV / marge / coef basculent sur l'unité de VENTE. */}
                 <div className="grid grid-cols-2 gap-2">
                   <div>
-                    <label className="block text-xs font-semibold text-gray-700 mb-1">Prix de vente TTC <span className="font-normal text-gray-400">/ unité</span></label>
+                    <label className="block text-xs font-semibold text-gray-700 mb-1">Vendu</label>
+                    <select value={form.sell_unit}
+                      onChange={e => setForm(p => ({ ...p, sell_unit: e.target.value, sell_qty: e.target.value ? p.sell_qty : '' }))}
+                      className="w-full h-10 border border-gray-200 rounded-lg px-3 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200 bg-white">
+                      <option value="">à l&apos;unité produite ({form.yield_unit || 'unité'})</option>
+                      {UNITES_VENTE.map(u => <option key={u.value} value={u.value}>{u.label}</option>)}
+                    </select>
+                  </div>
+                  {form.sell_unit ? (
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-700 mb-1">Batch vendable <span className="font-normal text-gray-400">en {form.sell_unit}</span></label>
+                      <Input inputMode="decimal" value={form.sell_qty} onChange={e => setForm(p => ({ ...p, sell_qty: e.target.value }))} placeholder="2,4" />
+                      <p className="text-[10px] text-gray-400 mt-0.5">Ce que le batch représente à la vente — ex. 6 pièces de 400 g → 2,4. Marge et coef se calculent sur cette base.</p>
+                    </div>
+                  ) : (
+                    <div className="flex items-end pb-2.5">
+                      <p className="text-[10px] text-gray-400">Fabriqué en pièces mais vendu au kg ? Choisissez l&apos;unité de vente — la marge suivra.</p>
+                    </div>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-700 mb-1">Prix de vente TTC <span className="font-normal text-gray-400">/ {form.sell_unit || form.yield_unit || 'unité'}</span></label>
                     <Input inputMode="decimal" value={form.selling_price_ttc} onChange={e => onPvChange(e.target.value)} placeholder="4,50" />
                   </div>
                   <div>
@@ -992,7 +1123,10 @@ export default function RecettesPage() {
                   <span className="font-semibold">{fmtEuro(preview.mo)}</span>
                 </div>
                 <div className="flex justify-between font-extrabold text-pilote-800 mt-1.5 pt-1.5 border-t border-pilote-100">
-                  <span>Coût de revient{preview.parUnite !== null ? ` (${fmtEuro(preview.parUnite)} / ${form.yield_unit || 'unité'})` : ''}</span>
+                  <span>
+                    Coût de revient{preview.parUnite !== null ? ` (${fmtEuro(preview.parUnite)} / ${form.yield_unit || 'unité'})` : ''}
+                    {form.sell_unit && preview.parUniteVente !== null && preview.parUniteVente !== preview.parUnite ? ` — soit ${fmtEuro(preview.parUniteVente)} / ${form.sell_unit} vendu` : ''}
+                  </span>
                   <span>{fmtEuro(preview.total)}</span>
                 </div>
                 {preview.manquants > 0 && (
