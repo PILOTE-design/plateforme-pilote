@@ -9,7 +9,7 @@ export async function GET() {
   const serviceSupabase = createServiceClient()
   const { data } = await serviceSupabase
     .from('profiles')
-    .select('billing_email, company_name, siret, billing_email_verified, billing_forward_id')
+    .select('billing_email, company_name, siret, billing_email_verified, billing_forward_id, billing_forward_confirmation')
     .eq('user_id', user.id)
     .maybeSingle()
 
