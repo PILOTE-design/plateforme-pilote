@@ -47,6 +47,6 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({
     ok: true,
     billing_email: profile.billing_email,
-    forward_address: `factures-${profile.billing_forward_id}@mail.getpilote.app`,
+    forward_address: `factures-${profile.billing_forward_id}@getpilote.app`,
   })
 }

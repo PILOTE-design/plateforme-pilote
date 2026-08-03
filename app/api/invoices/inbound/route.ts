@@ -1,7 +1,9 @@
 /**
  * Webhook de réception d'emails entrants (factures transférées par l'utilisateur).
- * Compatible Resend Inbound, Mailgun, Postmark, SendGrid Inbound Parse.
- * L'adresse cible est : factures-{billing_forward_id}@mail.getpilote.app
+ * Fournisseur branché : RESEND INBOUND (webhook `email.received`, signé Svix).
+ * Les formats historiques (Mailgun, Postmark, SendGrid Inbound Parse) restent
+ * lus, mais uniquement tant qu'aucun secret de signature n'est configuré.
+ * L'adresse cible est : factures-{billing_forward_id}@getpilote.app
  *
  * C'EST LE CONNECTEUR DES BOUCHERIES SANS LOGICIEL DE FACTURATION (31/07).
  * Beaucoup de maisons n'ont ni Pennylane ni équivalent : elles transfèrent
@@ -17,6 +19,22 @@
  *
  * Le corps du mail reste le repli quand il n'y a AUCUNE pièce jointe lisible —
  * la facture est alors créée sans PDF et signalée comme telle, jamais devinée.
+ *
+ * Particularité Resend : le webhook ne porte que les MÉTADONNÉES (ni corps, ni
+ * pièces jointes). Le mail complet est RÉCUPÉRÉ par l'API avec la clé déjà
+ * utilisée pour l'envoi (RESEND_API_KEY), et la pièce jointe est téléchargée
+ * par son URL présignée.
+ *
+ * Garde-fous :
+ *   · signature Svix vérifiée dès que RESEND_WEBHOOK_SECRET est posée — les
+ *     requêtes non signées sont alors refusées (401), quel qu'en soit le format ;
+ *   · destinataire inconnu, adresse non vérifiée : 200 SILENCIEUX (journalisé) —
+ *     on ne renseigne pas un curieux, et Resend n'a rien à réessayer ;
+ *   · échec transitoire (API Resend, extraction IA) : 4xx — Resend RÉESSAIE plus
+ *     tard, et l'archivage sous un nom DÉTERMINISTE (mail-{email_id}) rend ces
+ *     rejeux sans doublon ;
+ *   · même mail livré deux fois : détecté par le marqueur [resend:{email_id}]
+ *     dans les notes de la facture déjà créée — on répond « déjà reçue ».
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase/server'
@@ -24,13 +42,17 @@ import { resolveClientId } from '@/lib/resolve-client-id'
 import { loadSupplierCategories, rememberedCategory } from '@/lib/supplier-memory'
 import { weekForInvoice, plausibleDelivery } from '@/lib/invoice-week'
 import { pdfToLines } from '@/lib/pdf-lines'
-import { randomUUID } from 'crypto'
+import { randomUUID, createHmac, timingSafeEqual } from 'crypto'
 import Anthropic from '@anthropic-ai/sdk'
 
 // Clé de repli au build : le constructeur Anthropic lève une erreur si la clé est absente,
 // ce qui casse `next build` (« Collecting page data »). En prod, l'extraction échoue
 // proprement à l'exécution tant que ANTHROPIC_API_KEY n'est pas définie.
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || 'MISSING_ANTHROPIC_KEY' })
+
+/** Au-delà, la pièce jointe n'est pas téléchargée : une facture n'a pas cette
+ *  taille, et le webhook doit répondre avant l'échéance de Vercel. */
+const TAILLE_PIECE_MAX = 15 * 1024 * 1024
 
 function getISOWeek(date: Date) {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
@@ -46,11 +68,40 @@ type Piece = { filename: string; buffer: Buffer }
 const looksPdf = (name: string, type?: string) =>
   /\.pdf$/i.test(String(name || '')) || String(type || '').toLowerCase().includes('pdf')
 
-/** Première pièce jointe PDF du message, quel que soit le fournisseur d'email.
- *  Trois formats coexistent dans la nature :
+/** Vérification de la signature Svix (schéma des webhooks Resend).
+ *  Retourne null si la signature est valable, sinon le MOTIF du rejet.
+ *  Implémentée sans dépendance : HMAC-SHA256 de `{id}.{timestamp}.{corps brut}`
+ *  avec la clé base64 du secret (après le préfixe `whsec_`), comparée à chacune
+ *  des signatures annoncées (l'en-tête peut en porter plusieurs, séparées par
+ *  des espaces, chacune préfixée de sa version « v1, »). */
+function verifierSignatureSvix(headers: Headers, corps: string, secret: string): string | null {
+  const id = headers.get('svix-id')
+  const ts = headers.get('svix-timestamp')
+  const sigs = headers.get('svix-signature')
+  if (!id || !ts || !sigs) return 'en-têtes svix absents'
+  const age = Math.abs(Date.now() / 1000 - Number(ts))
+  if (!Number.isFinite(age) || age > 300) return `horodatage hors fenêtre (${Math.round(age)} s) — rejeu ?`
+  let attendu: Buffer
+  try {
+    const cle = Buffer.from(secret.startsWith('whsec_') ? secret.slice(6) : secret, 'base64')
+    attendu = createHmac('sha256', cle).update(`${id}.${ts}.${corps}`).digest()
+  } catch { return 'secret de signature illisible' }
+  for (const partie of sigs.split(' ')) {
+    const val = partie.includes(',') ? partie.slice(partie.indexOf(',') + 1) : partie
+    try {
+      const recu = Buffer.from(val, 'base64')
+      if (recu.length === attendu.length && timingSafeEqual(recu, attendu)) return null
+    } catch { /* signature illisible : on tente la suivante */ }
+  }
+  return 'aucune signature ne correspond'
+}
+
+/** Première pièce jointe PDF du message, pour les formats qui livrent le
+ *  contenu EN LIGNE (formats historiques — Resend passe par l'API, plus bas).
+ *  Deux formes coexistent dans la nature :
  *   · form-data avec un vrai fichier (SendGrid Inbound Parse, Mailgun) ;
- *   · JSON avec un tableau `attachments` en base64 (Resend, Mailgun API) ;
- *   · JSON Postmark, qui capitalise (`Attachments`, `Name`, `Content`).
+ *   · JSON avec un tableau `attachments` en base64 (Mailgun API, Postmark qui
+ *     capitalise : `Attachments`, `Name`, `Content`).
  *  Aucune n'est privilégiée : on prend la première qui ressemble à un PDF.
  *  null = pas de pièce jointe exploitable (le corps du mail prendra le relais). */
 async function pickPdf(body: any, form: FormData | null): Promise<Piece | null> {
@@ -83,6 +134,60 @@ async function pickPdf(body: any, form: FormData | null): Promise<Piece | null> 
   return null
 }
 
+/** Le mail complet, récupéré par l'API Resend — le webhook n'en porte que les
+ *  métadonnées. `erreur` non nulle = échec TRANSITOIRE à faire réessayer (4xx). */
+type MailResend = {
+  erreur: string | null
+  subject: string
+  texte: string
+  piece: Piece | null
+  motifPiece: string | null
+}
+
+async function chargerMailResend(emailId: string): Promise<MailResend> {
+  const vide: MailResend = { erreur: null, subject: '', texte: '', piece: null, motifPiece: null }
+  const cle = process.env.RESEND_API_KEY
+  if (!cle) return { ...vide, erreur: 'RESEND_API_KEY absente : contenu du mail irrécupérable' }
+  const entetes = { Authorization: `Bearer ${cle}` }
+
+  const rep = await fetch(`https://api.resend.com/emails/receiving/${emailId}`, { headers: entetes })
+  if (!rep.ok) return { ...vide, erreur: `API Resend ${rep.status} sur le mail ${emailId}` }
+  const mail: any = await rep.json().catch(() => null)
+  if (!mail) return { ...vide, erreur: 'réponse API Resend illisible' }
+
+  // Corps : le texte brut d'abord ; l'HTML en repli, jamais une data-URL brute.
+  const html = typeof mail.html === 'string' && !mail.html.startsWith('data:') ? mail.html : ''
+  const texte = typeof mail.text === 'string' && mail.text.trim()
+    ? mail.text
+    : html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+
+  // Première pièce jointe PDF : métadonnées → URL présignée → contenu.
+  // Chaque pièce écartée laisse son motif — le journal dira pourquoi une
+  // facture est arrivée sans document, jamais « ça n'a pas marché ».
+  let piece: Piece | null = null
+  let motifPiece: string | null = null
+  const pjs: any[] = Array.isArray(mail.attachments) ? mail.attachments : []
+  for (const a of pjs) {
+    const nom = String(a?.filename ?? '')
+    if (!looksPdf(nom, String(a?.content_type ?? ''))) continue
+    if (Number(a?.size) > TAILLE_PIECE_MAX) { motifPiece = `pièce ${nom} trop lourde (${Math.round(Number(a.size) / 1e6)} Mo)`; continue }
+    const repMeta = await fetch(`https://api.resend.com/emails/receiving/${emailId}/attachments/${a.id}`, { headers: entetes })
+    if (!repMeta.ok) { motifPiece = `API Resend ${repMeta.status} sur la pièce ${nom}`; continue }
+    const meta: any = await repMeta.json().catch(() => null)
+    if (typeof meta?.download_url !== 'string') { motifPiece = `pièce ${nom} sans URL de téléchargement`; continue }
+    const repPj = await fetch(meta.download_url)
+    if (!repPj.ok) { motifPiece = `téléchargement de ${nom} en échec (${repPj.status})`; continue }
+    const buf = Buffer.from(await repPj.arrayBuffer())
+    // L'en-tête fait foi : un .pdf renommé n'est pas un PDF.
+    if (buf.length === 0 || buf.subarray(0, 5).toString('latin1') !== '%PDF-') { motifPiece = `pièce ${nom} sans en-tête PDF`; continue }
+    piece = { filename: nom || 'facture.pdf', buffer: buf }
+    motifPiece = null
+    break
+  }
+
+  return { erreur: null, subject: String(mail.subject ?? ''), texte, piece, motifPiece }
+}
+
 /** Texte d'un PDF : par COORDONNÉES d'abord (colonnes séparées, même lecture
  *  que l'extraction des lignes), repli sur le texte plat de pdf-parse. */
 async function readPdfText(buffer: Buffer): Promise<string> {
@@ -95,24 +200,75 @@ async function readPdfText(buffer: Buffer): Promise<string> {
 
 export async function POST(request: NextRequest) {
   const serviceSupabase = createServiceClient()
+  const secret = process.env.RESEND_WEBHOOK_SECRET || ''
+  const contentType = request.headers.get('content-type') || ''
 
-  // Accepter JSON ou form-data selon le provider. Le FormData est CONSERVÉ :
-  // c'est là que vivent les pièces jointes des fournisseurs qui postent en
-  // multipart (les aplatir dans `body` perdait le contenu des fichiers).
+  // ── PORTE D'ENTRÉE ────────────────────────────────────────────────────
+  // Dès qu'un secret est configuré, SEULES les requêtes signées Svix passent :
+  // les formats multipart historiques, non signés, sont refusés du même coup.
+  // Sans secret (transition, bac à sable), tout est accepté — et le journal
+  // le crie à chaque réception.
   let body: any = {}
   let form: FormData | null = null
-  const contentType = request.headers.get('content-type') || ''
-  if (contentType.includes('application/json')) {
-    body = await request.json()
-  } else if (contentType.includes('multipart/form-data') || contentType.includes('application/x-www-form-urlencoded')) {
+  if (contentType.includes('multipart/form-data') || contentType.includes('application/x-www-form-urlencoded')) {
+    if (secret) {
+      console.warn('[inbound] REJET : requête multipart non signée alors qu\'un secret est configuré')
+      return NextResponse.json({ error: 'Signature requise' }, { status: 401 })
+    }
     form = await request.formData()
     for (const [k, v] of form.entries()) body[k] = v
+  } else {
+    const brut = await request.text()
+    if (secret) {
+      const motif = verifierSignatureSvix(request.headers, brut, secret)
+      if (motif) {
+        console.warn('[inbound] REJET signature :', motif)
+        return NextResponse.json({ error: 'Signature invalide' }, { status: 401 })
+      }
+    } else {
+      console.warn('[inbound] RESEND_WEBHOOK_SECRET absente — webhook accepté SANS vérification de signature')
+    }
+    try { body = JSON.parse(brut) } catch {
+      return NextResponse.json({ error: 'Corps illisible' }, { status: 400 })
+    }
+  }
+
+  // ── RESEND `email.received` : aller CHERCHER le mail complet ──────────
+  // Le webhook ne livre que les métadonnées. L'échec de récupération est
+  // TRANSITOIRE : on répond 422 pour que Resend représente le même événement
+  // plus tard — l'archivage déterministe rend ce rejeu sans doublon.
+  let resendEmailId: string | null = null
+  let subject = ''
+  let plainText = ''
+  let piece: Piece | null = null
+  let motifPiece: string | null = null
+  let toField = ''
+
+  if (body?.type === 'email.received' && body?.data && typeof body.data === 'object') {
+    const d = body.data
+    resendEmailId = typeof d.email_id === 'string' && d.email_id ? d.email_id : null
+    if (!resendEmailId) return NextResponse.json({ error: 'événement sans email_id' }, { status: 400 })
+    // L'adresse PILOTE peut être le destinataire direct (to), un destinataire
+    // en copie, ou — cas du transfert automatique depuis la boîte du boucher —
+    // n'apparaître QUE dans l'enveloppe (received_for).
+    toField = [d.to, d.cc, d.received_for].flat().filter(Boolean).map(String).join(' ')
+  } else {
+    // Formats historiques : tout est déjà dans la requête.
+    toField = String(body.to || body.recipient || body.To || body.Recipient || '')
+    subject = String(body.subject || body.Subject || '')
+    const textBody = body.text || body['body-plain'] || body.stripped_text || ''
+    const htmlBody = body.html || body['body-html'] || body.stripped_html || ''
+    plainText = String(textBody || String(htmlBody).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim())
   }
 
   // Identifier l'utilisateur depuis l'adresse de destination
-  const toField: string = body.to || body.recipient || body.To || body.Recipient || ''
   const match = toField.match(/factures-([a-z0-9]+)@/)
-  if (!match) return NextResponse.json({ error: 'Recipient non reconnu' }, { status: 400 })
+  if (!match) {
+    // 200 SILENCIEUX : un mail qui n'est pas pour nous ne mérite ni rejeu ni
+    // indice — mais le journal garde la trace.
+    console.warn('[inbound] destinataire sans adresse factures-… :', toField.slice(0, 160))
+    return NextResponse.json({ ok: false, motif: 'destinataire non reconnu' })
+  }
   const forwardId = match[1]
 
   const { data: profile } = await serviceSupabase
@@ -122,34 +278,65 @@ export async function POST(request: NextRequest) {
     .eq('billing_email_verified', true)
     .maybeSingle()
 
-  if (!profile) return NextResponse.json({ error: 'Profil non trouvé ou email non vérifié' }, { status: 404 })
+  if (!profile) {
+    console.warn('[inbound] forward_id inconnu ou adresse non vérifiée :', forwardId)
+    return NextResponse.json({ ok: false, motif: 'adresse inconnue' })
+  }
 
   // resolveClientId (user_id puis email) — delivery_email est le même champ que
   // celui qui a servi à créer la fiche client à l'onboarding. Le lookup direct
   // client_user_id perdait les factures du second login d'une boutique.
   const clientId = await resolveClientId(serviceSupabase, String(profile.user_id), (profile as { delivery_email?: string | null }).delivery_email ?? null)
 
-  if (!clientId) return NextResponse.json({ error: 'Client introuvable' }, { status: 404 })
+  if (!clientId) {
+    console.warn('[inbound] fiche introuvable pour forward_id :', forwardId)
+    return NextResponse.json({ ok: false, motif: 'fiche introuvable' })
+  }
 
-  // Extraire le contenu de l'email
-  const subject   = body.subject   || body.Subject   || ''
-  const textBody  = body.text      || body['body-plain']  || body.stripped_text || ''
-  const htmlBody  = body.html      || body['body-html']   || body.stripped_html || ''
-  const plainText = textBody || htmlBody.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+  // ── IDEMPOTENCE : le même mail ne crée jamais deux factures ───────────
+  // Resend représente l'événement tant qu'il n'a pas vu de 2xx : si la facture
+  // de CE mail existe déjà, on répond « déjà reçue » et rien d'autre ne bouge.
+  if (resendEmailId) {
+    const { data: deja } = await serviceSupabase
+      .from('invoices')
+      .select('id')
+      .eq('client_id', clientId)
+      .ilike('notes', `%[resend:${resendEmailId}]%`)
+      .limit(1)
+      .maybeSingle()
+    if (deja) return NextResponse.json({ ok: true, deja_recue: true, invoice_id: deja.id })
+  }
+
+  // Récupération du contenu Resend — APRÈS le tri du destinataire : on ne
+  // dépense pas d'appels API pour un mail qui ne nous concerne pas.
+  if (resendEmailId) {
+    const mail = await chargerMailResend(resendEmailId)
+    if (mail.erreur) {
+      console.error('[inbound] contenu irrécupérable :', mail.erreur)
+      return NextResponse.json({ error: mail.erreur }, { status: 422 })
+    }
+    subject = mail.subject
+    plainText = mail.texte
+    piece = mail.piece
+    motifPiece = mail.motifPiece
+    if (motifPiece) console.warn('[inbound] pièce jointe écartée :', motifPiece)
+  } else {
+    piece = await pickPdf(body, form)
+  }
 
   // ── LA PIÈCE JOINTE PDF EST LA SOURCE ──────────────────────────────────
   // Le PDF est archivé AVANT toute lecture : même s'il n'est pas exploitable
   // aujourd'hui, le document reste consultable et relisible plus tard. Un échec
   // d'archivage ne fait jamais échouer la réception — la facture existe quand
-  // même, simplement sans PDF (et l'écran le dit).
-  const piece = await pickPdf(body, form)
+  // même, simplement sans PDF (et l'écran le dit). Le nom est DÉTERMINISTE pour
+  // un mail Resend (rejeux sans doublon), aléatoire pour les formats en ligne.
   let filePath: string | null = null
   let pdfText = ''
   if (piece) {
-    const path = `${clientId}/mail-${randomUUID()}.pdf`
+    const path = `${clientId}/mail-${resendEmailId ?? randomUUID()}.pdf`
     const { error: upErr } = await serviceSupabase.storage
       .from('invoice-files')
-      .upload(path, piece.buffer, { contentType: 'application/pdf', upsert: false })
+      .upload(path, piece.buffer, { contentType: 'application/pdf', upsert: Boolean(resendEmailId) })
     if (!upErr) filePath = path
     else console.error('[inbound] archivage du PDF impossible:', upErr.message)
     try {
@@ -279,7 +466,7 @@ Si montant HT absent, déduire de TTC : HT = TTC / 1.{tva_rate/100+1}`
       // et suit ensuite exactement le chemin d'une facture Pennylane.
       file_path:      filePath,
       lines_status:   null,
-      notes:          `Reçue par email${piece ? ` · pièce jointe ${piece.filename}` : ' · sans pièce jointe (lu dans le corps du message)'}${memoryApplied ? ' · catégorie reprise de vos factures précédentes' : ''} — objet: ${subject.slice(0, 100)}`,
+      notes:          `Reçue par email${piece ? ` · pièce jointe ${piece.filename}` : ` · sans pièce jointe${motifPiece ? ` (${motifPiece})` : ' (lu dans le corps du message)'}`}${memoryApplied ? ' · catégorie reprise de vos factures précédentes' : ''} — objet: ${subject.slice(0, 100)}${resendEmailId ? ` [resend:${resendEmailId}]` : ''}`,
     })
     .select()
     .single()
