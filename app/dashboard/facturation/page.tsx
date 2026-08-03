@@ -1129,11 +1129,11 @@ export default function FacturationPage() {
             {mail.verified && mail.forward_id ? (
               <div className="mt-3 flex items-center gap-2 flex-wrap">
                 <code className="text-xs font-semibold text-pilote-800 bg-white ring-1 ring-pilote-100 rounded-lg px-3 py-2 tabular">
-                  factures-{mail.forward_id}@mail.getpilote.app
+                  factures-{mail.forward_id}@getpilote.app
                 </code>
                 <button
                   onClick={() => {
-                    navigator.clipboard?.writeText(`factures-${mail.forward_id}@mail.getpilote.app`)
+                    navigator.clipboard?.writeText(`factures-${mail.forward_id}@getpilote.app`)
                       .then(() => { setMailCopie(true); setTimeout(() => setMailCopie(false), 2000) })
                       .catch(() => setMailMsg({ ok: false, texte: 'Copie impossible — sélectionnez l\'adresse à la main.' }))
                   }}
