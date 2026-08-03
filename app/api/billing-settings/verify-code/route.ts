@@ -5,11 +5,11 @@ import crypto from 'crypto'
 export async function POST(request: NextRequest) {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { code } = await request.json()
-  if (!code || typeof code !== 'string') {
-    return NextResponse.json({ error: 'Code manquant' }, { status: 400 })
+  if (!code || code.length !== 6) {
+    return NextResponse.json({ error: 'Code invalide' }, { status: 400 })
   }
 
   const serviceSupabase = createServiceClient()
@@ -20,18 +20,21 @@ export async function POST(request: NextRequest) {
     .maybeSingle()
 
   if (!profile?.billing_email_code) {
-    return NextResponse.json({ error: 'Aucun code en attente. Renvoyez un code.' }, { status: 400 })
+    return NextResponse.json({ error: 'Aucun code en attente' }, { status: 400 })
   }
 
-  if (profile.billing_email_code_expires && new Date(profile.billing_email_code_expires) < new Date()) {
-    return NextResponse.json({ error: 'Code expiré. Renvoyez un code.' }, { status: 400 })
+  // Vérifier l'expiration
+  if (new Date(profile.billing_email_code_expires) < new Date()) {
+    return NextResponse.json({ error: 'Code expiré. Renvoyez un nouveau code.' }, { status: 400 })
   }
 
-  const codeHash = crypto.createHash('sha256').update(code.trim()).digest('hex')
-  if (codeHash !== profile.billing_email_code) {
+  // Vérifier le hash
+  const inputHash = crypto.createHash('sha256').update(code.trim()).digest('hex')
+  if (inputHash !== profile.billing_email_code) {
     return NextResponse.json({ error: 'Code incorrect' }, { status: 400 })
   }
 
+  // Marquer comme vérifié, effacer le code
   await serviceSupabase
     .from('profiles')
     .update({
