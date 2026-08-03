@@ -442,10 +442,43 @@ export async function GET() {
   ].filter((x): x is string => x !== null)
   const erreurLecture = refsPage.erreur ?? pointsPage.erreur ?? quarantainePage.erreur ?? pendingPage.erreur
 
+  // ── VUE PAR FOURNISSEUR (lot 40, modèle Otami) : la dépense réelle chez
+  // chaque maison sur 12 mois — factures matière uniquement (jamais les charges
+  // fixes). Les réfs, dates de dernier achat et tendances viennent des réfs déjà
+  // renvoyées ; ici, seulement ce que les réfs ne savent pas dire : l'argent.
+  // Les libellés partent BRUTS — la page les nettoie (nomFournisseur) et
+  // fusionne les variantes d'un même nom.
+  const cutoffFournisseurs = new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10)
+  const { data: factures12m } = await service.from('invoices')
+    .select('supplier_name, amount_ht, invoice_date')
+    .eq('client_id', clientId).eq('is_fixed_charge', false)
+    .gte('invoice_date', cutoffFournisseurs)
+    .limit(5000)
+  const depenseParFournisseur = new Map<string, { depense: number; factures: number; derniere: string | null }>()
+  for (const f of factures12m || []) {
+    const nom = String(f.supplier_name || '').trim()
+    if (!nom) continue
+    const cur = depenseParFournisseur.get(nom) || { depense: 0, factures: 0, derniere: null }
+    cur.depense += Number(f.amount_ht) || 0
+    cur.factures += 1
+    const d = String(f.invoice_date || '')
+    if (d && (!cur.derniere || d > cur.derniere)) cur.derniere = d
+    depenseParFournisseur.set(nom, cur)
+  }
+  const fournisseursOut = [...depenseParFournisseur.entries()]
+    .map(([nom, v]) => ({
+      nom,
+      depense_12m: Math.round(v.depense * 100) / 100,
+      factures_12m: v.factures,
+      derniere_facture: v.derniere,
+    }))
+    .sort((a, b) => b.depense_12m - a.depense_12m)
+
   return NextResponse.json({
     generics: genericsOut,
     queue: queueOut,
     pending: pendingOut,
+    fournisseurs: fournisseursOut,
     doutes: doutes || [],
     sans_pdf: sansPdf ?? 0,
     moves: movesOut,
