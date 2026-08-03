@@ -28,6 +28,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { isAdminEmail } from '@/lib/admins'
+import { resolveClientId } from '@/lib/resolve-client-id'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
@@ -94,15 +95,32 @@ async function lireQuotidien(req: NextRequest): Promise<NextResponse> {
     }
   }
 
-  // ── Les fiches à servir : celles qui ont une intégration comptable ACTIVE.
-  // Une fiche débranchée (bac à sable) sort de la tournée d'elle-même.
+  // ── Les fiches à servir : intégration comptable ACTIVE, ou canal E-MAIL
+  // VÉRIFIÉ. Les maisons sans logiciel de facturation reçoivent leurs factures
+  // par mail — personne ne clique pour elles non plus : la tournée passe aussi
+  // derrière elles. Une fiche débranchée SANS canal e-mail sort d'elle-même.
   const service = createServiceClient()
   const { data: integs } = await service.from('billing_integrations')
     .select('client_id')
     .eq('provider', 'pennylane').eq('is_active', true)
-  const clientIds = [...new Set((integs || []).map(i => String(i.client_id)))]
+  const avecPennylane = new Set((integs || []).map(i => String(i.client_id)))
+
+  // Canal e-mail : chaque profil vérifié est rattaché à sa fiche par le MÊME
+  // resolveClientId que la route de réception — les deux ne peuvent pas
+  // diverger sur qui appartient à qui.
+  const { data: profilsMail } = await service.from('profiles')
+    .select('user_id, delivery_email')
+    .not('billing_forward_id', 'is', null)
+    .eq('billing_email_verified', true)
+  const parMail = new Set<string>()
+  for (const p of profilsMail || []) {
+    const cid = await resolveClientId(service, String(p.user_id), (p as { delivery_email?: string | null }).delivery_email ?? null)
+    if (cid) parMail.add(cid)
+  }
+
+  const clientIds = [...new Set([...avecPennylane, ...parMail])]
   if (clientIds.length === 0) {
-    return NextResponse.json({ ok: true, fiches: [], message: 'Aucune fiche avec intégration active — rien à lire.' })
+    return NextResponse.json({ ok: true, fiches: [], message: 'Aucune fiche avec intégration active ni canal e-mail vérifié — rien à lire.' })
   }
   const { data: clients } = await service.from('clients').select('id, name').in('id', clientIds)
   const nomDe = new Map((clients || []).map(c => [String(c.id), String(c.name ?? '')]))
@@ -126,14 +144,18 @@ async function lireQuotidien(req: NextRequest): Promise<NextResponse> {
     if (tempsEcoule()) { bilan.coupee_par_le_temps = true; continue }
 
     // 1. RATTRAPAGE des PDF manquants — avant la lecture, pour que les factures
-    //    tout juste récupérées entrent dans la file de cette nuit.
-    for (let lot = 0; lot < LOTS_PDF && !tempsEcoule(); lot++) {
-      const r = await appel('/api/billing-integrations/backfill-pdf', { client_id: clientId }, 58_000)
-      if (r.__erreur) { bilan.echecs.push({ facture: 'rattrapage PDF', motif: String(r.__erreur) }); break }
-      bilan.pdf_recuperes += Number(r.recuperes) || 0
-      bilan.pdf_restants = Number(r.restantes) || 0
-      // Plus rien à rattraper, ou plus rien de rattrapABLE : inutile d'insister.
-      if (!r.restantes || !r.recuperes) break
+    //    tout juste récupérées entrent dans la file de cette nuit. Fiches
+    //    Pennylane seulement : une fiche « e-mail seulement » n'a rien à
+    //    rattraper, ses PDF arrivent AVEC le mail.
+    if (avecPennylane.has(clientId)) {
+      for (let lot = 0; lot < LOTS_PDF && !tempsEcoule(); lot++) {
+        const r = await appel('/api/billing-integrations/backfill-pdf', { client_id: clientId }, 58_000)
+        if (r.__erreur) { bilan.echecs.push({ facture: 'rattrapage PDF', motif: String(r.__erreur) }); break }
+        bilan.pdf_recuperes += Number(r.recuperes) || 0
+        bilan.pdf_restants = Number(r.restantes) || 0
+        // Plus rien à rattraper, ou plus rien de rattrapABLE : inutile d'insister.
+        if (!r.restantes || !r.recuperes) break
+      }
     }
 
     // 2. LECTURE des factures jamais lues — un PDF présent, aucun statut.
