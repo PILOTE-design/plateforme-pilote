@@ -25,9 +25,10 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import { ShoppingBasket, FileSearch, TrendingUp, TrendingDown, Search, RefreshCw, Link2, ChevronDown, ChevronRight, Pencil, Trash2, Unlink, X, Check, AlertTriangle, Sparkles, ChefHat, HelpCircle } from 'lucide-react'
+import { ShoppingBasket, FileSearch, TrendingUp, TrendingDown, Search, RefreshCw, Link2, ChevronDown, ChevronRight, Pencil, Trash2, Unlink, X, Check, AlertTriangle, Sparkles, ChefHat, HelpCircle, Store } from 'lucide-react'
 import { useToast } from '@/components/ui/toast'
 import { guessBaseUnit, unitKind } from '@/lib/mercuriale-auto'
+import { matchFamilyId, type MarginFamily } from '@/lib/margin-families'
 
 type Ref = {
   id: string
@@ -118,6 +119,15 @@ type Move = {
   invoice_id: string | null
   /** Saut ≥ ±25 % : signalement « à vérifier », pas un verdict */
   anomalie: boolean
+}
+
+/** Dépense réelle chez un fournisseur sur 12 mois (factures matière) — vue
+ *  « Fournisseurs » (lot 40, modèle Otami). Libellé BRUT, nettoyé à l'affichage. */
+type FournisseurDepense = {
+  nom: string
+  depense_12m: number
+  factures_12m: number
+  derniere_facture: string | null
 }
 
 type PendingInvoice = {
@@ -255,8 +265,14 @@ export default function MercurialePage() {
   const [validant, setValidant] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
-  // Trois onglets par intention : consulter (prix), agir (traiter), ranger (organiser)
-  const [view, setView] = useState<'prix' | 'traiter' | 'organiser'>('prix')
+  // Quatre onglets par intention : consulter (prix), par maison (fournisseurs),
+  // agir (traiter), ranger (organiser)
+  const [view, setView] = useState<'prix' | 'traiter' | 'organiser' | 'fournisseurs'>('prix')
+  // Vue « Fournisseurs » : dépenses 12 mois par maison (API) + familles de la
+  // boutique (référentiel des marges) pour classer chaque catalogue
+  const [fournisseurs, setFournisseurs] = useState<FournisseurDepense[]>([])
+  const [familles, setFamilles] = useState<MarginFamily[]>([])
+  const [fournisseurSel, setFournisseurSel] = useState<string | null>(null)
   const [processing, setProcessing] = useState(false)
   const [progress, setProgress] = useState({ done: 0, total: 0, errors: 0 })
   const stopRef = useRef(false)
@@ -310,7 +326,11 @@ export default function MercurialePage() {
     // travaille. Repasser par l'écran de chargement après chaque micro-action
     // faisait clignoter toute la page pour un facteur de conversion saisi.
     if (!opts?.silencieux) setLoading(true)
-    const data = await fetch('/api/mercuriale', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).catch(() => null)
+    const [data, fam] = await Promise.all([
+      fetch('/api/mercuriale', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch('/api/margin-families', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).catch(() => null),
+    ])
+    if (fam && Array.isArray(fam.families)) setFamilles(fam.families as MarginFamily[])
     if (data) {
       setGenerics(Array.isArray(data.generics) ? data.generics : [])
       setQueue(Array.isArray(data.queue) ? data.queue : [])
@@ -318,6 +338,7 @@ export default function MercurialePage() {
       setDoutes(Array.isArray(data.doutes) ? data.doutes : [])
       setMoves(Array.isArray(data.moves) ? data.moves : [])
       setMovesTotal(Number(data.moves_total) || 0)
+      setFournisseurs(Array.isArray(data.fournisseurs) ? data.fournisseurs : [])
       setSansPdf(Number(data.sans_pdf) || 0)
       setLectureIncomplete(typeof data.lecture_incomplete === 'string' ? data.lecture_incomplete : null)
     }
@@ -984,6 +1005,73 @@ export default function MercurialePage() {
    *  chiffre qui dit si la mercuriale a besoin de vous aujourd'hui. */
   const aTraiterTotal = pending.length + doutes.length + queueCounts.produits + refsSansConversion.length + sansPdf
 
+  // ── VUE PAR FOURNISSEUR (lot 40, modèle Otami) : la mercuriale de chaque
+  // maison — ses réfs, leurs derniers prix et tendances, classées par familles
+  // de la boutique, avec la dépense réelle 12 mois en tête de carte. ──
+  /** Toutes les réfs (rattachées + en file), avec leur générique éventuel */
+  const toutesRefs = useMemo(() => [
+    ...generics.flatMap(g => g.refs.map(r => ({ r, g: g as Generic | null }))),
+    ...queue.map(r => ({ r, g: null as Generic | null })),
+  ], [generics, queue])
+  /** Réfs groupées par maison (nom nettoyé) + date du dernier achat connu */
+  const refsParFournisseur = useMemo(() => {
+    const m = new Map<string, { refs: { r: Ref; g: Generic | null }[]; dernier: string | null }>()
+    for (const x of toutesRefs) {
+      const nom = nomFournisseur(x.r.supplier_name) || 'Fournisseur inconnu'
+      const cur = m.get(nom) || { refs: [], dernier: null }
+      cur.refs.push(x)
+      const d = String(x.r.last_seen || x.r.last_price_date || '')
+      if (d && (!cur.dernier || d > cur.dernier)) cur.dernier = d
+      m.set(nom, cur)
+    }
+    return m
+  }, [toutesRefs])
+  /** Cartes fournisseurs : réfs + dépense 12 mois (les variantes d'un même nom
+   *  brut fusionnent après nettoyage), triées par dépense — l'argent d'abord. */
+  const cartesFournisseurs = useMemo(() => {
+    const dep = new Map<string, { depense: number; factures: number; derniere: string | null }>()
+    for (const f of fournisseurs) {
+      const nom = nomFournisseur(f.nom) || 'Fournisseur inconnu'
+      const cur = dep.get(nom) || { depense: 0, factures: 0, derniere: null }
+      cur.depense += f.depense_12m
+      cur.factures += f.factures_12m
+      if (f.derniere_facture && (!cur.derniere || f.derniere_facture > cur.derniere)) cur.derniere = f.derniere_facture
+      dep.set(nom, cur)
+    }
+    const noms = new Set([...refsParFournisseur.keys(), ...dep.keys()])
+    return [...noms].map(nom => ({
+      nom,
+      nbRefs: refsParFournisseur.get(nom)?.refs.length ?? 0,
+      dernier: refsParFournisseur.get(nom)?.dernier ?? dep.get(nom)?.derniere ?? null,
+      depense: Math.round((dep.get(nom)?.depense ?? 0) * 100) / 100,
+      factures: dep.get(nom)?.factures ?? 0,
+    })).sort((a, b) => b.depense - a.depense || b.nbRefs - a.nbRefs || a.nom.localeCompare(b.nom, 'fr'))
+  }, [refsParFournisseur, fournisseurs])
+  /** Catalogue du fournisseur ouvert : réfs classées par famille de la boutique
+   *  (référentiel des marges, sous-familles ramenées à leur racine), filtrées
+   *  par la recherche. « Autres » ramasse ce qu'aucune famille ne reconnaît. */
+  const catalogueFournisseur = useMemo(() => {
+    if (!fournisseurSel) return null
+    const entree = refsParFournisseur.get(fournisseurSel)
+    if (!entree) return null
+    const q = search.trim().toLowerCase()
+    const famById = new Map(familles.map(f => [f.id, f]))
+    const sections = new Map<string, { r: Ref; g: Generic | null }[]>()
+    for (const x of entree.refs) {
+      if (q && !x.r.name.toLowerCase().includes(q) && !(x.g && x.g.name.toLowerCase().includes(q))) continue
+      const libelle = x.g ? x.g.name : x.r.name
+      const fid = matchFamilyId(libelle, familles)
+      const fam = fid ? famById.get(fid) ?? null : null
+      const racine = fam ? (fam.parent_id ? famById.get(fam.parent_id)?.name ?? fam.name : fam.name) : 'Autres'
+      const arr = sections.get(racine) || []
+      arr.push(x)
+      sections.set(racine, arr)
+    }
+    return [...sections.entries()]
+      .map(([titre, refs]) => ({ titre, refs: [...refs].sort((a, b) => a.r.name.localeCompare(b.r.name, 'fr')) }))
+      .sort((a, b) => b.refs.length - a.refs.length || a.titre.localeCompare(b.titre, 'fr'))
+  }, [fournisseurSel, refsParFournisseur, familles, search])
+
   /** Ligne d'une réf en file : « Associer » l'ajoute à l'association en cours */
   const renderRef = (r: Ref) => {
     const isSel = selIds.includes(r.id)
@@ -1163,6 +1251,10 @@ export default function MercurialePage() {
           <button onClick={() => setView('prix')}
             className={`text-xs font-semibold rounded-full px-3.5 py-1.5 transition-colors ${view === 'prix' ? 'bg-pilote text-white shadow-card' : 'text-pilote hover:bg-pilote-100'}`}>
             Prix du jour
+          </button>
+          <button onClick={() => { setView('fournisseurs'); setFournisseurSel(null) }}
+            className={`text-xs font-semibold rounded-full px-3.5 py-1.5 transition-colors ${view === 'fournisseurs' ? 'bg-pilote text-white shadow-card' : 'text-pilote hover:bg-pilote-100'}`}>
+            Fournisseurs
           </button>
           <button onClick={() => setView('traiter')}
             className={`flex items-center gap-1.5 text-xs font-semibold rounded-full px-3.5 py-1.5 transition-colors ${view === 'traiter' ? 'bg-pilote text-white shadow-card' : 'text-pilote hover:bg-pilote-100'}`}>
@@ -1751,6 +1843,112 @@ export default function MercurialePage() {
                 </div>
               )}
             </div>
+          ) : view === 'fournisseurs' ? (
+            /* ══ Onglet FOURNISSEURS (lot 40, modèle Otami) : la mercuriale de
+                chaque maison — cartes triées par la dépense réelle 12 mois,
+                puis le catalogue du fournisseur classé par familles. ══ */
+            fournisseurSel === null ? (
+              <div>
+                <div className="flex items-baseline gap-2 mb-3">
+                  <h2 className="text-sm font-extrabold uppercase tracking-wider text-gray-700">Mes fournisseurs</h2>
+                  <span className="text-[11px] text-gray-400 tabular">
+                    {cartesFournisseurs.length} maison{cartesFournisseurs.length > 1 ? 's' : ''} · triées par dépense sur 12 mois
+                  </span>
+                </div>
+                {cartesFournisseurs.length === 0 ? (
+                  <div className="bg-white rounded-2xl border border-dashed border-gray-200 py-14 text-center">
+                    <Store className="w-10 h-10 text-gray-300 mx-auto mb-3" />
+                    <p className="text-sm font-medium text-gray-500">Aucun fournisseur pour l&apos;instant — ils apparaîtront à la première facture lue.</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {cartesFournisseurs
+                      .filter(f => !search.trim() || f.nom.toLowerCase().includes(search.trim().toLowerCase()))
+                      .map(f => (
+                        <button key={f.nom} onClick={() => setFournisseurSel(f.nom)}
+                          className="text-left bg-white rounded-2xl border border-gray-100 shadow-card p-5 hover:shadow-card-hover hover:-translate-y-0.5 transition-all">
+                          <div className="flex items-center gap-3 mb-3">
+                            <div className="w-10 h-10 rounded-xl bg-pilote-50 flex items-center justify-center flex-shrink-0">
+                              <span className="text-sm font-extrabold text-pilote">{f.nom.slice(0, 2).toUpperCase()}</span>
+                            </div>
+                            <p className="text-sm font-bold text-gray-900 leading-snug flex-1">{f.nom}</p>
+                          </div>
+                          <p className="text-2xl font-extrabold tracking-tight text-gray-900 tabular">
+                            {f.depense > 0 ? fmtEuro(f.depense) : '—'}
+                            <span className="text-xs font-semibold text-gray-400 ml-1.5">/ 12 mois</span>
+                          </p>
+                          <p className="text-[11px] text-gray-500 mt-2 tabular">
+                            {f.nbRefs} réf{f.nbRefs > 1 ? 's' : ''}
+                            {f.factures > 0 ? ` · ${f.factures} facture${f.factures > 1 ? 's' : ''}` : ''}
+                            {f.dernier ? ` · dernier achat ${fmtDate(f.dernier)}` : ''}
+                          </p>
+                        </button>
+                      ))}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div>
+                <div className="flex items-center gap-3 mb-3 flex-wrap">
+                  <button onClick={() => setFournisseurSel(null)}
+                    className="flex items-center gap-1 text-xs font-semibold text-pilote hover:underline">
+                    <ChevronRight className="w-3.5 h-3.5 rotate-180" />Tous les fournisseurs
+                  </button>
+                  <h2 className="text-sm font-extrabold uppercase tracking-wider text-gray-700">{fournisseurSel}</h2>
+                  <span className="text-[11px] text-gray-400 tabular">
+                    {refsParFournisseur.get(fournisseurSel)?.refs.length ?? 0} réf{(refsParFournisseur.get(fournisseurSel)?.refs.length ?? 0) > 1 ? 's' : ''}
+                    {(() => { const d = refsParFournisseur.get(fournisseurSel)?.dernier; return d ? ` · dernier achat ${fmtDate(d)}` : '' })()}
+                  </span>
+                </div>
+                {(catalogueFournisseur ?? []).length === 0 && (
+                  <div className="bg-white rounded-2xl border border-dashed border-gray-200 py-12 text-center">
+                    <p className="text-sm font-medium text-gray-500">Aucune réf{search ? ' ne correspond à la recherche' : ''} chez ce fournisseur.</p>
+                  </div>
+                )}
+                {(catalogueFournisseur ?? []).map(sec => (
+                  <div key={sec.titre} className="mb-5">
+                    <div className="flex items-baseline gap-2 mb-2">
+                      <h3 className="text-xs font-bold uppercase tracking-wider text-gray-400">{sec.titre}</h3>
+                      <span className="text-[11px] text-gray-400 tabular">{sec.refs.length}</span>
+                    </div>
+                    <div className="bg-white rounded-2xl border border-gray-100 shadow-card overflow-hidden divide-y divide-gray-50">
+                      {sec.refs.map(({ r, g }) => (
+                        <div key={r.id} className="px-4 py-2.5 flex items-center gap-3 flex-wrap text-xs">
+                          <span className="flex-1 min-w-[220px]">
+                            <span className="text-sm font-semibold text-gray-900">{r.name}</span>
+                            {g ? (
+                              <button onClick={() => { setView('prix'); setSearch(''); setOpenId(g.id); setEditId(null) }}
+                                title="Ouvrir cet article dans « Prix du jour »"
+                                className="ml-1.5 text-[10px] font-semibold text-pilote bg-pilote-50 ring-1 ring-pilote-100 rounded-full px-2 py-0.5 hover:bg-pilote-100 transition-colors">
+                                {g.name}
+                              </button>
+                            ) : (
+                              <span className="ml-1.5 text-[10px] font-semibold text-amber-700 bg-amber-50 rounded-full px-2 py-0.5">à rapprocher</span>
+                            )}
+                          </span>
+                          <span className="text-gray-400 w-12 text-center flex-shrink-0">{r.unit || '—'}</span>
+                          {(() => {
+                            const d = r.last_seen || r.last_price_date
+                            const age = priceAge(d ? String(d).slice(0, 10) : null)
+                            const vieux = age !== null && age > 30
+                            return (
+                              <span className={`tabular w-24 text-right flex-shrink-0 ${vieux ? 'text-amber-600 font-semibold' : 'text-gray-400'}`}
+                                title={vieux ? `Dernier achat il y a ${age} jours — ce prix a pu bouger depuis` : undefined}>
+                                {d ? fmtDate(String(d).slice(0, 10)) : '—'}
+                              </span>
+                            )
+                          })()}
+                          <span className="font-bold text-gray-900 tabular w-28 text-right flex-shrink-0">
+                            {r.last_price_ht !== null ? `${fmtEuro(Number(r.last_price_ht))}${r.unit ? ` / ${r.unit}` : ''}` : '—'}
+                          </span>
+                          <span className="w-16 text-right flex-shrink-0"><Variation pct={r.variation_pct} /></span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )
           ) : view === 'prix' ? (
             /* ══ Onglet PRIX DU JOUR : le catalogue des prix ══ */
             <>
