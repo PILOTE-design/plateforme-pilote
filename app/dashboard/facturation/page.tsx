@@ -342,7 +342,10 @@ export default function FacturationPage() {
   const [settForm,  setSettForm]  = useState({ company_name: '', siret: '' })
   // Connecteur EMAIL : pour les maisons sans logiciel de facturation. L'adresse
   // de transfert n'existe qu'une fois l'email du gérant vérifié par code.
-  const [mail, setMail] = useState<{ forward_id: string | null; verified: boolean; email: string | null }>({ forward_id: null, verified: false, email: null })
+  // `confirmation` : le code que GMAIL envoie à l'adresse PILOTE quand le
+  // boucher met en place le transfert automatique — relayé ici (lot 34).
+  type ConfirmationTransfert = { code?: string | null; lien?: string | null; recu_le?: string } | null
+  const [mail, setMail] = useState<{ forward_id: string | null; verified: boolean; email: string | null; confirmation: ConfirmationTransfert }>({ forward_id: null, verified: false, email: null, confirmation: null })
   const [mailStep, setMailStep] = useState<'idle' | 'code'>('idle')
   const [mailAddr, setMailAddr] = useState('')
   const [mailCode, setMailCode] = useState('')
@@ -401,7 +404,7 @@ export default function FacturationPage() {
     setSummary(sumRes)
     const s = settRes || {}
     setSettForm({ company_name: s.company_name || '', siret: s.siret || '' })
-    setMail({ forward_id: s.billing_forward_id || null, verified: Boolean(s.billing_email_verified), email: s.billing_email || null })
+    setMail({ forward_id: s.billing_forward_id || null, verified: Boolean(s.billing_email_verified), email: s.billing_email || null, confirmation: s.billing_forward_confirmation ?? null })
     if (s.billing_email && !mailAddr) setMailAddr(String(s.billing_email))
     if (caRes && !caRes.error) setCaForm({ ca_total: String(caRes.ca_total || ''), ca_boucherie: String(caRes.ca_boucherie || ''), ca_charcuterie: String(caRes.ca_charcuterie || ''), ca_traiteur: String(caRes.ca_traiteur || ''), ca_divers: String(caRes.ca_divers || '') })
     else setCaForm({ ca_total: '', ca_boucherie: '', ca_charcuterie: '', ca_traiteur: '', ca_divers: '' })
@@ -435,6 +438,20 @@ export default function FacturationPage() {
     setMailBusy(false)
     if (r?.ok) { setMailStep('idle'); setMailCode(''); setMailMsg({ ok: true, texte: 'Adresse vérifiée — vous pouvez transférer vos factures.' }); load() }
     else setMailMsg({ ok: false, texte: d?.error || 'Code refusé.' })
+  }
+
+  /** Va chercher le code de confirmation que Gmail a envoyé à l'adresse
+   *  PILOTE (transfert automatique) — il arrive en quelques secondes après la
+   *  demande côté Gmail ; ce bouton le relève sans recharger toute la page. */
+  async function verifierCodeTransfert() {
+    setMailBusy(true)
+    const s = await fetch('/api/billing-settings', { cache: 'no-store' }).then(r => r.json()).catch(() => null)
+    setMailBusy(false)
+    if (s && !s.error) {
+      setMail({ forward_id: s.billing_forward_id || null, verified: Boolean(s.billing_email_verified), email: s.billing_email || null, confirmation: s.billing_forward_confirmation ?? null })
+      if (s.billing_forward_confirmation) { setMailMsg(null); return }
+    }
+    setMailMsg({ ok: false, texte: 'Pas encore de code reçu — demandez d\'abord l\'ajout de l\'adresse dans Gmail (étapes 1-2), puis re-cliquez.' })
   }
 
   const loadIntegrations = useCallback(async () => {
@@ -1117,11 +1134,12 @@ export default function FacturationPage() {
                 <Mail className="w-4 h-4 text-white" />
               </div>
               <div className="flex-1 min-w-[240px]">
-                <p className="font-bold text-sm text-gray-900">Pas de logiciel de facturation ? Transférez vos factures par email</p>
+                <p className="font-bold text-sm text-gray-900">Pas de logiciel de facturation ? Vos factures arrivent par email, toutes seules</p>
                 <p className="text-[11px] text-gray-500 mt-0.5 leading-relaxed">
-                  Vous transférez la facture reçue de votre fournisseur à votre adresse PILOTE ; la pièce jointe PDF est
-                  archivée et lue exactement comme une facture synchronisée — lignes, mercuriale, prix du jour.
-                  Elle arrive « à vérifier » et n&apos;entre dans vos marges qu&apos;après votre validation.
+                  Mettez en place le transfert automatique UNE fois (guide ci-dessous), ou donnez simplement cette adresse
+                  à vos fournisseurs : chaque facture qui arrive dans votre boîte file ici sans aucun geste. La pièce
+                  jointe PDF est archivée et lue exactement comme une facture synchronisée — lignes, mercuriale, prix du
+                  jour. Elle arrive « à vérifier » et n&apos;entre dans vos marges qu&apos;après votre validation.
                 </p>
               </div>
             </div>
@@ -1143,6 +1161,56 @@ export default function FacturationPage() {
                 <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-green-700 bg-green-50 rounded-full px-2 py-1">
                   <Check className="w-3 h-3" />Adresse active{mail.email ? ` · vérifiée sur ${mail.email}` : ''}
                 </span>
+
+                {/* Le code que Gmail a envoyé pour valider le transfert automatique —
+                    capté par PILOTE et relayé ici, sinon la mise en place mourrait
+                    à cette étape (le code part à l'adresse PILOTE, pas au boucher). */}
+                {mail.confirmation && (
+                  <div className="w-full mt-1 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5">
+                    <p className="text-xs font-bold text-amber-800">Gmail demande une confirmation — la voici :</p>
+                    {mail.confirmation.code && (
+                      <p className="mt-1 text-lg font-extrabold tracking-widest text-gray-900 tabular">{mail.confirmation.code}</p>
+                    )}
+                    <p className="text-[11px] text-amber-700 mt-0.5">
+                      Saisissez ce code dans la fenêtre Gmail « Ajouter une adresse de transfert »
+                      {mail.confirmation.lien ? <> — ou <a href={mail.confirmation.lien} target="_blank" rel="noreferrer" className="font-semibold underline">confirmez en un clic</a>, puis activez le transfert dans Gmail.</> : ', puis activez le transfert.'}
+                    </p>
+                  </div>
+                )}
+
+                {/* Mise en place du transfert AUTOMATIQUE : configurée une fois,
+                    plus aucun geste — facture reçue = facture arrivée ici. */}
+                <details className="w-full mt-1">
+                  <summary className="cursor-pointer text-xs font-semibold text-pilote hover:underline">
+                    Mettre en place le transfert automatique (une fois, 2 minutes)
+                  </summary>
+                  <div className="mt-2 grid md:grid-cols-2 gap-3">
+                    <div className="rounded-xl border border-gray-100 bg-white p-3">
+                      <p className="text-xs font-bold text-gray-900 mb-1.5">Sur Gmail</p>
+                      <ol className="text-[11px] text-gray-600 space-y-1 list-decimal list-inside leading-relaxed">
+                        <li>Roue dentée → « Voir tous les paramètres » → onglet <span className="font-semibold">Transfert et POP/IMAP</span></li>
+                        <li>« Ajouter une adresse de transfert » → collez votre adresse PILOTE ci-dessus</li>
+                        <li>Gmail envoie un code de confirmation : <span className="font-semibold">il s&apos;affiche ici</span> — cliquez « Relever le code Gmail »</li>
+                        <li>Choisissez « Transférer une copie » : vos mails restent aussi dans votre boîte</li>
+                      </ol>
+                    </div>
+                    <div className="rounded-xl border border-gray-100 bg-white p-3">
+                      <p className="text-xs font-bold text-gray-900 mb-1.5">Sur Outlook</p>
+                      <ol className="text-[11px] text-gray-600 space-y-1 list-decimal list-inside leading-relaxed">
+                        <li>Roue dentée → « Courrier » → <span className="font-semibold">Transfert</span></li>
+                        <li>« Activer le transfert » → collez votre adresse PILOTE → cochez « Conserver une copie »</li>
+                        <li>Aucun code demandé — c&apos;est terminé</li>
+                      </ol>
+                    </div>
+                  </div>
+                  <div className="mt-2 flex items-center gap-2 flex-wrap">
+                    <button onClick={verifierCodeTransfert} disabled={mailBusy}
+                      className="text-xs font-semibold text-pilote border border-pilote-200 bg-white rounded-lg px-2.5 py-1.5 hover:bg-pilote-50 transition-colors disabled:opacity-50">
+                      {mailBusy ? 'Vérification…' : 'Relever le code Gmail'}
+                    </button>
+                    <span className="text-[10px] text-gray-400">Une fois le transfert actif : plus aucun geste, chaque facture reçue arrive ici et la lecture se fait la nuit.</span>
+                  </div>
+                </details>
               </div>
             ) : (
               <div className="mt-3 flex items-center gap-2 flex-wrap">
