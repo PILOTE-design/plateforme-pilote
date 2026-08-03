@@ -29,7 +29,16 @@ type Invoice = {
   notes?: string; week_number: number; year: number
   is_fixed_charge?: boolean; period_days?: number | null; prorata_ht?: number | null
   status?: string | null
+  /** Document archivé + issue de sa lecture — pour proposer le téléversement
+   *  (lot 31) uniquement quand la facture n'a pas de lecture exploitable. */
+  file_path?: string | null
+  lines_status?: string | null
 }
+
+/** Statuts SANS lecture exploitable : le document peut être (re)fourni. Même
+ *  liste que la route de téléversement — les deux doivent dire pareil. */
+const SANS_LECTURE = new Set(['no_file', 'scan_illisible', 'error', 'hors_matiere'])
+const documentRemplacable = (inv: Invoice) => !inv.file_path || SANS_LECTURE.has(String(inv.lines_status ?? ''))
 
 type WeeklyCA = {
   ca_total: number; ca_boucherie: number; ca_charcuterie: number; ca_traiteur: number
@@ -629,6 +638,46 @@ export default function FacturationPage() {
     const res = await fetch(`/api/invoices/${inv.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ is_fixed_charge: false, charge_family_id: null }) }).catch(() => null)
     if (res?.ok) { toast({ variant: 'success', title: `« ${inv.supplier_name} » repassée en achats` }); load() }
     else toast({ variant: 'error', title: 'Opération impossible' })
+  }
+
+  // ── Téléversement du document d'une charge (lot 31) ──
+  // Une facture mal transmise arrive en charges structurelles SANS document :
+  // le boucher fournit le PDF, la lecture juge sur pièce — si c'est de la
+  // matière, l'étiquette tombe toute seule et elle repasse en achats.
+  const [televersant, setTeleversant] = useState<string | null>(null)
+  async function televerserDocument(inv: Invoice, fichier: File | null) {
+    if (!fichier || televersant) return
+    setTeleversant(inv.id)
+    const form = new FormData()
+    form.append('file', fichier)
+    const res = await fetch(`/api/invoices/${inv.id}/document`, { method: 'POST', body: form }).catch(() => null)
+    const data = res ? await res.json().catch(() => null) : null
+    if (!res?.ok) {
+      setTeleversant(null)
+      toast({ variant: 'error', title: `${inv.supplier_name} : téléversement refusé`, description: data?.error || 'Réessayez.' })
+      return
+    }
+    toast({ variant: 'info', title: `${inv.supplier_name} : document reçu`, description: 'Lecture en cours — elle décide de la nature de la facture.' })
+    // La lecture juge le document (relire saute la mémoire fournisseur : c'est
+    // une nouvelle pièce, elle mérite sa propre audience).
+    const rl = await fetch('/api/invoices/extract-lines', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ invoice_id: inv.id, relire: true }),
+    }).catch(() => null)
+    const rd = rl ? await rl.json().catch(() => null) : null
+    setTeleversant(null)
+    if (rl?.ok && (rd?.status === 'done' || rd?.status === 'partial')) {
+      toast({
+        variant: 'success',
+        title: `${inv.supplier_name} : reclassée en achats de la semaine`,
+        description: `Le document porte de la matière — ${rd?.prix_promus ?? 0} prix retenu${(rd?.prix_promus ?? 0) > 1 ? 's' : ''} pour la mercuriale.`,
+      })
+    } else if (rl?.ok && rd?.status === 'hors_matiere') {
+      toast({ variant: 'info', title: `${inv.supplier_name} : le document confirme une charge`, description: 'Elle reste en charges structurelles — rien d\'anormal si c\'est un loyer, un abonnement, une assurance…' })
+    } else {
+      toast({ variant: 'error', title: `${inv.supplier_name} : lecture du document en échec`, description: rd?.error || 'Le document est archivé — relancez la lecture depuis la mercuriale.' })
+    }
+    load()
   }
 
   async function setChargeFam(inv: Invoice, familyId: string) {
@@ -1264,6 +1313,17 @@ export default function FacturationPage() {
                     <option value="">Famille de charge…</option>
                     {chargeFamilies.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
                   </select>
+                  {/* Facture mal transmise ? Le boucher fournit le document, la
+                      lecture juge sur pièce : matière → retour en achats tout
+                      seul ; charge → elle reste ici, confirmée. (lot 31) */}
+                  {documentRemplacable(inv) && (
+                    <label className={`text-[11px] font-bold rounded-lg px-2.5 py-1.5 cursor-pointer transition-colors ${televersant === inv.id ? 'text-gray-400 bg-gray-100' : 'text-white bg-pilote hover:bg-pilote-hover shadow-card'}`}
+                      title="Joindre le PDF de cette facture : sa lecture décidera si c'est de la matière (retour en achats) ou bien une charge">
+                      {televersant === inv.id ? 'Lecture…' : 'Téléverser la facture'}
+                      <input type="file" accept="application/pdf,.pdf" className="hidden" disabled={televersant !== null}
+                        onChange={e => { const f = e.target.files?.[0] ?? null; e.target.value = ''; televerserDocument(inv, f) }} />
+                    </label>
+                  )}
                   <button onClick={() => moveBackToVariable(inv)}
                     className="text-[11px] font-semibold text-gray-400 hover:text-pilote hover:underline">Repasser en achats</button>
                 </div>
