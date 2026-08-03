@@ -7,7 +7,7 @@
 // ici ne pose d'état persistant ni ne fetch.
 
 import { useMemo } from 'react'
-import { TrendingUp, TrendingDown, Store, ChevronRight } from 'lucide-react'
+import { TrendingUp, TrendingDown, Store, ChevronRight, Lock } from 'lucide-react'
 import { matchFamilyId, type MarginFamily } from '@/lib/margin-families'
 
 // ── Formats partagés ──────────────────────────────────────
@@ -441,6 +441,160 @@ export function VueRayons({ produits, familles, search, sel, onSel, onOuvrirProd
           </div>
         </div>
       ))}
+    </div>
+  )
+}
+
+// ── Prix bloqués (lot 43, modèle Otami) ───────────────────
+
+/** Une facture payée AU-DESSUS d'un prix bloqué — un écart à réclamer */
+export type EcartBloque = {
+  article_id: string
+  ref_name: string
+  supplier_name: string | null
+  generic_id: string | null
+  generic_name: string | null
+  unit: string | null
+  bloque: number
+  paye: number
+  qte: number | null
+  /** (payé − bloqué) × quantité de la ligne — null si la facture n'a pas de quantité lue */
+  ecart_ht: number | null
+  date: string
+  invoice_id: string | null
+}
+
+/** Verrou de prix d'une réf, dans la fiche produit : bloquer le prix négocié,
+ *  le débloquer, ou voir depuis quand il tient. Le prix proposé par défaut est
+ *  le dernier payé — on verrouille ce qu'on vient d'accepter. */
+export function VerrouPrixRef({ r, draft, onDraft, onVerrou, enCours }: {
+  r: { id: string; unit: string | null; last_price_ht: number | null; blocked_price_ht?: number | string | null; blocked_at?: string | null }
+  draft: string
+  onDraft: (v: string) => void
+  onVerrou: (id: string, prix: number | null) => void
+  enCours: boolean
+}) {
+  const bloque = r.blocked_price_ht !== null && r.blocked_price_ht !== undefined ? Number(r.blocked_price_ht) : null
+  if (bloque !== null && bloque > 0) {
+    return (
+      <span className="flex items-center gap-1.5 text-[10px] font-semibold text-green-800 bg-green-50 ring-1 ring-green-200 rounded-full px-2 py-0.5 tabular"
+        title={`Prix négocié verrouillé${r.blocked_at ? ` le ${fmtDate(String(r.blocked_at).slice(0, 10))}` : ''} — toute facture au-dessus sera signalée dans « À traiter »`}>
+        <Lock className="w-3 h-3" />bloqué à {fmtEuro(bloque)}{r.unit ? ` / ${r.unit}` : ''}
+        <button onClick={() => onVerrou(r.id, null)} disabled={enCours}
+          className="font-bold underline hover:text-green-900 disabled:opacity-50">Débloquer</button>
+      </span>
+    )
+  }
+  return (
+    <span className="flex items-center gap-1.5 text-[10px] text-gray-400 tabular">
+      <input value={draft} inputMode="decimal"
+        placeholder={r.last_price_ht !== null ? String(Number(r.last_price_ht)) : 'prix'}
+        onChange={e => onDraft(e.target.value)}
+        title="Prix négocié à verrouiller (par défaut : le dernier payé)"
+        className="w-16 border border-gray-200 rounded px-1.5 py-0.5 text-right tabular bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200" />
+      <button onClick={() => {
+        const v = parseFloat((draft || '').replace(',', '.'))
+        const prix = v > 0 ? v : (r.last_price_ht !== null ? Number(r.last_price_ht) : NaN)
+        if (prix > 0) onVerrou(r.id, prix)
+      }} disabled={enCours}
+        title="Verrouiller le prix négocié avec le fournisseur : toute facture au-dessus sera signalée dans « À traiter »"
+        className="flex items-center gap-1 font-semibold text-gray-400 hover:text-pilote transition-colors disabled:opacity-50">
+        <Lock className="w-3 h-3" />Bloquer
+      </button>
+    </span>
+  )
+}
+
+/** Écarts sur prix bloqués — section « À traiter » : le fournisseur a facturé
+ *  au-dessus du prix convenu. Groupé par réf (le plus gros cumul d'abord),
+ *  trois gestes par ligne : voir la facture, rebloquer au nouveau prix
+ *  (l'accepter), ou déverrouiller. Le plafond de liste est annoncé, et un
+ *  dépassement sans quantité lue est COMPTÉ comme non chiffré, jamais omis. */
+export function BlocEcartsBloques({ ecarts, total, enCours, onOuvrirProduit, onVerrou }: {
+  ecarts: EcartBloque[]
+  total: number
+  enCours: string | null
+  onOuvrirProduit: (genericId: string) => void
+  onVerrou: (articleId: string, prix: number | null) => void
+}) {
+  const groupes = useMemo(() => {
+    const m = new Map<string, EcartBloque[]>()
+    for (const e of ecarts) {
+      const arr = m.get(e.article_id) || []
+      arr.push(e)
+      m.set(e.article_id, arr)
+    }
+    return [...m.values()].map(lignes => {
+      const tri = [...lignes].sort((a, b) => String(b.date).localeCompare(String(a.date)))
+      const cumul = tri.reduce((s, l) => s + (l.ecart_ht ?? 0), 0)
+      const sansMontant = tri.filter(l => l.ecart_ht === null).length
+      return { ref: tri[0], lignes: tri, cumul: Math.round(cumul * 100) / 100, sansMontant }
+    }).sort((a, b) => b.cumul - a.cumul || String(b.ref.date).localeCompare(String(a.ref.date)))
+  }, [ecarts])
+  if (groupes.length === 0) return null
+  return (
+    <div className="mb-6 bg-white rounded-2xl border border-red-200 shadow-card overflow-hidden">
+      <div className="px-4 py-2.5 bg-red-50/70 flex items-center gap-2 flex-wrap">
+        <Lock className="w-4 h-4 text-red-600 flex-shrink-0" />
+        <p className="text-sm font-bold text-gray-900 flex-1 min-w-[220px]">
+          {groupes.length} prix bloqué{groupes.length > 1 ? 's' : ''} dépassé{groupes.length > 1 ? 's' : ''}
+          <span className="ml-2 text-[11px] font-normal text-red-700">le fournisseur a facturé au-dessus du prix convenu — matière à demander un avoir</span>
+        </p>
+        {total > ecarts.length && (
+          <span className="text-[11px] text-gray-400 tabular">les {ecarts.length} écarts les plus récents affichés (sur {total})</span>
+        )}
+      </div>
+      <div className="divide-y divide-gray-100">
+        {groupes.map(g => {
+          const pct = g.ref.bloque > 0 ? Math.round(((g.ref.paye - g.ref.bloque) / g.ref.bloque) * 1000) / 10 : null
+          return (
+            <div key={g.ref.article_id} className="px-4 py-2.5 flex items-center gap-3 flex-wrap text-xs">
+              <span className="flex-1 min-w-[220px]">
+                <span className="text-sm font-semibold text-gray-900">{g.ref.ref_name}</span>
+                <span className="block text-[11px] text-gray-400">
+                  {nomFournisseur(g.ref.supplier_name) || '—'}
+                  {g.ref.generic_id && g.ref.generic_name ? (
+                    <>
+                      {' · '}
+                      <button onClick={() => onOuvrirProduit(g.ref.generic_id as string)} className="font-semibold text-pilote hover:underline">{g.ref.generic_name}</button>
+                    </>
+                  ) : null}
+                </span>
+              </span>
+              <span className="tabular text-gray-500">
+                bloqué à <strong className="text-gray-900">{fmtEuro(g.ref.bloque)}</strong>{g.ref.unit ? ` / ${g.ref.unit}` : ''}
+                {' → payé '}<strong className="text-red-600">{fmtEuro(g.ref.paye)}</strong> le {fmtDate(g.ref.date)}
+                {pct !== null ? <span className="font-bold text-red-600"> (+{pct.toLocaleString('fr-FR')} %)</span> : null}
+              </span>
+              <span className="tabular text-right">
+                <span className="block font-bold text-red-600">{g.cumul > 0 ? `${fmtEuro(g.cumul)} d'écart` : '—'}</span>
+                <span className="block text-[10px] text-gray-400">
+                  {g.lignes.length} dépassement{g.lignes.length > 1 ? 's' : ''}
+                  {g.sansMontant > 0 ? ` · ${g.sansMontant} sans quantité lue (non chiffré${g.sansMontant > 1 ? 's' : ''})` : ''}
+                </span>
+              </span>
+              <span className="flex items-center gap-2 flex-shrink-0">
+                {g.ref.invoice_id && (
+                  <button onClick={() => window.open(`/api/invoices/${g.ref.invoice_id}/file`, '_blank')}
+                    className="text-[11px] font-semibold text-gray-500 hover:text-pilote underline">voir la facture</button>
+                )}
+                <button onClick={() => onVerrou(g.ref.article_id, g.ref.paye)} disabled={enCours === g.ref.article_id}
+                  title="Accepter le nouveau prix : le verrou repart de là"
+                  className="text-[11px] font-bold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg px-2.5 py-1 disabled:opacity-50">
+                  Rebloquer à {fmtEuro(g.ref.paye)}
+                </button>
+                <button onClick={() => onVerrou(g.ref.article_id, null)} disabled={enCours === g.ref.article_id}
+                  className="text-[11px] font-bold text-white bg-pilote hover:bg-pilote-hover rounded-lg px-2.5 py-1 shadow-card disabled:opacity-50">
+                  Débloquer
+                </button>
+              </span>
+            </div>
+          )
+        })}
+      </div>
+      <p className="px-4 py-2 text-[10px] text-gray-400 border-t border-gray-50">
+        Un écart compare chaque facture postérieure au verrou avec le prix convenu, à l&apos;unité facturée de la réf. Rebloquer accepte le nouveau prix ; débloquer retire la surveillance.
+      </p>
     </div>
   )
 }
