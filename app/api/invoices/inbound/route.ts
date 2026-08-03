@@ -28,6 +28,10 @@
  * Garde-fous :
  *   · signature Svix vérifiée dès que RESEND_WEBHOOK_SECRET est posée — les
  *     requêtes non signées sont alors refusées (401), quel qu'en soit le format ;
+ *   · sans variable d'environnement, le VERROU PAR CLÉ D'URL prend le relais
+ *     (lot 35) : la clé rangée en base (platform_settings.inbound_webhook_key)
+ *     doit accompagner l'appel en `?cle=` — seul Resend connaît l'URL complète.
+ *     Le webhook n'est JAMAIS ouvert à tous dès qu'un des deux verrous existe ;
  *   · destinataire inconnu, adresse non vérifiée : 200 SILENCIEUX (journalisé) —
  *     on ne renseigne pas un curieux, et Resend n'a rien à réessayer ;
  *   · échec transitoire (API Resend, extraction IA) : 4xx — Resend RÉESSAIE plus
@@ -211,10 +215,29 @@ export async function POST(request: NextRequest) {
   const contentType = request.headers.get('content-type') || ''
 
   // ── PORTE D'ENTRÉE ────────────────────────────────────────────────────
-  // Dès qu'un secret est configuré, SEULES les requêtes signées Svix passent :
-  // les formats multipart historiques, non signés, sont refusés du même coup.
-  // Sans secret (transition, bac à sable), tout est accepté — et le journal
-  // le crie à chaque réception.
+  // Deux verrous possibles, du plus fort au plus simple :
+  //   1. RESEND_WEBHOOK_SECRET posée → SEULES les requêtes signées Svix
+  //      passent, les formats multipart historiques sont refusés du même coup ;
+  //   2. sinon, clé d'URL en base (platform_settings) → l'appel doit porter
+  //      `?cle=` identique — seul Resend connaît l'URL complète du webhook.
+  // Sans AUCUN des deux (bac à sable), tout est accepté — et le journal le
+  // crie à chaque réception.
+  if (!secret) {
+    const { data: reglage } = await serviceSupabase
+      .from('platform_settings').select('value').eq('key', 'inbound_webhook_key').maybeSingle()
+    const cleAttendue = reglage?.value ? String(reglage.value) : ''
+    if (cleAttendue) {
+      const cleRecue = Buffer.from(request.nextUrl.searchParams.get('cle') ?? '', 'utf8')
+      const attendue = Buffer.from(cleAttendue, 'utf8')
+      if (cleRecue.length !== attendue.length || !timingSafeEqual(cleRecue, attendue)) {
+        console.warn('[inbound] REJET : clé d\'URL absente ou fausse')
+        return NextResponse.json({ error: 'Clé requise' }, { status: 401 })
+      }
+    } else {
+      console.warn('[inbound] aucun verrou configuré (ni RESEND_WEBHOOK_SECRET, ni clé d\'URL) — webhook accepté SANS vérification')
+    }
+  }
+
   let body: any = {}
   let form: FormData | null = null
   if (contentType.includes('multipart/form-data') || contentType.includes('application/x-www-form-urlencoded')) {
@@ -232,8 +255,6 @@ export async function POST(request: NextRequest) {
         console.warn('[inbound] REJET signature :', motif)
         return NextResponse.json({ error: 'Signature invalide' }, { status: 401 })
       }
-    } else {
-      console.warn('[inbound] RESEND_WEBHOOK_SECRET absente — webhook accepté SANS vérification de signature')
     }
     try { body = JSON.parse(brut) } catch {
       return NextResponse.json({ error: 'Corps illisible' }, { status: 400 })
