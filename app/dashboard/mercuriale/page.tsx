@@ -25,10 +25,17 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import { ShoppingBasket, FileSearch, TrendingUp, TrendingDown, Search, RefreshCw, Link2, ChevronDown, ChevronRight, Pencil, Trash2, Unlink, X, Check, AlertTriangle, Sparkles, ChefHat, HelpCircle, Store } from 'lucide-react'
+import { ShoppingBasket, FileSearch, Search, RefreshCw, Link2, ChevronDown, ChevronRight, Pencil, Trash2, Unlink, X, Check, AlertTriangle, Sparkles, ChefHat, HelpCircle, Store } from 'lucide-react'
 import { useToast } from '@/components/ui/toast'
 import { guessBaseUnit, unitKind } from '@/lib/mercuriale-auto'
 import { matchFamilyId, type MarginFamily } from '@/lib/margin-families'
+// Briques d'affichage de la mercuriale (formats, courbes, blocs de la fiche
+// enrichie du lot 41) — voir ./ui.tsx : la page garde la logique, ui le dessin.
+import {
+  fmtEuro, fmtQty, fmtDate, nomFournisseur, unitLabel, priceAge, MOTIF_PRIX,
+  Variation, Sparkline, TuileMoy3Mois, BlocAchatsMensuels, BlocHistoriqueAchats,
+  type PricePoint, type FicheDetail,
+} from './ui'
 
 type Ref = {
   id: string
@@ -57,9 +64,6 @@ type Ref = {
   /** Date du dernier prix vu (facture), repli last_price_date */
   last_seen?: string | null
 }
-
-/** Point d'historique : date de facture + prix payé, à l'unité de base */
-type PricePoint = { d: string; p: number }
 
 /** Fiche recette utilisatrice d'un générique — quantité BRUTE par batch */
 type RecipeUse = {
@@ -153,36 +157,6 @@ type DouteInvoice = {
   lines_error: string | null
 }
 
-const fmtEuro = (n: number) => n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'
-const fmtQty = (n: number) => n.toLocaleString('fr-FR', { maximumFractionDigits: 3 })
-
-/** « Pas de prix » a quatre causes qui appellent quatre gestes différents.
- *  Les nommer, c'est la différence entre un écran qui constate et un écran
- *  qui dit quoi faire. */
-const MOTIF_PRIX: Record<string, { court: string; quoi_faire: string }> = {
-  aucune_ref:      { court: 'aucune réf rattachée',   quoi_faire: 'Rattachez une réf fournisseur à cet article depuis l’onglet « À traiter ».' },
-  conversion:      { court: 'conversion manquante',   quoi_faire: 'Une réf est facturée dans une autre unité : indiquez sa conversion dans l’onglet « À traiter ».' },
-  quarantaine:     { court: 'prix refusés à la lecture', quoi_faire: 'Des prix ont été lus mais écartés faute de vérification. Relancez la lecture de la facture concernée.' },
-  jamais_facture:  { court: 'jamais facturé',         quoi_faire: 'Aucune facture lue ne porte encore cet article — le prix arrivera à la prochaine lecture.' },
-}
-const fmtDate = (s: string | null) => (s ? new Date(s + 'T00:00:00Z').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }) : '—')
-
-/** Nom de fournisseur LISIBLE. Le connecteur stocke des libellés générés du
- *  genre « Facture AURIBAULT OIRY - 15299292 (label généré) » : affichés tels
- *  quels, ils noient le nom qui compte au milieu d'un numéro de pièce. On garde
- *  la maison, pas la référence de la facture. */
-const nomFournisseur = (s: string | null | undefined): string => {
-  const t = String(s ?? '').trim()
-  if (!t) return ''
-  return t
-    .replace(/^(facture|avoir)\s+/i, '')
-    .replace(/\s*\(label\s+g[ée]n[ée]r[ée]\)\s*$/i, '')
-    // Numéro de pièce en fin de libellé : EXIGE un espace avant le tiret et au
-    // moins un chiffre — sinon « SOCIETE JEAN-CHARLES » perdrait son Charles.
-    .replace(/\s+-\s*(?=[A-Za-z0-9/-]*\d)[A-Za-z0-9/-]{4,}$/, '')
-    .trim() || t
-}
-const unitLabel = (u: 'kg' | 'piece') => (u === 'kg' ? 'kg' : 'pièce')
 const titleize = (s: string) => { const t = s.trim().replace(/\s+/g, ' '); return t ? t.charAt(0).toUpperCase() + t.slice(1).toLowerCase() : t }
 
 /** Nom proposé pour un lot de réfs qui se ressemblent : le début COMMUN de
@@ -200,54 +174,6 @@ function commonLabel(names: string[]): string {
   }
   const label = out.join(' ').replace(/[\s\-–·,]+$/, '')
   return titleize(label || names[0])
-}
-
-function Variation({ pct }: { pct: number | null }) {
-  if (pct === null) return <span className="text-xs text-gray-300">—</span>
-  const up = pct > 0
-  return (
-    <span className={`inline-flex items-center gap-1 text-xs font-bold tabular ${up ? 'text-red-600' : 'text-green-600'}`}>
-      {up ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-      {pct > 0 ? '+' : ''}{pct.toLocaleString('fr-FR')} %
-    </span>
-  )}
-
-/** Courbe d'historique d'un générique : x = DATE du point, y = prix à l'unité
- *  de base. Trait navy, dernier prix marqué en orange — l'unique accent.
- *
- *  L'axe des x plaçait les points par RANG, alors que les étiquettes en dessous
- *  sont des dates : un prix stable onze mois puis un bond la semaine dernière se
- *  dessinait comme une montée régulière, c'est-à-dire l'inverse de ce qui s'est
- *  passé. Les paliers se voient maintenant tels quels — un plat long reste plat.
- *  Un escalier (« le prix a tenu jusqu'ici, puis a sauté ») est plus honnête
- *  qu'une diagonale : le prix payé n'a pas glissé entre deux factures. */
-function Sparkline({ points }: { points: PricePoint[] }) {
-  const W = 240, H = 48, PAD = 5
-  const ps = points.map(x => x.p)
-  const min = Math.min(...ps), max = Math.max(...ps)
-  const span = max - min
-  const jour = (d: string) => new Date(d + 'T00:00:00Z').getTime()
-  const t0 = jour(points[0]?.d ?? ''), t1 = jour(points[points.length - 1]?.d ?? '')
-  const dt = t1 - t0
-  const X = (i: number) => {
-    if (points.length < 2) return W / 2
-    // Dates identiques ou illisibles : repli sur le rang plutôt qu'un NaN
-    if (!Number.isFinite(dt) || dt <= 0) return PAD + (i / (points.length - 1)) * (W - PAD * 2)
-    return PAD + ((jour(points[i].d) - t0) / dt) * (W - PAD * 2)
-  }
-  const Y = (p: number) => (span === 0 ? H / 2 : H - PAD - ((p - min) / span) * (H - PAD * 2))
-  // Tracé en ESCALIER : le prix tient jusqu'à la facture suivante, puis change.
-  const d = ps.map((p, i) => (i === 0
-    ? `M${X(0).toFixed(1)},${Y(p).toFixed(1)}`
-    : `L${X(i).toFixed(1)},${Y(ps[i - 1]).toFixed(1)} L${X(i).toFixed(1)},${Y(p).toFixed(1)}`)).join(' ')
-  return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-12" role="img" aria-label="Historique du prix sur 12 mois">
-      {points.length >= 2 && (
-        <path d={d} fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="text-pilote" />
-      )}
-      <circle cx={X(points.length - 1)} cy={Y(ps[ps.length - 1] ?? 0)} r={3.5} className="fill-pilote-orange" />
-    </svg>
-  )
 }
 
 export default function MercurialePage() {
@@ -312,6 +238,11 @@ export default function MercurialePage() {
 
   // Catalogue : générique déplié + édition + suppression en deux clics
   const [openId, setOpenId] = useState<string | null>(null)
+  // Fiche enrichie (lot 41) : volumes mensuels, moyenne 3 mois et historique
+  // facture par facture — chargés à l'OUVERTURE du produit et gardés en cache
+  // (l'API du catalogue n'a pas à transporter ce détail pour tous les articles).
+  const [fiches, setFiches] = useState<Record<string, FicheDetail>>({})
+  const [ficheLoading, setFicheLoading] = useState<string | null>(null)
   const [editId, setEditId] = useState<string | null>(null)
   const [edit, setEdit] = useState({ name: '', base_unit: 'kg' as 'kg' | 'piece', category: 'ingredient' as 'ingredient' | 'emballage', loss: '0' })
   const [confirmDelId, setConfirmDelId] = useState<string | null>(null)
@@ -341,6 +272,9 @@ export default function MercurialePage() {
       setFournisseurs(Array.isArray(data.fournisseurs) ? data.fournisseurs : [])
       setSansPdf(Number(data.sans_pdf) || 0)
       setLectureIncomplete(typeof data.lecture_incomplete === 'string' ? data.lecture_incomplete : null)
+      // Les fiches enrichies décrivent l'état d'AVANT ce rafraîchissement :
+      // on les oublie, elles se rechargeront à la prochaine ouverture.
+      setFiches({})
     }
     if (!opts?.silencieux) setLoading(false)
   }, [])
@@ -359,6 +293,24 @@ export default function MercurialePage() {
   useEffect(() => () => { if (differeRef.current) clearTimeout(differeRef.current) }, [])
 
   useEffect(() => { load() }, [load])
+
+  // La fiche enrichie du produit OUVERT (lot 41) : un seul générique à la fois,
+  // en cache jusqu'au prochain rafraîchissement du catalogue. Une réponse qui
+  // n'a pas la forme attendue est ignorée — les blocs restent simplement absents.
+  useEffect(() => {
+    if (!openId || fiches[openId]) return
+    let annule = false
+    setFicheLoading(openId)
+    fetch(`/api/mercuriale/fiche?generic=${openId}`, { cache: 'no-store' })
+      .then(r => (r.ok ? r.json() : null))
+      .catch(() => null)
+      .then((d: FicheDetail | null) => {
+        if (annule) return
+        if (d && Array.isArray(d.lignes) && Array.isArray(d.mois)) setFiches(prev => ({ ...prev, [openId]: d }))
+        setFicheLoading(cur => (cur === openId ? null : cur))
+      })
+    return () => { annule = true }
+  }, [openId, fiches])
 
   // Lien profond ?generic=<id> : ouvre directement la fiche de l'article visé
   // et l'amène sous les yeux. C'est ce qui permet à une fiche recette de dire
@@ -957,8 +909,6 @@ export default function MercurialePage() {
     [...filteredGenerics].sort((a, b) =>
       (b.refs.some(r => r.needs_conversion) ? 1 : 0) - (a.refs.some(r => r.needs_conversion) ? 1 : 0)),
   [filteredGenerics])
-  /** Âge du dernier prix en jours — au-delà de 30 j, le catalogue le signale */
-  const priceAge = (d: string | null) => (d ? Math.floor((Date.now() - new Date(d + 'T00:00:00Z').getTime()) / 86400000) : null)
 
   /** Dernier prix utilisable PAR FOURNISSEUR d'un générique, du moins cher au
    *  plus cher — la matière de la comparaison fournisseurs. Une réf sans prix
@@ -2128,6 +2078,7 @@ export default function MercurialePage() {
                                               <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Min 12 mois</p>
                                               <p className="text-sm font-extrabold text-gray-900 tabular">{g.min_12m !== null ? fmtEuro(g.min_12m) : '—'}</p>
                                             </div>
+                                            <TuileMoy3Mois fiche={fiches[g.id]} />
                                             <div>
                                               <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Max 12 mois</p>
                                               <p className="text-sm font-extrabold text-gray-900 tabular">{g.max_12m !== null ? fmtEuro(g.max_12m) : '—'}</p>
@@ -2149,6 +2100,10 @@ export default function MercurialePage() {
                                               : <>Pas encore d&apos;historique — la courbe des prix se construit à chaque facture lue.</>}
                                           </p>
                                         )}
+                                        {ficheLoading === g.id && !fiches[g.id] && (
+                                          <p className="mb-2.5 text-[11px] text-gray-400">Chargement du détail des achats…</p>
+                                        )}
+                                        <BlocAchatsMensuels fiche={fiches[g.id]} baseUnit={g.base_unit} />
                                         {/* Comparaison fournisseurs : dernier prix connu de chacun, du moins cher au plus cher */}
                                         {(() => {
                                           const rows = supplierRows(g)
@@ -2188,6 +2143,7 @@ export default function MercurialePage() {
                                             </div>
                                           )
                                         })()}
+                                        <BlocHistoriqueAchats fiche={fiches[g.id]} baseUnit={g.base_unit} />
                                         {/* Impact sur les fiches recettes : Δprix × quantité brute, par batch et par unité produite */}
                                         {g.recipes_used.length > 0 ? (() => {
                                           const delta = g.price_ht !== null && g.prev_price_ht !== null
