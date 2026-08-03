@@ -14,10 +14,14 @@
 // son facteur de conversion — sans lui, son prix serait faux, donc il est
 // IGNORÉ et signalé.
 //
-// Deux vues : le CATALOGUE (prix du jour) et le DOSSIER DES ASSOCIATIONS
-// (chaque générique avec ses réfs à plat — badge Auto, conversions manquantes
-// à régler sur place, déplacer / dissocier une réf).
-// La lecture des factures se déclenche ici (une facture à la fois).
+// TROIS ONGLETS, un par intention (refonte lisibilité 03/08) :
+//   · PRIX DU JOUR — ce qu'on vient CONSULTER : le catalogue, les mouvements ;
+//   · À TRAITER — tout ce qui attend un geste, au même endroit et compté :
+//     factures à lire, classements à confirmer, produits à regrouper,
+//     conversions à renseigner ;
+//   · ORGANISER — le rangement du catalogue : chaque article avec ses réfs
+//     (déplacer, dissocier, fusionner), le rapprochement intelligent.
+// La lecture des factures se déclenche dans « À traiter » (une à la fois).
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
@@ -146,8 +150,8 @@ const fmtQty = (n: number) => n.toLocaleString('fr-FR', { maximumFractionDigits:
  *  Les nommer, c'est la différence entre un écran qui constate et un écran
  *  qui dit quoi faire. */
 const MOTIF_PRIX: Record<string, { court: string; quoi_faire: string }> = {
-  aucune_ref:      { court: 'aucune réf rattachée',   quoi_faire: 'Rattachez une réf fournisseur à cet article depuis la file « À rapprocher ».' },
-  conversion:      { court: 'conversion manquante',   quoi_faire: 'Une réf est facturée dans une autre unité : indiquez sa conversion dans l’onglet Associations.' },
+  aucune_ref:      { court: 'aucune réf rattachée',   quoi_faire: 'Rattachez une réf fournisseur à cet article depuis l’onglet « À traiter ».' },
+  conversion:      { court: 'conversion manquante',   quoi_faire: 'Une réf est facturée dans une autre unité : indiquez sa conversion dans l’onglet « À traiter ».' },
   quarantaine:     { court: 'prix refusés à la lecture', quoi_faire: 'Des prix ont été lus mais écartés faute de vérification. Relancez la lecture de la facture concernée.' },
   jamais_facture:  { court: 'jamais facturé',         quoi_faire: 'Aucune facture lue ne porte encore cet article — le prix arrivera à la prochaine lecture.' },
 }
@@ -251,7 +255,8 @@ export default function MercurialePage() {
   const [validant, setValidant] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
-  const [view, setView] = useState<'catalogue' | 'associations'>('catalogue')
+  // Trois onglets par intention : consulter (prix), agir (traiter), ranger (organiser)
+  const [view, setView] = useState<'prix' | 'traiter' | 'organiser'>('prix')
   const [processing, setProcessing] = useState(false)
   const [progress, setProgress] = useState({ done: 0, total: 0, errors: 0 })
   const stopRef = useRef(false)
@@ -348,7 +353,7 @@ export default function MercurialePage() {
       toast({ variant: 'error', title: 'Article introuvable', description: 'Il a pu être supprimé ou fusionné depuis.' })
       return
     }
-    setView('catalogue')
+    setView('prix')
     setSearch('')
     setHausseFilter(false)
     setAutoFilter(false)
@@ -969,6 +974,16 @@ export default function MercurialePage() {
   const refsAssociees = useMemo(() => generics.reduce((s, g) => s + g.refs.length, 0), [generics])
   const recipesCountByGeneric = useMemo(() => new Map(generics.map(g => [g.id, g.recipes_count])), [generics])
 
+  /** Réfs facturées dans une autre unité que la base de leur article, SANS
+   *  conversion : leur prix est ignoré. Liste à plat pour l'onglet « À
+   *  traiter » — les régler ne doit pas demander de fouiller le catalogue. */
+  const refsSansConversion = useMemo(() =>
+    generics.flatMap(g => g.refs.filter(r => r.needs_conversion).map(r => ({ r, g }))),
+  [generics])
+  /** Total de l'onglet « À traiter » : tout ce qui attend un geste. C'est LE
+   *  chiffre qui dit si la mercuriale a besoin de vous aujourd'hui. */
+  const aTraiterTotal = pending.length + doutes.length + queueCounts.produits + refsSansConversion.length + sansPdf
+
   /** Ligne d'une réf en file : « Associer » l'ajoute à l'association en cours */
   const renderRef = (r: Ref) => {
     const isSel = selIds.includes(r.id)
@@ -1013,7 +1028,7 @@ export default function MercurialePage() {
           </div>
           <div>
             <h1 className="text-2xl font-extrabold tracking-tight text-gray-900">Mercuriale</h1>
-            <p className="text-sm text-gray-500 mt-1">Vos articles génériques, au kg ou à la pièce — chaque réf fournisseur s&apos;y rattache</p>
+            <p className="text-sm text-gray-500 mt-1">Le prix d&apos;achat du jour de chaque produit, lu sur vos factures</p>
           </div>
         </div>
         <button onClick={() => load()} disabled={loading}
@@ -1021,6 +1036,19 @@ export default function MercurialePage() {
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />Actualiser
         </button>
       </div>
+
+      {/* Comment ça marche, en trois phrases — dépliable, pour que l'écran ne
+          demande jamais un mode d'emploi externe. */}
+      <details className="mb-5 -mt-4">
+        <summary className="cursor-pointer text-xs font-semibold text-gray-400 hover:text-pilote transition-colors inline-flex items-center gap-1.5">
+          <HelpCircle className="w-3.5 h-3.5" />Comment ça marche ?
+        </summary>
+        <div className="mt-2 bg-white rounded-2xl border border-gray-100 shadow-card px-4 py-3 text-xs text-gray-600 leading-relaxed max-w-2xl">
+          <p><strong className="text-gray-900">1.</strong> Vos factures sont lues automatiquement : chaque produit acheté obtient son <strong className="text-gray-900">prix du jour</strong>, au kg ou à la pièce.</p>
+          <p className="mt-1"><strong className="text-gray-900">2.</strong> Quand deux libellés se ressemblent (« FILET POULET SV » et « FILET DE POULET LR »), l&apos;onglet <strong className="text-gray-900">À traiter</strong> vous demande de confirmer que c&apos;est le même produit — une fois, jamais deux.</p>
+          <p className="mt-1"><strong className="text-gray-900">3.</strong> Vos fiches recettes utilisent ces prix : quand un fournisseur augmente, vous le voyez ici, et l&apos;impact se lit sur chaque fiche.</p>
+        </div>
+      </details>
 
       {/* Lecture tronquée : le catalogue affiché n'est pas complet. En tête de
           page, avant tout chiffre — c'est la fiabilité de TOUT l'écran qui est
@@ -1032,166 +1060,40 @@ export default function MercurialePage() {
         </div>
       )}
 
-      {/* Factures sans PDF : rien à lire tant que le document n'est pas récupéré */}
-      {sansPdf > 0 && (
-        <div className="mb-4 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex items-center gap-3 flex-wrap">
-          <AlertTriangle className="w-4 h-4 text-amber-700 flex-shrink-0" />
-          <p className="text-sm text-amber-900 flex-1 min-w-[220px]">
-            <strong>{sansPdf} facture{sansPdf > 1 ? 's' : ''} sans document archivé</strong> — sans PDF, aucune ligne ne peut être lue
-            et leurs prix manquent à la mercuriale. Le fichier peut être redemandé à votre logiciel de facturation.
-          </p>
-          <button onClick={rattraperPdf} disabled={backfill}
-            className="text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-lg px-3.5 py-2 shadow-card active:scale-[0.98] transition-all disabled:opacity-50">
-            {backfill ? 'Récupération…' : 'Récupérer les PDF'}
-          </button>
-        </div>
-      )}
-
-      {/* File d'attente d'extraction — jamais lues ET relectures (partial, error) */}
-      {pending.length > 0 && (() => {
-        const neuves = pending.filter(p => !p.lines_status)
-        const arelire = pending.filter(p => !!p.lines_status)
-        return (
-        <div className="mb-6 bg-pilote-50 border border-pilote-200 rounded-xl px-4 py-3">
-          <div className="flex items-center gap-3 flex-wrap">
-            <FileSearch className="w-4 h-4 text-pilote flex-shrink-0" />
-            <p className="text-sm text-pilote-800 flex-1 min-w-[200px]">
-              <strong>{pending.length} facture{pending.length > 1 ? 's' : ''}</strong> à lire
-              {arelire.length > 0 ? <> — dont <strong>{arelire.length} à relire</strong> (lecture incomplète ou en échec)</> : null}.
-              Seule la matière première entre dans la mercuriale ; les réfs sans ressemblance s&apos;associent toutes seules.
-            </p>
-            {processing ? (
-              <div className="flex items-center gap-3">
-                <span className="text-xs font-semibold text-pilote tabular">{progress.done} / {progress.total}{progress.errors > 0 ? ` · ${progress.errors} échec${progress.errors > 1 ? 's' : ''}` : ''}</span>
-                <button onClick={() => { stopRef.current = true }}
-                  className="text-xs font-bold text-pilote underline">Arrêter</button>
-              </div>
-            ) : (
-              <button onClick={processQueue}
-                className="text-xs font-bold text-white bg-pilote hover:bg-pilote-hover rounded-lg px-3.5 py-2 shadow-card active:scale-[0.98] transition-all">
-                Lire les {neuves.length > 0 && arelire.length > 0 ? `${pending.length} ` : ''}factures
-              </button>
-            )}
-          </div>
-
-          {/* Ce qui a coincé, et pourquoi — dépliable, avec relecture à l'unité */}
-          {arelire.length > 0 && (
-            <div className="mt-2.5 border-t border-pilote-200/70 pt-2">
-              <button onClick={() => setShowMotifs(v => !v)}
-                className="flex items-center gap-1.5 text-[11px] font-bold text-pilote hover:underline">
-                {showMotifs ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-                Voir pourquoi {arelire.length > 1 ? 'ces lectures ont coincé' : 'cette lecture a coincé'}
-              </button>
-              {showMotifs && (
-                <div className="mt-1.5 space-y-1">
-                  {arelire.map(p => (
-                    <div key={p.id} className="bg-white rounded-lg px-3 py-2 flex items-start gap-3 flex-wrap">
-                      <span className="text-[11px] text-gray-400 tabular flex-shrink-0 w-16">{fmtDate(p.invoice_date)}</span>
-                      <span className="flex-1 min-w-[180px]">
-                        <span className="text-xs font-semibold text-gray-900">{p.supplier_name}</span>
-                        <span className="block text-[11px] text-gray-500 leading-snug">
-                          {p.lines_error || (p.lines_status === 'error' ? 'Échec sans motif enregistré — relancez la lecture pour en obtenir un.' : 'Lecture incomplète.')}
-                        </span>
-                      </span>
-                      <span className="flex items-center gap-2 flex-shrink-0">
-                        <button onClick={() => window.open(`/api/invoices/${p.id}/file`, '_blank')}
-                          className="text-[11px] font-semibold text-gray-500 hover:text-pilote underline">voir la facture</button>
-                        <button onClick={() => relire(p)} disabled={processing || relisant === p.id}
-                          className="text-[11px] font-bold text-white bg-pilote hover:bg-pilote-hover rounded-lg px-2.5 py-1 shadow-card disabled:opacity-50">
-                          {relisant === p.id ? 'Lecture…' : 'Relire'}
-                        </button>
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-        )
-      })()}
-
-      {/* File de doute matière/charge (lot 29) — le tri dit quand il n'est pas
-          sûr, et c'est le boucher qui tranche, d'un clic. */}
-      {doutes.length > 0 && (
-        <div className="mb-6 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
-          <div className="flex items-center gap-2 mb-2">
-            <HelpCircle className="w-4 h-4 text-amber-600 flex-shrink-0" />
-            <p className="text-sm text-amber-900">
-              <strong>{doutes.length} classement{doutes.length > 1 ? 's' : ''} à confirmer</strong> — la lecture a hésité entre matière première et charge. Votre œil tranche en un clic.
-            </p>
-          </div>
-          <div className="space-y-1">
-            {doutes.map(d => (
-              <div key={d.id} className="bg-white rounded-lg px-3 py-2 flex items-start gap-3 flex-wrap">
-                <span className="text-[11px] text-gray-400 tabular flex-shrink-0 w-16">{fmtDate(d.invoice_date)}</span>
-                <span className="flex-1 min-w-[180px]">
-                  <span className="text-xs font-semibold text-gray-900">{nomFournisseur(d.supplier_name)}</span>
-                  <span className="text-xs text-gray-500 tabular"> · {fmtEuro(Number(d.amount_ht) || 0)}</span>
-                  <span className="block text-[11px] text-gray-500 leading-snug">
-                    {d.lines_status === 'hors_matiere' ? 'Écartée comme charge. ' : 'Lue comme matière. '}
-                    {d.lines_error || ''}
-                  </span>
-                </span>
-                <span className="flex items-center gap-2 flex-shrink-0">
-                  <button onClick={() => window.open(`/api/invoices/${d.id}/file`, '_blank')}
-                    className="text-[11px] font-semibold text-gray-500 hover:text-pilote underline">voir la facture</button>
-                  <button onClick={() => trancherNature(d, 'hors_matiere')} disabled={tranchant !== null}
-                    className="text-[11px] font-bold text-amber-800 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-lg px-2.5 py-1 disabled:opacity-50">
-                    {tranchant === d.id ? '…' : 'C’est une charge'}
-                  </button>
-                  <button onClick={() => trancherNature(d, 'matiere')} disabled={tranchant !== null}
-                    className="text-[11px] font-bold text-white bg-pilote hover:bg-pilote-hover rounded-lg px-2.5 py-1 shadow-card disabled:opacity-50">
-                    {tranchant === d.id ? 'En cours…' : 'C’est de la matière'}
-                  </button>
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* KPIs */}
+      {/* KPIs — trois chiffres, trois réponses : qu'est-ce que je suis, ai-je
+          du travail, mes coûts bougent-ils. La tuile « À traiter » CONDUIT à
+          l'onglet du même nom : le chiffre et le geste ne font qu'un. */}
       <div className="grid grid-cols-3 gap-4 mb-6">
         <div className="bg-white rounded-2xl border border-gray-100 shadow-card p-5">
-          <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Articles génériques</p>
+          <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Produits suivis</p>
           <p className="text-2xl font-extrabold tracking-tight text-gray-900 tabular">{generics.length}</p>
+          <p className="text-[11px] text-gray-400 mt-0.5">{refsAssociees} réf{refsAssociees > 1 ? 's' : ''} fournisseur rattachée{refsAssociees > 1 ? 's' : ''}</p>
         </div>
-        {/* Le compteur affichait le tableau BRUT — réfs écartées et lignes
-            non-produit comprises — alors que la liste juste en dessous ne montre
-            que les produits à traiter. Le chiffre orange ne pouvait donc jamais
-            tomber à zéro : les taxes et les réfs volontairement écartées y
-            restaient à vie. Il compte maintenant ce que la liste montre, et dit
-            le reste sur une seconde ligne. */}
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-card p-5">
-          <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Réfs à rapprocher</p>
-          <p className={`text-2xl font-extrabold tracking-tight tabular ${queueCounts.produits > 0 ? 'text-amber-600' : 'text-gray-900'}`}>{queueCounts.produits}</p>
-          {(queueCounts.ecartees > 0 || queueCounts.nonProduit > 0) && (
-            <p className="text-[11px] text-gray-400 mt-0.5">
-              + {[
-                queueCounts.ecartees > 0 ? `${queueCounts.ecartees} écartée${queueCounts.ecartees > 1 ? 's' : ''}` : null,
-                queueCounts.nonProduit > 0 ? `${queueCounts.nonProduit} non-produit` : null,
-              ].filter(Boolean).join(' · ')}
-            </p>
-          )}
-        </div>
+        <button onClick={() => setView('traiter')}
+          className={`text-left bg-white rounded-2xl border shadow-card p-5 transition-all hover:shadow-card-hover ${view === 'traiter' ? 'border-pilote-200 ring-2 ring-pilote-200' : 'border-gray-100'}`}>
+          <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">À traiter</p>
+          <p className={`text-2xl font-extrabold tracking-tight tabular ${aTraiterTotal > 0 ? 'text-amber-600' : 'text-gray-900'}`}>{aTraiterTotal}</p>
+          <p className="text-[11px] text-gray-400 mt-0.5">{aTraiterTotal > 0 ? 'cliquer pour tout régler au même endroit' : 'rien en attente — tout est à jour'}</p>
+        </button>
         {hausses > 0 ? (
-          <button onClick={() => { setHausseFilter(v => !v); setView('catalogue') }}
+          <button onClick={() => { setHausseFilter(v => !v); setView('prix') }}
             className={`text-left bg-white rounded-2xl border shadow-card p-5 transition-all hover:shadow-card-hover ${hausseFilter ? 'border-pilote-200 ring-2 ring-pilote-200' : 'border-gray-100'}`}>
             <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Prix en hausse</p>
             <p className="text-2xl font-extrabold tracking-tight tabular text-red-600">{hausses}</p>
-            <p className="text-[11px] text-gray-400 mt-0.5">{hausseFilter ? 'filtre actif — cliquer pour tout revoir' : 'cliquer pour filtrer le catalogue'}</p>
+            <p className="text-[11px] text-gray-400 mt-0.5">{hausseFilter ? 'filtre actif — cliquer pour tout revoir' : 'cliquer pour ne voir que les hausses'}</p>
           </button>
         ) : (
           <div className="bg-white rounded-2xl border border-gray-100 shadow-card p-5">
             <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Prix en hausse</p>
             <p className="text-2xl font-extrabold tracking-tight tabular text-gray-900">0</p>
+            <p className="text-[11px] text-gray-400 mt-0.5">aucune hausse en cours</p>
           </div>
         )}
       </div>
 
-      {/* ── Mouvements de prix — chaque changement constaté sur 30 jours ── */}
-      {moves.length > 0 && (
+      {/* ── Mouvements de prix — chaque changement constaté sur 30 jours.
+          Sur « Prix du jour » seulement : c'est de la consultation. ── */}
+      {view === 'prix' && moves.length > 0 && (
         <div className="mb-6 bg-white rounded-2xl border border-gray-100 shadow-card overflow-hidden">
           <div className="px-4 py-3 border-b border-gray-100 flex items-baseline gap-2 flex-wrap">
             <h2 className="text-sm font-extrabold uppercase tracking-wider text-gray-700">Mouvements de prix</h2>
@@ -1209,7 +1111,7 @@ export default function MercurialePage() {
           <div className="divide-y divide-gray-50">
             {(movesOpen ? moves : moves.slice(0, 5)).map((m, i) => (
               <button key={`${m.generic_id}-${m.date}-${i}`}
-                onClick={() => { setView('catalogue'); setHausseFilter(false); setOpenId(m.generic_id); setEditId(null) }}
+                onClick={() => { setView('prix'); setHausseFilter(false); setOpenId(m.generic_id); setEditId(null) }}
                 title="Ouvrir cet article au catalogue"
                 className="w-full flex items-center gap-3 px-4 py-2.5 text-left hover:bg-gray-50 transition-colors flex-wrap">
                 <span className="text-[11px] text-gray-400 tabular w-16 flex-shrink-0">{fmtDate(m.date)}</span>
@@ -1254,31 +1156,36 @@ export default function MercurialePage() {
         </div>
       )}
 
-      {/* Recherche + bascule Catalogue / Associations */}
+      {/* Trois onglets, un par intention : consulter / agir / ranger. La
+          recherche vit à côté — elle filtre l'onglet affiché. */}
       <div className="mb-5 flex items-center gap-3 flex-wrap">
-        <div className="relative flex-1 min-w-[240px]">
-          <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Rechercher un article générique, une réf, un fournisseur…"
-            className="w-full border border-gray-200 rounded-xl pl-9 pr-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200" />
-        </div>
         <div className="inline-flex bg-pilote-50 ring-1 ring-pilote-100 rounded-full p-1 gap-1">
-          <button onClick={() => setView('catalogue')}
-            className={`text-xs font-semibold rounded-full px-3.5 py-1.5 transition-colors ${view === 'catalogue' ? 'bg-pilote text-white shadow-card' : 'text-pilote hover:bg-pilote-100'}`}>
-            Catalogue
+          <button onClick={() => setView('prix')}
+            className={`text-xs font-semibold rounded-full px-3.5 py-1.5 transition-colors ${view === 'prix' ? 'bg-pilote text-white shadow-card' : 'text-pilote hover:bg-pilote-100'}`}>
+            Prix du jour
           </button>
-          <button onClick={() => setView('associations')}
-            className={`flex items-center gap-1.5 text-xs font-semibold rounded-full px-3.5 py-1.5 transition-colors ${view === 'associations' ? 'bg-pilote text-white shadow-card' : 'text-pilote hover:bg-pilote-100'}`}>
-            Associations
-            {conversionsManquantes > 0 && (
-              <span className={`text-[10px] font-bold rounded-full px-1.5 py-0.5 tabular ${view === 'associations' ? 'bg-white/20 text-white' : 'bg-amber-100 text-amber-700'}`}>{conversionsManquantes}</span>
+          <button onClick={() => setView('traiter')}
+            className={`flex items-center gap-1.5 text-xs font-semibold rounded-full px-3.5 py-1.5 transition-colors ${view === 'traiter' ? 'bg-pilote text-white shadow-card' : 'text-pilote hover:bg-pilote-100'}`}>
+            À traiter
+            {aTraiterTotal > 0 && (
+              <span className={`text-[10px] font-bold rounded-full px-1.5 py-0.5 tabular ${view === 'traiter' ? 'bg-white/20 text-white' : 'bg-amber-100 text-amber-700'}`}>{aTraiterTotal}</span>
             )}
           </button>
+          <button onClick={() => setView('organiser')}
+            className={`text-xs font-semibold rounded-full px-3.5 py-1.5 transition-colors ${view === 'organiser' ? 'bg-pilote text-white shadow-card' : 'text-pilote hover:bg-pilote-100'}`}>
+            Organiser
+          </button>
+        </div>
+        <div className="relative flex-1 min-w-[240px]">
+          <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Rechercher un produit, une réf, un fournisseur…"
+            className="w-full border border-gray-200 rounded-xl pl-9 pr-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200" />
         </div>
         {/* Revue des génériques créés tout seuls. Le badge « Auto » demandait de
             vérifier nom et unité, mais rien ne permettait ni de les isoler, ni
             de dire que c'était fait : le compteur ne bougeait jamais. */}
-        {autoAVerifier > 0 && (
-          <button onClick={() => { setAutoFilter(v => !v); setView('catalogue') }}
+        {view === 'prix' && autoAVerifier > 0 && (
+          <button onClick={() => { setAutoFilter(v => !v); setView('prix') }}
             className={`flex items-center gap-1.5 text-xs font-semibold rounded-full px-3.5 py-2 ring-1 transition-colors ${autoFilter ? 'bg-pilote text-white ring-pilote shadow-card' : 'text-pilote bg-white ring-pilote-200 hover:bg-pilote-50'}`}>
             Auto à vérifier
             <span className={`text-[10px] font-bold rounded-full px-1.5 py-0.5 tabular ${autoFilter ? 'bg-white/20 text-white' : 'bg-pilote-50 text-pilote'}`}>{autoAVerifier}</span>
@@ -1286,8 +1193,9 @@ export default function MercurialePage() {
         )}
       </div>
 
-      {/* ── Association en cours (sélection par les boutons « Associer ») ── */}
-      {selRefs.length > 0 && (
+      {/* ── Association en cours (sélection par les boutons « Associer ») —
+          elle vit avec la file, dans « À traiter ». ── */}
+      {view === 'traiter' && selRefs.length > 0 && (
         <div className="sticky top-2 z-30 mb-5">
           <div className="bg-white rounded-2xl border-2 border-pilote-200 shadow-card-hover p-4">
             <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
@@ -1379,7 +1287,132 @@ export default function MercurialePage() {
         <div className="space-y-2">{[...Array(6)].map((_, i) => <div key={i} className="h-12 bg-gray-100 rounded-xl animate-pulse" />)}</div>
       ) : (
         <>
-          {/* File de RAPPROCHEMENT : uniquement les réfs qui se ressemblent. */}
+          {/* ══ Onglet À TRAITER : tout ce qui attend un geste, dans l'ordre du
+              circuit — lire les factures, confirmer les classements, regrouper
+              les produits, renseigner les conversions. Chaque section
+              n'apparaît que si elle a du travail à montrer. ══ */}
+          {view === 'traiter' && (
+            <>
+              {/* 1. Factures sans PDF : rien à lire tant que le document n'est pas récupéré */}
+              {sansPdf > 0 && (
+                <div className="mb-4 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex items-center gap-3 flex-wrap">
+                  <AlertTriangle className="w-4 h-4 text-amber-700 flex-shrink-0" />
+                  <p className="text-sm text-amber-900 flex-1 min-w-[220px]">
+                    <strong>{sansPdf} facture{sansPdf > 1 ? 's' : ''} sans document archivé</strong> — sans PDF, aucune ligne ne peut être lue
+                    et leurs prix manquent à la mercuriale. Le fichier peut être redemandé à votre logiciel de facturation.
+                  </p>
+                  <button onClick={rattraperPdf} disabled={backfill}
+                    className="text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-lg px-3.5 py-2 shadow-card active:scale-[0.98] transition-all disabled:opacity-50">
+                    {backfill ? 'Récupération…' : 'Récupérer les PDF'}
+                  </button>
+                </div>
+              )}
+
+              {/* 2. File d'attente de lecture — jamais lues ET relectures (partial, error) */}
+              {pending.length > 0 && (() => {
+                const neuves = pending.filter(p => !p.lines_status)
+                const arelire = pending.filter(p => !!p.lines_status)
+                return (
+                <div className="mb-6 bg-pilote-50 border border-pilote-200 rounded-xl px-4 py-3">
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <FileSearch className="w-4 h-4 text-pilote flex-shrink-0" />
+                    <p className="text-sm text-pilote-800 flex-1 min-w-[200px]">
+                      <strong>{pending.length} facture{pending.length > 1 ? 's' : ''}</strong> à lire
+                      {arelire.length > 0 ? <> — dont <strong>{arelire.length} à relire</strong> (lecture incomplète ou en échec)</> : null}.
+                      Seule la matière première entre dans la mercuriale ; les réfs sans ressemblance s&apos;associent toutes seules.
+                    </p>
+                    {processing ? (
+                      <div className="flex items-center gap-3">
+                        <span className="text-xs font-semibold text-pilote tabular">{progress.done} / {progress.total}{progress.errors > 0 ? ` · ${progress.errors} échec${progress.errors > 1 ? 's' : ''}` : ''}</span>
+                        <button onClick={() => { stopRef.current = true }}
+                          className="text-xs font-bold text-pilote underline">Arrêter</button>
+                      </div>
+                    ) : (
+                      <button onClick={processQueue}
+                        className="text-xs font-bold text-white bg-pilote hover:bg-pilote-hover rounded-lg px-3.5 py-2 shadow-card active:scale-[0.98] transition-all">
+                        Lire les {neuves.length > 0 && arelire.length > 0 ? `${pending.length} ` : ''}factures
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Ce qui a coincé, et pourquoi — dépliable, avec relecture à l'unité */}
+                  {arelire.length > 0 && (
+                    <div className="mt-2.5 border-t border-pilote-200/70 pt-2">
+                      <button onClick={() => setShowMotifs(v => !v)}
+                        className="flex items-center gap-1.5 text-[11px] font-bold text-pilote hover:underline">
+                        {showMotifs ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                        Voir pourquoi {arelire.length > 1 ? 'ces lectures ont coincé' : 'cette lecture a coincé'}
+                      </button>
+                      {showMotifs && (
+                        <div className="mt-1.5 space-y-1">
+                          {arelire.map(p => (
+                            <div key={p.id} className="bg-white rounded-lg px-3 py-2 flex items-start gap-3 flex-wrap">
+                              <span className="text-[11px] text-gray-400 tabular flex-shrink-0 w-16">{fmtDate(p.invoice_date)}</span>
+                              <span className="flex-1 min-w-[180px]">
+                                <span className="text-xs font-semibold text-gray-900">{p.supplier_name}</span>
+                                <span className="block text-[11px] text-gray-500 leading-snug">
+                                  {p.lines_error || (p.lines_status === 'error' ? 'Échec sans motif enregistré — relancez la lecture pour en obtenir un.' : 'Lecture incomplète.')}
+                                </span>
+                              </span>
+                              <span className="flex items-center gap-2 flex-shrink-0">
+                                <button onClick={() => window.open(`/api/invoices/${p.id}/file`, '_blank')}
+                                  className="text-[11px] font-semibold text-gray-500 hover:text-pilote underline">voir la facture</button>
+                                <button onClick={() => relire(p)} disabled={processing || relisant === p.id}
+                                  className="text-[11px] font-bold text-white bg-pilote hover:bg-pilote-hover rounded-lg px-2.5 py-1 shadow-card disabled:opacity-50">
+                                  {relisant === p.id ? 'Lecture…' : 'Relire'}
+                                </button>
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+                )
+              })()}
+
+              {/* 3. File de doute matière/charge (lot 29) — le tri dit quand il
+                  n'est pas sûr, et c'est le boucher qui tranche, d'un clic. */}
+              {doutes.length > 0 && (
+                <div className="mb-6 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+                  <div className="flex items-center gap-2 mb-2">
+                    <HelpCircle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+                    <p className="text-sm text-amber-900">
+                      <strong>{doutes.length} classement{doutes.length > 1 ? 's' : ''} à confirmer</strong> — la lecture a hésité entre matière première et charge. Votre œil tranche en un clic.
+                    </p>
+                  </div>
+                  <div className="space-y-1">
+                    {doutes.map(d => (
+                      <div key={d.id} className="bg-white rounded-lg px-3 py-2 flex items-start gap-3 flex-wrap">
+                        <span className="text-[11px] text-gray-400 tabular flex-shrink-0 w-16">{fmtDate(d.invoice_date)}</span>
+                        <span className="flex-1 min-w-[180px]">
+                          <span className="text-xs font-semibold text-gray-900">{nomFournisseur(d.supplier_name)}</span>
+                          <span className="text-xs text-gray-500 tabular"> · {fmtEuro(Number(d.amount_ht) || 0)}</span>
+                          <span className="block text-[11px] text-gray-500 leading-snug">
+                            {d.lines_status === 'hors_matiere' ? 'Écartée comme charge. ' : 'Lue comme matière. '}
+                            {d.lines_error || ''}
+                          </span>
+                        </span>
+                        <span className="flex items-center gap-2 flex-shrink-0">
+                          <button onClick={() => window.open(`/api/invoices/${d.id}/file`, '_blank')}
+                            className="text-[11px] font-semibold text-gray-500 hover:text-pilote underline">voir la facture</button>
+                          <button onClick={() => trancherNature(d, 'hors_matiere')} disabled={tranchant !== null}
+                            className="text-[11px] font-bold text-amber-800 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-lg px-2.5 py-1 disabled:opacity-50">
+                            {tranchant === d.id ? '…' : 'C’est une charge'}
+                          </button>
+                          <button onClick={() => trancherNature(d, 'matiere')} disabled={tranchant !== null}
+                            className="text-[11px] font-bold text-white bg-pilote hover:bg-pilote-hover rounded-lg px-2.5 py-1 shadow-card disabled:opacity-50">
+                            {tranchant === d.id ? 'En cours…' : 'C’est de la matière'}
+                          </button>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+          {/* 4. File de RAPPROCHEMENT : uniquement les réfs qui se ressemblent. */}
           {(queueGroups.length > 0 || nonProductRefs.length > 0) && (
             <div className="mb-8">
               <div className="flex items-baseline gap-2 mb-1">
@@ -1505,13 +1538,68 @@ export default function MercurialePage() {
             </div>
           )}
 
-          {/* ══ Vue DOSSIER DES ASSOCIATIONS ══ */}
-          {view === 'associations' ? (
+              {/* 5. Conversions à renseigner — une réf facturée dans une autre
+                  unité que la base de son article a un prix INUTILISABLE tant
+                  que « combien ça pèse » n'est pas dit. Liste à plat : les
+                  régler ne demande plus de fouiller article par article. */}
+              {refsSansConversion.length > 0 && (
+                <div className="mb-6 bg-white rounded-2xl border border-amber-200 shadow-card overflow-hidden">
+                  <div className="px-4 py-2.5 bg-amber-50/60">
+                    <p className="text-sm font-bold text-gray-900">
+                      {refsSansConversion.length} conversion{refsSansConversion.length > 1 ? 's' : ''} à renseigner
+                      <span className="ml-2 text-[11px] font-normal text-amber-700">le prix de ces réfs est ignoré tant que la conversion manque — jamais pris tel quel</span>
+                    </p>
+                  </div>
+                  <div className="divide-y divide-gray-100">
+                    {refsSansConversion.map(({ r, g }) => (
+                      <div key={r.id} className="px-4 py-2.5 flex items-center gap-3 flex-wrap text-xs">
+                        <span className="font-semibold text-gray-800 flex-1 min-w-[170px]">
+                          {r.name}
+                          <span className="block text-[11px] font-normal text-gray-400">{nomFournisseur(r.supplier_name) || '—'} · article « {g.name} »</span>
+                        </span>
+                        <span className="text-gray-500 tabular">{r.last_price_ht !== null ? `${fmtEuro(Number(r.last_price_ht))}${r.unit ? ` / ${r.unit}` : ''}` : '—'}</span>
+                        <span className="flex items-center gap-1.5 text-[11px] text-amber-700 bg-amber-50 ring-1 ring-amber-200 rounded-lg px-2 py-1 tabular">
+                          1 {r.unit || 'unité'} =
+                          <input value={fixDrafts[r.id] ?? ''} inputMode="decimal" placeholder="?"
+                            onChange={e => setFixDrafts(p => ({ ...p, [r.id]: e.target.value }))}
+                            onKeyDown={e => { if (e.key === 'Enter') fixConversion(r, g.id) }}
+                            className="w-14 border border-amber-300 rounded px-1.5 py-0.5 text-right tabular bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200" />
+                          {unitLabel(g.base_unit)}
+                          <button onClick={() => fixConversion(r, g.id)}
+                            className="font-bold text-white bg-pilote hover:bg-pilote-hover rounded px-1.5 py-0.5 transition-colors">OK</button>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="px-4 py-2 text-[10px] text-gray-400 border-t border-gray-50">Exemple : une réf facturée « à la pièce » pour un article « au kg » → tapez le poids d&apos;une pièce (1,5 pour 1,5 kg).</p>
+                </div>
+              )}
+
+              {/* Tout est réglé : le dire clairement vaut mieux qu'un écran vide */}
+              {aTraiterTotal === 0 && (
+                <div className="bg-white rounded-2xl border border-dashed border-gray-200 py-14 text-center">
+                  <div className="w-12 h-12 rounded-2xl bg-green-50 flex items-center justify-center mx-auto mb-3">
+                    <Check className="w-6 h-6 text-green-600" />
+                  </div>
+                  <p className="text-sm font-bold text-gray-900 mb-1">Rien à traiter — tout est à jour</p>
+                  <p className="text-xs text-gray-400 max-w-md mx-auto">
+                    Les factures sont lues, les produits regroupés, les conversions renseignées.
+                    Les prochaines factures arriveront ici toutes seules après leur lecture de nuit.
+                  </p>
+                </div>
+              )}
+            </>
+          )}
+
+          {/* ══ Onglet ORGANISER : le rangement du catalogue — chaque article
+              avec ses réfs (déplacer, dissocier, fusionner), et le
+              rapprochement intelligent des doublons d'appellation. ══ */}
+          {view === 'organiser' ? (
             <div>
               <div className="flex items-center justify-between gap-3 mb-1 flex-wrap">
                 <div className="flex items-baseline gap-2">
-                  <h2 className="text-sm font-extrabold uppercase tracking-wider text-gray-700">Dossier des associations</h2>
-                  <span className="text-[11px] text-gray-400 tabular">{filteredGenerics.length} générique{filteredGenerics.length > 1 ? 's' : ''} · {refsAssociees} réf{refsAssociees > 1 ? 's' : ''} associée{refsAssociees > 1 ? 's' : ''}</span>
+                  <h2 className="text-sm font-extrabold uppercase tracking-wider text-gray-700">Organiser le catalogue</h2>
+                  <span className="text-[11px] text-gray-400 tabular">{filteredGenerics.length} produit{filteredGenerics.length > 1 ? 's' : ''} · {refsAssociees} réf{refsAssociees > 1 ? 's' : ''} rattachée{refsAssociees > 1 ? 's' : ''}</span>
                 </div>
                 <button onClick={runSmart} disabled={smartLoading}
                   className="flex items-center gap-1.5 text-xs font-bold text-white bg-pilote hover:bg-pilote-hover rounded-xl px-3.5 py-2 shadow-card active:scale-[0.98] transition-all disabled:opacity-50">
@@ -1519,7 +1607,7 @@ export default function MercurialePage() {
                 </button>
               </div>
               <p className="text-[11px] text-gray-400 mb-3">
-                Chaque générique avec ses réfs : vérifiez les associations automatiques (badge Auto), réglez les conversions manquantes, déplacez ou dissociez une réf.
+                Chaque produit avec ses réfs fournisseurs : déplacez une réf mal rangée, dissociez-la, fusionnez deux produits en doublon.
                 Le rapprochement intelligent repère les doublons d&apos;appellation entre fournisseurs (« cervelas » acheté chez trois maisons) — chaque fusion se valide.
               </p>
 
@@ -1575,7 +1663,7 @@ export default function MercurialePage() {
                   {search && visibleQueue.length > 0 && (
                     <p className="text-xs text-gray-500 mt-2">
                       Mais {visibleQueue.length} réf{visibleQueue.length > 1 ? 's' : ''} pas encore rapprochée{visibleQueue.length > 1 ? 's' : ''} correspond{visibleQueue.length > 1 ? 'ent' : ''} à « {search.trim()} » —{' '}
-                      <button onClick={() => setView('associations')} className="font-semibold text-pilote hover:underline">voir dans Associations</button>.
+                      <button onClick={() => setView('traiter')} className="font-semibold text-pilote hover:underline">voir dans « À traiter »</button>.
                     </p>
                   )}
                   {search && autoFilter && (
@@ -1621,8 +1709,8 @@ export default function MercurialePage() {
                             Confirmer
                           </button>
                         )}
-                        <button onClick={() => { setView('catalogue'); setOpenId(g.id); setEditId(null) }}
-                          className="text-[11px] font-semibold text-pilote hover:underline">Ouvrir au catalogue</button>
+                        <button onClick={() => { setView('prix'); setOpenId(g.id); setEditId(null) }}
+                          className="text-[11px] font-semibold text-pilote hover:underline">Ouvrir dans Prix du jour</button>
                       </div>
                       {g.refs.length === 0 ? (
                         <p className="px-4 py-3 text-xs text-gray-400">Aucune réf fournisseur rattachée.</p>
@@ -1663,9 +1751,22 @@ export default function MercurialePage() {
                 </div>
               )}
             </div>
-          ) : (
-            /* ══ Vue CATALOGUE ══ */
-            filteredGenerics.length === 0 && filteredQueue.length === 0 ? (
+          ) : view === 'prix' ? (
+            /* ══ Onglet PRIX DU JOUR : le catalogue des prix ══ */
+            <>
+              {/* Ce qui attend un geste n'est plus sous les yeux ici : une
+                  ligne le rappelle, l'onglet « À traiter » fait le reste. */}
+              {aTraiterTotal > 0 && (
+                <button onClick={() => setView('traiter')}
+                  className="w-full mb-4 bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 flex items-center gap-2.5 text-left hover:bg-amber-100/70 transition-colors">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0" />
+                  <span className="text-sm text-amber-900 flex-1">
+                    <strong>{aTraiterTotal} élément{aTraiterTotal > 1 ? 's' : ''} attend{aTraiterTotal > 1 ? 'ent' : ''} dans « À traiter »</strong> — factures à lire, produits à regrouper…
+                  </span>
+                  <ChevronRight className="w-4 h-4 text-amber-600 flex-shrink-0" />
+                </button>
+              )}
+              {filteredGenerics.length === 0 && filteredQueue.length === 0 ? (
               <div className="bg-white rounded-2xl border border-dashed border-gray-200 py-16 text-center">
                 <ShoppingBasket className="w-10 h-10 text-gray-300 mx-auto mb-3" />
                 <p className="text-sm font-medium text-gray-500 mb-1">{generics.length === 0 && queue.length === 0 ? 'Aucun article pour l’instant' : 'Rien ne correspond à la recherche'}</p>
@@ -1958,7 +2059,7 @@ export default function MercurialePage() {
                                                   {r.last_price_ht !== null ? `${fmtEuro(Number(r.last_price_ht))}${r.unit ? ` / ${r.unit}` : ''}` : '—'}
                                                 </span>
                                                 {r.needs_conversion ? (
-                                                  <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 rounded px-1.5 py-0.5">conversion manquante — voir Associations</span>
+                                                  <span className="text-[10px] font-semibold text-amber-700 bg-amber-50 rounded px-1.5 py-0.5">conversion manquante — à régler dans « À traiter »</span>
                                                 ) : (
                                                   <span className="font-bold text-gray-900 tabular">
                                                     {r.price_base !== null ? `${fmtEuro(r.price_base)} / ${unitLabel(g.base_unit)}` : '—'}
@@ -1982,15 +2083,16 @@ export default function MercurialePage() {
                     </table>
                   </div>
                   <p className="px-4 py-3 text-[11px] text-gray-400 border-t border-gray-100 leading-snug">
-                    Le prix d&apos;un article générique est le dernier prix relevé parmi ses réfs fournisseurs, ramené à son unité
-                    de base par le facteur de conversion (« 1 rouleau = 4,5 kg »). Une réf facturée dans une autre unité que la
-                    base et sans conversion est ignorée pour le prix — réglez-la dans l&apos;onglet Associations. Une hausse est en
-                    rouge — c&apos;est un coût d&apos;achat. Les fiches recettes s&apos;appuient uniquement sur ces articles génériques.
+                    Le prix d&apos;un produit est le dernier prix relevé parmi ses réfs fournisseurs, ramené à son unité
+                    de base par la conversion (« 1 rouleau = 4,5 kg »). Une réf facturée dans une autre unité et sans
+                    conversion est ignorée pour le prix — réglez-la dans l&apos;onglet « À traiter ». Une hausse est en
+                    rouge — c&apos;est un coût d&apos;achat. Les fiches recettes s&apos;appuient uniquement sur ces prix.
                   </p>
                 </div>
               </div>
-            ) : null
-          )}
+              ) : null}
+            </>
+          ) : null}
         </>
       )}
     </div>
