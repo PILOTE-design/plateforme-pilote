@@ -396,8 +396,12 @@ export default function RecettesPage() {
 
   function openEdit(r: Recipe) {
     setEditId(r.id)
+    // Catégorie héritée en minuscules (« traiteur rachat ») : rebasculée sur la
+    // famille du référentiel qui porte le même nom — sans ça, le menu déroulant
+    // n'afficherait rien, la valeur ne correspondant exactement à aucune option.
+    const catCanonique = familles.find(f => f.name.trim().toLowerCase() === (r.category ?? '').trim().toLowerCase())?.name ?? r.category ?? ''
     setForm({
-      name: r.name, category: r.category ?? '',
+      name: r.name, category: catCanonique,
       yield_qty: r.yield_qty != null ? String(r.yield_qty) : '', yield_unit: r.yield_unit ?? 'pièces',
       sell_unit: r.sell_unit ?? '', sell_qty: r.sell_qty != null ? String(r.sell_qty) : '',
       labor_minutes: String(r.labor_minutes ?? ''), selling_price_ttc: r.selling_price_ttc != null ? String(r.selling_price_ttc) : '',
