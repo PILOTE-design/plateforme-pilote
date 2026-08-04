@@ -20,10 +20,10 @@ import { Pencil, Plus, X, Check, Clock, ShoppingBasket, Package, AlertTriangle, 
 import { useToast } from '@/components/ui/toast'
 import { facteurPerte, parseStoredSteps, parseStoredTiers } from '@/lib/recipes'
 import {
-  TableauIngredients, TrendSpark,
+  GrapheCouts, TableauIngredients, TrendSpark,
   ageJours, fmtDateFr, fmtEuro, fmtMin, fmtQty, ligneKg, num, round2, unitFr,
   venteEnClair, UNITES_VENTE,
-  type FicheEmployee, type FicheFormat, type FicheGeneric, type FicheRecipe,
+  type FicheEmployee, type FicheFormat, type FicheGeneric, type FicheRecipe, type JalonCout, type SerieCout,
 } from './fiche-ui'
 
 // Les TYPES de la fiche vivent dans ./fiche-ui — ils restent ré-exportés ici,
@@ -100,6 +100,8 @@ export default function FichePanel({
   const [confirmIng, setConfirmIng] = useState<number | null>(null)
   // Sous-onglet affiché — « Ingrédients » d'abord, c'est là qu'on travaille
   const [onglet, setOnglet] = useState<Onglet>('ingredients')
+  // Séries visibles du graphe de l'onglet Statistiques
+  const [series, setSeries] = useState<Record<SerieCout, boolean>>({ cout: true, pv: true, marge: false })
 
   const c = recipe.cost
   const employeeName = useMemo(() =>
@@ -225,6 +227,29 @@ export default function FichePanel({
   const moUnite = c && venteQty > 0 ? round2(c.main_oeuvre_ht / venteQty) : null
   const margeBrute = !coutIncomplet && pvHTActif !== null && matiereUnite !== null ? round2(pvHTActif - matiereUnite) : null
   const margeNette = margeBrute !== null && moUnite !== null ? round2(margeBrute - moUnite) : null
+
+  /** Les jalons du graphe. Le serveur renvoie le coût MATIÈRE du batch relu aux
+   *  prix de chaque date ; on y ajoute la main-d'œuvre (constante — le temps ne
+   *  dépend pas des prix d'achat) et on ramène le tout à l'UNITÉ DE VENTE, la
+   *  même base que le prix de vente. Superposer un coût de batch et un prix au
+   *  kilo donnerait deux courbes qui ne se parlent pas.
+   *
+   *  Le prix de vente est celui d'AUJOURD'HUI sur toute la période : PILOTE ne
+   *  garde pas l'historique des prix de vente. La note sous le graphe le dit. */
+  const jalonsGraphe = useMemo<JalonCout[]>(() => {
+    const s = c?.matiere_series
+    if (!Array.isArray(s) || s.length < 2) return []
+    const q = venteQty > 0 ? venteQty : 1
+    const mo = c?.main_oeuvre_ht ?? 0
+    return s.map(pt => {
+      const cout = round2((pt.v + mo) / q)
+      const pv = pvHTActif
+      // Même règle d'honnêteté que partout : pas de marge tant qu'il manque un
+      // prix d'ingrédient — la courbe serait flatteuse et fausse.
+      const marge = pv !== null && pv > 0 && !coutIncomplet ? Math.round(((pv - cout) / pv) * 10) / 10 : null
+      return { d: pt.d, cout, pv, marge }
+    })
+  }, [c, venteQty, pvHTActif, coutIncomplet])
 
   const margeColor = margeActive === null
     ? 'text-gray-900'
@@ -1181,6 +1206,46 @@ export default function FichePanel({
             </div>
           )
         })()}
+
+        {/* ── Le graphe : coût, prix de vente et marge superposés ──────────────
+            Otami superpose les trois et annote chaque point. C'est ce qui
+            transforme une courbe en réponse à « la rentabilité de ce produit
+            se dégrade-t-elle ? » : un coût qui monte pendant qu'un prix reste
+            plat se lit d'un coup d'œil. */}
+        {jalonsGraphe.length >= 2 && (
+          <div className="mb-4 rounded-2xl border border-gray-100 overflow-hidden">
+            <div className="px-4 py-2.5 bg-gray-50 flex items-center justify-between gap-3 flex-wrap">
+              <h3 className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Évolution du coût de revient</h3>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {([
+                  { id: 'cout' as const, label: `Coût / ${uniteVente}`, actif: 'bg-pilote text-white' },
+                  { id: 'pv' as const, label: 'Prix de vente HT', actif: 'bg-gray-600 text-white' },
+                  { id: 'marge' as const, label: 'Taux de marge', actif: 'bg-pilote-orange text-white' },
+                ]).map(s => {
+                  const dispo = s.id === 'cout' || jalonsGraphe.some(j => (s.id === 'pv' ? j.pv : j.marge) !== null)
+                  return (
+                    <button key={s.id} disabled={!dispo}
+                      onClick={() => setSeries(p => ({ ...p, [s.id]: !p[s.id] }))}
+                      title={dispo ? undefined : 'Posez un prix de vente sur ce format pour lire cette courbe'}
+                      className={`text-[11px] font-semibold rounded-full px-2.5 py-1 transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${series[s.id] && dispo ? s.actif : 'bg-white text-gray-500 border border-gray-200 hover:bg-gray-100'}`}>
+                      {s.label}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+            <div className="px-2 pt-2">
+              <GrapheCouts points={jalonsGraphe} series={series} uniteVente={uniteVente} />
+            </div>
+            {/* Ce que le graphe N'EST PAS. Otami date son axe des jours où un
+                prix a changé ; ici ce sont des lundis. Le dire évite de lire
+                « le prix a bougé ce jour-là » là où il n'y a qu'un jalon. */}
+            <p className="px-4 py-2 text-[11px] text-gray-400 border-t border-gray-100">
+              Un point par lundi des huit dernières semaines, plus aujourd&apos;hui — ce sont des jalons de lecture, pas les dates auxquelles un prix a changé.
+              Le coût est relu aux prix mercuriale de chaque date ; le prix de vente et la main-d&apos;œuvre, eux, sont ceux d&apos;aujourd&apos;hui.
+            </p>
+          </div>
+        )}
 
         {/* Courbe impossible à tracer : DIRE POURQUOI. Un bloc simplement absent
             se lit « le coût matière n'a pas bougé » — c'est l'inverse du sens. */}
