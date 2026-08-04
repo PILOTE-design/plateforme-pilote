@@ -13,8 +13,7 @@ import {
   TrendingUp, TrendingDown, ShoppingCart, Users, Euro,
   Save, X, Settings, Check, Loader2, AlertCircle,
   Link2, Link2Off, RefreshCw, ArrowUpRight, Repeat, PieChart,
-  Pencil, CalendarClock, Scale, Mail, Copy
-} from 'lucide-react'
+  Pencil, CalendarClock, Scale, Mail, Copy, History} from 'lucide-react'
 import {
   costForWindow, weekRecurringCost, provisionForWindow, enumeratePeriods,
   type RecurringCharge, type RecurringActual, type Periodicity,
@@ -161,6 +160,11 @@ function matchSplit(name: string, splits: RayonSplit[]): RayonSplit | null {
 type BillingIntegration = {
   provider: string; is_active: boolean; last_sync_at?: string
   last_sync_status?: 'success' | 'error' | 'pending'; invoices_synced?: number; company_id?: string
+  /** Rattrapage initial des 2 derniers mois — une DATE, pas un drapeau : quand
+   *  le bouton n'est plus là, l'écran peut dire quand il a servi. */
+  backfill_at?: string | null
+  backfill_imported?: number | null
+  backfill_tronque?: boolean | null
 }
 
 type ProviderMeta = {
@@ -368,6 +372,7 @@ export default function FacturationPage() {
   const [connecting,       setConnecting]       = useState(false)
   const [connectError,     setConnectError]     = useState('')
   const [syncing,          setSyncing]          = useState<string | null>(null)
+  const [rattrapage,       setRattrapage]       = useState(false)
 
   // Garde anti-réponses obsolètes : si l'utilisateur change de semaine pendant qu'un
   // chargement est en cours, la réponse de l'ancienne semaine ne doit PAS écraser l'affichage
@@ -895,6 +900,45 @@ export default function FacturationPage() {
     }
   }
 
+  /**
+   * Rattrapage initial : les 2 derniers mois en un appel, UNE seule fois.
+   *
+   * La synchro ordinaire travaille semaine par semaine — remonter deux mois
+   * demandait neuf clics. Le verrou vit côté serveur (un bouton caché n'est pas
+   * une garantie) ; ici on se contente de ne plus le proposer.
+   */
+  async function lancerRattrapage() {
+    const ok = await confirmAction({
+      title: 'Récupérer vos 2 derniers mois de factures ?',
+      description: 'Pennylane sera interrogé une seule fois. Les factures arriveront « à vérifier » : elles n’entreront dans vos marges qu’après votre validation. Cette récupération n’est pas rejouable.',
+      confirmLabel: 'Récupérer',
+    })
+    if (!ok) return
+    setRattrapage(true)
+    const res = await fetch('/api/billing-integrations/rattrapage', { method: 'POST' }).catch(() => null)
+    const data = res ? await res.json().catch(() => ({} as any)) : ({} as any)
+    setRattrapage(false)
+    loadIntegrations(); load()
+    if (res?.ok && data?.success) {
+      const n = Number(data.imported) || 0
+      // La troncature est ANNONCÉE : un appel Pennylane rend 100 factures au
+      // maximum, et le connecteur ne dit pas combien il en restait. Taire ce
+      // plafond ferait lire « tout est là » à un import incomplet.
+      const bouts = [
+        n > 0 ? `${n} facture${n > 1 ? 's' : ''} récupérée${n > 1 ? 's' : ''}` : 'Aucune facture sur la période',
+        data.tronque ? '100 est le maximum d’un appel : il en reste peut-être' : null,
+        data.pdf || null,
+      ].filter(Boolean)
+      toast({ variant: n > 0 ? 'success' : 'info', title: 'Rattrapage terminé', description: bouts.join(' · ') + '.' })
+    } else {
+      toast({
+        variant: 'error',
+        title: data?.error || 'Rattrapage impossible',
+        description: data?.detail || 'Réessayez dans un instant.',
+      })
+    }
+  }
+
   /** Ouvre le choix des 3 familles — la liste des postes vient du planning (intégrés + personnalisés) */
   async function openFamilles() {
     setFamilleDraft(summary?.familles?.length === 3 ? summary.familles.map(f => f.key) : [...DEFAULT_MARGIN_FAMILIES])
@@ -1131,6 +1175,49 @@ export default function FacturationPage() {
       {/* Panneau intégrations (replié par défaut) */}
       {showProviders && (
         <div className="bg-white border-b border-gray-100 px-6 py-4 space-y-4">
+          {/* ── Rattrapage initial : les 2 derniers mois, une seule fois ── */}
+          {(() => {
+            const pl = integrations.find(i => i.provider === 'pennylane')
+            if (!pl) return null
+            const fait = Boolean(pl.backfill_at)
+            return (
+              <div className={`rounded-2xl border p-4 ${fait ? 'border-gray-100 bg-gray-50/60' : 'border-pilote-100 bg-white'}`}>
+                <div className="flex items-start gap-3 flex-wrap">
+                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${fait ? 'bg-gray-300' : 'bg-pilote'}`}>
+                    <History className="w-4 h-4 text-white" />
+                  </div>
+                  <div className="flex-1 min-w-[240px]">
+                    <p className="font-bold text-sm text-gray-900">
+                      {fait ? 'Vos 2 derniers mois ont déjà été récupérés' : 'Récupérer vos 2 derniers mois de factures'}
+                    </p>
+                    {fait ? (
+                      <p className="text-[11px] text-gray-500 mt-0.5 leading-relaxed">
+                        Fait le {new Date(String(pl.backfill_at)).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' })}
+                        {typeof pl.backfill_imported === 'number' ? ` · ${pl.backfill_imported} facture${pl.backfill_imported > 1 ? 's' : ''} récupérée${pl.backfill_imported > 1 ? 's' : ''}` : ''}
+                        {pl.backfill_tronque ? ' · le plafond de 100 factures par appel avait été atteint : il en manque peut-être' : ''}.
+                        {' '}Cette récupération ne se rejoue pas — les factures qui arrivent depuis sont prises par la synchronisation hebdomadaire.
+                      </p>
+                    ) : (
+                      <p className="text-[11px] text-gray-500 mt-0.5 leading-relaxed">
+                        La synchronisation travaille semaine par semaine : pour démarrer avec un historique, il faudrait
+                        la lancer neuf fois. Ce bouton interroge Pennylane <strong>une seule fois</strong> sur les deux
+                        derniers mois. Les factures arrivent « à vérifier » et n&apos;entrent dans vos marges
+                        qu&apos;après votre validation. À utiliser une fois, à la mise en service.
+                      </p>
+                    )}
+                  </div>
+                  {!fait && (
+                    <button onClick={lancerRattrapage} disabled={rattrapage}
+                      className="flex items-center gap-1.5 bg-pilote hover:bg-pilote-hover text-white text-xs font-semibold rounded-xl px-3.5 py-2 transition-colors disabled:opacity-50 flex-shrink-0">
+                      <History className={`w-3.5 h-3.5 ${rattrapage ? 'animate-spin' : ''}`} />
+                      {rattrapage ? 'Récupération…' : 'Récupérer 2 mois'}
+                    </button>
+                  )}
+                </div>
+              </div>
+            )
+          })()}
+
           {/* ── Sans logiciel de facturation : l'adresse de transfert ── */}
           <div className="rounded-2xl border border-pilote-100 bg-pilote-50/40 p-4">
             <div className="flex items-start gap-3 flex-wrap">
