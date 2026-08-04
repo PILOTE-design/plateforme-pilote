@@ -34,7 +34,8 @@ import { matchFamilyId, type MarginFamily } from '@/lib/margin-families'
 import {
   fmtEuro, fmtQty, fmtDate, nomFournisseur, unitLabel, priceAge, MOTIF_PRIX,
   Variation, Sparkline, TuileMoy3Mois, BlocAchatsMensuels, BlocHistoriqueAchats, VueRayons,
-  type PricePoint, type FicheDetail,
+  VerrouPrixRef, BlocEcartsBloques,
+  type PricePoint, type FicheDetail, type EcartBloque,
 } from './ui'
 
 type Ref = {
@@ -63,6 +64,9 @@ type Ref = {
   last_invoice_id?: string | null
   /** Date du dernier prix vu (facture), repli last_price_date */
   last_seen?: string | null
+  /** Prix négocié VERROUILLÉ (lot 43) — toute facture au-dessus est signalée */
+  blocked_price_ht?: number | string | null
+  blocked_at?: string | null
 }
 
 /** Fiche recette utilisatrice d'un générique — quantité BRUTE par batch */
@@ -206,6 +210,11 @@ export default function MercurialePage() {
   // encore rapprochées), annoncée sous les cartes plutôt que passée sous silence
   const [rayonSel, setRayonSel] = useState<string | null>(null)
   const [depenseHorsCatalogue, setDepenseHorsCatalogue] = useState(0)
+  // Prix bloqués (lot 43) : écarts signalés par l'API + verrous en cours de pose
+  const [ecartsBloques, setEcartsBloques] = useState<EcartBloque[]>([])
+  const [ecartsBloquesTotal, setEcartsBloquesTotal] = useState(0)
+  const [verrouDrafts, setVerrouDrafts] = useState<Record<string, string>>({})
+  const [verrouillant, setVerrouillant] = useState<string | null>(null)
   const [processing, setProcessing] = useState(false)
   const [progress, setProgress] = useState({ done: 0, total: 0, errors: 0 })
   const stopRef = useRef(false)
@@ -278,6 +287,8 @@ export default function MercurialePage() {
       setMovesTotal(Number(data.moves_total) || 0)
       setFournisseurs(Array.isArray(data.fournisseurs) ? data.fournisseurs : [])
       setDepenseHorsCatalogue(Number(data.depense_hors_catalogue_12m) || 0)
+      setEcartsBloques(Array.isArray(data.ecarts_bloques) ? data.ecarts_bloques : [])
+      setEcartsBloquesTotal(Number(data.ecarts_bloques_total) || 0)
       setSansPdf(Number(data.sans_pdf) || 0)
       setLectureIncomplete(typeof data.lecture_incomplete === 'string' ? data.lecture_incomplete : null)
       // Les fiches enrichies décrivent l'état d'AVANT ce rafraîchissement :
@@ -763,6 +774,25 @@ export default function MercurialePage() {
     rafraichirBientot()
   }
 
+  /** Pose ou retire le PRIX BLOQUÉ d'une réf (lot 43, modèle Otami) — le prix
+   *  négocié avec le fournisseur ; toute facture postérieure payée au-dessus
+   *  sera signalée dans « À traiter ». null = déverrouiller. */
+  async function poserVerrou(refId: string, prix: number | null) {
+    if (verrouillant) return
+    setVerrouillant(refId)
+    const res = await fetch(`/api/articles/${refId}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ blocked_price_ht: prix }),
+    }).catch(() => null)
+    setVerrouillant(null)
+    if (!res?.ok) { toast({ variant: 'error', title: 'Verrou non enregistré', description: 'Réessayez.' }); return }
+    toast(prix !== null
+      ? { variant: 'success', title: `Prix bloqué à ${fmtEuro(prix)}`, description: 'Toute facture au-dessus sera signalée dans « À traiter ».' }
+      : { variant: 'success', title: 'Prix débloqué — la surveillance est retirée' })
+    setVerrouDrafts(prev => { const n = { ...prev }; delete n[refId]; return n })
+    load({ silencieux: true })
+  }
+
   /** Déplace une réf vers un autre générique (conversion remise à zéro) */
   async function moveRef(r: Ref, genericId: string) {
     const g = generics.find(x => x.id === genericId)
@@ -959,9 +989,11 @@ export default function MercurialePage() {
   const refsSansConversion = useMemo(() =>
     generics.flatMap(g => g.refs.filter(r => r.needs_conversion).map(r => ({ r, g }))),
   [generics])
+  /** Réfs dont le prix bloqué est dépassé (lot 43) — une réf = un geste */
+  const refsEnEcart = useMemo(() => new Set(ecartsBloques.map(e => e.article_id)).size, [ecartsBloques])
   /** Total de l'onglet « À traiter » : tout ce qui attend un geste. C'est LE
    *  chiffre qui dit si la mercuriale a besoin de vous aujourd'hui. */
-  const aTraiterTotal = pending.length + doutes.length + queueCounts.produits + refsSansConversion.length + sansPdf
+  const aTraiterTotal = pending.length + doutes.length + queueCounts.produits + refsSansConversion.length + sansPdf + refsEnEcart
 
   // ── VUE PAR FOURNISSEUR (lot 40, modèle Otami) : la mercuriale de chaque
   // maison — ses réfs, leurs derniers prix et tendances, classées par familles
@@ -1465,6 +1497,12 @@ export default function MercurialePage() {
                   </div>
                 </div>
               )}
+
+              {/* 3 bis. Prix bloqués dépassés (lot 43) : le fournisseur a facturé
+                  au-dessus du prix convenu — les gestes vivent dans ui.tsx. */}
+              <BlocEcartsBloques ecarts={ecartsBloques} total={ecartsBloquesTotal} enCours={verrouillant}
+                onOuvrirProduit={id => { setView('prix'); setSearch(''); setOpenId(id); setEditId(null) }}
+                onVerrou={poserVerrou} />
 
           {/* 4. File de RAPPROCHEMENT : uniquement les réfs qui se ressemblent. */}
           {(queueGroups.length > 0 || nonProductRefs.length > 0) && (
@@ -2239,6 +2277,9 @@ export default function MercurialePage() {
                                                     {r.price_base !== null ? `${fmtEuro(r.price_base)} / ${unitLabel(g.base_unit)}` : '—'}
                                                   </span>
                                                 )}
+                                                <VerrouPrixRef r={r} draft={verrouDrafts[r.id] ?? ''}
+                                                  onDraft={v => setVerrouDrafts(p => ({ ...p, [r.id]: v }))}
+                                                  onVerrou={poserVerrou} enCours={verrouillant === r.id} />
                                                 <button onClick={() => dissociate(r.id, r.name)} title="Renvoyer dans la file d'attente"
                                                   className="flex items-center gap-1 font-semibold text-gray-400 hover:text-red-600 transition-colors"><Unlink className="w-3 h-3" />Dissocier</button>
                                               </div>
