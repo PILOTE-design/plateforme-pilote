@@ -193,6 +193,125 @@ export function TrendSpark({ points }: { points: { d: string; v: number }[] }) {
   )
 }
 
+/** Un jalon du graphe de l'onglet Statistiques : une date, et ce que la fiche
+ *  valait ce jour-là. `pv` et `marge` sont null quand le prix de vente n'est
+ *  pas posé ou qu'il manque un prix d'ingrédient. */
+export type JalonCout = { d: string; cout: number; pv: number | null; marge: number | null }
+
+/** Les trois lectures du graphe. Une seule série d'échelle « pourcentage »,
+ *  d'où le deuxième axe. */
+export type SerieCout = 'cout' | 'pv' | 'marge'
+
+/**
+ * « Évolution des coûts » — la fiche relue aux prix de chaque jalon.
+ *
+ * Otami superpose coût de fabrication, prix de vente et marge brute, annote
+ * chaque point de sa valeur, et date l'axe. C'est ce qui transforme une courbe
+ * en réponse à la vraie question : « la rentabilité de ce produit se
+ * dégrade-t-elle ? » — un coût qui monte pendant qu'un prix de vente reste plat
+ * se lit d'un coup d'œil, alors qu'il fallait auparavant comparer deux écrans.
+ *
+ * Le coût est PAR UNITÉ DE VENTE, la même base que le prix : superposer un coût
+ * de batch et un prix au kilo donnerait deux courbes qui ne se parlent pas.
+ */
+export function GrapheCouts({ points, series, uniteVente }: {
+  points: JalonCout[]
+  series: Record<SerieCout, boolean>
+  uniteVente: string
+}) {
+  const W = 720, H = 220, L = 46, R = 44, T = 26, B = 30
+  const n = points.length
+  if (n < 2) return null
+
+  // Échelle des EUROS : coût et prix de vente la partagent, sinon les deux
+  // courbes ne seraient pas comparables. Bornée à 0 en bas — une échelle qui
+  // démarre au minimum transforme une variation de 2 % en falaise.
+  const euros = [
+    ...points.map(p => p.cout),
+    ...points.map(p => p.pv).filter((v): v is number => v !== null && series.pv),
+  ]
+  const maxE = Math.max(...euros) * 1.12 || 1
+  const X = (i: number) => L + (i / (n - 1)) * (W - L - R)
+  const Ye = (v: number) => H - B - (v / maxE) * (H - T - B)
+  // Échelle des POURCENTAGES : 0 à 100, fixe — une marge se lit sur une échelle
+  // absolue, pas sur une échelle qui bouge à chaque fiche.
+  const Ym = (v: number) => H - B - (Math.max(0, Math.min(100, v)) / 100) * (H - T - B)
+
+  const trace = (vals: (number | null)[], y: (v: number) => number) => {
+    let d = ''
+    let ouvert = false
+    vals.forEach((v, i) => {
+      if (v === null) { ouvert = false; return }
+      d += `${ouvert ? 'L' : 'M'}${X(i).toFixed(1)},${y(v).toFixed(1)} `
+      ouvert = true
+    })
+    return d.trim()
+  }
+
+  const jour = (s: string) => new Date(s + 'T00:00:00Z').toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', timeZone: 'UTC' })
+  // Au-delà de 6 jalons les dates se chevauchent : on n'en écrit qu'une sur deux
+  // et le premier comme le dernier sont toujours là.
+  const pas = n > 6 ? 2 : 1
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img"
+      aria-label={`Évolution du coût de revient par ${uniteVente} sur les huit dernières semaines`}>
+      {/* Grille horizontale — quatre repères, discrets */}
+      {[0, 0.25, 0.5, 0.75, 1].map(f => (
+        <line key={f} x1={L} x2={W - R} y1={H - B - f * (H - T - B)} y2={H - B - f * (H - T - B)}
+          className="stroke-gray-100" strokeWidth={1} />
+      ))}
+      {[0, 0.5, 1].map(f => (
+        <text key={`e${f}`} x={L - 6} y={H - B - f * (H - T - B) + 3} textAnchor="end"
+          className="fill-gray-400 text-[9px] tabular">{(maxE * f).toFixed(maxE < 10 ? 1 : 0)}&nbsp;€</text>
+      ))}
+      {series.marge && [0, 0.5, 1].map(f => (
+        <text key={`m${f}`} x={W - R + 6} y={H - B - f * (H - T - B) + 3} textAnchor="start"
+          className="fill-pilote-orange text-[9px] tabular">{Math.round(f * 100)}&nbsp;%</text>
+      ))}
+
+      {/* Prix de vente — plat, en gris : c'est le repère, pas le sujet */}
+      {series.pv && points.some(p => p.pv !== null) && (
+        <path d={trace(points.map(p => p.pv), Ye)} fill="none" strokeWidth={2}
+          strokeDasharray="5 4" className="stroke-gray-300" strokeLinecap="round" />
+      )}
+      {/* Marge — l'accent orange, une seule fois sur l'écran */}
+      {series.marge && points.some(p => p.marge !== null) && (
+        <path d={trace(points.map(p => p.marge), Ym)} fill="none" strokeWidth={2}
+          className="stroke-pilote-orange" strokeLinecap="round" strokeLinejoin="round" />
+      )}
+      {/* Coût de revient — le sujet, en navy plein */}
+      {series.cout && (
+        <path d={trace(points.map(p => p.cout), Ye)} fill="none" strokeWidth={2.5}
+          className="stroke-pilote" strokeLinecap="round" strokeLinejoin="round" />
+      )}
+
+      {/* Points annotés de leur valeur — c'est ce qui rend la courbe lisible
+          sans survol, et le survol n'existe pas sur le comptoir d'un atelier. */}
+      {series.cout && points.map((p, i) => (
+        <g key={p.d}>
+          <circle cx={X(i)} cy={Ye(p.cout)} r={2.5} className="fill-pilote" />
+          {(i === 0 || i === n - 1 || i % pas === 0) && (
+            <text x={X(i)} y={Ye(p.cout) - 7} textAnchor="middle" className="fill-gray-600 text-[9px] font-semibold tabular">
+              {p.cout.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </text>
+          )}
+        </g>
+      ))}
+      {series.marge && points.map((p, i) => (
+        p.marge === null ? null : <circle key={`pm${p.d}`} cx={X(i)} cy={Ym(p.marge)} r={2} className="fill-pilote-orange" />
+      ))}
+
+      {/* Axe des dates */}
+      {points.map((p, i) => (
+        (i === 0 || i === n - 1 || i % pas === 0)
+          ? <text key={`d${p.d}`} x={X(i)} y={H - 10} textAnchor="middle" className="fill-gray-400 text-[9px] tabular">{jour(p.d)}</text>
+          : null
+      ))}
+    </svg>
+  )
+}
+
 /** Le poids d'une fiche : brut, net, et le nombre de lignes SANS poids connu */
 export type FichePoids = { net: number; brut: number; horsAssiette: number }
 
