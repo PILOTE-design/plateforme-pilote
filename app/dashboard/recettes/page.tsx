@@ -9,11 +9,15 @@
 // ou une embauche, et toutes les fiches se recalculent.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChefHat, Plus, X, Search, AlertTriangle, Clock, ShoppingBasket, Package, Check } from 'lucide-react'
+import { ChefHat, Plus, X, Search, AlertTriangle, Check, Euro, Factory } from 'lucide-react'
 import Link from 'next/link'
 import { useToast } from '@/components/ui/toast'
 import { useConfirm } from '@/components/ui/confirm-dialog'
 import FichePanel, { type FicheRecipe } from './fiche-panel'
+import ListeFiches, {
+  coutUniteAffiche, verdictAffiche,
+  type ListeRecipe, type SortKey, type SortState,
+} from './liste'
 import { parseStoredSteps, recipeTotalMinutes } from '@/lib/recipes'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -77,13 +81,8 @@ const fmtEuro = (n: number) => n.toLocaleString('fr-FR', { minimumFractionDigits
 const unitFr = (u: string | null) => (u === 'piece' ? 'pièce' : u || '')
 const EMPTY_ING = (): IngredientDraft => ({ generic_id: null, article_id: null, sub_recipe_id: null, label: '', quantity: '', qty_unit: null, unit: null, loss_pct: '0', manual_price_ht: '', legacy_price: null })
 
-/** Couleur d'une marge : jugée contre la CIBLE de sa catégorie quand elle
- *  existe (vert ≥ cible, orange à moins de 10 pts sous la cible, rouge sinon),
- *  sinon contre les repères historiques 50/30. */
-const margeTone = (marge: number, target: number | null) => {
-  if (target !== null) return marge >= target ? 'text-green-600' : marge >= target - 10 ? 'text-orange-500' : 'text-red-600'
-  return marge >= 50 ? 'text-green-600' : marge >= 30 ? 'text-orange-500' : 'text-red-600'
-}
+// La couleur d'une marge (contre la cible de sa catégorie, sinon les repères
+// 50/30) vit désormais dans ./liste — c'est le tableau qui la peint.
 
 const catLabel = (c: string | null) => (c && c.trim() ? c.trim().toLowerCase() : 'sans catégorie')
 
@@ -125,6 +124,12 @@ export default function RecettesPage() {
   const [search, setSearch] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
   const [catFilter, setCatFilter] = useState<string | null>(null)
+  // Interrupteur global : le coût affiché comprend-il la main-d'œuvre ?
+  // Le même écran répond alors à deux questions — « ce que ça me coûte
+  // vraiment » (MO comprise, la base d'un prix de vente) et « ce que ça coûte
+  // en matière » (le chiffre qu'on compare à un tarif de grossiste).
+  const [avecMainOeuvre, setAvecMainOeuvre] = useState(true)
+  const [sort, setSort] = useState<SortState>({ key: 'nom', dir: 'asc' })
   // Fiche ouverte EN ENCADRÉ sur la page (zéro navigation) — re-clic = fermeture
   const [openId, setOpenId] = useState<string | null>(null)
   const panelRef = useRef<HTMLDivElement | null>(null)
@@ -304,7 +309,52 @@ export default function RecettesPage() {
       .slice(0, 8)
   }, [recipes, search])
 
-  // Sections par catégorie, triées ; les recettes par nom à l'intérieur.
+  /** Les fiches qui entrent dans une AUTRE fiche — la chip « Sous-recette » de
+   *  la liste. Lu des lignes d'ingrédients : rien n'est stocké pour ça. */
+  const sousRecetteIds = useMemo(() => {
+    const s = new Set<string>()
+    for (const r of recipes) for (const i of r.ingredients) if (i.sub_recipe_id) s.add(String(i.sub_recipe_id))
+    return s
+  }, [recipes])
+
+  /** Un clic sur un en-tête : même colonne → on inverse le sens ; autre colonne
+   *  → on démarre dans le sens le plus utile (le nom de A à Z, les chiffres du
+   *  plus fort au plus faible — on ouvre un tri de marge pour voir les extrêmes). */
+  const onSort = useCallback((key: SortKey) => {
+    setSort(prev => (prev.key === key
+      ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' }
+      : { key, dir: key === 'nom' ? 'asc' : 'desc' }))
+  }, [])
+
+  /** Tri d'une liste de fiches selon l'en-tête choisi. Une valeur ABSENTE
+   *  (pas de prix de vente, marge non calculable) part toujours EN DERNIER,
+   *  quel que soit le sens : un trou n'est ni le meilleur ni le pire, il est
+   *  hors classement — le remonter en tête d'un tri décroissant ferait passer
+   *  des fiches non chiffrées pour les plus rentables. */
+  const trier = useCallback((list: Recipe[]): Recipe[] => {
+    const sens = sort.dir === 'asc' ? 1 : -1
+    const val = (r: Recipe): number | null => {
+      const l = r as unknown as ListeRecipe
+      switch (sort.key) {
+        case 'cout': return coutUniteAffiche(l, avecMainOeuvre)
+        case 'marge': return verdictAffiche(l, avecMainOeuvre).marge_pct
+        case 'pv': return r.selling_price_ttc
+        case 'temps': return r.cost.total_minutes ?? r.labor_minutes
+        default: return null
+      }
+    }
+    return [...list].sort((a, b) => {
+      if (sort.key === 'nom') return sens * a.name.localeCompare(b.name, 'fr')
+      const va = val(a), vb = val(b)
+      if (va === null && vb === null) return a.name.localeCompare(b.name, 'fr')
+      if (va === null) return 1
+      if (vb === null) return -1
+      if (va === vb) return a.name.localeCompare(b.name, 'fr')
+      return sens * (va - vb)
+    })
+  }, [sort, avecMainOeuvre])
+
+  // Sections par catégorie, triées ; les fiches à l'intérieur suivent l'en-tête.
   const grouped = useMemo(() => {
     const m = new Map<string, Recipe[]>()
     for (const r of filtered) {
@@ -314,9 +364,9 @@ export default function RecettesPage() {
       m.set(c, arr)
     }
     return [...m.entries()]
-      .map(([cat, list]) => [cat, [...list].sort((a, b) => a.name.localeCompare(b.name, 'fr'))] as const)
+      .map(([cat, list]) => [cat, trier(list)] as const)
       .sort((a, b) => a[0].localeCompare(b[0], 'fr'))
-  }, [filtered])
+  }, [filtered, trier])
 
   const allCats = useMemo(() => {
     const set = new Set<string>()
@@ -343,17 +393,22 @@ export default function RecettesPage() {
   // Bandeau de pilotage : calculé sur TOUTES les fiches (jamais sur le filtre
   // en cours). Une fiche sans marge calculable n'entre pas dans la moyenne.
   const stats = useMemo(() => {
-    const chiffrees = recipes.filter(r => r.cost.marge_pct !== null)
+    // La marge suit l'INTERRUPTEUR : afficher des coûts hors main-d'œuvre dans
+    // le tableau et une marge MO comprise dans le bandeau juste au-dessus
+    // donnerait deux verdicts contradictoires sur le même écran.
+    const margeDe = (r: Recipe) => verdictAffiche(r as unknown as ListeRecipe, avecMainOeuvre).marge_pct
+    const chiffrees = recipes.filter(r => margeDe(r) !== null)
     const margeMoyenne = chiffrees.length > 0
-      ? chiffrees.reduce((s, r) => s + (r.cost.marge_pct as number), 0) / chiffrees.length
+      ? chiffrees.reduce((s, r) => s + (margeDe(r) as number), 0) / chiffrees.length
       : null
     const sousCible = recipes.filter(r => {
       const t = targetByCat.get(catLabel(r.category))
-      return t !== undefined && r.cost.marge_pct !== null && r.cost.marge_pct < t
+      const m = margeDe(r)
+      return t !== undefined && m !== null && m < t
     })
     const prixManquants = recipes.filter(r => r.cost.prix_manquants > 0).length
     return { chiffrees: chiffrees.length, margeMoyenne, sousCible, prixManquants, hasTargets: targets.length > 0 }
-  }, [recipes, targetByCat, targets])
+  }, [recipes, targetByCat, targets, avecMainOeuvre])
 
   /** Pose (ou retire, champ vide) la cible de marge d'une catégorie */
   async function saveTarget(cat: string) {
@@ -557,57 +612,17 @@ export default function RecettesPage() {
     setPickerRow(null)
   }
 
-  /** Carte d'une fiche — partagée entre les sections par catégorie et la
-   *  section « À retravailler » (bordure d'alerte). La marge se juge contre
-   *  la cible de sa catégorie quand elle existe. */
-  const ficheCard = (r: Recipe, alerte = false) => {
-    const t = targetByCat.get(catLabel(r.category)) ?? null
-    return (
-      <button key={r.id} onClick={() => openFiche(r.id)}
-        className={`text-left bg-white rounded-2xl border shadow-card p-5 hover:shadow-card-hover hover:-translate-y-0.5 transition-all ${alerte ? 'border-red-200' : 'border-gray-100'}`}>
-        <div className="flex items-start justify-between gap-2 mb-3">
-          <p className="text-sm font-bold text-gray-900 leading-snug">{r.name}</p>
-          {r.category && <span className="text-[10px] font-semibold uppercase tracking-wider text-pilote bg-pilote-50 rounded-lg px-1.5 py-0.5 flex-shrink-0">{r.category}</span>}
-        </div>
-        <p className="text-2xl font-extrabold tracking-tight text-gray-900 tabular">
-          {r.cost.par_unite_ht !== null ? fmtEuro(r.cost.par_unite_ht) : fmtEuro(r.cost.total_ht)}
-          <span className="text-xs font-semibold text-gray-400 ml-1.5">
-            {r.cost.par_unite_ht !== null ? `/ ${r.yield_unit || 'unité'}` : '/ batch'}
-          </span>
-        </p>
-        {/* Vendu dans une autre unité : le coût qui se compare au PV est celui-là */}
-        {r.sell_unit && r.cost.par_unite_vente_ht != null && r.cost.par_unite_vente_ht !== r.cost.par_unite_ht && (
-          <p className="text-[11px] text-gray-500 tabular">soit {fmtEuro(r.cost.par_unite_vente_ht)} / {r.sell_unit} vendu</p>
-        )}
-        <div className="mt-2 space-y-0.5 text-[11px] text-gray-500 tabular">
-          <p><ShoppingBasket className="w-3 h-3 inline mr-1 text-gray-400" />Matière {fmtEuro(r.cost.matiere_ht)}</p>
-          {r.cost.emballage_ht > 0 && <p><Package className="w-3 h-3 inline mr-1 text-gray-400" />Emballage {fmtEuro(r.cost.emballage_ht)}</p>}
-          <p><Clock className="w-3 h-3 inline mr-1 text-gray-400" />Main-d&apos;œuvre {fmtEuro(r.cost.main_oeuvre_ht)} ({(r.cost.total_minutes ?? r.labor_minutes).toLocaleString('fr-FR')} min{r.employee_id && employees.find(e => e.id === r.employee_id) ? ` · ${employees.find(e => e.id === r.employee_id)!.name}` : ''})</p>
-        </div>
-        <div className="mt-3 pt-3 border-t border-gray-100 flex items-center gap-2 flex-wrap">
-          {r.cost.marge_pct !== null && (
-            <span className={`text-xs font-bold tabular ${margeTone(r.cost.marge_pct, t)}`}>
-              marge {r.cost.marge_pct.toLocaleString('fr-FR')} %
-            </span>
-          )}
-          {t !== null && r.cost.marge_pct !== null && (
-            <span className="text-xs text-gray-400 tabular">cible {t.toLocaleString('fr-FR')} %</span>
-          )}
-          {r.cost.coefficient !== null && <span className="text-xs text-gray-400 tabular">coef ×{r.cost.coefficient.toLocaleString('fr-FR')}</span>}
-          {r.cost.prix_manquants > 0 && (
-            <span className="text-[11px] font-semibold text-amber-600">
-              {r.cost.prix_manquants} prix manquant{r.cost.prix_manquants > 1 ? 's' : ''} — marge non calculable
-            </span>
-          )}
-        </div>
-      </button>
-    )
+  /** Propriétés communes à tous les tableaux de la page — l'interrupteur, le
+   *  tri et l'ouverture d'une fiche sont les mêmes partout. */
+  const tableauCommun = {
+    sort, onSort, avecMainOeuvre, sousRecetteIds,
+    onOpen: openFiche, openId,
   }
 
   return (
     <div className="p-6 md:p-8 max-w-6xl mx-auto">
       {/* En-tête */}
-      <div className="mb-8 flex items-start justify-between gap-3 flex-wrap">
+      <div className="mb-6 flex items-start justify-between gap-6 flex-wrap">
         <div className="flex items-start gap-3">
           <div className="w-12 h-12 bg-gradient-to-br from-pilote to-pilote-hover rounded-2xl flex items-center justify-center flex-shrink-0 shadow-card">
             <ChefHat className="w-6 h-6 text-white" />
@@ -620,9 +635,31 @@ export default function RecettesPage() {
             </p>
           </div>
         </div>
-        <Button onClick={openNew} className="bg-pilote hover:bg-pilote-hover text-white">
-          <Plus className="w-4 h-4 mr-1.5" />Nouvelle recette
-        </Button>
+
+        {/* Les trois gestes principaux, en pastilles rondes étiquetées — un
+            bouton de texte perdu dans une barre ne se voit pas, et les deux
+            pages où l'on va depuis les fiches (les prix, la production) se
+            cherchaient jusqu'ici dans le menu. */}
+        <div className="flex items-start gap-5">
+          <button onClick={openNew} className="group flex flex-col items-center gap-1.5 w-20">
+            <span className="w-12 h-12 rounded-full bg-pilote text-white flex items-center justify-center shadow-card group-hover:bg-pilote-hover group-active:scale-[0.95] transition-all">
+              <Plus className="w-5 h-5" />
+            </span>
+            <span className="text-[11px] font-semibold text-gray-600 text-center leading-tight group-hover:text-pilote transition-colors">Nouvelle fiche</span>
+          </button>
+          <Link href="/dashboard/mercuriale" className="group flex flex-col items-center gap-1.5 w-20">
+            <span className="w-12 h-12 rounded-full bg-white ring-1 ring-pilote-200 text-pilote flex items-center justify-center shadow-card group-hover:bg-pilote-50 group-active:scale-[0.95] transition-all">
+              <Euro className="w-5 h-5" />
+            </span>
+            <span className="text-[11px] font-semibold text-gray-600 text-center leading-tight group-hover:text-pilote transition-colors">Mercuriale</span>
+          </Link>
+          <Link href="/dashboard/production" className="group flex flex-col items-center gap-1.5 w-20">
+            <span className="w-12 h-12 rounded-full bg-white ring-1 ring-pilote-200 text-pilote flex items-center justify-center shadow-card group-hover:bg-pilote-50 group-active:scale-[0.95] transition-all">
+              <Factory className="w-5 h-5" />
+            </span>
+            <span className="text-[11px] font-semibold text-gray-600 text-center leading-tight group-hover:text-pilote transition-colors">Production</span>
+          </Link>
+        </div>
       </div>
 
       {laborRate === null && (
@@ -642,6 +679,7 @@ export default function RecettesPage() {
             </p>
             <p className="text-[11px] text-pilote-200 mt-0.5">
               {stats.chiffrees > 0 ? `sur ${stats.chiffrees} fiche${stats.chiffrees > 1 ? 's' : ''} chiffrée${stats.chiffrees > 1 ? 's' : ''}` : 'aucune fiche avec PV et coût'}
+              {avecMainOeuvre ? ' · MO comprise' : ' · hors main-d’œuvre'}
             </p>
           </div>
           <div className="bg-white rounded-2xl border border-gray-100 shadow-card p-5">
@@ -676,7 +714,8 @@ export default function RecettesPage() {
       {/* Recherche + catégories */}
       {recipes.length > 0 && (
         <div className="mb-5 space-y-3">
-          <div className="relative">
+          <div className="flex items-center gap-3 flex-wrap">
+          <div className="relative flex-1 min-w-[240px]">
             <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <input value={search}
               onChange={e => { setSearch(e.target.value); setSearchOpen(true) }}
@@ -703,6 +742,25 @@ export default function RecettesPage() {
               </div>
             )}
           </div>
+
+          {/* Interrupteur global — il change la lecture de TOUTE la liste :
+              coûts, marges, coefficients et bandeau du haut. C'est le geste le
+              plus fort repris d'Otami : deux questions, un seul écran. */}
+          <button type="button" onClick={() => setAvecMainOeuvre(v => !v)}
+            title={avecMainOeuvre
+              ? 'Coûts main-d’œuvre COMPRISE — ce que le produit coûte réellement à la maison, la base d’un prix de vente. Cliquer pour ne lire que la matière.'
+              : 'Coûts SANS la main-d’œuvre — la matière seule, à comparer à un tarif de grossiste. Cliquer pour réintégrer le temps de fabrication.'}
+            className={`flex items-center gap-2.5 rounded-xl px-3.5 py-2.5 border transition-all flex-shrink-0 ${avecMainOeuvre ? 'bg-pilote-50 border-pilote-200' : 'bg-white border-gray-200 hover:bg-gray-50'}`}>
+            <span className={`w-9 h-5 rounded-full flex items-center p-0.5 transition-colors ${avecMainOeuvre ? 'bg-pilote justify-end' : 'bg-gray-300 justify-start'}`}>
+              <span className="w-4 h-4 rounded-full bg-white shadow-card" />
+            </span>
+            <span className="text-left">
+              <span className={`block text-xs font-bold ${avecMainOeuvre ? 'text-pilote' : 'text-gray-600'}`}>Main-d&apos;œuvre</span>
+              <span className="block text-[10px] text-gray-400">{avecMainOeuvre ? 'comprise dans les coûts' : 'exclue — matière seule'}</span>
+            </span>
+          </button>
+          </div>
+
           {allCats.length > 1 && (
             <div className="flex items-center gap-2 flex-wrap">
               <button onClick={() => setCatFilter(null)}
@@ -774,11 +832,17 @@ export default function RecettesPage() {
                   {stats.sousCible.length} fiche{stats.sousCible.length > 1 ? 's' : ''} sous la cible de marge de sa catégorie — la plus basse d&apos;abord
                 </span>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {[...stats.sousCible]
-                  .sort((a, b) => (a.cost.marge_pct ?? 0) - (b.cost.marge_pct ?? 0))
-                  .map(r => ficheCard(r, true))}
-              </div>
+              {/* Toutes catégories mélangées : chaque ligne se juge contre SA
+                  cible, l'en-tête ne peut donc pas en afficher une seule. */}
+              <ListeFiches
+                {...tableauCommun}
+                fiches={[...stats.sousCible]
+                  .sort((a, b) => (verdictAffiche(a as unknown as ListeRecipe, avecMainOeuvre).marge_pct ?? 0)
+                    - (verdictAffiche(b as unknown as ListeRecipe, avecMainOeuvre).marge_pct ?? 0)) as unknown as ListeRecipe[]}
+                target={null}
+                targetFor={r => targetByCat.get(catLabel(r.category)) ?? null}
+                cibleTexte="cible propre à chaque catégorie"
+              />
             </section>
           )}
           {grouped.map(([cat, list]) => (
@@ -813,9 +877,11 @@ export default function RecettesPage() {
                   </button>
                 ))}
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {list.map(r => ficheCard(r))}
-              </div>
+              <ListeFiches
+                {...tableauCommun}
+                fiches={list as unknown as ListeRecipe[]}
+                target={targetByCat.get(cat) ?? null}
+              />
             </section>
           ))}
         </div>
