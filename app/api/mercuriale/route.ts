@@ -29,6 +29,7 @@ import { resolveClientId } from '@/lib/resolve-client-id'
 import { ensureAutoGenerics, stemKey, isNonProduct, unitKind } from '@/lib/mercuriale-auto'
 import { appliquerDictionnaire } from '@/lib/association-dictionary'
 import { fetchAllPages } from '@/lib/fetch-all'
+import { coutsMorceauxDuClient } from '@/lib/valorisation-source'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -63,7 +64,7 @@ export async function GET() {
   // quand deux lignes partagent la même date.
   const [{ data: generics }, refsPage, pointsPage, pendingPage] = await Promise.all([
     service.from('generic_articles')
-      .select('id, name, base_unit, category, default_loss_pct, auto_created')
+      .select('id, name, base_unit, category, default_loss_pct, auto_created, valorisation_cut_id')
       .eq('client_id', clientId).eq('active', true)
       .order('name'),
     fetchAllPages<any>(apres => {
@@ -180,6 +181,12 @@ export async function GET() {
     cur.lignes += 1
     depenseParArticle.set(k, cur)
   }
+
+  // Prix des morceaux de DÉCOUPE. Sans eux, les articles créés par le lot 53
+  // s'affichaient « aucune réf rattachée » : un reproche injuste — un morceau de
+  // carcasse n'a pas de fournisseur — assorti d'un geste (« rattachez une réf »)
+  // qui n'a aucun sens. Le catalogue doit lire les TROIS provenances d'un prix.
+  const coutsDecoupe = await coutsMorceauxDuClient(service, clientId, user.id)
 
   // Garde-fou unités (même règle que lib/recipes.buildGenericMap) : une réf
   // facturée dans une unité INCOMPATIBLE avec la base de son générique (pièce
@@ -380,15 +387,23 @@ export async function GET() {
             ? 'quarantaine'
             : 'jamais_facture'
 
+    // Un morceau de découpe tire son prix de la dernière carcasse, pas d'une
+    // facture : il écrase donc le prix de facture (il n'y en a jamais) et fait
+    // taire le motif de prix manquant. `price_supplier` reste vide — écrire
+    // « dernier prix chez Bœuf du 20/07 » n'aurait aucun sens ; c'est la fiche
+    // recette qui porte la provenance en toutes lettres.
+    const cutId = typeof (g as any).valorisation_cut_id === 'string' ? String((g as any).valorisation_cut_id) : null
+    const coutDecoupe = cutId ? coutsDecoupe.get(cutId) ?? null : null
+
     return {
       ...g,
       default_loss_pct: Number(g.default_loss_pct) || 0,
       refs_count: refs.length,
       prix_quarantaine: prixEnQuarantaine,
-      price_missing_reason,
-      price_ht: prixJour,
-      price_date: best ? best.last_price_date : null,
-      price_supplier: best ? best.supplier_name : null,
+      price_missing_reason: coutDecoupe ? null : price_missing_reason,
+      price_ht: coutDecoupe ? coutDecoupe.price : prixJour,
+      price_date: coutDecoupe ? coutDecoupe.date : (best ? best.last_price_date : null),
+      price_supplier: coutDecoupe ? null : (best ? best.supplier_name : null),
       variation_pct: variationGenerique,
       /** Variation de la seule meilleure réf — conservée pour le détail par réf */
       variation_ref_pct: best ? best.variation_pct : null,
