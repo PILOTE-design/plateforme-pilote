@@ -122,13 +122,25 @@ export function assietteQuiTombeJuste(l: LigneBrute): { base: 'poids' | 'quantit
  * de lecture du prix fabriquerait une quantité absurde qu'on écrirait en base :
  *
  *  · quantité strictement positive et finie ;
- *  · pas plus de 100 000 (au-delà, c'est le prix qui a été mal lu, pas la
- *    quantité qui est grande) ;
- *  · et surtout, elle doit être PLUS GRANDE que la quantité lue — c'est le
- *    sens même du défaut observé : un conditionnement contient plusieurs
- *    unités (1 seau → 10 kg, « 6 × colisage 2 » → 12). Une quantité réparée
- *    plus PETITE que celle lue signalerait autre chose, qu'on ne comprend pas
- *    encore : on s'abstient.
+ *  · et surtout — c'est LA borne, apprise en production le 04/08 — le rapport
+ *    entre la quantité réparée et la quantité lue doit être un ENTIER.
+ *
+ * Cette dernière règle a été ajoutée après une régression réelle. La première
+ * version se contentait d'exiger « plus grande que la quantité lue », et une
+ * relecture en production a produit :
+ *
+ *   MPRO 25 BTE PLATEAU  qté lue 3, « PU » lu 1,00 €, montant 44,13 €
+ *                        → quantité réparée 44,13, prix publié 1,00 €/pièce
+ *                        alors que le vrai prix est 14,71 €/pièce.
+ *
+ * L'extraction avait pris pour prix unitaire une valeur qui n'en était pas, et
+ * la réparation a fabriqué une quantité absurde pour la faire coller. Sur 52
+ * lignes réparées, 38 étaient fausses.
+ *
+ * Le rapport ENTIER les sépare exactement : un conditionnement contient un
+ * nombre ENTIER d'unités (1 seau → 10 kg, 6 × colisage 2 → 12 pièces), jamais
+ * 14,71. Vérifié sur les cas réels : LABELMERGUEZ 10/1 = 10 ✓, SAN PELL
+ * 12/2 = 6 ✓, MPRO 44,13/3 = 14,71 ✗, MAUREL 3,996/2 = 1,998 ✗.
  *
  * Le signe est repris de la quantité lue : sur un avoir, une quantité négative
  * doit le rester.
@@ -138,17 +150,35 @@ export function quantiteReparee(l: LigneBrute): number | null {
   if (pu == null || !Number.isFinite(pu) || pu === 0) return null
   if (!Number.isFinite(l.amount_ht) || l.amount_ht === 0) return null
   const q = Math.abs(l.amount_ht / pu)
-  if (!Number.isFinite(q) || q <= 0 || q > 100000) return null
+  if (!Number.isFinite(q) || q <= 0) return null
   const lue = l.quantity != null && Number.isFinite(l.quantity) ? Math.abs(l.quantity) : null
   // Sans quantité lue, il n'y a rien à « réparer » — la ligne relève du cas
   // « prix seul », déjà accepté ailleurs.
   if (lue === null || lue === 0) return null
-  // Tolérance de forme : q doit dépasser la quantité lue d'au moins un demi
-  // pour cent, sinon les deux disent la même chose et le recoupement aurait
-  // déjà réussi.
-  if (q <= lue * 1.005) return null
+
+  // LE RAPPORT DOIT ÊTRE UN ENTIER. Un conditionnement contient un nombre
+  // entier d'unités ; 44,13 pièces pour 3 colis n'est pas un conditionnement,
+  // c'est un prix mal lu. Sans cette borne, on publie 1,00 €/pièce là où le
+  // prix est 14,71 € — mesuré en production, 38 lignes fausses sur 52.
+  const rapport = q / lue
+  const entier = Math.round(rapport)
+  // Au moins 2 : à 1, les deux quantités disent la même chose et le
+  // recoupement aurait déjà réussi. Au plus 10 000 : au-delà, c'est le prix
+  // qui a été mal lu, pas le colis qui est grand.
+  if (entier < 2 || entier > 10000) return null
+  // ET LA QUANTITÉ RECONSTRUITE DOIT REDONNER LE MONTANT, au demi-centime.
+  // Tester le rapport seul ne suffit pas : « 3,996 / 2 = 1,998 » frôle 2 par
+  // coïncidence, et l'accepter publiait 5 €/L pour une huile à 1,998 €/L.
+  // Vérifier le montant, c'est vérifier la chose qu'on affirme — la tolérance
+  // reste au niveau de l'arrondi comptable, jamais à celui d'une erreur.
+  const reconstruit = lue * entier * Math.abs(pu)
+  const tol = Math.max(0.005, Math.abs(l.amount_ht) * 0.0005)
+  if (Math.abs(reconstruit - Math.abs(l.amount_ht)) > tol) return null
+
   const signe = (l.quantity as number) < 0 ? -1 : 1
-  return round4(q * signe)
+  // On rend la quantité EXACTE du conditionnement (lue × entier), et non le
+  // quotient brut : « 11,9937 sachets » n'existe pas, 12 oui.
+  return round4(lue * entier * signe)
 }
 
 /**
