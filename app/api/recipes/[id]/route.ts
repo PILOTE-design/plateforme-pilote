@@ -23,8 +23,9 @@ import { PAYROLL_EMPLOYEE_COLUMNS, chargeMultiplier, productiveFactor, type Payr
 import {
   averageLoadedRate, employeeLoadedRate, buildGenericMap,
   buildGenericPriceSeries, costMatiereAtDate, motifSerieMatiere, buildRecipeCostGraph,
+  computeFormatVerdict, costPourFormat, formatParDefaut,
   parseIngredients, parseRecipeFields,
-  type IngredientRow, type RecipeCost, type RecipeRow,
+  type IngredientRow, type RecipeCost, type RecipeFormat, type RecipeRow,
 } from '@/lib/recipes'
 import { fetchAllPages } from '@/lib/fetch-all'
 
@@ -106,6 +107,20 @@ export async function GET(_request: NextRequest, { params }: { params: { id: str
     service.from('recipe_targets').select('category, target_marge_pct').eq('client_id', clientId),
   ])
 
+  // Formats de vente de CETTE fiche — le coût du batch est le même pour tous,
+  // seuls la quantité vendable et le prix changent.
+  const { data: formatRows } = await service.from('recipe_formats')
+    .select('*').eq('client_id', clientId).eq('recipe_id', params.id).order('position')
+  const formats: RecipeFormat[] = ((formatRows || []) as Record<string, unknown>[]).map(f => ({
+    id: String(f.id), recipe_id: String(f.recipe_id), name: String(f.name ?? ''),
+    sell_unit: (f.sell_unit as string | null) ?? null,
+    sell_qty: f.sell_qty != null ? Number(f.sell_qty) : null,
+    selling_price_ttc: f.selling_price_ttc != null ? Number(f.selling_price_ttc) : null,
+    tva_rate: Number(f.tva_rate) || 5.5,
+    validated: f.validated === true,
+    position: Number(f.position) || 0,
+  }))
+
   const articles = articlesPage.rows
   const emps = (employees || []) as unknown as PayrollEmployee[]
   const averageRate = averageLoadedRate(emps)
@@ -133,9 +148,11 @@ export async function GET(_request: NextRequest, { params }: { params: { id: str
   // Graphe PARESSEUX : ces deux appels ne calculent que la fiche demandée et,
   // en cascade, ses sous-recettes. Les autres fiches ne sont jamais évaluées.
   const costed = graph.costedFor(params.id)
-  const cost = graph.costFor(params.id) as RecipeCost | null
+  const brut = graph.costFor(params.id) as RecipeCost | null
   const row = (recipes || []).find((r: any) => String(r.id) === String(params.id))
-  if (!row || !cost) return NextResponse.json({ error: 'Fiche introuvable' }, { status: 404 })
+  if (!row || !brut) return NextResponse.json({ error: 'Fiche introuvable' }, { status: 404 })
+  const defaut = formatParDefaut(formats)
+  const cost = costPourFormat(brut, row, defaut)
 
   // Série du coût matière — pour CETTE fiche seulement, et seulement si elle a
   // au moins une ligne au prix mercuriale. Les points de prix sont restreints
@@ -201,7 +218,18 @@ export async function GET(_request: NextRequest, { params }: { params: { id: str
   const matiere_series_motif = motifSerieMatiere(hasMercuriale, matiere_series.length)
 
   return NextResponse.json({
-    recipe: { ...row, ingredients: costed, cost: { ...cost, matiere_series, matiere_series_motif } },
+    recipe: {
+      ...row,
+      // Colonnes de vente de la fiche gelées depuis le lot 46 : ce sont celles
+      // du format par défaut qui sortent d'ici.
+      sell_unit: defaut?.sell_unit ?? null,
+      sell_qty: defaut?.sell_qty ?? null,
+      selling_price_ttc: defaut?.selling_price_ttc ?? null,
+      tva_rate: defaut?.tva_rate ?? (Number((row as any).tva_rate) || 5.5),
+      formats: formats.map(f => ({ ...f, ...computeFormatVerdict(brut.total_ht, row, f, brut.prix_manquants) })),
+      ingredients: costed,
+      cost: { ...cost, matiere_series, matiere_series_motif },
+    },
     labor_rate_ht: averageRate,
     historique_incomplet,
     target: cible2 ? Number((cible2 as any).target_marge_pct) : null,
@@ -239,9 +267,34 @@ export async function PUT(request: NextRequest, { params }: { params: { id: stri
   const guard = await checkOwnership(service, clientId, parsedFields.fields!, rows, params.id)
   if (guard) return NextResponse.json({ error: guard }, { status: 400 })
 
+  // Les champs de VENTE ne vivent plus sur la fiche mais sur ses FORMATS
+  // (lot 46). Ce PUT reste le chemin d'édition du format PAR DÉFAUT — la
+  // modale et le panneau lui envoient toujours prix, unité et TVA. Les autres
+  // formats s'éditent par /api/recipes/[id]/formats.
+  const { sell_unit, sell_qty, selling_price_ttc, tva_rate, ...champsFiche } = parsedFields.fields!
+
   const { error: upErr } = await service.from('recipes')
-    .update(parsedFields.fields!).eq('id', params.id).eq('client_id', clientId)
+    .update(champsFiche).eq('id', params.id).eq('client_id', clientId)
   if (upErr) return NextResponse.json({ error: upErr.message }, { status: 500 })
+
+  const { data: fmtRows } = await service.from('recipe_formats')
+    .select('id, position, name').eq('client_id', clientId).eq('recipe_id', params.id).order('position')
+  const defautId = (fmtRows || [])[0]?.id ?? null
+  if (defautId) {
+    const { error: fErr } = await service.from('recipe_formats')
+      .update({ sell_unit, sell_qty, selling_price_ttc, tva_rate: tva_rate ?? 5.5, updated_at: new Date().toISOString() })
+      .eq('id', defautId).eq('client_id', clientId)
+    if (fErr) return NextResponse.json({ error: `Format de vente : ${fErr.message}` }, { status: 500 })
+  } else {
+    // Fiche sans aucun format (ne devrait pas exister depuis la reprise) : on
+    // en recrée un plutôt que de laisser un prix sans nulle part où aller.
+    const { error: fErr } = await service.from('recipe_formats').insert({
+      client_id: clientId, recipe_id: params.id,
+      name: String(champsFiche.name), sell_unit, sell_qty, selling_price_ttc,
+      tva_rate: tva_rate ?? 5.5, position: 0,
+    })
+    if (fErr) return NextResponse.json({ error: `Format de vente : ${fErr.message}` }, { status: 500 })
+  }
 
   if (rows) {
     const { error: delErr } = await service.from('recipe_ingredients')
