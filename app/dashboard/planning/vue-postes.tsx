@@ -18,7 +18,7 @@
 // employé, à « qui travaille, et combien ça coûte ». Les deux, pas l'une.
 
 import { AlertTriangle } from 'lucide-react'
-import type { LignePoste } from '@/lib/planning-postes'
+import { SANS_POSTE, type LignePoste } from '@/lib/planning-postes'
 
 const JOURS_COURTS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim']
 
@@ -31,12 +31,11 @@ export function fmtHeures(h: number): string {
 }
 
 export default function VuePostes({
-  lignes, sansPoste, libelles, couleurs, joursDates, jourActifIdx, totalSemaine,
+  lignes, libelles, couleurs, joursDates, jourActifIdx, totalSemaine,
 }: {
-  /** Une entrée par poste, dans l'ordre voulu — y compris les postes à 0 h */
+  /** Une entrée par poste, plus la ligne SANS_POSTE si des heures travaillées
+   *  ne servent aucun rayon — c'est le contrat de `couvertureParPoste`. */
   lignes: LignePoste[]
-  /** Les créneaux travaillés qui ne servent aucun poste. Affichés à part. */
-  sansPoste?: LignePoste | null
   /** clé de poste → libellé lisible (« boucherie » → « Boucherie ») */
   libelles: Record<string, string>
   /** clé de poste → classes Tailwind de sa pastille */
@@ -45,21 +44,17 @@ export default function VuePostes({
   joursDates: { jour: number; mois: string }[]
   /** Index du jour d'aujourd'hui dans la semaine, ou -1 */
   jourActifIdx: number
-  /** Total des heures planifiées de la semaine, tel que la page l'affiche */
+  /** Total des heures planifiées, tous postes confondus */
   totalSemaine: number
 }) {
-  const nonCouverts = lignes.filter(l => l.vide)
-  // La ligne « sans poste » n'existe à l'écran que si elle porte des heures :
-  // un planning entièrement renseigné ne doit pas voir de ligne vide de plus.
-  const orphelins = sansPoste && !sansPoste.vide ? sansPoste : null
-  // Toutes les lignes du tableau, orphelins compris — c'est ce que le pied
-  // additionne, et ce qui doit retomber sur le total de la page.
-  const toutes = orphelins ? [...lignes, orphelins] : lignes
+  // Le « reste » n'est pas un rayon : il ne compte pas comme un poste non
+  // couvert, et il ne doit pas apparaître dans le bandeau des rayons vides.
+  const orphelins = lignes.find(l => l.poste === SANS_POSTE) ?? null
+  const nonCouverts = lignes.filter(l => l.vide && l.poste !== SANS_POSTE)
+  const toutes = lignes
+  // Le pied dit ce que ses colonnes additionnent — jamais un chiffre venu
+  // d'ailleurs. Depuis que la ligne « Sans poste » existe, les deux coïncident.
   const sommeTableau = Math.round(toutes.reduce((s, l) => s + l.heures_semaine, 0) * 100) / 100
-  // Un écart qui subsisterait malgré la ligne « sans poste » viendrait d'une
-  // source d'heures que ce tableau ne sait pas encore lire. On l'ANNONCE au
-  // lieu de le laisser au lecteur attentif : c'est exactement le défaut qu'on
-  // corrige ici, il ne doit pas pouvoir revenir en silence.
   const ecart = Math.round((totalSemaine - sommeTableau) * 100) / 100
 
   return (
@@ -180,7 +175,7 @@ export default function VuePostes({
           <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
           <p className="text-[11px] leading-relaxed text-amber-800">
             <strong>{fmtHeures(Math.abs(ecart))} d&apos;écart avec le total de la semaine</strong>
-            {' — '}ce tableau totalise {fmtHeures(sommeTableau)}, la page en annonce {fmtHeures(totalSemaine)}.
+            {' — '}ce tableau totalise {fmtHeures(sommeTableau)}, la semaine en annonce {fmtHeures(totalSemaine)}.
             {' '}Le détail manquant n&apos;est pas dans cette vue : lisez le planning par employé.
           </p>
         </div>
