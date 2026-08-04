@@ -19,6 +19,7 @@ import {
   type RecurringCharge, type RecurringActual, type Periodicity,
 } from '@/lib/recurring-charges'
 import { labelsMatch, DEFAULT_MARGIN_FAMILIES, DEFAULT_TVA_RATE, MATIERE_BENCH, DIVERS_POSTE, type Poste } from '@/lib/postes'
+import { nomFournisseur } from '@/lib/supplier-name'
 
 // ─── Types ──────────────────
 
@@ -656,13 +657,13 @@ export default function FacturationPage() {
    *  choisit sa famille de charge. Réversible. */
   async function moveToFixed(inv: Invoice) {
     const res = await fetch(`/api/invoices/${inv.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ is_fixed_charge: true }) }).catch(() => null)
-    if (res?.ok) { toast({ variant: 'success', title: `« ${inv.supplier_name} » déplacée en charges fixes`, description: 'Elle ne pèse plus sur les marges matière. Choisissez sa famille de charge ci-dessous.' }); load() }
+    if (res?.ok) { toast({ variant: 'success', title: `« ${nomFournisseur(inv.supplier_name) || inv.supplier_name} » déplacée en charges fixes`, description: 'Elle ne pèse plus sur les marges matière. Choisissez sa famille de charge ci-dessous.' }); load() }
     else toast({ variant: 'error', title: 'Déplacement impossible' })
   }
 
   async function moveBackToVariable(inv: Invoice) {
     const res = await fetch(`/api/invoices/${inv.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ is_fixed_charge: false, charge_family_id: null }) }).catch(() => null)
-    if (res?.ok) { toast({ variant: 'success', title: `« ${inv.supplier_name} » repassée en achats` }); load() }
+    if (res?.ok) { toast({ variant: 'success', title: `« ${nomFournisseur(inv.supplier_name) || inv.supplier_name} » repassée en achats` }); load() }
     else toast({ variant: 'error', title: 'Opération impossible' })
   }
 
@@ -680,10 +681,10 @@ export default function FacturationPage() {
     const data = res ? await res.json().catch(() => null) : null
     if (!res?.ok) {
       setTeleversant(null)
-      toast({ variant: 'error', title: `${inv.supplier_name} : téléversement refusé`, description: data?.error || 'Réessayez.' })
+      toast({ variant: 'error', title: `${nomFournisseur(inv.supplier_name) || inv.supplier_name} : téléversement refusé`, description: data?.error || 'Réessayez.' })
       return
     }
-    toast({ variant: 'info', title: `${inv.supplier_name} : document reçu`, description: 'Lecture en cours — elle décide de la nature de la facture.' })
+    toast({ variant: 'info', title: `${nomFournisseur(inv.supplier_name) || inv.supplier_name} : document reçu`, description: 'Lecture en cours — elle décide de la nature de la facture.' })
     // La lecture juge le document (relire saute la mémoire fournisseur : c'est
     // une nouvelle pièce, elle mérite sa propre audience).
     const rl = await fetch('/api/invoices/extract-lines', {
@@ -695,13 +696,13 @@ export default function FacturationPage() {
     if (rl?.ok && (rd?.status === 'done' || rd?.status === 'partial')) {
       toast({
         variant: 'success',
-        title: `${inv.supplier_name} : reclassée en achats de la semaine`,
+        title: `${nomFournisseur(inv.supplier_name) || inv.supplier_name} : reclassée en achats de la semaine`,
         description: `Le document porte de la matière — ${rd?.prix_promus ?? 0} prix retenu${(rd?.prix_promus ?? 0) > 1 ? 's' : ''} pour la mercuriale.`,
       })
     } else if (rl?.ok && rd?.status === 'hors_matiere') {
-      toast({ variant: 'info', title: `${inv.supplier_name} : le document confirme une charge`, description: 'Elle reste en charges structurelles — rien d\'anormal si c\'est un loyer, un abonnement, une assurance…' })
+      toast({ variant: 'info', title: `${nomFournisseur(inv.supplier_name) || inv.supplier_name} : le document confirme une charge`, description: 'Elle reste en charges structurelles — rien d\'anormal si c\'est un loyer, un abonnement, une assurance…' })
     } else {
-      toast({ variant: 'error', title: `${inv.supplier_name} : lecture du document en échec`, description: rd?.error || 'Le document est archivé — relancez la lecture depuis la mercuriale.' })
+      toast({ variant: 'error', title: `${nomFournisseur(inv.supplier_name) || inv.supplier_name} : lecture du document en échec`, description: rd?.error || 'Le document est archivé — relancez la lecture depuis la mercuriale.' })
     }
     load()
   }
@@ -1025,9 +1026,9 @@ export default function FacturationPage() {
       <tr key={inv.id} className="border-t border-gray-50 hover:bg-gray-50 group transition-colors">
         <td className="px-4 py-2.5">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-pilote-50 text-pilote flex items-center justify-center text-[11px] font-extrabold flex-shrink-0">{initials(inv.supplier_name)}</div>
+            <div className="w-8 h-8 rounded-lg bg-pilote-50 text-pilote flex items-center justify-center text-[11px] font-extrabold flex-shrink-0">{initials(nomFournisseur(inv.supplier_name) || inv.supplier_name)}</div>
             <div>
-              <div className="font-semibold text-sm text-gray-900">{inv.supplier_name}</div>
+              <div className="font-semibold text-sm text-gray-900">{nomFournisseur(inv.supplier_name) || inv.supplier_name}</div>
               {inv.invoice_number && <div className="text-xs text-gray-400">{inv.invoice_number}</div>}
               {inv.status === 'a_verifier' && (
                 <button onClick={() => validateInvoice(inv)} title="Importée automatiquement — cliquer pour valider (elle comptera dans les marges)"
@@ -1484,7 +1485,7 @@ export default function FacturationPage() {
               {invoices.filter(i => i.is_fixed_charge).map(inv => (
                 <div key={inv.id} className="px-5 py-2.5 flex items-center gap-3 flex-wrap">
                   <div className="flex-1 min-w-[180px]">
-                    <p className="text-sm font-semibold text-gray-900">{inv.supplier_name}</p>
+                    <p className="text-sm font-semibold text-gray-900">{nomFournisseur(inv.supplier_name) || inv.supplier_name}</p>
                     <p className="text-[11px] text-gray-400 tabular">{new Date(inv.invoice_date).toLocaleDateString('fr-FR')}{inv.invoice_number ? ` · ${inv.invoice_number}` : ''}</p>
                   </div>
                   <span className="text-sm font-semibold text-gray-700 tabular">{fmtEuro(inv.amount_ht)}</span>
