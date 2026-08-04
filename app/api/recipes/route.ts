@@ -17,9 +17,9 @@ import { PAYROLL_EMPLOYEE_COLUMNS, chargeMultiplier, productiveFactor, type Payr
 import {
   averageLoadedRate, employeeLoadedRate, buildGenericMap,
   buildGenericPriceSeries, costMatiereAtDate, motifSerieMatiere,
-  buildRecipeCostGraph,
+  buildRecipeCostGraph, computeFormatVerdict, costPourFormat, formatParDefaut,
   parseIngredients, parseRecipeFields,
-  type IngredientRow, type RecipeCost, type RecipeRow,
+  type IngredientRow, type RecipeCost, type RecipeFormat, type RecipeRow,
 } from '@/lib/recipes'
 import { fetchAllPages } from '@/lib/fetch-all'
 
@@ -38,7 +38,7 @@ export async function GET() {
   // (un prix en quarantaine a unit_price_ht NULL et n'apparaît jamais ici)
   const cutoff12m = new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10)
 
-  const [{ data: recipes }, { data: ingredients }, { data: employees }, articlesPage, { data: generics }, { data: targets }] = await Promise.all([
+  const [{ data: recipes }, { data: ingredients }, { data: employees }, articlesPage, { data: generics }, { data: targets }, { data: formatRows }] = await Promise.all([
     service.from('recipes').select('*').eq('client_id', clientId).eq('active', true).order('name'),
     service.from('recipe_ingredients').select('*').eq('client_id', clientId).order('position'),
     service.from('employees').select(PAYROLL_EMPLOYEE_COLUMNS).eq('client_id', clientId),
@@ -54,6 +54,7 @@ export async function GET() {
     }),
     service.from('generic_articles').select('id, name, base_unit, category, default_loss_pct').eq('client_id', clientId).eq('active', true).order('name'),
     service.from('recipe_targets').select('category, target_marge_pct').eq('client_id', clientId),
+    service.from('recipe_formats').select('*').eq('client_id', clientId).order('position'),
   ])
   const articles = articlesPage.rows
 
@@ -148,9 +149,33 @@ export async function GET() {
     rateForRecipe: r => employeeLoadedRate(emps, r.employee_id as string | null) ?? averageRate,
   })
 
+  // Formats de vente, rangés par fiche. Le coût du batch est le MÊME pour tous
+  // les formats d'une fiche (c'est la même fabrication) : seule la division par
+  // la quantité vendable et le prix changent.
+  const formatsByRecipe = new Map<string, RecipeFormat[]>()
+  for (const f of (formatRows || []) as Record<string, unknown>[]) {
+    const rid = String(f.recipe_id)
+    const arr = formatsByRecipe.get(rid) || []
+    arr.push({
+      id: String(f.id), recipe_id: rid, name: String(f.name ?? ''),
+      sell_unit: (f.sell_unit as string | null) ?? null,
+      sell_qty: f.sell_qty != null ? Number(f.sell_qty) : null,
+      selling_price_ttc: f.selling_price_ttc != null ? Number(f.selling_price_ttc) : null,
+      tva_rate: Number(f.tva_rate) || 5.5,
+      validated: f.validated === true,
+      position: Number(f.position) || 0,
+    })
+    formatsByRecipe.set(rid, arr)
+  }
+
   const out = (recipes || []).map((r: RecipeRow & Record<string, unknown>) => {
     const costed = graph.costedFor(r.id)
-    const cost = graph.costFor(r.id) as RecipeCost
+    const brut = graph.costFor(r.id) as RecipeCost
+    const formats = formatsByRecipe.get(String(r.id)) || []
+    const defaut = formatParDefaut(formats)
+    // La partie « vente » du coût vient du format PAR DÉFAUT — les colonnes de
+    // vente de la fiche ne sont plus écrites depuis le lot 46.
+    const cost = costPourFormat(brut, r, defaut)
     const hasMercuriale = costed.some(l => l.generic_id && l.price_source === 'mercuriale')
     // Série du coût matière : les lignes sous-recettes y restent CONSTANTES (au
     // coût du jour) — seule la matière mercuriale directe est relue à date.
@@ -161,7 +186,19 @@ export async function GET() {
       : []
     // Une courbe absente se lit « le coût n'a pas bougé » si rien ne dit pourquoi.
     const matiere_series_motif = motifSerieMatiere(hasMercuriale, matiere_series.length)
-    return { ...r, ingredients: costed, cost: { ...cost, matiere_series, matiere_series_motif } }
+    return {
+      ...r,
+      // Les colonnes de vente de la FICHE sont gelées (lot 46) : on renvoie
+      // celles du format par défaut à leur place, pour qu'aucun écran ne
+      // continue à lire un prix que plus personne n'écrit.
+      sell_unit: defaut?.sell_unit ?? null,
+      sell_qty: defaut?.sell_qty ?? null,
+      selling_price_ttc: defaut?.selling_price_ttc ?? null,
+      tva_rate: defaut?.tva_rate ?? (Number(r.tva_rate) || 5.5),
+      formats: formats.map(f => ({ ...f, ...computeFormatVerdict(brut.total_ht, r, f, brut.prix_manquants) })),
+      ingredients: costed,
+      cost: { ...cost, matiere_series, matiere_series_motif },
+    }
   })
 
   return NextResponse.json({
@@ -203,8 +240,13 @@ export async function POST(request: NextRequest) {
   const guard = await checkOwnership(service, clientId, parsedFields.fields!, parsedIngs.rows!)
   if (guard) return NextResponse.json({ error: guard }, { status: 400 })
 
+  // Les champs de VENTE ne vont plus sur la fiche : ils font le format par
+  // défaut (lot 46). Écrire aux deux endroits créerait deux vérités, et c'est
+  // celle qu'on n'édite plus qui finirait par être lue quelque part.
+  const { sell_unit, sell_qty, selling_price_ttc, tva_rate, ...champsFiche } = parsedFields.fields!
+
   const { data: recipe, error } = await service.from('recipes')
-    .insert({ client_id: clientId, ...parsedFields.fields })
+    .insert({ client_id: clientId, ...champsFiche })
     .select('id').single()
   if (error || !recipe) return NextResponse.json({ error: error?.message ?? 'Création impossible' }, { status: 500 })
 
@@ -215,6 +257,19 @@ export async function POST(request: NextRequest) {
     // Pas de recette sans ses ingrédients : on retire la coquille plutôt que de la laisser vide
     await service.from('recipes').delete().eq('id', recipe.id)
     return NextResponse.json({ error: `Ingrédients : ${ingErr.message}` }, { status: 500 })
+  }
+
+  // Toute fiche a AU MOINS un format : sans lui elle n'aurait ni prix ni marge,
+  // et l'écran la montrerait comme une fiche qu'on vient de vider.
+  const { error: fmtErr } = await service.from('recipe_formats').insert({
+    client_id: clientId, recipe_id: recipe.id,
+    name: String(champsFiche.name), sell_unit, sell_qty, selling_price_ttc,
+    tva_rate: tva_rate ?? 5.5, position: 0,
+  })
+  if (fmtErr) {
+    await service.from('recipe_ingredients').delete().eq('recipe_id', recipe.id)
+    await service.from('recipes').delete().eq('id', recipe.id)
+    return NextResponse.json({ error: `Format de vente : ${fmtErr.message}` }, { status: 500 })
   }
 
   return NextResponse.json({ success: true, id: recipe.id })
