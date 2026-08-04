@@ -95,7 +95,9 @@ export async function GET(_request: NextRequest, { params }: { params: { id: str
     service.from('employees').select(PAYROLL_EMPLOYEE_COLUMNS).eq('client_id', clientId),
     fetchAllPages<any>(apres => {
       let q = service.from('articles')
-        .select('id, unit, last_price_ht, last_price_date, generic_id, conversion_factor')
+        // `name` / `supplier_name` : la réf fournisseur d'où sort le prix,
+        // affichée sous l'ingrédient (même contenu que la liste).
+        .select('id, name, supplier_name, unit, last_price_ht, last_price_date, generic_id, conversion_factor')
         .eq('client_id', clientId)
       if (apres) q = q.gt('id', apres)
       return q.order('id', { ascending: true })
