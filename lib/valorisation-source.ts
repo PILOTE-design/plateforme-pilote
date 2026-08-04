@@ -96,18 +96,29 @@ export async function coutsMorceauxDuClient(
   if (lignes.length === 0) return out
 
   // Les prix de référence et les coûts forcés du boucher — une ligne par
-  // profil, structurée { espèce: { pièce: valeur } }.
-  const profil = profileIdFallback || String(lignes[0].profile_id || '')
-  let prixRefParEspece: Record<string, Record<string, number | string>> = {}
-  let coutsForcesParEspece: Record<string, Record<string, number | string>> = {}
-  if (profil) {
+  // PROFIL, structurée { espèce: { pièce: valeur } }.
+  //
+  // C'est le profil qui a SAISI la carcasse qui fait foi, pas celui qui regarde
+  // l'écran. L'inverse — prendre d'abord le compte connecté — faisait qu'un
+  // deuxième login de la même boucherie, ou un administrateur en entretien,
+  // lisait des prix de référence vides et surtout ignorait les COÛTS FORCÉS à
+  // la main : le chiffre affiché n'était plus celui que le boucher avait posé.
+  // `profileIdFallback` redevient ce que son nom dit : un repli.
+  type Prefs = Record<string, Record<string, number | string>>
+  const cachePrefs = new Map<string, { prix: Prefs; forces: Prefs }>()
+  const prefsDuProfil = async (profil: string): Promise<{ prix: Prefs; forces: Prefs }> => {
+    const vide = { prix: {} as Prefs, forces: {} as Prefs }
+    if (!profil) return vide
+    const enCache = cachePrefs.get(profil)
+    if (enCache) return enCache
     const { data: pref } = await service
       .from('valorisation_prices').select('prices, cost_overrides').eq('profile_id', profil).maybeSingle()
     const p = pref as Row | null
-    if (p) {
-      prixRefParEspece = (p.prices as typeof prixRefParEspece) || {}
-      coutsForcesParEspece = (p.cost_overrides as typeof coutsForcesParEspece) || {}
-    }
+    const lu = p
+      ? { prix: ((p.prices as Prefs) || {}), forces: ((p.cost_overrides as Prefs) || {}) }
+      : vide
+    cachePrefs.set(profil, lu)
+    return lu
   }
 
   // Une seule découpe par espèce : la plus récente. Les lignes arrivent triées
@@ -118,12 +129,13 @@ export async function coutsMorceauxDuClient(
     if (!ANIMAL_TYPES.includes(espece) || vue.has(espece)) continue
     vue.add(espece)
 
+    const prefs = await prefsDuProfil(String(v.profile_id || '') || profileIdFallback || '')
     const repartition = repartitionCarcasse({
       cuts: CUTS_BY_ANIMAL[espece],
       poids: (v.cut_weights as Record<string, number> | null) ?? null,
       coutTotalHT: Number(v.total_cost) || 0,
-      prixRef: prixRefParEspece[espece] ?? null,
-      coutsForces: coutsForcesParEspece[espece] ?? null,
+      prixRef: prefs.prix[espece] ?? null,
+      coutsForces: prefs.forces[espece] ?? null,
     })
     const date = String(v.purchase_date || '').slice(0, 10)
     for (const m of repartition.morceaux) {
@@ -182,6 +194,12 @@ export function appliquerCoutsDecoupe(
  * 121 lignes vides parce qu'une nomenclature existe ne rendrait service à
  * personne. Ne renomme jamais un générique existant — le boucher a le droit de
  * l'appeler comme il veut.
+ *
+ * Appelé depuis DEUX endroits, et c'est voulu : à l'enregistrement d'une
+ * carcasse — le geste qui crée les morceaux — et à l'ouverture des fiches
+ * recettes, qui rattrape les découpes antérieures. Le seul déclencheur d'avant
+ * — cette liste — laissait une boucherie avec 43 pièces pesées et aucun morceau
+ * dans son catalogue, mesuré le 04/08/2026.
  *
  * Tolérant à l'échec : c'est un confort, jamais une condition pour afficher une
  * fiche. Rend le nombre de génériques créés.
