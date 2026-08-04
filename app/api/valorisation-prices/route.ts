@@ -4,7 +4,11 @@ import { createClient } from '@/lib/supabase/server'
 // Prix personnalisés par pièce, mémorisés par boucherie (profil) et par espèce.
 // - prices        : prix de référence marché (surcharge le prix indicatif)
 // - sellOverrides  : prix conseillé/kg saisi manuellement (surcharge le prix auto réf × coefficient)
-// GET → { prices, sellOverrides }
+// - costOverrides  : COÛT de revient/kg forcé à la main (lot 56). À ne pas confondre
+//                    avec le précédent : l'un est ce qu'on vend, l'autre ce qu'on paie.
+//                    Forcer un coût casse volontairement l'équilibre avec le coût de
+//                    la carcasse — l'écart est annoncé à l'écran, jamais absorbé.
+// GET → { prices, sellOverrides, costOverrides }
 // PUT → enregistre l'un et/ou l'autre (upsert sur profile_id)
 
 export async function GET() {
@@ -14,12 +18,16 @@ export async function GET() {
 
   const { data, error } = await supabase
     .from('valorisation_prices')
-    .select('prices, sell_overrides')
+    .select('prices, sell_overrides, cost_overrides')
     .eq('profile_id', user.id)
     .maybeSingle()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ prices: data?.prices ?? {}, sellOverrides: data?.sell_overrides ?? {} })
+  return NextResponse.json({
+    prices: data?.prices ?? {},
+    sellOverrides: data?.sell_overrides ?? {},
+    costOverrides: data?.cost_overrides ?? {},
+  })
 }
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
@@ -35,7 +43,8 @@ export async function PUT(req: NextRequest) {
   const row: Record<string, unknown> = { profile_id: user.id, updated_at: new Date().toISOString() }
   if (body && isPlainObject(body.prices)) row.prices = body.prices
   if (body && isPlainObject(body.sellOverrides)) row.sell_overrides = body.sellOverrides
-  if (row.prices === undefined && row.sell_overrides === undefined) {
+  if (body && isPlainObject(body.costOverrides)) row.cost_overrides = body.costOverrides
+  if (row.prices === undefined && row.sell_overrides === undefined && row.cost_overrides === undefined) {
     return NextResponse.json({ error: 'Rien à enregistrer' }, { status: 400 })
   }
 
