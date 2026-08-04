@@ -195,11 +195,11 @@ export function appliquerCoutsDecoupe(
  * personne. Ne renomme jamais un générique existant — le boucher a le droit de
  * l'appeler comme il veut.
  *
- * Appelé depuis TROIS endroits, et c'est voulu : à l'enregistrement d'une
- * carcasse (le geste qui crée les morceaux), à l'ouverture de la mercuriale et
- * à celle des fiches recettes (rattrapage des découpes antérieures). Un seul
- * déclencheur — la liste des fiches — laissait une boucherie avec 43 pièces
- * pesées et aucun morceau dans son catalogue, mesuré le 04/08/2026.
+ * Appelé depuis DEUX endroits, et c'est voulu : à l'enregistrement d'une
+ * carcasse — le geste qui crée les morceaux — et à l'ouverture des fiches
+ * recettes, qui rattrape les découpes antérieures. Le seul déclencheur d'avant
+ * — cette liste — laissait une boucherie avec 43 pièces pesées et aucun morceau
+ * dans son catalogue, mesuré le 04/08/2026.
  *
  * Tolérant à l'échec : c'est un confort, jamais une condition pour afficher une
  * fiche. Rend le nombre de génériques créés.
