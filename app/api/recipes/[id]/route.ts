@@ -28,6 +28,7 @@ import {
   type IngredientRow, type RecipeCost, type RecipeFormat, type RecipeRow,
 } from '@/lib/recipes'
 import { fetchAllPages } from '@/lib/fetch-all'
+import { appliquerCoutsDecoupe, coutsMorceauxDuClient } from '@/lib/valorisation-source'
 
 export const dynamic = 'force-dynamic'
 
@@ -103,7 +104,7 @@ export async function GET(_request: NextRequest, { params }: { params: { id: str
       if (apres) q = q.gt('id', apres)
       return q.order('id', { ascending: true })
     }),
-    service.from('generic_articles').select('id, name, base_unit, category, default_loss_pct').eq('client_id', clientId).eq('active', true).order('name'),
+    service.from('generic_articles').select('id, name, base_unit, category, default_loss_pct, valorisation_cut_id').eq('client_id', clientId).eq('active', true).order('name'),
     service.from('recipe_targets').select('category, target_marge_pct').eq('client_id', clientId),
   ])
 
@@ -124,7 +125,11 @@ export async function GET(_request: NextRequest, { params }: { params: { id: str
   const articles = articlesPage.rows
   const emps = (employees || []) as unknown as PayrollEmployee[]
   const averageRate = averageLoadedRate(emps)
+  // Même troisième provenance que la liste : le coût d'un morceau de découpe,
+  // relu de la dernière carcasse, jamais stocké sur l'article.
+  const coutsDecoupe = await coutsMorceauxDuClient(service, clientId)
   const genericById = buildGenericMap((generics || []) as Record<string, unknown>[], articles as Record<string, unknown>[])
+  appliquerCoutsDecoupe(genericById, (generics || []) as Record<string, unknown>[], coutsDecoupe)
   const priceByArticle = new Map<string, number>()
   for (const a of articles) {
     if (a.last_price_ht != null) priceByArticle.set(a.id, parseFloat(String(a.last_price_ht)))
