@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { resolveClientId } from '@/lib/resolve-client-id'
+import { coutsMorceauxDuClient, ensureGeneriquesDecoupe } from '@/lib/valorisation-source'
 
 // Les valorisations étaient la SEULE table métier rattachée à `profile_id`,
 // alors que clients, articles, articles génériques et recettes le sont à
@@ -68,5 +69,32 @@ export async function POST(req: NextRequest) {
     .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json(data, { status: 201 })
+
+  // ── LA CARCASSE DEVIENT DES INGRÉDIENTS, ICI ET MAINTENANT ───────────────
+  //
+  // Les morceaux chiffrés reçoivent leur article générique dès l'enregistrement
+  // de la découpe, et non plus seulement quand quelqu'un ouvre la liste des
+  // fiches recettes.
+  //
+  // Le rattrapage paresseux du lot 53 n'avait qu'un seul déclencheur — cette
+  // liste — et le résultat se mesure en production le 04/08 : une boucherie
+  // avec 43 pièces pesées sur un bœuf à 3 090,42 € n'avait AUCUN morceau dans
+  // sa mercuriale. Le boucher enregistre sa carcasse, va la chercher comme
+  // ingrédient, ne la trouve pas, et rien à l'écran ne lui dit pourquoi.
+  //
+  // Le geste qui crée les morceaux est celui qui enregistre la découpe : c'est
+  // donc là que ça se passe. Reste idempotent (les pièces déjà connues ne sont
+  // pas recréées) et tolérant à l'échec — une carcasse enregistrée le reste,
+  // même si le catalogue ne suit pas.
+  let morceaux_crees = 0
+  if (clientId) {
+    try {
+      const couts = await coutsMorceauxDuClient(service, clientId, user.id)
+      morceaux_crees = await ensureGeneriquesDecoupe(service, clientId, couts)
+    } catch (e) {
+      console.error('[valorisations] création des morceaux de découpe', e)
+    }
+  }
+
+  return NextResponse.json({ ...(data as Record<string, unknown>), morceaux_crees }, { status: 201 })
 }
