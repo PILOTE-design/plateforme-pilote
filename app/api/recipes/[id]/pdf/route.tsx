@@ -109,10 +109,13 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
       category: g.category === 'emballage' ? 'emballage' as const : 'ingredient' as const,
       default_loss_pct: Number(g.default_loss_pct) || 0,
       price_ht: null,
-      // La fiche ATELIER ne porte volontairement aucun prix : la date n'a donc
-      // rien à y faire non plus (le champ existe depuis que la fiche à l'écran
-      // affiche l'âge de chaque prix).
+      // La fiche ATELIER ne porte volontairement aucun prix : ni la date, ni la
+      // réf fournisseur d'où il sortirait n'ont donc rien à y faire (ces champs
+      // existent parce que la fiche À L'ÉCRAN affiche l'âge et la provenance de
+      // chaque prix — le classeur de l'atelier, lui, reste sans chiffres).
       price_date: null,
+      ref_name: null,
+      ref_supplier: null,
     }]))
     const costed = costIngredients((ings || []) as IngredientRow[], new Map(), genericById)
     const steps = parseStoredSteps(recipe.fabrication_steps)
