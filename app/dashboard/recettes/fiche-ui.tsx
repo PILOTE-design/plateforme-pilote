@@ -43,7 +43,13 @@ export type FicheGeneric = {
 }
 
 export type FicheCost = {
-  matiere_ht: number; emballage_ht: number; main_oeuvre_ht: number; total_ht: number
+  matiere_ht: number
+  /** Surcoût de la PERTE DE FABRICATION sur la matière — affiché à part,
+   *  jamais fondu dans `matiere_ht` : c'est un chiffre sur lequel le boucher
+   *  peut agir (revoir une cuisson, une découpe). */
+  perte_ht?: number
+  perte_pct?: number
+  emballage_ht: number; main_oeuvre_ht: number; total_ht: number
   par_unite_ht: number | null
   /** Coût par unité de VENTE — la base du PV, de la marge et du coefficient */
   par_unite_vente_ht?: number | null
@@ -83,6 +89,8 @@ export type FicheRecipe = {
   /** Vendu dans une AUTRE unité que la production (pièces fabriquées, kg vendus) */
   sell_unit?: string | null; sell_qty?: number | null
   labor_minutes: number; selling_price_ttc: number | null; tva_rate: number; notes: string | null
+  /** Perte de FABRICATION de la fiche, en % (l'atelier — pas le parage d'une ligne) */
+  loss_pct?: number | null
   employee_id: string | null
   fabrication_steps?: unknown
   time_tiers?: unknown

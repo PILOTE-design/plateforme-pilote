@@ -25,6 +25,11 @@ export type RecipeRow = {
    *  « 6 pièces de 400 g vendues au kg ») — la base de la marge et du coef. */
   sell_qty?: number | null
   labor_minutes: number
+  /** PERTE DE FABRICATION de la fiche, en % — l'atelier, pas la ligne :
+   *  évaporation à la cuisson, chutes de mêlée, fond de cuve. Distincte de
+   *  `recipe_ingredients.loss_pct` (le parage d'un morceau), elle s'applique à
+   *  l'ensemble de la matière une fois toutes les lignes sorties. */
+  loss_pct?: number | null
   selling_price_ttc: number | null
   tva_rate: number
   notes: string | null
@@ -165,6 +170,22 @@ export type IngredientCost = IngredientRow & {
 
 export type RecipeCost = {
   matiere_ht: number
+  /** Surcoût de la PERTE DE FABRICATION (`recipes.loss_pct`) sur la matière —
+   *  affiché À PART, jamais fondu dans `matiere_ht`.
+   *
+   *  Deux pertes coexistent et les confondre fausse tout : celle d'une LIGNE
+   *  (parage, épluchage) gonfle déjà sa quantité brute ; celle de la FICHE est
+   *  la perte de l'atelier (évaporation, chutes de mêlée, fond de cuve) et
+   *  s'applique à l'ensemble une fois toutes les lignes sorties. Sans elle, une
+   *  fiche qui perd 5 % à la cuisson affiche un coût sous-évalué de 5 % et une
+   *  marge d'autant flattée.
+   *
+   *  Le montrer séparément plutôt que de le noyer dans la matière : c'est un
+   *  chiffre sur lequel le boucher peut AGIR (revoir une cuisson, une découpe),
+   *  pas une fatalité du prix d'achat. */
+  perte_ht: number
+  /** Le % de perte de fabrication de la fiche, tel que saisi (0 = aucune) */
+  perte_pct: number
   emballage_ht: number
   main_oeuvre_ht: number
   total_ht: number
@@ -184,6 +205,24 @@ export type RecipeCost = {
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 const round4 = (n: number) => Math.round(n * 10000) / 10000
+
+/** Le % de perte de fabrication d'une fiche, ramené dans [0 ; 99]. Une valeur
+ *  illisible ou absente vaut 0 : on n'invente pas une perte, on n'en refuse
+ *  pas une non plus. */
+export function pertePlausible(raw: unknown): number {
+  const p = Number(raw)
+  if (!Number.isFinite(p) || p <= 0) return 0
+  return Math.min(99, Math.round(p * 100) / 100)
+}
+
+/** Ce par quoi il faut multiplier une quantité NETTE pour obtenir la quantité
+ *  BRUTE à sortir quand l'atelier perd `p` % : 1/(1−p/100). Un seul endroit,
+ *  lu par le coût du jour ET par la relecture aux prix d'hier — sinon la courbe
+ *  et le chiffre du haut de la fiche divergeraient. */
+export function facteurPerte(pertePct: number): number {
+  const p = pertePlausible(pertePct)
+  return p > 0 ? 1 / (1 - p / 100) : 1
+}
 
 /** Quantité VENDABLE du batch, dans l'unité où la fiche se vend.
  *
@@ -343,9 +382,15 @@ export function computeRecipeCost(
 ): RecipeCost {
   const matiere = round2(ingredients.filter(i => i.categorie !== 'emballage').reduce((s, i) => s + i.line_total_ht, 0))
   const emballage = round2(ingredients.filter(i => i.categorie === 'emballage').reduce((s, i) => s + i.line_total_ht, 0))
+  // PERTE DE FABRICATION : il faut sortir davantage de matière pour obtenir le
+  // même rendement — le surcoût est donc matière × (1/(1−p) − 1). Elle ne touche
+  // NI l'emballage (on ne perd pas de barquette à la cuisson) NI la main-d'œuvre
+  // (le temps ne dépend pas du rendement).
+  const pertePct = pertePlausible(recipe.loss_pct)
+  const perte = round2(matiere * (facteurPerte(pertePct) - 1))
   const totalMinutes = recipeTotalMinutes(recipe)
   const mo = round2(laborRate !== null ? totalMinutes / 60 * laborRate : 0)
-  const total = round2(matiere + emballage + mo)
+  const total = round2(matiere + perte + emballage + mo)
   const yieldQty = Number(recipe.yield_qty) || 0
   const parUnite = yieldQty > 0 ? round2(total / yieldQty) : null
   // Unité de VENTE distincte (fabriqué en pièces, vendu au kg) : le PV se
@@ -381,6 +426,8 @@ export function computeRecipeCost(
 
   return {
     matiere_ht: matiere,
+    perte_ht: perte,
+    perte_pct: pertePct,
     emballage_ht: emballage,
     main_oeuvre_ht: mo,
     total_ht: total,
@@ -596,6 +643,13 @@ export function parseRecipeFields(body: Record<string, unknown>): { error?: stri
       tva_rate: Number.isFinite(tva) && tva > 0 && tva <= 20 ? tva : 5.5,
       notes: typeof body?.notes === 'string' && body.notes ? String(body.notes).slice(0, 500) : null,
       employee_id: typeof body?.employee_id === 'string' && body.employee_id ? body.employee_id : null,
+      // Perte de FABRICATION de la fiche. ABSENTE DU CORPS = INCHANGÉE, comme
+      // les étapes et les paliers ci-dessous : la modale d'édition et le
+      // panneau envoient chacun leur sous-ensemble de champs, et une perte
+      // remise à 0 par un enregistrement d'étapes serait un coût de revient qui
+      // baisse tout seul — exactement le genre de chiffre faux en silence que
+      // ce projet refuse. (Même leçon que `sell_unit` au lot 39.)
+      ...(body?.loss_pct !== undefined ? { loss_pct: pertePlausible(body.loss_pct) } : {}),
       // Procédé de fabrication : étapes ordonnées AVEC durée (minutes, null si non
       // chronométrée). Les anciens clients envoient encore des chaînes — tolérées.
       // Absent du corps = inchangé.
@@ -764,18 +818,26 @@ export function costMatiereAtDate(
   costed: IngredientCost[],
   seriesByGeneric: Map<string, GenericPriceSeries>,
   d: string,
+  /** Perte de FABRICATION de la fiche (%) — appliquée à la matière seule, comme
+   *  dans `computeRecipeCost`. Sans elle, la courbe raconterait un coût matière
+   *  systématiquement plus bas que celui affiché en haut de la fiche. */
+  pertePct: number = 0,
 ): number | null {
-  let total = 0
+  let matiere = 0
+  let emballage = 0
   for (const line of costed) {
+    let ligne: number
     if (line.generic_id && line.price_source === 'mercuriale') {
       const p = priceAtDate(seriesByGeneric.get(line.generic_id), d)
       if (p === null) return null
-      total += p * line.qty_brute
+      ligne = p * line.qty_brute
     } else {
-      total += line.line_total_ht
+      ligne = line.line_total_ht
     }
+    if (line.categorie === 'emballage') emballage += ligne
+    else matiere += ligne
   }
-  return Math.round(total * 100) / 100
+  return Math.round((matiere * facteurPerte(pertePct) + emballage) * 100) / 100
 }
 
 // ── Sous-recettes ─────────────────────────────────────────────────────────

@@ -23,7 +23,7 @@ import { PAYROLL_EMPLOYEE_COLUMNS, chargeMultiplier, productiveFactor, type Payr
 import {
   averageLoadedRate, employeeLoadedRate, buildGenericMap,
   buildGenericPriceSeries, costMatiereAtDate, motifSerieMatiere, buildRecipeCostGraph,
-  computeFormatVerdict, costPourFormat, formatParDefaut,
+  computeFormatVerdict, costPourFormat, formatParDefaut, pertePlausible,
   parseIngredients, parseRecipeFields,
   type IngredientRow, type RecipeCost, type RecipeFormat, type RecipeRow,
 } from '@/lib/recipes'
@@ -206,7 +206,7 @@ export async function GET(_request: NextRequest, { params }: { params: { id: str
     const todayIso = new Date().toISOString().slice(0, 10)
     if (jalons[jalons.length - 1] !== todayIso) jalons.push(todayIso)
     matiere_series = jalons
-      .map(d => ({ d, v: costMatiereAtDate(costed, seriesByGeneric, d) }))
+      .map(d => ({ d, v: costMatiereAtDate(costed, seriesByGeneric, d, pertePlausible((row as any).loss_pct)) }))
       .filter((x): x is { d: string; v: number } => x.v !== null)
   }
 

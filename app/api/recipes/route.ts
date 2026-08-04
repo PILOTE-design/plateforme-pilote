@@ -17,7 +17,7 @@ import { PAYROLL_EMPLOYEE_COLUMNS, chargeMultiplier, productiveFactor, type Payr
 import {
   averageLoadedRate, employeeLoadedRate, buildGenericMap,
   buildGenericPriceSeries, costMatiereAtDate, motifSerieMatiere,
-  buildRecipeCostGraph, computeFormatVerdict, costPourFormat, formatParDefaut,
+  buildRecipeCostGraph, computeFormatVerdict, costPourFormat, formatParDefaut, pertePlausible,
   parseIngredients, parseRecipeFields,
   type IngredientRow, type RecipeCost, type RecipeFormat, type RecipeRow,
 } from '@/lib/recipes'
@@ -181,7 +181,7 @@ export async function GET() {
     // coût du jour) — seule la matière mercuriale directe est relue à date.
     const matiere_series = hasMercuriale
       ? jalons
-          .map(d => ({ d, v: costMatiereAtDate(costed, seriesByGeneric, d) }))
+          .map(d => ({ d, v: costMatiereAtDate(costed, seriesByGeneric, d, pertePlausible((r as any).loss_pct)) }))
           .filter((x): x is { d: string; v: number } => x.v !== null)
       : []
     // Une courbe absente se lit « le coût n'a pas bougé » si rien ne dit pourquoi.

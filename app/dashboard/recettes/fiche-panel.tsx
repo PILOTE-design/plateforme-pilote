@@ -18,7 +18,7 @@ import { useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { Pencil, Plus, X, Check, Clock, ShoppingBasket, Package, AlertTriangle, Users, Printer, Copy } from 'lucide-react'
 import { useToast } from '@/components/ui/toast'
-import { parseStoredSteps, parseStoredTiers } from '@/lib/recipes'
+import { facteurPerte, parseStoredSteps, parseStoredTiers } from '@/lib/recipes'
 import {
   TableauIngredients, TrendSpark,
   ageJours, fmtDateFr, fmtEuro, fmtMin, fmtQty, ligneKg, num, round2, unitFr,
@@ -90,8 +90,12 @@ export default function FichePanel({
   // Création d'un format (« + Format ») — nom, unité de vente, quantité vendable
   const [editFormat, setEditFormat] = useState<{ mode: 'creer'; nom: string; unite: string; qty: string } | null>(null)
   const [confirmFormat, setConfirmFormat] = useState(false)
-  // Ajout d'ingrédient directement depuis le tableau (comme les étapes)
-  const [newIng, setNewIng] = useState<{ query: string; generic: FicheGeneric | null; qty: string; unit: 'kg' | 'g' | 'piece'; loss: string } | null>(null)
+  // Ajout d'ingrédient directement depuis le tableau (comme les étapes).
+  // `emballage` : la recherche ne propose alors que des CONTENANTS — c'est le
+  // bouton « Ajouter » de la carte Contenants qui l'ouvre dans ce mode.
+  const [newIng, setNewIng] = useState<{ query: string; generic: FicheGeneric | null; qty: string; unit: 'kg' | 'g' | 'piece'; loss: string; emballage?: boolean } | null>(null)
+  // Édition de la perte de fabrication (null = pas en cours d'édition)
+  const [editPerte, setEditPerte] = useState<string | null>(null)
   // Retrait d'ingrédient en deux clics (jamais de confirm() natif)
   const [confirmIng, setConfirmIng] = useState<number | null>(null)
   // Sous-onglet affiché — « Ingrédients » d'abord, c'est là qu'on travaille
@@ -130,7 +134,18 @@ export default function FichePanel({
     return { net: acc.net + kg.net, brut: acc.brut + kg.brut, horsAssiette: acc.horsAssiette }
   }, { net: 0, brut: 0, horsAssiette: 0 }), [recipe])
 
+  // `coutMatiere` reste la somme des LIGNES (matière + emballage) : c'est le
+  // dénominateur des parts de coût du tableau, et son pied affiche 100 %. La
+  // perte de fabrication n'est PAS une ligne — l'ajouter ici ferait des
+  // pourcentages qui ne totalisent plus ce que le pied annonce. Elle est donc
+  // comptée à part, et affichée sur sa propre ligne sous le tableau.
+  const pertePct = Number(c?.perte_pct ?? recipe.loss_pct ?? 0) || 0
+  const perteHt = Number(c?.perte_ht ?? 0) || 0
   const coutMatiere = (c?.matiere_ht ?? 0) + (c?.emballage_ht ?? 0)
+  /** Les CONTENANTS de la fiche : ses lignes d'ingrédient de catégorie
+   *  « emballage ». Pas de table dédiée — un contenant est un article générique
+   *  comme un autre, c'est sa catégorie qui le désigne. */
+  const contenants = useMemo(() => recipe.ingredients.filter(i => i.categorie === 'emballage'), [recipe.ingredients])
 
   // ── Le FORMAT affiché ──────────────────────────────────────────────────
   // La fabrication est commune à tous les formats (ingrédients, étapes, temps,
@@ -204,7 +219,9 @@ export default function FichePanel({
   //
   // Rien n'est publié tant qu'un prix d'ingrédient manque : le coût serait
   // sous-évalué, donc les deux marges flattées — même règle que le moteur.
-  const matiereUnite = c && venteQty > 0 ? round2((c.matiere_ht + c.emballage_ht) / venteQty) : null
+  // La perte de fabrication est un coût de MATIÈRE (il faut en sortir plus pour
+  // le même rendement) : elle entre dans la marge brute, pas dans la nette.
+  const matiereUnite = c && venteQty > 0 ? round2((c.matiere_ht + perteHt + c.emballage_ht) / venteQty) : null
   const moUnite = c && venteQty > 0 ? round2(c.main_oeuvre_ht / venteQty) : null
   const margeBrute = !coutIncomplet && pvHTActif !== null && matiereUnite !== null ? round2(pvHTActif - matiereUnite) : null
   const margeNette = margeBrute !== null && moUnite !== null ? round2(margeBrute - moUnite) : null
@@ -227,7 +244,7 @@ export default function FichePanel({
     loss_pct: i.loss_pct, manual_price_ht: i.manual_price_ht ?? null,
   }))
 
-  async function saveAll(extra?: { selling_price_ttc?: number | null; ingredients?: ReturnType<typeof ingPayload> }) {
+  async function saveAll(extra?: { selling_price_ttc?: number | null; loss_pct?: number; ingredients?: ReturnType<typeof ingPayload> }) {
     if (saving) return
     setSaving(true)
     const res = await fetch(`/api/recipes/${recipe.id}`, {
@@ -240,6 +257,10 @@ export default function FichePanel({
         // l'unité produite, et sa marge changerait en silence.
         sell_unit: recipe.sell_unit ?? null, sell_qty: recipe.sell_qty ?? null,
         labor_minutes: recipe.labor_minutes,
+        // La perte de fabrication DOIT voyager elle aussi : le serveur la laisse
+        // inchangée quand elle est absente, mais l'envoyer explicitement évite
+        // que la règle change un jour sans qu'on s'en aperçoive ici.
+        loss_pct: extra && 'loss_pct' in extra ? extra.loss_pct : (Number(recipe.loss_pct) || 0),
         selling_price_ttc: extra && 'selling_price_ttc' in extra ? extra.selling_price_ttc : recipe.selling_price_ttc,
         tva_rate: recipe.tva_rate, notes: recipe.notes, employee_id: recipe.employee_id,
         fabrication_steps: steps
@@ -278,6 +299,7 @@ export default function FichePanel({
         yield_qty: recipe.yield_qty, yield_unit: recipe.yield_unit,
         sell_unit: recipe.sell_unit ?? null, sell_qty: recipe.sell_qty ?? null,
         labor_minutes: recipe.labor_minutes,
+        loss_pct: Number(recipe.loss_pct) || 0,
         // Le PV n'est PAS repris : une variante n'a aucune raison de se vendre
         // au même prix, et un prix hérité en silence est un prix qu'on oublie.
         selling_price_ttc: null,
@@ -393,6 +415,20 @@ export default function FichePanel({
     setSaving(false)
     if (res?.ok) { setFormatId(null); toast({ variant: 'info', title: 'Format retiré' }); onSaved() }
     else toast({ variant: 'error', title: 'Retrait impossible', description: data?.error || 'Réessayez.' })
+  }
+
+  /** Enregistre la perte de fabrication (champ vide = aucune perte) */
+  function savePerte() {
+    if (saving || editPerte === null) return
+    const brut = editPerte.trim()
+    const v = brut === '' ? 0 : num(editPerte)
+    setEditPerte(null)
+    if (!(v >= 0 && v < 100)) {
+      toast({ variant: 'error', title: 'Perte invalide', description: 'Indiquez un pourcentage entre 0 et 99.' })
+      return
+    }
+    if (Math.abs(v - pertePct) < 0.005) return
+    saveAll({ loss_pct: v })
   }
 
   /** Valide l'édition sur place du PV ou du coef → recalcule et enregistre le PV TTC */
@@ -694,13 +730,19 @@ export default function FichePanel({
                   <dd className="font-semibold text-gray-900 tabular text-right">{baseQty > 0 ? `${fmtQty(baseQty)} ${uniteLabel}` : <span className="text-gray-300">non renseignée</span>}</dd>
                 </div>
                 <div className="flex justify-between gap-3">
-                  <dt className="text-gray-500">Poids brut &middot; net</dt>
+                  <dt className="text-gray-500">Poids à sortir &middot; net</dt>
                   <dd className="font-semibold text-gray-900 tabular text-right">
                     {poids.brut > 0
-                      ? <>{fmtQty(poids.brut)} kg <span className="font-normal text-gray-400">&middot; {fmtQty(poids.net)} kg net</span></>
+                      ? <>{fmtQty(round2(poids.brut * facteurPerte(pertePct) * 1000) / 1000)} kg <span className="font-normal text-gray-400">&middot; {fmtQty(poids.net)} kg net</span></>
                       : <span className="text-gray-300">aucune ligne pesable</span>}
                   </dd>
                 </div>
+                {pertePct > 0 && poids.brut > 0 && (
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-gray-500">dont perte de fabrication</dt>
+                    <dd className="font-semibold text-amber-600 tabular text-right">{pertePct.toLocaleString('fr-FR')} % &middot; {fmtEuro(perteHt)}</dd>
+                  </div>
+                )}
                 {/* Le coût AU KILO se rapporte au poids NET — ce qui sort de
                     l'atelier, pas ce qu'on a sorti du frigo. Il n'existe que si
                     la fiche a des lignes pesables : sinon, tiret. */}
@@ -748,6 +790,67 @@ export default function FichePanel({
 
         {onglet === 'ingredients' && (
           <>
+        {/* ── Contenants et perte de fabrication ──────────────────────────────
+            Les deux cartes qu'Otami met en tête de son onglet Ingrédients.
+            · CONTENANTS : PILOTE n'a pas de table dédiée et n'en a pas besoin —
+              un contenant est déjà un article générique de catégorie
+              « emballage », posé en ligne d'ingrédient. La carte ne fait que
+              les rassembler et compter ce qu'ils coûtent.
+            · PERTE DE FABRICATION : celle de l'atelier (évaporation, chutes de
+              mêlée, fond de cuve), distincte de la perte d'une LIGNE (le parage
+              d'un morceau). Sans elle, une fiche qui perd 5 % à la cuisson
+              affiche un coût sous-évalué de 5 % et une marge d'autant flattée. */}
+        <div className="mb-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="rounded-2xl border border-gray-100 px-4 py-3 flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Contenants</p>
+              <p className="text-sm text-gray-700 mt-0.5">
+                {contenants.length === 0
+                  ? <span className="text-gray-400">aucun emballage sur cette fiche</span>
+                  : <span className="tabular"><span className="font-bold text-gray-900">{contenants.length}</span> — {fmtEuro(c?.emballage_ht ?? 0)} le batch</span>}
+              </p>
+              {contenants.length > 0 && (
+                <p className="text-[11px] text-gray-400 truncate mt-0.5">{contenants.map(i => i.label).join(' · ')}</p>
+              )}
+            </div>
+            <button onClick={() => setNewIng({ query: '', generic: null, qty: '', unit: 'piece', loss: '0', emballage: true })}
+              title="Ajouter un contenant — un article générique de catégorie « emballage » de votre mercuriale"
+              className="flex items-center gap-1.5 text-xs font-bold text-pilote border border-pilote-200 bg-white rounded-xl px-3 py-2 hover:bg-pilote-50 transition-colors flex-shrink-0">
+              <Plus className="w-3.5 h-3.5" />Ajouter
+            </button>
+          </div>
+
+          <div className="rounded-2xl border border-gray-100 px-4 py-3 flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Perte de fabrication</p>
+              <p className="text-[11px] text-gray-400 mt-0.5">
+                Ce que l&rsquo;atelier perd sur l&rsquo;ensemble — cuisson, chutes de mêlée, fond de cuve. Le parage d&rsquo;un ingrédient, lui, se règle sur sa ligne.
+              </p>
+            </div>
+            {editPerte !== null ? (
+              <span className="inline-flex items-center gap-1 bg-white border border-pilote-200 rounded-full pl-3 pr-1 py-1 flex-shrink-0">
+                <input autoFocus inputMode="decimal" value={editPerte}
+                  onChange={e => setEditPerte(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') savePerte(); if (e.key === 'Escape') setEditPerte(null) }}
+                  placeholder="5" className="w-10 text-sm tabular focus:outline-none" />
+                <span className="text-[11px] text-gray-400">%</span>
+                <button onClick={savePerte} disabled={saving}
+                  className="w-6 h-6 rounded-full bg-pilote text-white flex items-center justify-center disabled:opacity-50" title="Enregistrer (champ vide = aucune perte)">
+                  <Check className="w-3 h-3" />
+                </button>
+                <button onClick={() => setEditPerte(null)}
+                  className="w-6 h-6 rounded-full text-gray-400 hover:bg-gray-100 flex items-center justify-center"><X className="w-3 h-3" /></button>
+              </span>
+            ) : (
+              <button onClick={() => setEditPerte(pertePct > 0 ? String(pertePct).replace('.', ',') : '')}
+                title="Modifier la perte de fabrication"
+                className={`text-sm font-bold tabular rounded-full px-3 py-1.5 transition-colors flex-shrink-0 ${pertePct > 0 ? 'text-pilote bg-pilote-50 ring-1 ring-pilote-100 hover:bg-pilote-100' : 'text-gray-400 bg-gray-50 hover:bg-gray-100'}`}>
+                {pertePct > 0 ? `${pertePct.toLocaleString('fr-FR')} %` : 'aucune'}
+              </button>
+            )}
+          </div>
+        </div>
+
         {c && c.prix_manquants > 0 && (
           <div className="mb-4 bg-amber-50 border border-amber-200 rounded-xl px-4 py-2 flex items-start gap-2 text-xs text-amber-800">
             <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
@@ -794,7 +897,7 @@ export default function FichePanel({
                     ) : (
                       <input autoFocus value={newIng.query}
                         onChange={e => setNewIng(p => (p ? { ...p, query: e.target.value } : p))}
-                        placeholder="Chercher un article générique…"
+                        placeholder={newIng.emballage ? 'Chercher un contenant…' : 'Chercher un article générique…'}
                         className="flex-1 min-w-[160px] border border-gray-200 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200" />
                     )}
                     <input inputMode="decimal" value={newIng.qty} placeholder="Qté"
@@ -825,7 +928,7 @@ export default function FichePanel({
                   </div>
                   {!newIng.generic && newIng.query.trim().length >= 2 && (
                     <div className="absolute z-20 left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-card-hover overflow-hidden">
-                      {generics.filter(g => g.name.toLowerCase().includes(newIng.query.trim().toLowerCase())).slice(0, 6).map(g => (
+                      {generics.filter(g => (newIng.emballage ? g.category === 'emballage' : true) && g.name.toLowerCase().includes(newIng.query.trim().toLowerCase())).slice(0, 6).map(g => (
                         <button key={g.id}
                           onClick={() => setNewIng(p => (p ? { ...p, generic: g, query: g.name, unit: g.base_unit === 'kg' ? 'kg' : 'piece', loss: String(g.default_loss_pct || 0) } : p))}
                           className="w-full text-left px-3 py-2 text-sm hover:bg-pilote-50 flex items-center justify-between gap-2">
@@ -837,8 +940,8 @@ export default function FichePanel({
                           </span>
                         </button>
                       ))}
-                      {generics.filter(g => g.name.toLowerCase().includes(newIng.query.trim().toLowerCase())).length === 0 && (
-                        <p className="px-3 py-2 text-xs text-gray-400">Aucun article générique — créez-le d&apos;abord dans la Mercuriale.</p>
+                      {generics.filter(g => (newIng.emballage ? g.category === 'emballage' : true) && g.name.toLowerCase().includes(newIng.query.trim().toLowerCase())).length === 0 && (
+                        <p className="px-3 py-2 text-xs text-gray-400">Aucun {newIng.emballage ? 'contenant' : 'article générique'} — créez-le d&apos;abord dans la Mercuriale{newIng.emballage ? ', avec la catégorie « emballage »' : ''}.</p>
                       )}
                     </div>
                   )}
@@ -852,6 +955,11 @@ export default function FichePanel({
             </div>
             <div className="px-3.5 py-2.5 border-t border-gray-100 flex flex-wrap gap-x-5 gap-y-1 text-[11px] text-gray-500 tabular">
               <span><ShoppingBasket className="w-3 h-3 inline mr-1 text-gray-400" />Matière {c ? fmtEuro(c.matiere_ht * ratio) : '—'}</span>
+              {perteHt > 0 && (
+                <span title={`Perte de fabrication de ${pertePct.toLocaleString('fr-FR')} % : il faut sortir d'autant plus de matière pour le même rendement`}>
+                  <AlertTriangle className="w-3 h-3 inline mr-1 text-amber-500" />Perte de fabrication {pertePct.toLocaleString('fr-FR')} % — {fmtEuro(perteHt * ratio)}
+                </span>
+              )}
               {c && c.emballage_ht > 0 && <span><Package className="w-3 h-3 inline mr-1 text-gray-400" />Emballage {fmtEuro(c.emballage_ht * ratio)}</span>}
               <span><Clock className="w-3 h-3 inline mr-1 text-gray-400" />Main-d&apos;œuvre {active ? fmtEuro(moScaled) : (c ? fmtEuro(c.main_oeuvre_ht) : '—')}</span>
               <span className="font-bold text-gray-700">Coût {active ? `pour ${fmtQty(active.qty)} ${uniteLabel}` : 'du batch'} : {active ? fmtEuro(coutScaled) : (c ? fmtEuro(c.total_ht) : '—')}</span>
@@ -988,9 +1096,15 @@ export default function FichePanel({
                 <dd className="font-semibold text-gray-900 tabular">{tvaActive.toLocaleString('fr-FR')} %</dd>
               </div>
               <div className="flex justify-between gap-3">
-                <dt className="text-gray-500">Matière {c && c.emballage_ht > 0 ? '+ emballage' : ''}</dt>
+                <dt className="text-gray-500">Matière {c && c.emballage_ht > 0 ? '+ emballage' : ''}{pertePct > 0 ? ', perte comprise' : ''}</dt>
                 <dd className="font-semibold text-gray-900 tabular">{matiereUnite !== null ? fmtEuro(matiereUnite) : <span className="text-gray-300">&mdash;</span>}</dd>
               </div>
+              {pertePct > 0 && (
+                <div className="flex justify-between gap-3">
+                  <dt className="text-gray-500">dont perte de fabrication <span className="text-gray-400">({pertePct.toLocaleString('fr-FR')} %)</span></dt>
+                  <dd className="font-semibold text-amber-600 tabular">{venteQty > 0 ? fmtEuro(round2(perteHt / venteQty)) : fmtEuro(perteHt)}</dd>
+                </div>
+              )}
               <div className="flex justify-between gap-3">
                 <dt className="text-gray-500">Main-d&rsquo;œuvre</dt>
                 <dd className="font-semibold text-gray-900 tabular">{moUnite !== null ? fmtEuro(moUnite) : <span className="text-gray-300">&mdash;</span>}</dd>
