@@ -150,9 +150,41 @@ export function couvertureParPoste(args: {
   entrees: Record<string, EntreePlanning> | EntreePlanning[]
   postes: string[]
 }): LignePoste[] {
-  const { employes, postes } = args
+  return construireLignes(rangerCreneaux(args.employes, args.entrees), args.postes)
+}
+
+/**
+ * Les créneaux TRAVAILLÉS qui ne servent aucun poste, rendus dans la même forme
+ * qu'une ligne de poste — pour être affichés dans le même tableau.
+ *
+ * Pourquoi cette fonction existe : `couvertureParPoste` refuse d'imputer un
+ * créneau sans poste à un rayon au hasard, et elle a raison. Mais tant que ces
+ * heures n'étaient rendues NULLE PART, le pied de la vue Postes annonçait
+ * 160h00 quand la page disait 167h48 — un écart de 7h48 que rien n'expliquait
+ * à l'écran (vu en production le 04/08/2026, un créneau de la semaine n'ayant
+ * pas de poste renseigné).
+ *
+ * Règle de maison : une exclusion se dit. On ne range pas ces heures dans un
+ * rayon, on les montre à part, et la somme du tableau redevient exactement le
+ * total travaillé.
+ */
+export const SANS_POSTE = '__sans_poste__'
+
+export function ligneSansPoste(args: {
+  employes: EmployePlanning[]
+  entrees: Record<string, EntreePlanning> | EntreePlanning[]
+}): LignePoste {
+  return construireLignes(rangerCreneaux(args.employes, args.entrees), [SANS_POSTE])[0]
+}
+
+/** Le parcours du planning, écrit UNE fois : les deux lectures ci-dessus en
+ *  dépendent, donc elles ne peuvent pas diverger. */
+function rangerCreneaux(
+  employes: EmployePlanning[],
+  entreesBrutes: Record<string, EntreePlanning> | EntreePlanning[],
+): Map<string, Map<JourPlanning, CreneauPoste[]>> {
   const nomDe = new Map(employes.map(e => [String(e.id), e.name]))
-  const entrees = Array.isArray(args.entrees) ? args.entrees : Object.values(args.entrees ?? {})
+  const entrees = Array.isArray(entreesBrutes) ? entreesBrutes : Object.values(entreesBrutes ?? {})
 
   // Accumulateur : poste → jour → créneaux
   const acc = new Map<string, Map<JourPlanning, CreneauPoste[]>>()
@@ -185,11 +217,12 @@ export function couvertureParPoste(args: {
       for (const m of moments) {
         const duree = dureeCreneau(m.debut, m.fin)
         if (duree === null) continue
-        const cibles = postesDuCreneau(sd, m.moment)
+        const lus = postesDuCreneau(sd, m.moment)
         // Un créneau sans poste renseigné n'est imputé à AUCUN rayon. On ne le
         // range pas d'office dans le premier de la liste : ce serait inventer
-        // une couverture. Il reste visible dans la vue par employé.
-        if (cibles.length === 0) continue
+        // une couverture. Il va dans SANS_POSTE, pour que ses heures restent
+        // comptées quelque part au lieu de disparaître du total.
+        const cibles = lus.length > 0 ? lus : [SANS_POSTE]
         const part = round2(duree / cibles.length)
         for (const poste of cibles) {
           pousser(poste, jour, {
@@ -206,6 +239,14 @@ export function couvertureParPoste(args: {
     }
   }
 
+  return acc
+}
+
+/** Les lignes demandées, dans l'ordre demandé — y compris celles à 00h00. */
+function construireLignes(
+  acc: Map<string, Map<JourPlanning, CreneauPoste[]>>,
+  postes: string[],
+): LignePoste[] {
   return postes.map(poste => {
     const parJour = acc.get(poste)
     const jours: JourPoste[] = JOURS_DB.map(jour => {
