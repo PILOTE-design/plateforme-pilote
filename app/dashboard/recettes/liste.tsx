@@ -26,6 +26,7 @@
 
 import { ArrowDown, ArrowUp, ArrowUpDown, Check, ChevronRight } from 'lucide-react'
 import { venteQty, margeEtCoef } from '@/lib/recipes'
+import { uniteAuPluriel } from './fiche-ui'
 
 export type ListeCost = {
   matiere_ht: number
@@ -167,7 +168,7 @@ function sousTitre(l: ListeLigne): string {
   if (!memeNom && l.recetteNom.trim()) bouts.push(l.recetteNom)
   if (l.yield_qty && l.yield_qty > 0) bouts.push(`${fmtQty(l.yield_qty)} ${l.yield_unit || 'unités'} par batch`)
   else bouts.push('rendement non renseigné')
-  if (l.sell_unit && Number(l.sell_qty) > 0) bouts.push(`vendu en ${l.sell_unit} (${fmtQty(Number(l.sell_qty))} par batch)`)
+  if (l.sell_unit && Number(l.sell_qty) > 0) bouts.push(`vendu en ${l.sell_unit} (${fmtQty(Number(l.sell_qty))} ${uniteAuPluriel(Number(l.sell_qty), l.sell_unit)} par batch)`)
   return bouts.join(' · ')
 }
 
