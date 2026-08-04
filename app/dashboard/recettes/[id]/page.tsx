@@ -20,6 +20,13 @@ export default function FicheRecettePage() {
   const [target, setTarget] = useState<number | null>(null)
   const [historiqueIncomplet, setHistoriqueIncomplet] = useState(false)
   const [loading, setLoading] = useState(true)
+  // Format à ouvrir (?format=<id>) — la liste étant à une ligne par format
+  // depuis le lot 50, un lien direct doit pouvoir viser un conditionnement
+  // précis. Lu une seule fois, sans useSearchParams (qui imposerait une
+  // frontière Suspense à cette page) et sans toucher au rendu serveur.
+  const [initialFormatId] = useState<string | null>(() => (
+    typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('format')
+  ))
 
   // UNE fiche, une route dédiée. Avant : on demandait la LISTE puis on y
   // cherchait la sienne — ce qui faisait calculer le coût de toutes les fiches
@@ -55,6 +62,7 @@ export default function FicheRecettePage() {
         <FichePanel
           key={recipe.id}
           recipe={recipe}
+          initialFormatId={initialFormatId}
           employees={employees}
           generics={generics}
           target={target}
