@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo} from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useToast } from '@/components/ui/toast'
@@ -11,6 +11,8 @@ import {
   getWeekDates, frenchHolidayNames, entryHours, entryBrutCost, chargeMultiplier,
   type PayrollEmployee, type PayrollEntry,
 } from '@/lib/payroll'
+import VuePostes from './vue-postes'
+import { couvertureParPoste, totalHeures, type EntreePlanning } from '@/lib/planning-postes'
 
 type DayType = 'travail' | 'conges' | 'maladie' | 'repos'
 
@@ -343,6 +345,10 @@ export default function PlanningPage() {
   // utilisables sur chaque créneau et comme famille de marge en facturation.
   const [customPostes,   setCustomPostes]   = useState<{ key: string; label: string }[]>([])
   const [showPostes,     setShowPostes]     = useState(false)
+  // La semaine se lit de DEUX façons — par employé (« qui travaille, et combien
+  // ça coûte ») ou par poste (« mon rayon est-il couvert ? »). Même donnée, même
+  // écran, deux questions ; le boucher se pose les deux.
+  const [vue, setVue] = useState<'employes' | 'postes'>('employes')
   const [newPosteLabel,  setNewPosteLabel]  = useState('')
   const [savingPostes,   setSavingPostes]   = useState(false)
 
@@ -406,6 +412,19 @@ export default function PlanningPage() {
   const holidays     = frenchHolidayNames(year)
   const weekHolidays = weekDates.map(d => holidays.get(d.toISOString().slice(0, 10)) ?? null)
   const weekVacances = getWeekVacances(weekDates)
+
+  // Rangement par poste — moteur PUR (lib/planning-postes, 50 assertions). Les
+  // heures d'un créneau multi-postes se partagent à parts égales, si bien que le
+  // total de cette vue égale exactement celui des heures travaillées.
+  const lignesPostes = useMemo(() => couvertureParPoste({
+    employes: employees.map(e => ({ id: e.id, name: e.name })),
+    entrees: entries as unknown as Record<string, EntreePlanning>,
+    postes: allPostes.map(p => p.key),
+  }), [employees, entries, allPostes])
+  const libellesPostes = useMemo(
+    () => Object.fromEntries(allPostes.map(p => [p.key, p.short])), [allPostes])
+  const couleursPostes = useMemo(
+    () => Object.fromEntries(allPostes.map(p => [p.key, p.color])), [allPostes])
   const holidayFlags = weekHolidays.map(h => h !== null)
 
   const setEntriesSync = (updater: (prev: EntriesMap) => EntriesMap) => {
@@ -948,8 +967,34 @@ export default function PlanningPage() {
         </div>
       )}
 
-      {/* ── Grid ── */}
-      <div className="overflow-x-auto">
+      {/* ── Deux lectures de la même semaine ── */}
+      <div className="mb-3 inline-flex items-center gap-1 bg-gray-100 rounded-xl p-1">
+        {([['employes', 'Employés'], ['postes', 'Postes']] as const).map(([k, label]) => (
+          <button key={k} type="button" onClick={() => setVue(k)}
+            title={k === 'employes'
+              ? 'Qui travaille, ses heures et ce qu’il coûte'
+              : 'Quels rayons sont couverts, par qui, et combien d’heures'}
+            className={`text-xs font-semibold rounded-lg px-3 py-1.5 transition-colors ${vue === k ? 'bg-white text-pilote shadow-card' : 'text-gray-500 hover:text-gray-700'}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {vue === 'postes' ? (
+        <VuePostes
+          lignes={lignesPostes}
+          libelles={libellesPostes}
+          couleurs={couleursPostes}
+          joursDates={weekDates.map(d => ({
+            jour: d.getUTCDate(),
+            mois: d.toLocaleDateString('fr-FR', { month: 'short', timeZone: 'UTC' }),
+          }))}
+          jourActifIdx={weekDates.findIndex(d => d.toISOString().slice(0, 10) === todayISO)}
+          totalSemaine={totalHeures(lignesPostes)}
+        />
+      ) : (
+        /* La grille par EMPLOYÉ — la lecture historique, inchangée. */
+        <div className="overflow-x-auto">
         <table className="w-full table-fixed border-collapse">
           <thead>
             <tr className="bg-white">
@@ -1294,6 +1339,7 @@ export default function PlanningPage() {
           </tbody>
         </table>
       </div>
+      )}
 
       {employees.length > 0 && (
         <div className="px-6 py-2.5 bg-amber-50 border-t border-amber-100">
