@@ -29,7 +29,8 @@ import { resolveClientId } from '@/lib/resolve-client-id'
 import { ensureAutoGenerics, stemKey, isNonProduct, unitKind } from '@/lib/mercuriale-auto'
 import { appliquerDictionnaire } from '@/lib/association-dictionary'
 import { fetchAllPages } from '@/lib/fetch-all'
-import { coutsMorceauxDuClient } from '@/lib/valorisation-source'
+import { coutsMorceauxDuClient, ensureGeneriquesDecoupe } from '@/lib/valorisation-source'
+import { nomFournisseur } from '@/lib/supplier-name'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -50,6 +51,18 @@ export async function GET() {
   // que le dictionnaire vient d'associer n'est plus libre pour la suite.
   await appliquerDictionnaire(service, clientId)
   await ensureAutoGenerics(service, clientId)
+
+  // MORCEAUX DE DÉCOUPE — prix lus, et articles créés s'ils manquent. Les deux
+  // gestes ICI, avant la lecture du catalogue : un morceau créé dans le même
+  // appel doit figurer dans la liste rendue, sinon il faut recharger la page
+  // pour le voir. Même place et même raison que `ensureAutoGenerics` au-dessus.
+  //
+  // La mercuriale est l'écran où le boucher cherche ses produits : y calculer
+  // le prix d'un morceau sans jamais créer l'article qui le porte revenait à
+  // connaître un chiffre sans montrer le produit. Troisième déclencheur, après
+  // l'enregistrement d'une carcasse (lot 63) et la liste des fiches (lot 53).
+  const coutsDecoupe = await coutsMorceauxDuClient(service, clientId, user.id)
+  await ensureGeneriquesDecoupe(service, clientId, coutsDecoupe)
 
   // Fenêtres de surveillance : l'historique se lit sur 12 mois glissants, les
   // mouvements sur 30 jours. Dates au format facture (YYYY-MM-DD).
@@ -111,8 +124,23 @@ export async function GET() {
   ])
   // La pagination se fait par identifiant (seul tri stable). L'ordre d'affichage
   // — la réf touchée le plus récemment d'abord — est rétabli ici, en mémoire.
+  //
+  // Le NOM DE MAISON est nettoyé ICI, une fois, et non plus à chaque endroit qui
+  // l'affiche. Le libellé du connecteur — « Facture METRO FRANCE -
+  // 0/0(070)0052/0054612 (label généré) » — descendait brut jusqu'à l'écran, et
+  // deux rendus oubliaient de le nettoyer : la sous-ligne « article · maison »
+  // sous chaque prix, et le badge « −70,8 % chez … ». Le boucher lisait le
+  // libellé du connecteur là où il attendait un fournisseur, vérifié en
+  // production le 04/08/2026.
+  //
+  // Nettoyer à la source règle les deux d'un coup, et fait mieux : deux libellés
+  // bruts de la même maison se rejoignent enfin dans la comparaison par
+  // fournisseur, au lieu d'y figurer comme deux maisons distinctes. Un libellé
+  // qui ne contient aucune lettre devient `null` — l'écran affiche son tiret
+  // honnête plutôt qu'un numéro de pièce présenté comme un fournisseur.
   const articles = refsPage.rows
     .slice()
+    .map((a: any) => ({ ...a, supplier_name: nomFournisseur(a.supplier_name) || null }))
     .sort((a: any, b: any) => String(b.updated_at || '').localeCompare(String(a.updated_at || '')))
   const pricePoints = pointsPage.rows
   const pending = pendingPage.rows
@@ -186,7 +214,7 @@ export async function GET() {
   // s'affichaient « aucune réf rattachée » : un reproche injuste — un morceau de
   // carcasse n'a pas de fournisseur — assorti d'un geste (« rattachez une réf »)
   // qui n'a aucun sens. Le catalogue doit lire les TROIS provenances d'un prix.
-  const coutsDecoupe = await coutsMorceauxDuClient(service, clientId, user.id)
+  // (`coutsDecoupe` est lu tout en haut, avec la création des articles.)
 
   // Garde-fou unités (même règle que lib/recipes.buildGenericMap) : une réf
   // facturée dans une unité INCOMPATIBLE avec la base de son générique (pièce
@@ -523,8 +551,10 @@ export async function GET() {
   // chaque maison sur 12 mois — factures matière uniquement (jamais les charges
   // fixes). Les réfs, dates de dernier achat et tendances viennent des réfs déjà
   // renvoyées ; ici, seulement ce que les réfs ne savent pas dire : l'argent.
-  // Les libellés partent BRUTS — la page les nettoie (nomFournisseur) et
-  // fusionne les variantes d'un même nom.
+  // Les libellés sont NETTOYÉS ici, comme ceux des réfs : deux écritures de la
+  // même maison se regroupent donc sur une seule ligne de dépense, et la page
+  // n'a plus à le refaire (son propre appel reste sans effet — nettoyer un nom
+  // déjà propre ne le change pas).
   const cutoffFournisseurs = new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10)
   const { data: factures12m } = await service.from('invoices')
     .select('supplier_name, amount_ht, invoice_date')
@@ -533,7 +563,7 @@ export async function GET() {
     .limit(5000)
   const depenseParFournisseur = new Map<string, { depense: number; factures: number; derniere: string | null }>()
   for (const f of factures12m || []) {
-    const nom = String(f.supplier_name || '').trim()
+    const nom = nomFournisseur(f.supplier_name)
     if (!nom) continue
     const cur = depenseParFournisseur.get(nom) || { depense: 0, factures: 0, derniere: null }
     cur.depense += Number(f.amount_ht) || 0
