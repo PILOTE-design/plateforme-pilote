@@ -185,6 +185,43 @@ export type RecipeCost = {
 const round2 = (n: number) => Math.round(n * 100) / 100
 const round4 = (n: number) => Math.round(n * 10000) / 10000
 
+/** Quantité VENDABLE du batch, dans l'unité où la fiche se vend.
+ *
+ *  « 6 pièces de 400 g vendues au kg » → 2,4. Sans unité de vente propre, la
+ *  base reste la production (yield_qty). 0 quand rien n'est renseigné : le coût
+ *  se rapporte alors au batch entier.
+ *
+ *  Exportée parce que l'écran en a besoin AUSSI — l'interrupteur « main-d'œuvre »
+ *  de la liste refait un coût par unité de vente sans la MO, et il doit le faire
+ *  sur EXACTEMENT la même base que le moteur, sinon deux chiffres qui se disent
+ *  la même chose divergeraient à l'écran. */
+export function venteQty(recipe: Pick<RecipeRow, 'sell_unit' | 'sell_qty' | 'yield_qty'>): number {
+  const sq = Number(recipe.sell_qty) || 0
+  const venteDistincte = typeof recipe.sell_unit === 'string' && recipe.sell_unit.trim() !== '' && sq > 0
+  return venteDistincte ? sq : (Number(recipe.yield_qty) || 0)
+}
+
+/** Marge et coefficient d'un prix de vente HT face à un coût unitaire.
+ *
+ *  UNE seule définition, lue par le moteur (computeRecipeCost) et par
+ *  l'interrupteur « main-d'œuvre » de la liste. Elle porte aussi la règle
+ *  d'honnêteté du projet : tant qu'il manque un prix d'ingrédient, le coût est
+ *  SOUS-évalué, donc la marge qui s'en déduirait serait FLATTÉE — on ne publie
+ *  ni l'une ni l'autre, on laisse le trou visible. */
+export function margeEtCoef(
+  pvHT: number | null,
+  coutUnite: number | null,
+  prixManquants: number,
+): { marge_pct: number | null; coefficient: number | null } {
+  if (pvHT === null || pvHT <= 0 || coutUnite === null || coutUnite <= 0 || prixManquants > 0) {
+    return { marge_pct: null, coefficient: null }
+  }
+  return {
+    marge_pct: round2(((pvHT - coutUnite) / pvHT) * 100),
+    coefficient: round2(pvHT / coutUnite),
+  }
+}
+
 /** Taux horaire chargé moyen de l'équipe (€/h) — même base que le planning :
  *  taux horaire × multiplicateur de charges patronales (CCN 992). Le gérant sans
  *  taux horaire renseigné est ignoré. null si aucun employé exploitable. */
@@ -314,9 +351,9 @@ export function computeRecipeCost(
   // Unité de VENTE distincte (fabriqué en pièces, vendu au kg) : le PV se
   // compare au coût PAR UNITÉ DE VENTE — total ÷ quantité vendable du batch.
   // Sans unité de vente propre, la base reste l'unité produite.
-  const sellQty = Number(recipe.sell_qty) || 0
-  const venteDistincte = typeof recipe.sell_unit === 'string' && recipe.sell_unit.trim() !== '' && sellQty > 0
-  const parUniteVente = venteDistincte ? round2(total / sellQty) : parUnite
+  const sellQty = venteQty(recipe)
+  const venteDistincte = typeof recipe.sell_unit === 'string' && recipe.sell_unit.trim() !== '' && Number(recipe.sell_qty) > 0
+  const parUniteVente = venteDistincte && sellQty > 0 ? round2(total / sellQty) : parUnite
 
   // Un ingrédient sans prix compte pour 0 € : le coût de revient est donc
   // SOUS-évalué, et la marge qui s'en déduit SUR-évaluée. Afficher « 62 % de
@@ -337,10 +374,9 @@ export function computeRecipeCost(
     const tva = Number(recipe.tva_rate) || 0
     pvHT = round2(pvTTC / (1 + tva / 100))
     const coutUnite = parUniteVente ?? total // sans rendement renseigné, le PV est comparé au batch entier
-    if (pvHT > 0 && coutUnite > 0 && prixManquants === 0) {
-      marge = round2(((pvHT - coutUnite) / pvHT) * 100)
-      coef = round2(pvHT / coutUnite)
-    }
+    const verdict = margeEtCoef(pvHT, coutUnite, prixManquants)
+    marge = verdict.marge_pct
+    coef = verdict.coefficient
   }
 
   return {
