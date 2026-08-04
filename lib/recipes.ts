@@ -395,6 +395,141 @@ export function computeRecipeCost(
   }
 }
 
+// ── FORMATS DE VENTE ──────────────────────────────────────────────────────
+// Une recette mère se vend sous plusieurs formats : « SAUCISSE MONTAGNARDE »
+// et « SAUCISSE MONTAGNARDE AU KG ». La FABRICATION est la même — mêmes
+// ingrédients, mêmes étapes, même coût de batch — mais chaque format a son
+// unité de vente, ce que le batch représente dedans, son prix et donc sa marge.
+//
+// Un format ne stocke QUE ce que le boucher a décidé. Coût, marge et
+// coefficient n'existent nulle part en base : ils se relisent ici, du coût du
+// batch (identique pour tous les formats) et des champs du format.
+
+export type RecipeFormat = {
+  id: string
+  recipe_id: string
+  name: string
+  sell_unit: string | null
+  /** Ce que le batch représente dans l'unité de vente du format (6 pièces de
+   *  400 g vendues au kg → 2,4). Absent : on retombe sur la production. */
+  sell_qty: number | null
+  selling_price_ttc: number | null
+  tva_rate: number
+  /** Format relu et validé par le boucher */
+  validated: boolean
+  position: number
+}
+
+/** Ce qu'un format vaut à la vente — entièrement dérivé, jamais stocké. */
+export type FormatVerdict = {
+  /** Quantité vendable du batch dans l'unité du format (0 : rien de renseigné) */
+  vente_qty: number
+  /** Coût du batch ramené à UNE unité de vente de ce format */
+  cout_unite_ht: number | null
+  pv_unitaire_ht: number | null
+  marge_pct: number | null
+  coefficient: number | null
+}
+
+/**
+ * Verdict de vente d'un format, à partir du coût COMPLET du batch.
+ *
+ * Le coût du batch ne dépend pas du format : c'est la même fabrication. Ce qui
+ * change d'un format à l'autre, c'est par combien on le divise (la quantité
+ * vendable) et à quel prix on le vend. Deux formats de la même fiche partagent
+ * donc leur coût matière et leur main-d'œuvre, et ne divergent que sur la marge.
+ *
+ * Mêmes règles que `computeRecipeCost`, à la lettre : repli sur la production
+ * quand le format n'a pas d'unité de vente propre, repli sur le batch entier
+ * quand rien n'est renseigné, et AUCUN verdict tant qu'il manque un prix
+ * d'ingrédient (le coût serait sous-évalué, la marge flattée).
+ */
+export function computeFormatVerdict(
+  totalHT: number,
+  recipe: Pick<RecipeRow, 'yield_qty'>,
+  format: Pick<RecipeFormat, 'sell_unit' | 'sell_qty' | 'selling_price_ttc' | 'tva_rate'>,
+  prixManquants: number,
+): FormatVerdict {
+  const q = venteQty({ sell_unit: format.sell_unit, sell_qty: format.sell_qty, yield_qty: recipe.yield_qty })
+  const coutUnite = q > 0 ? round2(totalHT / q) : (totalHT > 0 ? totalHT : null)
+  const pvTTC = Number(format.selling_price_ttc) || 0
+  const tva = Number(format.tva_rate) || 0
+  const pvHT = pvTTC > 0 ? round2(pvTTC / (1 + tva / 100)) : null
+  const verdict = margeEtCoef(pvHT, coutUnite, prixManquants)
+  return { vente_qty: q, cout_unite_ht: coutUnite, pv_unitaire_ht: pvHT, ...verdict }
+}
+
+/**
+ * Le coût d'une fiche, revu par UN format — celui que l'écran affiche.
+ *
+ * `computeRecipeCost` calcule encore sa partie « vente » à partir des colonnes
+ * de la fiche (`recipes.selling_price_ttc`…). Depuis que les formats existent,
+ * ces colonnes ne sont PLUS écrites : le prix vit sur le format. Les routes
+ * remplacent donc systématiquement la partie vente du coût par celle du format
+ * choisi — c'est la seule vérité, et elle est appliquée en UN seul endroit pour
+ * qu'aucun écran ne puisse lire l'ancienne.
+ *
+ * Format absent (fiche sans aucun format — ne devrait pas exister depuis la
+ * reprise) : la partie vente est mise à NULL plutôt que de laisser survivre un
+ * prix figé que plus personne ne peut modifier.
+ */
+export function costPourFormat(
+  cost: RecipeCost,
+  recipe: Pick<RecipeRow, 'yield_qty'>,
+  format: Pick<RecipeFormat, 'sell_unit' | 'sell_qty' | 'selling_price_ttc' | 'tva_rate'> | null,
+): RecipeCost {
+  if (!format) {
+    return { ...cost, par_unite_vente_ht: cost.par_unite_ht, pv_unitaire_ht: null, marge_pct: null, coefficient: null }
+  }
+  const v = computeFormatVerdict(cost.total_ht, recipe, format, cost.prix_manquants)
+  return {
+    ...cost,
+    // `par_unite_vente_ht` garde EXACTEMENT le sens qu'il avait : un coût PAR
+    // UNITÉ, donc null quand il n'y a pas d'unité (ni production, ni quantité
+    // vendable). Le verdict, lui, se calcule bien sur le batch entier dans ce
+    // cas — mais afficher « 36 € / unité » pour un batch sans rendement serait
+    // un chiffre juste sur une base fausse.
+    par_unite_vente_ht: v.vente_qty > 0 ? v.cout_unite_ht : cost.par_unite_ht,
+    pv_unitaire_ht: v.pv_unitaire_ht,
+    marge_pct: v.marge_pct,
+    coefficient: v.coefficient,
+  }
+}
+
+/** Le format PAR DÉFAUT d'une fiche : la position la plus basse, puis le nom.
+ *  C'est celui qu'on affiche à l'ouverture et celui que la liste résume. */
+export function formatParDefaut(formats: RecipeFormat[]): RecipeFormat | null {
+  if (formats.length === 0) return null
+  return [...formats].sort((a, b) => a.position - b.position || a.name.localeCompare(b.name, 'fr'))[0]
+}
+
+/** Champs d'un format — validation partagée entre création et édition.
+ *  Même exigence que la fiche : une unité de vente SANS quantité vendable
+ *  ferait comparer le prix du kilo au coût de la pièce. On refuse. */
+export function parseFormatFields(body: Record<string, unknown>): { error?: string; fields?: Record<string, unknown> } {
+  const name = String(body?.name ?? '').trim()
+  if (!name || name.length > 80) return { error: 'Nom du format requis (80 caractères max)' }
+  const sellUnit = typeof body?.sell_unit === 'string' && body.sell_unit.trim() ? String(body.sell_unit).trim().slice(0, 20) : null
+  const sellQtyRaw = Number(body?.sell_qty)
+  const sellQty = Number.isFinite(sellQtyRaw) && sellQtyRaw > 0 ? sellQtyRaw : null
+  if (sellUnit && sellQty === null) {
+    return { error: `Vendu en ${sellUnit} : indiquez ce que le batch représente dans cette unité (ex. 2,4)` }
+  }
+  const pv = Number(body?.selling_price_ttc)
+  const tva = Number(body?.tva_rate)
+  return {
+    fields: {
+      name,
+      sell_unit: sellUnit,
+      sell_qty: sellUnit ? sellQty : null,
+      selling_price_ttc: Number.isFinite(pv) && pv > 0 ? Math.round(pv * 100) / 100 : null,
+      tva_rate: Number.isFinite(tva) && tva > 0 && tva <= 20 ? tva : 5.5,
+      validated: body?.validated === true,
+      updated_at: new Date().toISOString(),
+    },
+  }
+}
+
 // ─── Validation des entrées (partagée entre POST /api/recipes et PUT /api/recipes/[id]) ───
 
 /** Ingrédients : validation commune création/édition. Renvoie une erreur lisible ou les lignes propres.
