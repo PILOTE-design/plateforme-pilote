@@ -135,6 +135,15 @@ export function postesDuCreneau(sd: DetailJour, moment: 'matin' | 'apmidi'): str
 }
 
 /**
+ * La ligne des créneaux TRAVAILLÉS qui ne servent aucun rayon.
+ *
+ * Elle n'est PAS un poste : c'est le reste, et il porte une clé réservée qu'un
+ * poste réel ne peut pas prendre. La vue la reconnaît à cette clé pour
+ * l'afficher à part, en ambre, sous le nom « Sans poste ».
+ */
+export const SANS_POSTE = '__sans_poste__'
+
+/**
  * Le planning rangé par POSTE.
  *
  * `postes` fixe l'ordre des lignes et garantit qu'un poste JAMAIS planifié
@@ -144,15 +153,43 @@ export function postesDuCreneau(sd: DetailJour, moment: 'matin' | 'apmidi'): str
  *
  * Seules les journées de type « travail » comptent : un congé payé n'occupe
  * aucun poste, même si son détail en porte un.
+ *
+ * ─── LE RESTE, ET POURQUOI IL EST RENDU ICI ──────────────────────────────
+ *
+ * Un créneau dont le poste n'est pas renseigné n'est imputé à AUCUN rayon : le
+ * ranger d'office dans le premier de la liste inventerait une couverture. Mais
+ * tant que ces heures n'étaient rendues NULLE PART, elles disparaissaient du
+ * tableau — le pied de la vue Postes annonçait 160h00 là où la semaine en
+ * comptait 167h48 (vu en production le 04/08/2026 : un créneau sans poste).
+ * Un écart de 7h48 que rien n'expliquait à l'écran.
+ *
+ * D'où le contrat, volontairement explicite : cette fonction rend une ligne par
+ * poste demandé, PUIS — seulement s'il reste des heures travaillées sans rayon
+ * — une dernière ligne de clé SANS_POSTE. Un planning entièrement renseigné n'a
+ * donc jamais cette ligne, et `postes.length` reste la longueur du résultat.
+ *
+ * Conséquence, et c'est le but : la somme des lignes rendues égale TOUJOURS le
+ * total des heures travaillées. Aucune heure ne peut plus se perdre en silence.
  */
 export function couvertureParPoste(args: {
   employes: EmployePlanning[]
   entrees: Record<string, EntreePlanning> | EntreePlanning[]
   postes: string[]
 }): LignePoste[] {
-  const { employes, postes } = args
+  const acc = rangerCreneaux(args.employes, args.entrees)
+  const lignes = construireLignes(acc, args.postes.filter(p => p !== SANS_POSTE))
+  const reste = construireLignes(acc, [SANS_POSTE])[0]
+  return reste.vide ? lignes : [...lignes, reste]
+}
+
+/** Le parcours du planning, écrit UNE fois : les deux lectures ci-dessus en
+ *  dépendent, donc elles ne peuvent pas diverger. */
+function rangerCreneaux(
+  employes: EmployePlanning[],
+  entreesBrutes: Record<string, EntreePlanning> | EntreePlanning[],
+): Map<string, Map<JourPlanning, CreneauPoste[]>> {
   const nomDe = new Map(employes.map(e => [String(e.id), e.name]))
-  const entrees = Array.isArray(args.entrees) ? args.entrees : Object.values(args.entrees ?? {})
+  const entrees = Array.isArray(entreesBrutes) ? entreesBrutes : Object.values(entreesBrutes ?? {})
 
   // Accumulateur : poste → jour → créneaux
   const acc = new Map<string, Map<JourPlanning, CreneauPoste[]>>()
@@ -185,11 +222,12 @@ export function couvertureParPoste(args: {
       for (const m of moments) {
         const duree = dureeCreneau(m.debut, m.fin)
         if (duree === null) continue
-        const cibles = postesDuCreneau(sd, m.moment)
+        const lus = postesDuCreneau(sd, m.moment)
         // Un créneau sans poste renseigné n'est imputé à AUCUN rayon. On ne le
         // range pas d'office dans le premier de la liste : ce serait inventer
-        // une couverture. Il reste visible dans la vue par employé.
-        if (cibles.length === 0) continue
+        // une couverture. Il va dans SANS_POSTE, pour que ses heures restent
+        // comptées quelque part au lieu de disparaître du total.
+        const cibles = lus.length > 0 ? lus : [SANS_POSTE]
         const part = round2(duree / cibles.length)
         for (const poste of cibles) {
           pousser(poste, jour, {
@@ -206,6 +244,14 @@ export function couvertureParPoste(args: {
     }
   }
 
+  return acc
+}
+
+/** Les lignes demandées, dans l'ordre demandé — y compris celles à 00h00. */
+function construireLignes(
+  acc: Map<string, Map<JourPlanning, CreneauPoste[]>>,
+  postes: string[],
+): LignePoste[] {
   return postes.map(poste => {
     const parJour = acc.get(poste)
     const jours: JourPoste[] = JOURS_DB.map(jour => {

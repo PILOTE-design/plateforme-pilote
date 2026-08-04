@@ -18,7 +18,7 @@
 // employé, à « qui travaille, et combien ça coûte ». Les deux, pas l'une.
 
 import { AlertTriangle } from 'lucide-react'
-import type { LignePoste } from '@/lib/planning-postes'
+import { SANS_POSTE, type LignePoste } from '@/lib/planning-postes'
 
 const JOURS_COURTS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim']
 
@@ -33,7 +33,8 @@ export function fmtHeures(h: number): string {
 export default function VuePostes({
   lignes, libelles, couleurs, joursDates, jourActifIdx, totalSemaine,
 }: {
-  /** Une entrée par poste, dans l'ordre voulu — y compris les postes à 0 h */
+  /** Une entrée par poste, plus la ligne SANS_POSTE si des heures travaillées
+   *  ne servent aucun rayon — c'est le contrat de `couvertureParPoste`. */
   lignes: LignePoste[]
   /** clé de poste → libellé lisible (« boucherie » → « Boucherie ») */
   libelles: Record<string, string>
@@ -46,7 +47,15 @@ export default function VuePostes({
   /** Total des heures planifiées, tous postes confondus */
   totalSemaine: number
 }) {
-  const nonCouverts = lignes.filter(l => l.vide)
+  // Le « reste » n'est pas un rayon : il ne compte pas comme un poste non
+  // couvert, et il ne doit pas apparaître dans le bandeau des rayons vides.
+  const orphelins = lignes.find(l => l.poste === SANS_POSTE) ?? null
+  const nonCouverts = lignes.filter(l => l.vide && l.poste !== SANS_POSTE)
+  const toutes = lignes
+  // Le pied dit ce que ses colonnes additionnent — jamais un chiffre venu
+  // d'ailleurs. Depuis que la ligne « Sans poste » existe, les deux coïncident.
+  const sommeTableau = Math.round(toutes.reduce((s, l) => s + l.heures_semaine, 0) * 100) / 100
+  const ecart = Math.round((totalSemaine - sommeTableau) * 100) / 100
 
   return (
     <div className="bg-white rounded-2xl border border-gray-100 shadow-card overflow-hidden">
@@ -84,13 +93,16 @@ export default function VuePostes({
             </tr>
           </thead>
           <tbody>
-            {lignes.map(ligne => (
-              <tr key={ligne.poste} className={`border-t border-gray-100 align-top ${ligne.vide ? 'bg-gray-50/40' : ''}`}>
+            {toutes.map(ligne => (
+              <tr key={ligne.poste} className={`border-t border-gray-100 align-top ${ligne.vide ? 'bg-gray-50/40' : ''} ${ligne === orphelins ? 'bg-amber-50/40' : ''}`}>
                 <td className="px-4 py-3">
                   <span className="inline-flex items-center gap-2">
-                    <span className={`text-[10px] font-semibold uppercase tracking-wider rounded-full px-2 py-0.5 whitespace-nowrap ${couleurs[ligne.poste] ?? 'bg-gray-100 text-gray-600'}`}>
-                      {libelles[ligne.poste] ?? ligne.poste}
+                    <span className={`text-[10px] font-semibold uppercase tracking-wider rounded-full px-2 py-0.5 whitespace-nowrap ${ligne === orphelins ? 'bg-amber-100 text-amber-800' : couleurs[ligne.poste] ?? 'bg-gray-100 text-gray-600'}`}>
+                      {ligne === orphelins ? 'Sans poste' : libelles[ligne.poste] ?? ligne.poste}
                     </span>
+                    {ligne === orphelins && (
+                      <span className="text-[10px] text-amber-700">à renseigner</span>
+                    )}
                   </span>
                 </td>
 
@@ -102,7 +114,7 @@ export default function VuePostes({
                           title={c.partage
                             ? `${c.employe_nom} — créneau partagé entre plusieurs postes : ${fmtHeures(c.heures)} imputées ici`
                             : `${c.employe_nom} — ${fmtHeures(c.heures)}`}
-                          className={`rounded-lg px-2 py-1 text-left ${couleurs[ligne.poste] ?? 'bg-gray-100 text-gray-600'}`}>
+                          className={`rounded-lg px-2 py-1 text-left ${ligne === orphelins ? 'bg-amber-100 text-amber-900' : couleurs[ligne.poste] ?? 'bg-gray-100 text-gray-600'}`}>
                           <p className="text-[10px] font-bold tabular leading-tight">
                             {c.debut && c.fin ? `${c.debut} – ${c.fin}` : fmtHeures(c.heures)}
                             {/* Un créneau partagé ne donne pas toutes ses heures
@@ -134,9 +146,9 @@ export default function VuePostes({
           <tfoot>
             <tr className="border-t border-gray-200 bg-gray-50">
               <td className="px-4 py-3 text-[11px] font-semibold uppercase tracking-wider text-gray-500">Toutes activités</td>
-              {lignes[0]?.jours.map((_, i) => {
-                const heuresJour = lignes.reduce((s, l) => s + l.jours[i].heures, 0)
-                const gens = new Set(lignes.flatMap(l => l.jours[i].creneaux.map(c => c.employe_id))).size
+              {toutes[0]?.jours.map((_, i) => {
+                const heuresJour = toutes.reduce((s, l) => s + l.jours[i].heures, 0)
+                const gens = new Set(toutes.flatMap(l => l.jours[i].creneaux.map(c => c.employe_id))).size
                 return (
                   <td key={i} className="px-2 py-3 text-center">
                     <span className="block text-xs font-bold tabular text-gray-700">{fmtHeures(heuresJour)}</span>
@@ -144,11 +156,30 @@ export default function VuePostes({
                   </td>
                 )
               })}
-              <td className="px-4 py-3 text-right text-sm font-extrabold tabular text-gray-900">{fmtHeures(totalSemaine)}</td>
+              {/* La SOMME DU TABLEAU, pas le total de la page : le pied doit
+                  dire ce que ses colonnes additionnent. Quand les deux
+                  diffèrent, c'est le bandeau ci-dessous qui le signale — on ne
+                  fait pas passer un chiffre pour l'autre. */}
+              <td className="px-4 py-3 text-right text-sm font-extrabold tabular text-gray-900">{fmtHeures(sommeTableau)}</td>
             </tr>
           </tfoot>
         </table>
       </div>
+
+      {/* Un écart qui subsiste APRÈS la ligne « sans poste » : quelque chose
+          compte des heures que ce tableau ne sait pas ranger. Le dire coûte
+          une ligne ; le taire coûte la confiance dans tous les autres
+          chiffres de l'écran. */}
+      {Math.abs(ecart) >= 0.02 && (
+        <div className="px-5 py-3 border-t border-amber-100 bg-amber-50/60 flex items-start gap-2">
+          <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+          <p className="text-[11px] leading-relaxed text-amber-800">
+            <strong>{fmtHeures(Math.abs(ecart))} d&apos;écart avec le total de la semaine</strong>
+            {' — '}ce tableau totalise {fmtHeures(sommeTableau)}, la semaine en annonce {fmtHeures(totalSemaine)}.
+            {' '}Le détail manquant n&apos;est pas dans cette vue : lisez le planning par employé.
+          </p>
+        </div>
+      )}
 
       {/* La règle de partage, écrite une fois sous le tableau plutôt que
           répétée sur chaque cellule. */}
@@ -157,6 +188,7 @@ export default function VuePostes({
           Un créneau qui sert plusieurs postes partage ses heures à parts égales entre eux — le total
           de cette vue est donc exactement celui des heures travaillées, sans double compte.
           Congés, arrêts et repos n&apos;occupent aucun poste.
+          {orphelins && ' Un créneau dont le poste n’est pas renseigné est compté à part, en « Sans poste » : ses heures sont travaillées, mais on ne peut pas dire quel rayon elles couvrent.'}
         </p>
       </div>
     </div>

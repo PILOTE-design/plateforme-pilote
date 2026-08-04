@@ -33,7 +33,13 @@ export const nomFournisseur = (s: string | null | undefined): string => {
     .replace(/^[\s–—-]+/, '')
     // Numéro de pièce en fin de libellé : EXIGE un espace avant le tiret et au
     // moins un chiffre — sinon « SOCIETE JEAN-CHARLES » perdrait son Charles.
-    .replace(/\s+-\s*(?=[A-Za-z0-9/-]*\d)[A-Za-z0-9/-]{4,}$/, '')
+    //
+    // Les PARENTHÈSES font partie du numéro chez METRO, dont les pièces
+    // s'écrivent « 0/0(070)0052/0054612 ». Sans elles dans la classe, le
+    // libellé restait affiché en entier au boucher — vérifié en production le
+    // 04/08/2026. Le reste de la garde ne bouge pas : pas d'espace admis dans
+    // le numéro, donc « BOUCHERIE DUPONT - SARL (2) » garde son SARL.
+    .replace(/\s+-\s*(?=[A-Za-z0-9/()-]*\d)[A-Za-z0-9/()-]{4,}$/, '')
     .trim()
   // Volontairement sans \p{L} : le typecheck du projet cible ES2017, où les
   // classes Unicode nommées ne compilent pas.
