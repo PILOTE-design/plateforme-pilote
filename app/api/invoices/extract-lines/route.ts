@@ -35,11 +35,93 @@ import {
   type ExtractedLine,
 } from '@/lib/invoice-extract'
 import { verdictLigne } from '@/lib/invoice-lines'
+import { dernierPrix, memePrix } from '@/lib/article-price'
 
 // Jusqu'à trois passes de lecture pour une facture qui résiste (texte, reprise,
 // image) : 60 s n'y suffisent plus. 300 s est le plafond réel de la plateforme,
 // et la lecture reste déclenchée à la main, une facture à la fois.
 export const maxDuration = 300
+
+type Service = ReturnType<typeof createServiceClient>
+
+/** Les articles que les lignes ACTUELLES de cette facture alimentent. À relever
+ *  AVANT de purger les lignes : après, plus rien ne dit lesquels étaient
+ *  concernés, et leur prix resterait figé sur une lecture disparue. */
+async function articlesDeLaFacture(service: Service, clientId: string, invoiceId: string): Promise<string[]> {
+  const { data } = await service.from('invoice_lines')
+    .select('article_id').eq('invoice_id', invoiceId).eq('client_id', clientId)
+  return (data || []).map(r => r.article_id).filter(Boolean) as string[]
+}
+
+/**
+ * Recale le dernier prix des articles donnés depuis leurs lignes de facture.
+ *
+ * C'est le seul endroit du projet qui écrit `last_price_ht` : le prix d'un
+ * article se DÉDUIT de ses points de prix, il ne s'accumule pas. `blocked_price_ht`
+ * n'est jamais touché — c'est une décision du boucher, pas une donnée dérivée.
+ *
+ * Un échec ici ne fait pas échouer la lecture : les lignes, elles, sont déjà
+ * justes, et c'est sur elles que tout se recalcule. Mais il est TRACÉ, parce
+ * qu'un prix resté en arrière est exactement ce qu'on cherche à ne plus voir.
+ */
+async function recalerArticles(service: Service, clientId: string, ids: (string | null)[]): Promise<void> {
+  const uniques = [...new Set(ids.filter(Boolean) as string[])]
+  if (uniques.length === 0) return
+  try {
+    const { data: arts } = await service.from('articles')
+      .select('id, last_price_ht, last_price_date, price_count')
+      .eq('client_id', clientId).in('id', uniques)
+    if (!arts?.length) return
+
+    // Tous les points de prix des articles concernés.
+    //
+    // Deux requêtes plutôt qu'une jointure : la forme d'une relation imbriquée
+    // change selon la façon dont PostgREST la résout (objet ou tableau), et une
+    // erreur de jointure serait avalée par le `catch` — c'est-à-dire qu'un prix
+    // resterait silencieusement en arrière, exactement le défaut qu'on corrige.
+    const { data: lignes, error: errLignes } = await service.from('invoice_lines')
+      .select('article_id, unit_price_ht, invoice_id, created_at')
+      .eq('client_id', clientId).in('article_id', uniques)
+    if (errLignes) throw new Error(`lecture des points de prix : ${errLignes.message}`)
+
+    const factureIds = [...new Set((lignes || []).map(l => l.invoice_id).filter(Boolean) as string[])]
+    const dateDe = new Map<string, string | null>()
+    if (factureIds.length) {
+      const { data: facs, error: errFacs } = await service.from('invoices')
+        .select('id, invoice_date').eq('client_id', clientId).in('id', factureIds)
+      if (errFacs) throw new Error(`lecture des dates de facture : ${errFacs.message}`)
+      for (const f of facs || []) dateDe.set(String(f.id), f.invoice_date ?? null)
+    }
+
+    const parArticle = new Map<string, Array<{ unit_price_ht: number | string | null; invoice_date: string | null; created_at: string | null }>>()
+    for (const l of lignes || []) {
+      const id = String(l.article_id ?? '')
+      if (!id) continue
+      const arr = parArticle.get(id) ?? []
+      arr.push({
+        unit_price_ht: l.unit_price_ht ?? null,
+        invoice_date: dateDe.get(String(l.invoice_id)) ?? null,
+        created_at: l.created_at ?? null,
+      })
+      parArticle.set(id, arr)
+    }
+
+    for (const a of arts) {
+      const calcule = dernierPrix(parArticle.get(String(a.id)) ?? [])
+      // Rien n'a bougé : ne pas écrire, pour ne pas faire vieillir `updated_at`
+      // que la mercuriale montre au boucher.
+      if (memePrix(calcule, a as never)) continue
+      await service.from('articles').update({
+        last_price_ht: calcule.last_price_ht,
+        last_price_date: calcule.last_price_date,
+        price_count: calcule.price_count,
+        updated_at: new Date().toISOString(),
+      }).eq('id', a.id).eq('client_id', clientId)
+    }
+  } catch (e) {
+    console.error('[extract-lines] recalage des prix d’articles', e)
+  }
+}
 
 
 export async function POST(request: NextRequest) {
@@ -228,10 +310,6 @@ export async function POST(request: NextRequest) {
         //    pour retrouver.
         const verdict = verdictLigne(l, factureSuspecte)
         const prixRetenu = verdict.prix_retenu
-        // « Promouvoir » veut dire : ce prix devient le dernier prix connu de
-        // l'article. Exactement les lignes dont le verdict retient un prix.
-        const promouvoir = prixRetenu !== null
-        const unitPrice = prixRetenu
         // Un AVOIR ne compte ni comme prix publié ni comme prix en quarantaine :
         // ne pas en tirer de prix est le comportement voulu, pas un échec de
         // lecture. Les compter gonflait le bilan d'alertes sans rien à faire.
@@ -240,31 +318,33 @@ export async function POST(request: NextRequest) {
           else if (verdict.prix_ecarte !== null) prixQuarantaine++
         }
 
+        // L'article est CRÉÉ sans prix : son dernier prix se déduit de ses
+        // lignes, et ses lignes n'existent pas encore. Le recalage de l'étape 5
+        // le lui donnera — une seule écriture du prix, au même endroit pour
+        // tout le monde.
         if (!art && nameKey) {
           const { data: created } = await service.from('articles').insert({
             client_id: clientId, name: l.designation, name_key: nameKey, unit: l.unit,
             supplier_key: supplierKey, supplier_name: invoice.supplier_name,
             article_code: l.article_code,
-            last_price_ht: prixRetenu,
-            last_price_date: promouvoir ? invoice.invoice_date : null,
-            price_count: promouvoir ? 1 : 0,
+            last_price_ht: null, last_price_date: null, price_count: 0,
           }).select('id, article_code, name_key, last_price_date, price_count').single()
           if (created) {
             art = created
             if (created.article_code) byCode.set(String(created.article_code), created)
             else byName.set(String(created.name_key), created)
           }
-        } else if (art && promouvoir) {
-          // Dernier prix : seule une facture plus récente (ou du même jour) le remplace.
-          const patch: Record<string, unknown> = { price_count: (art.price_count || 0) + 1, updated_at: new Date().toISOString() }
-          if (!art.last_price_date || invoice.invoice_date >= art.last_price_date) {
-            patch.last_price_ht = unitPrice
-            patch.last_price_date = invoice.invoice_date
-          }
-          await service.from('articles').update(patch).eq('id', art.id)
-          art.price_count = (art.price_count || 0) + 1
         }
-        // Une ligne non promue laisse l'article INCHANGÉ (son prix précédent reste).
+        // Le prix de l'article n'est PLUS poussé ici, ligne par ligne.
+        //
+        // Il l'était, en accumulant : chaque ligne promue écrivait son prix, et
+        // une ligne qui cessait de l'être ne reprenait jamais le sien. Après le
+        // lot 60, les prix faux ont bien quitté `invoice_lines` — et la
+        // mercuriale a continué de les afficher. 86 articles portaient un prix
+        // qu'aucune ligne existante ne pouvait plus expliquer.
+        //
+        // Le dernier prix est une donnée DÉRIVÉE : elle se recalcule depuis les
+        // lignes (étape 5), elle ne s'accumule pas.
 
         rows.push({
           client_id: clientId, invoice_id: invoice.id, article_id: art?.id ?? null,
@@ -290,10 +370,22 @@ export async function POST(request: NextRequest) {
       }
 
       // 5. Remplacement atomique des lignes de CETTE facture (ré-extraction incluse)
+      //
+      // Les articles que portaient les ANCIENNES lignes sont relevés avant la
+      // purge : si la relecture n'en publie plus le prix, ce sont eux qu'il
+      // faut recaler — et après la purge, plus rien ne dirait lesquels.
+      const avant = await articlesDeLaFacture(service, clientId, invoice.id)
       const { error: delErr } = await service.from('invoice_lines').delete().eq('invoice_id', invoice.id).eq('client_id', clientId)
       if (delErr) throw new Error(`Purge des anciennes lignes : ${delErr.message}`)
       const { error: insErr } = await service.from('invoice_lines').insert(rows)
       if (insErr) throw new Error(`Insertion des lignes : ${insErr.message}`)
+
+      // Le dernier prix des articles touchés, RECALCULÉ depuis leurs lignes.
+      // Ni avant ni pendant : après, quand les lignes disent la vérité.
+      await recalerArticles(service, clientId, [
+        ...avant,
+        ...rows.map(r => r.article_id as string | null),
+      ])
 
       // 6. Statut + dates lues sur le PDF (jamais d'écrasement d'une valeur déjà posée).
       // 'done' seulement si la facture boucle ET aucun prix en quarantaine ; sinon
@@ -632,7 +724,12 @@ export async function POST(request: NextRequest) {
     }
 
     if (nature === 'hors_matiere') {
+      // Une facture requalifiée en charge retire ses points de prix de la
+      // mercuriale : les articles qu'elle alimentait doivent retomber sur leur
+      // dernière facture d'achat, ou n'avoir plus de prix du tout.
+      const touches = await articlesDeLaFacture(service, clientId, invoice.id)
       await service.from('invoice_lines').delete().eq('invoice_id', invoice.id).eq('client_id', clientId)
+      await recalerArticles(service, clientId, touches)
       const patch: Record<string, unknown> = {}
       if (due_date && !invoice.due_date) patch.due_date = due_date
       // PÉRIODE FACTURÉE lue sur le document. Le prorata hebdomadaire des
