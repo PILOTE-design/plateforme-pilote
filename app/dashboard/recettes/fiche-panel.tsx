@@ -53,9 +53,13 @@ const ONGLETS: { id: Onglet; label: string }[] = [
 ]
 
 export default function FichePanel({
-  recipe, employees, generics, target = null, historiqueIncomplet = false, onEditFull, onSaved, onClose,
+  recipe, employees, generics, target = null, historiqueIncomplet = false, initialFormatId = null, onEditFull, onSaved, onClose,
 }: {
   recipe: FicheRecipe
+  /** Format à ouvrir d'emblée. La liste étant à une ligne par FORMAT (lot 50),
+   *  cliquer la ligne « au kg » doit ouvrir la fiche sur « au kg » — pas sur le
+   *  format par défaut. Absent ou introuvable : le format par défaut. */
+  initialFormatId?: string | null
   employees: FicheEmployee[]
   /** L'historique de prix a été tronqué côté serveur : la courbe ci-dessous ne
    *  porte que sur ce qui a pu être lu. Une courbe qui rétrécit ressemble en
@@ -86,7 +90,7 @@ export default function FichePanel({
   const kpiCancelRef = useRef(false)
   // Format de vente affiché — null tant qu'on n'a pas choisi : c'est le premier
   // (le format par défaut) qui s'ouvre, comme chez Otami.
-  const [formatId, setFormatId] = useState<string | null>(null)
+  const [formatId, setFormatId] = useState<string | null>(initialFormatId)
   // Création d'un format (« + Format ») — nom, unité de vente, quantité vendable
   const [editFormat, setEditFormat] = useState<{ mode: 'creer'; nom: string; unite: string; qty: string } | null>(null)
   const [confirmFormat, setConfirmFormat] = useState(false)

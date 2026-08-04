@@ -2,9 +2,15 @@
 
 // La LISTE des fiches recettes, en tableau — le DESSIN seulement.
 //
-// Même partage des rôles que la mercuriale (page.tsx garde la logique, ce
-// fichier garde le dessin), et mêmes partis pris de lecture qu'Otami, relevés
-// en lecture seule sur sa page « Recettes (Coûts de revient) » :
+// Depuis le lot 50, une ligne = un FORMAT DE VENTE, pas une fiche. C'est le
+// parti pris relevé chez Otami en lecture seule : le nom en gras est le FORMAT
+// (« SAUCISSE MONTAGNARDE AU KG »), l'italique en dessous rappelle la RECETTE
+// MÈRE. Ses « 409 fiches » sont 409 formats. La raison est concrète : un
+// boucher qui vend le même produit à la pièce ET au kilo a deux prix, donc deux
+// marges — une liste à une ligne par fiche n'en montrait qu'une, et c'est
+// justement cette liste qu'on balaye pour repérer ce qui ne marge pas.
+//
+// Le reste des partis pris de lecture, déjà en place :
 //
 //   · la DOUBLE lecture d'une marge — coefficient ET pourcentage, chacun dans
 //     sa pastille, avec la CIBLE de la boutique rappelée dans l'en-tête de
@@ -12,14 +18,13 @@
 //   · la FLÈCHE de tendance collée au coût — le sens du mouvement se lit avant
 //     la valeur ;
 //   · les CHIPS de catégorie dans leur propre colonne, pas fondues dans le nom ;
-//   · le SOUS-TITRE en italique sous le nom ;
 //   · des en-têtes TRIABLES dont l'icône de tri est visible en permanence, pas
 //     au survol.
 //
 // Ce qui n'est PAS repris d'Otami : sa palette verte, ses icônes en bout de
 // ligne. PILOTE reste navy/orange et révèle ses actions au survol.
 
-import { ArrowDown, ArrowUp, ArrowUpDown, ChevronRight } from 'lucide-react'
+import { ArrowDown, ArrowUp, ArrowUpDown, Check, ChevronRight } from 'lucide-react'
 import { venteQty, margeEtCoef } from '@/lib/recipes'
 
 export type ListeCost = {
@@ -31,6 +36,8 @@ export type ListeCost = {
   par_unite_vente_ht?: number | null
   prix_manquants: number
   total_minutes: number
+  /** Prix de vente HT DU FORMAT de la ligne — tout le reste du coût est celui
+   *  du batch, commun à tous les formats de la même fiche. */
   pv_unitaire_ht: number | null
   marge_pct: number | null
   coefficient: number | null
@@ -38,19 +45,38 @@ export type ListeCost = {
   matiere_series?: { d: string; v: number }[]
 }
 
-export type ListeRecipe = {
-  id: string
-  name: string
+/**
+ * UNE LIGNE DU TABLEAU = UN FORMAT DE VENTE.
+ *
+ * Le coût du batch (matière, emballage, main-d'œuvre, minutes, tendance) est le
+ * MÊME pour tous les formats d'une fiche : c'est la même fabrication. Ce qui
+ * change d'une ligne à l'autre, c'est par combien on divise ce coût (la
+ * quantité vendable `sell_qty`) et à quel prix on vend (`selling_price_ttc`).
+ * D'où des champs de vente portés par le FORMAT et un rendement porté par la
+ * RECETTE — `venteQty` du moteur sait déjà arbitrer entre les deux.
+ */
+export type ListeLigne = {
+  /** Identité de la ligne — « recette:format », unique dans tout le tableau */
+  key: string
+  recipeId: string
+  /** null quand la fiche n'a aucun format (ne devrait plus exister) */
+  formatId: string | null
+  /** Le nom en GRAS : celui du FORMAT */
+  nom: string
+  /** L'italique : la RECETTE MÈRE (tue quand elle porte le même nom) */
+  recetteNom: string
   category: string | null
+  /** Rendement de la recette mère — second segment du sous-titre */
   yield_qty: number | null
   yield_unit: string | null
+  /** Unité et quantité vendables DU FORMAT */
   sell_unit?: string | null
   sell_qty?: number | null
+  /** PV TTC DU FORMAT */
   selling_price_ttc: number | null
+  /** Format relu et validé par le boucher (coche verte, comme chez Otami) */
+  validated: boolean
   labor_minutes: number
-  /** Formats de vente de la fiche — la ligne résume le format PAR DÉFAUT ;
-   *  les autres se lisent en ouvrant la fiche. */
-  formats?: { id: string }[]
   cost: ListeCost
 }
 
@@ -69,12 +95,12 @@ export function fmtMin(m: number): string {
   return `${Math.floor(r / 60)} h ${String(r % 60).padStart(2, '0')}`
 }
 
-/** L'unité dans laquelle la fiche se VEND (celle que regarde le prix de vente) */
-export const uniteVente = (r: ListeRecipe) => r.sell_unit || r.yield_unit || 'unité'
+/** L'unité dans laquelle la LIGNE se vend (celle que regarde son prix) */
+export const uniteVente = (l: ListeLigne) => l.sell_unit || l.yield_unit || 'unité'
 
 /**
- * Le coût de revient AFFICHÉ, par unité de vente, selon l'interrupteur
- * « main-d'œuvre ».
+ * Le coût de revient AFFICHÉ pour cette ligne, par unité de vente DU FORMAT,
+ * selon l'interrupteur « main-d'œuvre ».
  *
  * L'interrupteur est le geste le plus fort repris d'Otami : le même écran
  * répond à deux questions différentes. Main-d'œuvre COMPRISE, on lit ce que le
@@ -83,14 +109,14 @@ export const uniteVente = (r: ListeRecipe) => r.sell_unit || r.yield_unit || 'un
  * qu'on compare à un tarif de grossiste, ou à ce que coûterait le même produit
  * acheté tout fait.
  *
- * La base (quantité vendable du batch) et le verdict (marge, coefficient) sont
+ * La base (quantité vendable du format) et le verdict (marge, coefficient) sont
  * relus du moteur — `venteQty` et `margeEtCoef` de lib/recipes — pour que le
  * chiffre hors MO se calcule EXACTEMENT comme celui du moteur, à la seule
  * différence de la main-d'œuvre retirée.
  */
-export function coutUniteAffiche(r: ListeRecipe, avecMainOeuvre: boolean): number | null {
-  const batch = avecMainOeuvre ? r.cost.total_ht : round2(r.cost.matiere_ht + r.cost.emballage_ht)
-  const q = venteQty(r)
+export function coutUniteAffiche(l: ListeLigne, avecMainOeuvre: boolean): number | null {
+  const batch = avecMainOeuvre ? l.cost.total_ht : round2(l.cost.matiere_ht + l.cost.emballage_ht)
+  const q = venteQty(l)
   // Sans rendement ni quantité vendable, le prix de vente se compare au batch
   // entier — exactement le repli du moteur.
   return q > 0 ? round2(batch / q) : batch
@@ -98,15 +124,17 @@ export function coutUniteAffiche(r: ListeRecipe, avecMainOeuvre: boolean): numbe
 
 /** Marge et coefficient AFFICHÉS — même fonction que le moteur, appliquée au
  *  coût de l'interrupteur. Restent à null tant qu'il manque un prix. */
-export function verdictAffiche(r: ListeRecipe, avecMainOeuvre: boolean) {
-  return margeEtCoef(r.cost.pv_unitaire_ht, coutUniteAffiche(r, avecMainOeuvre), r.cost.prix_manquants)
+export function verdictAffiche(l: ListeLigne, avecMainOeuvre: boolean) {
+  return margeEtCoef(l.cost.pv_unitaire_ht, coutUniteAffiche(l, avecMainOeuvre), l.cost.prix_manquants)
 }
 
 /** Sens du coût matière sur les 8 dernières semaines. null : pas de courbe
  *  traçable — on n'affiche alors AUCUNE flèche (une flèche « stable » se
- *  lirait « je sais que ça n'a pas bougé », ce qui est faux). */
-export function tendance(r: ListeRecipe): 'hausse' | 'baisse' | null {
-  const s = r.cost.matiere_series
+ *  lirait « je sais que ça n'a pas bougé », ce qui est faux).
+ *  La série est celle du BATCH : deux formats d'une même fiche portent donc la
+ *  même tendance, et c'est juste — c'est la même matière qui bouge. */
+export function tendance(l: ListeLigne): 'hausse' | 'baisse' | null {
+  const s = l.cost.matiere_series
   if (!Array.isArray(s) || s.length < 2) return null
   const delta = s[s.length - 1].v - s[0].v
   if (Math.abs(delta) < 0.005) return null
@@ -128,12 +156,18 @@ export function margeTon(marge: number, target: number | null): string {
  *  boucher raisonne en coefficient, un tableur en pourcentage. */
 export const coefCible = (margePct: number) => (margePct >= 100 ? null : round2(1 / (1 - margePct / 100)))
 
-/** Ce que la fiche produit, en une ligne — le sous-titre italique sous le nom */
-function sousTitre(r: ListeRecipe): string {
+/** Le sous-titre italique : la RECETTE MÈRE, puis ce que le batch produit.
+ *
+ *  La recette mère n'est rappelée que si le format porte un AUTRE nom qu'elle —
+ *  toute fiche naît avec un format à son propre nom, et écrire deux fois la
+ *  même chose sur deux lignes n'apprend rien. */
+function sousTitre(l: ListeLigne): string {
   const bouts: string[] = []
-  if (r.yield_qty && r.yield_qty > 0) bouts.push(`${fmtQty(r.yield_qty)} ${r.yield_unit || 'unités'} par batch`)
+  const memeNom = l.recetteNom.trim().toLowerCase() === l.nom.trim().toLowerCase()
+  if (!memeNom && l.recetteNom.trim()) bouts.push(l.recetteNom)
+  if (l.yield_qty && l.yield_qty > 0) bouts.push(`${fmtQty(l.yield_qty)} ${l.yield_unit || 'unités'} par batch`)
   else bouts.push('rendement non renseigné')
-  if (r.sell_unit && Number(r.sell_qty) > 0) bouts.push(`vendu en ${r.sell_unit} (${fmtQty(Number(r.sell_qty))} par batch)`)
+  if (l.sell_unit && Number(l.sell_qty) > 0) bouts.push(`vendu en ${l.sell_unit} (${fmtQty(Number(l.sell_qty))} par batch)`)
   return bouts.join(' · ')
 }
 
@@ -163,14 +197,15 @@ function ThTri({ label, sortKey, sort, onSort, align = 'right', children }: {
 }
 
 export default function ListeFiches({
-  fiches, target, targetFor, cibleTexte = null, sort, onSort, avecMainOeuvre, sousRecetteIds, onOpen, openId,
+  lignes, target, targetFor, cibleTexte = null, sort, onSort, avecMainOeuvre, sousRecetteIds, onOpen, openKey,
 }: {
-  fiches: ListeRecipe[]
+  /** Une entrée par FORMAT DE VENTE — voir ListeLigne */
+  lignes: ListeLigne[]
   /** Cible de marge de la catégorie affichée — null : aucune posée */
   target: number | null
   /** Cible propre à CHAQUE ligne (sections qui mélangent les catégories).
    *  Absent : toutes les lignes se jugent contre `target`. */
-  targetFor?: (r: ListeRecipe) => number | null
+  targetFor?: (l: ListeLigne) => number | null
   /** Remplace les pastilles de cible dans l'en-tête, quand une seule cible ne
    *  peut pas décrire la colonne (ex. « À retravailler », toutes catégories). */
   cibleTexte?: string | null
@@ -178,11 +213,12 @@ export default function ListeFiches({
   onSort: (k: SortKey) => void
   /** Interrupteur global : le coût affiché inclut-il la main-d'œuvre ? */
   avecMainOeuvre: boolean
-  /** Fiches qui entrent dans une AUTRE fiche — la chip « Sous-recette » */
+  /** Fiches qui entrent dans une AUTRE fiche — la chip « Sous-recette ».
+   *  Indexé par RECETTE : c'est la fabrication qui est réutilisée, pas un format. */
   sousRecetteIds: Set<string>
-  onOpen: (id: string) => void
-  /** Fiche actuellement dépliée en encadré — sa ligne reste marquée */
-  openId: string | null
+  onOpen: (l: ListeLigne) => void
+  /** Ligne actuellement dépliée en encadré — elle reste marquée */
+  openKey: string | null
 }) {
   const cibleCoef = target !== null ? coefCible(target) : null
 
@@ -192,7 +228,7 @@ export default function ListeFiches({
         <table className="w-full min-w-[820px]">
           <thead>
             <tr className="bg-gray-50">
-              <ThTri label="Nom" sortKey="nom" sort={sort} onSort={onSort} align="left" />
+              <ThTri label="Format de vente" sortKey="nom" sort={sort} onSort={onSort} align="left" />
               <th className="px-3.5 py-2.5 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider align-bottom">Catégories</th>
               <ThTri label={avecMainOeuvre ? 'Coût (HT)' : 'Coût matière (HT)'} sortKey="cout" sort={sort} onSort={onSort}>
                 <p className="text-[10px] font-normal normal-case tracking-normal text-gray-300 mt-0.5">
@@ -224,41 +260,37 @@ export default function ListeFiches({
             </tr>
           </thead>
           <tbody>
-            {fiches.map(r => {
-              const cout = coutUniteAffiche(r, avecMainOeuvre)
-              const verdict = verdictAffiche(r, avecMainOeuvre)
-              const cible = targetFor ? targetFor(r) : target
-              const t = tendance(r)
-              const ouverte = openId === r.id
+            {lignes.map(l => {
+              const cout = coutUniteAffiche(l, avecMainOeuvre)
+              const verdict = verdictAffiche(l, avecMainOeuvre)
+              const cible = targetFor ? targetFor(l) : target
+              const t = tendance(l)
+              const ouverte = openKey === l.key
               return (
-                <tr key={r.id} role="button" tabIndex={0}
-                  onClick={() => onOpen(r.id)}
-                  onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(r.id) } }}
+                <tr key={l.key} role="button" tabIndex={0}
+                  onClick={() => onOpen(l)}
+                  onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(l) } }}
                   className={`group border-t border-gray-100 cursor-pointer transition-colors focus:outline-none focus:bg-pilote-50/60 ${ouverte ? 'bg-pilote-50/60' : 'hover:bg-gray-50'}`}>
                   <td className="px-3.5 py-3 max-w-[22rem]">
                     <p className="text-sm font-bold text-gray-900 leading-snug truncate">
-                      {r.name}
-                      {/* Plusieurs conditionnements pour la même fabrication :
-                          la ligne résume le format par défaut, les autres se
-                          lisent en ouvrant la fiche. Le dire ici évite de croire
-                          que le prix affiché est le seul de la fiche. */}
-                      {(r.formats?.length ?? 0) > 1 && (
-                        <span className="ml-1.5 text-[10px] font-semibold uppercase tracking-wider text-pilote bg-pilote-50 ring-1 ring-pilote-100 rounded-full px-1.5 py-0.5 align-middle">
-                          {r.formats!.length} formats
-                        </span>
+                      {/* La coche verte des formats relus, comme chez Otami —
+                          discrète, devant le nom, sans mot en plus. */}
+                      {l.validated && (
+                        <Check className="w-3.5 h-3.5 text-green-600 inline-block mr-1 -mt-0.5" aria-label="Format validé" />
                       )}
+                      {l.nom}
                     </p>
-                    <p className="text-[11px] italic text-gray-400 truncate">{sousTitre(r)}</p>
+                    <p className="text-[11px] italic text-gray-400 truncate">{sousTitre(l)}</p>
                   </td>
 
                   <td className="px-3.5 py-3">
                     <div className="flex flex-col items-start gap-1">
                       <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 bg-gray-100 rounded-full px-2 py-0.5 whitespace-nowrap">
-                        {sousRecetteIds.has(r.id) ? 'Sous-recette' : 'Produit fini'}
+                        {sousRecetteIds.has(l.recipeId) ? 'Sous-recette' : 'Produit fini'}
                       </span>
-                      {r.category && r.category.trim() && (
+                      {l.category && l.category.trim() && (
                         <span className="text-[10px] font-semibold uppercase tracking-wider text-pilote bg-pilote-50 ring-1 ring-pilote-100 rounded-full px-2 py-0.5 max-w-[11rem] truncate">
-                          {r.category}
+                          {l.category}
                         </span>
                       )}
                     </div>
@@ -279,9 +311,9 @@ export default function ListeFiches({
                         </span>
                       )}
                     </span>
-                    {r.cost.prix_manquants > 0 && (
+                    {l.cost.prix_manquants > 0 && (
                       <p className="text-[10px] font-semibold text-amber-600">
-                        {r.cost.prix_manquants} prix manquant{r.cost.prix_manquants > 1 ? 's' : ''} — sous-estimé
+                        {l.cost.prix_manquants} prix manquant{l.cost.prix_manquants > 1 ? 's' : ''} — sous-estimé
                       </p>
                     )}
                   </td>
@@ -303,15 +335,15 @@ export default function ListeFiches({
 
                   <td className="px-3.5 py-3 text-right">
                     <p className="text-sm font-semibold text-gray-900 tabular">
-                      {r.selling_price_ttc != null ? fmtEuro(r.selling_price_ttc) : '—'}
+                      {l.selling_price_ttc != null ? fmtEuro(l.selling_price_ttc) : '—'}
                     </p>
                     <p className="text-[11px] text-gray-400 tabular">
-                      {r.cost.pv_unitaire_ht !== null ? `${fmtEuro(r.cost.pv_unitaire_ht)} HT / ${uniteVente(r)}` : `/ ${uniteVente(r)}`}
+                      {l.cost.pv_unitaire_ht !== null ? `${fmtEuro(l.cost.pv_unitaire_ht)} HT / ${uniteVente(l)}` : `/ ${uniteVente(l)}`}
                     </p>
                   </td>
 
                   <td className="px-3.5 py-3 text-right text-sm text-gray-600 tabular">
-                    {fmtMin(r.cost.total_minutes ?? r.labor_minutes)}
+                    {fmtMin(l.cost.total_minutes ?? l.labor_minutes)}
                   </td>
 
                   <td className="pr-2 text-right">
