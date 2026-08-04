@@ -135,6 +135,15 @@ export function postesDuCreneau(sd: DetailJour, moment: 'matin' | 'apmidi'): str
 }
 
 /**
+ * La ligne des créneaux TRAVAILLÉS qui ne servent aucun rayon.
+ *
+ * Elle n'est PAS un poste : c'est le reste, et il porte une clé réservée qu'un
+ * poste réel ne peut pas prendre. La vue la reconnaît à cette clé pour
+ * l'afficher à part, en ambre, sous le nom « Sans poste ».
+ */
+export const SANS_POSTE = '__sans_poste__'
+
+/**
  * Le planning rangé par POSTE.
  *
  * `postes` fixe l'ordre des lignes et garantit qu'un poste JAMAIS planifié
@@ -144,37 +153,33 @@ export function postesDuCreneau(sd: DetailJour, moment: 'matin' | 'apmidi'): str
  *
  * Seules les journées de type « travail » comptent : un congé payé n'occupe
  * aucun poste, même si son détail en porte un.
+ *
+ * ─── LE RESTE, ET POURQUOI IL EST RENDU ICI ──────────────────────────────
+ *
+ * Un créneau dont le poste n'est pas renseigné n'est imputé à AUCUN rayon : le
+ * ranger d'office dans le premier de la liste inventerait une couverture. Mais
+ * tant que ces heures n'étaient rendues NULLE PART, elles disparaissaient du
+ * tableau — le pied de la vue Postes annonçait 160h00 là où la semaine en
+ * comptait 167h48 (vu en production le 04/08/2026 : un créneau sans poste).
+ * Un écart de 7h48 que rien n'expliquait à l'écran.
+ *
+ * D'où le contrat, volontairement explicite : cette fonction rend une ligne par
+ * poste demandé, PUIS — seulement s'il reste des heures travaillées sans rayon
+ * — une dernière ligne de clé SANS_POSTE. Un planning entièrement renseigné n'a
+ * donc jamais cette ligne, et `postes.length` reste la longueur du résultat.
+ *
+ * Conséquence, et c'est le but : la somme des lignes rendues égale TOUJOURS le
+ * total des heures travaillées. Aucune heure ne peut plus se perdre en silence.
  */
 export function couvertureParPoste(args: {
   employes: EmployePlanning[]
   entrees: Record<string, EntreePlanning> | EntreePlanning[]
   postes: string[]
 }): LignePoste[] {
-  return construireLignes(rangerCreneaux(args.employes, args.entrees), args.postes)
-}
-
-/**
- * Les créneaux TRAVAILLÉS qui ne servent aucun poste, rendus dans la même forme
- * qu'une ligne de poste — pour être affichés dans le même tableau.
- *
- * Pourquoi cette fonction existe : `couvertureParPoste` refuse d'imputer un
- * créneau sans poste à un rayon au hasard, et elle a raison. Mais tant que ces
- * heures n'étaient rendues NULLE PART, le pied de la vue Postes annonçait
- * 160h00 quand la page disait 167h48 — un écart de 7h48 que rien n'expliquait
- * à l'écran (vu en production le 04/08/2026, un créneau de la semaine n'ayant
- * pas de poste renseigné).
- *
- * Règle de maison : une exclusion se dit. On ne range pas ces heures dans un
- * rayon, on les montre à part, et la somme du tableau redevient exactement le
- * total travaillé.
- */
-export const SANS_POSTE = '__sans_poste__'
-
-export function ligneSansPoste(args: {
-  employes: EmployePlanning[]
-  entrees: Record<string, EntreePlanning> | EntreePlanning[]
-}): LignePoste {
-  return construireLignes(rangerCreneaux(args.employes, args.entrees), [SANS_POSTE])[0]
+  const acc = rangerCreneaux(args.employes, args.entrees)
+  const lignes = construireLignes(acc, args.postes.filter(p => p !== SANS_POSTE))
+  const reste = construireLignes(acc, [SANS_POSTE])[0]
+  return reste.vide ? lignes : [...lignes, reste]
 }
 
 /** Le parcours du planning, écrit UNE fois : les deux lectures ci-dessus en
