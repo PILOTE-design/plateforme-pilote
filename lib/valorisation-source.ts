@@ -243,23 +243,29 @@ export async function ensureGeneriquesDecoupe(
 ): Promise<number> {
   if (couts.size === 0) return 0
 
+  // TOUS les génériques actifs, pas seulement ceux de découpe : la base porte un
+  // index unique sur (client_id, name_key), et un morceau qui porterait le nom
+  // d'un article déjà au catalogue le heurterait.
   const { data: existants, error } = await service
     .from('generic_articles')
-    .select('id, valorisation_cut_id')
+    .select('id, valorisation_cut_id, name_key')
     .eq('client_id', clientId)
-    .not('valorisation_cut_id', 'is', null)
+    .eq('active', true)
   if (error) {
     console.error('[valorisation-source] génériques illisibles:', error.message)
     return 0
   }
-  const deja = new Set(((existants as Row[] | null) ?? []).map(r => String(r.valorisation_cut_id)))
+  const lignes = (existants as Row[] | null) ?? []
+  const deja = new Set(lignes.filter(r => r.valorisation_cut_id).map(r => String(r.valorisation_cut_id)))
+  const clesPrises = new Set(lignes.map(r => String(r.name_key ?? '')))
 
   const aCreer: Row[] = []
   for (const t of ANIMAL_TYPES) {
     for (const cut of CUTS_BY_ANIMAL[t]) {
       if (!couts.has(cut.id) || deja.has(cut.id)) continue
       deja.add(cut.id)
-      const nom = nomGeneriqueMorceau(cut)
+      const nom = nomLibre(cut, t, clesPrises)
+      clesPrises.add(nom.toLowerCase())
       aCreer.push({
         client_id: clientId,
         name: nom,
@@ -277,10 +283,60 @@ export async function ensureGeneriquesDecoupe(
   }
   if (aCreer.length === 0) return 0
 
-  const { error: insErr } = await service.from('generic_articles').insert(aCreer)
-  if (insErr) {
-    console.error('[valorisation-source] création des génériques de découpe impossible:', insErr.message)
-    return 0
+  // UNE LIGNE À LA FOIS, et non plus le lot entier.
+  //
+  // L'insertion groupée est tout-ou-rien : une seule ligne refusée par la base
+  // en emportait quarante et une autres, `console.error`, et la fonction rendait
+  // zéro. C'est ce qui est arrivé en production le 04/08/2026 — la boucherie
+  // avait 43 pièces pesées et pas un seul morceau au catalogue. Le déclencheur
+  // du lot 63 marchait ; c'est l'écriture qui échouait, en silence.
+  //
+  // Une pièce qui résiste ne coûte donc plus que sa propre place. Le nombre
+  // rendu est celui des morceaux RÉELLEMENT créés, jamais celui des tentatives.
+  let crees = 0
+  for (const ligne of aCreer) {
+    const { error: insErr } = await service.from('generic_articles').insert(ligne)
+    if (insErr) {
+      console.error(`[valorisation-source] morceau « ${String(ligne.name)} » non créé :`, insErr.message)
+      continue
+    }
+    crees++
   }
-  return aCreer.length
+  return crees
+}
+
+/** Un nom de morceau qui ne heurte aucun nom déjà pris.
+ *
+ *  La nomenclature donne LE MÊME nom à des pièces différentes — treize cas, dont
+ *  « Jarret avec os », porté à la fois par `jarret_avec_os` et `jarret_semelle`
+ *  du bœuf. Deux morceaux de la même carcasse produisaient donc la même clé, et
+ *  l'index unique de la base refusait l'écriture.
+ *
+ *  On garde le nom de la nomenclature — c'est celui que le boucher lit sur son
+ *  écran de valorisation — et on ne s'en écarte QUE s'il est déjà pris : le
+ *  libellé se dérive alors de l'identifiant de la pièce, qui est unique par
+ *  construction (« jarret_semelle » → « Jarret semelle »), puis, en tout dernier
+ *  recours, de l'espèce. Jamais de suffixe numérique : « Jarret avec os 2 » ne
+ *  dirait à personne de quel morceau il s'agit. */
+function nomLibre(cut: Cut, espece: AnimalType, prises: Set<string>): string {
+  const candidats = [
+    nomGeneriqueMorceau(cut),
+    `${libelleDepuisId(cut.id)} — découpe`,
+    `${cut.name} (${ESPECE_FR[espece].toLowerCase()}) — découpe`,
+    `${libelleDepuisId(cut.id)} (${ESPECE_FR[espece].toLowerCase()}) — découpe`,
+  ]
+  for (const c of candidats) if (!prises.has(c.toLowerCase())) return c
+  return candidats[candidats.length - 1]
+}
+
+/** « jarret_semelle » → « Jarret semelle ». Les préfixes d'espèce et de groupe
+ *  qui structurent les identifiants (`b2_`, `veau_`, `capa_`…) sont retirés :
+ *  ils rangent la nomenclature, ils ne nomment pas la pièce. */
+function libelleDepuisId(id: string): string {
+  const sansPrefixe = String(id)
+    .replace(/^(b2|capa|art8|boeuf|veau|agneau|porc|volaille)_/, '')
+    .replace(/_/g, ' ')
+    .trim()
+  if (!sansPrefixe) return String(id)
+  return sansPrefixe.charAt(0).toUpperCase() + sansPrefixe.slice(1)
 }
