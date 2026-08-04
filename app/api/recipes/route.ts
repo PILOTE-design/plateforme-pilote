@@ -22,6 +22,7 @@ import {
   type IngredientRow, type RecipeCost, type RecipeFormat, type RecipeRow,
 } from '@/lib/recipes'
 import { fetchAllPages } from '@/lib/fetch-all'
+import { appliquerCoutsDecoupe, coutsMorceauxDuClient, ensureGeneriquesDecoupe } from '@/lib/valorisation-source'
 
 export const dynamic = 'force-dynamic'
 
@@ -38,6 +39,15 @@ export async function GET() {
   // (un prix en quarantaine a unit_price_ht NULL et n'apparaît jamais ici)
   const cutoff12m = new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10)
 
+  // Rattrapage PARESSEUX des morceaux de découpe, sur le modèle de
+  // `ensureAutoGenerics` de la mercuriale : les pièces réellement découpées et
+  // chiffrées reçoivent leur article générique, une fois, sans que le boucher
+  // ait le moindre geste à faire. Idempotent, tolérant à l'échec, et exécuté
+  // AVANT la lecture du catalogue pour que les nouvelles pièces soient dans la
+  // liste du même appel.
+  const coutsDecoupe = await coutsMorceauxDuClient(service, clientId, user.id)
+  await ensureGeneriquesDecoupe(service, clientId, coutsDecoupe)
+
   const [{ data: recipes }, { data: ingredients }, { data: employees }, articlesPage, { data: generics }, { data: targets }, { data: formatRows }] = await Promise.all([
     service.from('recipes').select('*').eq('client_id', clientId).eq('active', true).order('name'),
     service.from('recipe_ingredients').select('*').eq('client_id', clientId).order('position'),
@@ -52,7 +62,7 @@ export async function GET() {
       if (apres) q = q.gt('id', apres)
       return q.order('id', { ascending: true })
     }),
-    service.from('generic_articles').select('id, name, base_unit, category, default_loss_pct').eq('client_id', clientId).eq('active', true).order('name'),
+    service.from('generic_articles').select('id, name, base_unit, category, default_loss_pct, valorisation_cut_id').eq('client_id', clientId).eq('active', true).order('name'),
     service.from('recipe_targets').select('category, target_marge_pct').eq('client_id', clientId),
     service.from('recipe_formats').select('*').eq('client_id', clientId).order('position'),
   ])
@@ -97,7 +107,12 @@ export async function GET() {
 
   const emps = (employees || []) as unknown as PayrollEmployee[]
   const averageRate = averageLoadedRate(emps)
+  // Prix des morceaux de DÉCOUPE — la valorisation carcasse est la troisième
+  // provenance possible d'un prix, à côté de la facture et de la saisie
+  // manuelle. Posés APRÈS buildGenericMap : un morceau n'a jamais de réf
+  // fournisseur, il n'y a donc rien à arbitrer.
   const genericById = buildGenericMap((generics || []) as Record<string, unknown>[], (articles || []) as Record<string, unknown>[])
+  appliquerCoutsDecoupe(genericById, (generics || []) as Record<string, unknown>[], coutsDecoupe)
   const priceByArticle = new Map<string, number>()
   for (const a of articles || []) {
     if (a.last_price_ht != null) priceByArticle.set(a.id, parseFloat(String(a.last_price_ht)))
