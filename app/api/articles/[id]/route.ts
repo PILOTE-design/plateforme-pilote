@@ -35,6 +35,23 @@ export async function PUT(request: NextRequest, { params }: { params: { id: stri
   if ('error' in auth) return auth.error
   const { service, clientId } = auth
 
+  // Prix BLOQUÉ (lot 43, modèle Otami) : le prix négocié avec le fournisseur,
+  // verrouillé sur la réf. blocked_at date le verrou — seules les factures
+  // POSTÉRIEURES peuvent le dépasser. null = déverrouiller (surveillance levée).
+  if ('blocked_price_ht' in body && !('generic_id' in body)) {
+    let blocked: number | null = null
+    if (body.blocked_price_ht !== null && body.blocked_price_ht !== '') {
+      const v = Number(body.blocked_price_ht)
+      if (!Number.isFinite(v) || v <= 0 || v > 100000) return NextResponse.json({ error: 'Prix bloqué invalide' }, { status: 400 })
+      blocked = Math.round(v * 10000) / 10000
+    }
+    const { error } = await service.from('articles')
+      .update({ blocked_price_ht: blocked, blocked_at: blocked !== null ? new Date().toISOString() : null })
+      .eq('id', params.id).eq('client_id', clientId)
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ success: true })
+  }
+
   // Écarter / restaurer une réf de la file « À rapprocher » sans l'associer.
   // no_auto accompagne dans les deux sens : une réf écartée puis restaurée se
   // traite à la main, l'association automatique ne la reprend jamais.

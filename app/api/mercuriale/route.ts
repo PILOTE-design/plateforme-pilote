@@ -68,7 +68,7 @@ export async function GET() {
       .order('name'),
     fetchAllPages<any>(apres => {
       let q = service.from('articles')
-        .select('id, name, unit, supplier_name, article_code, last_price_ht, last_price_date, price_count, generic_id, conversion_factor, ignored, updated_at')
+        .select('id, name, unit, supplier_name, article_code, last_price_ht, last_price_date, price_count, generic_id, conversion_factor, ignored, updated_at, blocked_price_ht, blocked_at')
         .eq('client_id', clientId)
       if (apres) q = q.gt('id', apres)
       return q.order('id', { ascending: true })
@@ -147,13 +147,16 @@ export async function GET() {
     quarantaineParArticle.set(k, (quarantaineParArticle.get(k) || 0) + 1)
   }
 
-  // Variation : deux derniers prix unitaires distincts par réf, datés par la facture
-  const pointsByArticle = new Map<string, { date: string; price: number; invoiceId: string | null }[]>()
+  // Variation : deux derniers prix unitaires distincts par réf, datés par la
+  // facture. La QUANTITÉ voyage avec chaque point (lot 43) : elle chiffre
+  // l'écart en euros quand une facture dépasse un prix bloqué.
+  const pointsByArticle = new Map<string, { date: string; price: number; invoiceId: string | null; qte: number | null }[]>()
   for (const p of (pricePoints || []) as any[]) {
     const date = p.invoices?.invoice_date
     if (!p.article_id || !date) continue
     const arr = pointsByArticle.get(p.article_id) || []
-    arr.push({ date, price: parseFloat(p.unit_price_ht), invoiceId: p.invoice_id ? String(p.invoice_id) : null })
+    const qv = p.quantity !== null && p.quantity !== undefined ? Number(p.quantity) : null
+    arr.push({ date, price: parseFloat(p.unit_price_ht), invoiceId: p.invoice_id ? String(p.invoice_id) : null, qte: qv !== null && Number.isFinite(qv) ? qv : null })
     pointsByArticle.set(p.article_id, arr)
   }
 
@@ -414,6 +417,40 @@ export async function GET() {
   moves.sort((a, b) => String(b.date).localeCompare(String(a.date)) || Math.abs(b.pct ?? 0) - Math.abs(a.pct ?? 0))
   const movesOut = moves.slice(0, 50)
 
+  // ÉCARTS SUR PRIX BLOQUÉS (lot 43, modèle Otami) : pour chaque réf au prix
+  // verrouillé, chaque ligne de facture POSTÉRIEURE au verrou payée AU-DESSUS
+  // du prix convenu (au-delà du dixième de centime) est un écart — matière à
+  // demander un avoir. L'écart en euros = (payé − bloqué) × quantité de la
+  // ligne quand la facture porte une quantité ; sinon il reste non chiffré et
+  // la page le DIT. Plafond de liste annoncé, jamais muet.
+  const genericNameById = new Map<string, string>((generics || []).map((g: any) => [String(g.id), String(g.name)]))
+  const ecarts: any[] = []
+  for (const a of enriched) {
+    const bloque = a.blocked_price_ht !== null && a.blocked_price_ht !== undefined ? Number(a.blocked_price_ht) : null
+    if (bloque === null || !(bloque > 0)) continue
+    const depuis = a.blocked_at ? String(a.blocked_at).slice(0, 10) : null
+    for (const pt of pointsByArticle.get(a.id) || []) {
+      if (depuis && pt.date < depuis) continue
+      if (!(pt.price > bloque + 0.0005)) continue
+      ecarts.push({
+        article_id: String(a.id),
+        ref_name: String(a.name),
+        supplier_name: a.supplier_name ?? null,
+        generic_id: a.generic_id ? String(a.generic_id) : null,
+        generic_name: a.generic_id ? genericNameById.get(String(a.generic_id)) ?? null : null,
+        unit: a.unit ?? null,
+        bloque: round4(bloque),
+        paye: round4(pt.price),
+        qte: pt.qte,
+        ecart_ht: pt.qte !== null ? round2((pt.price - bloque) * pt.qte) : null,
+        date: pt.date,
+        invoice_id: pt.invoiceId,
+      })
+    }
+  }
+  ecarts.sort((a, b) => String(b.date).localeCompare(String(a.date)))
+  const ecartsOut = ecarts.slice(0, 100)
+
   // File « À rapprocher » : chaque réf restante porte sa clé de rapprochement
   // (deux premiers mots significatifs), une suggestion si un générique existant
   // partage cette clé, et un marqueur non-produit (taxes, remises, licences…).
@@ -510,6 +547,8 @@ export async function GET() {
     pending: pendingOut,
     fournisseurs: fournisseursOut,
     depense_hors_catalogue_12m: depenseHorsCatalogue,
+    ecarts_bloques: ecartsOut,
+    ecarts_bloques_total: ecarts.length,
     doutes: doutes || [],
     sans_pdf: sansPdf ?? 0,
     moves: movesOut,
