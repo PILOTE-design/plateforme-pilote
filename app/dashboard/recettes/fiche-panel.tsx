@@ -22,7 +22,7 @@ import { facteurPerte, parseStoredSteps, parseStoredTiers } from '@/lib/recipes'
 import {
   GrapheCouts, TableauIngredients, TrendSpark,
   ageJours, fmtDateFr, fmtEuro, fmtMin, fmtQty, ligneKg, num, round2, unitFr,
-  venteEnClair, UNITES_VENTE,
+  venteEnClair, uniteAuPluriel, UNITES_VENTE,
   type FicheEmployee, type FicheFormat, type FicheGeneric, type FicheRecipe, type JalonCout, type SerieCout,
 } from './fiche-ui'
 
@@ -532,7 +532,7 @@ export default function FichePanel({
           </div>
           <p className="text-xs text-gray-500 mt-0.5">
             {recipe.yield_qty ? `Base : ${fmtQty(recipe.yield_qty)} ${uniteLabel} par batch` : 'Rendement non renseigné'}
-            {actif?.sell_unit && Number(actif.sell_qty) > 0 ? <>{' · '}vendu {venteEnClair(actif.sell_unit)} — le batch fait {fmtQty(Number(actif.sell_qty))} {actif.sell_unit} vendables</> : null}
+            {actif?.sell_unit && Number(actif.sell_qty) > 0 ? <>{' · '}vendu {venteEnClair(actif.sell_unit)} — le batch fait {fmtQty(Number(actif.sell_qty))} {uniteAuPluriel(Number(actif.sell_qty), actif.sell_unit)} vendables</> : null}
             {/* « Prix du jour » sans nuance était une promesse que les données
                 ne tiennent pas toujours : le plus ancien prix de la fiche peut
                 dater de plusieurs mois. On dit lequel, et depuis quand. */}
@@ -584,7 +584,7 @@ export default function FichePanel({
             const sel = actif?.id === f.id
             return (
               <button key={f.id} onClick={() => { setFormatId(f.id); setEditFormat(null); setConfirmFormat(false) }}
-                title={f.sell_unit && f.sell_qty ? `Vendu en ${f.sell_unit} — le batch en fait ${fmtQty(Number(f.sell_qty))}` : 'Vendu à l’unité produite'}
+                title={f.sell_unit && f.sell_qty ? `Vendu ${venteEnClair(f.sell_unit)} — le batch en fait ${fmtQty(Number(f.sell_qty))} ${uniteAuPluriel(Number(f.sell_qty), f.sell_unit)}` : 'Vendu à l’unité produite'}
                 className={`inline-flex items-center gap-1.5 text-xs font-semibold rounded-full px-3 py-1.5 transition-colors ${sel ? 'bg-pilote text-white shadow-card' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'}`}>
                 {f.validated && <Check className={`w-3 h-3 ${sel ? 'text-white/70' : 'text-green-600'}`} />}
                 <span className="max-w-[16rem] truncate">{f.name}</span>
@@ -1106,7 +1106,7 @@ export default function FichePanel({
                 Ce que rapporte {actif ? `le format « ${actif.name} »` : 'la fiche'}
               </h3>
               <span className="text-[11px] text-gray-400 tabular">
-                {venteQty > 0 ? `${fmtQty(venteQty)} ${uniteVente} vendables par batch` : 'quantité vendable non renseignée'}
+                {venteQty > 0 ? `${fmtQty(venteQty)} ${uniteAuPluriel(venteQty, uniteVente)} vendables par batch` : 'quantité vendable non renseignée'}
               </span>
             </div>
             {/* Les deux marges du métier, PAR UNITÉ DE VENTE :
