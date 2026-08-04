@@ -5,14 +5,15 @@ import { useSearchParams } from 'next/navigation'
 import { Calculator, TrendingUp, Package, Info, AlertTriangle, CheckCircle, Save, Trash2, Clock, X, Loader2, Users, BarChart2, RotateCcw, ChevronRight, Download } from 'lucide-react'
 import { useToast } from '@/components/ui/toast'
 import { useConfirm } from '@/components/ui/confirm-dialog'
+import {
+  BOEUF_ALL_CUTS, VEAU_CUTS, AGNEAU_CUTS, PORC_CUTS, VOLAILLE_CUTS,
+  type AnimalType, type Cut, type CutCategory,
+} from '@/lib/valorisation'
 
 // ─── Types ──────────────────────────────
 
-type CutCategory = 'premier' | 'deuxieme' | 'troisieme' | 'abat' | 'os'
-type AnimalType  = 'boeuf' | 'veau' | 'agneau' | 'porc' | 'volaille'
 
 interface Breed { id: string; name: string; carcassYield: number; avgWeight: string; origin: string; description: string }
-interface Cut   { id: string; name: string; category: CutCategory; yieldPct: number; marketPrice: number; group?: string[] }
 interface CutResult { cut: Cut; weight: number; sellingPrice: number; revenue: number; active: boolean }
 interface SavedValo {
   id: string; breed_id: string; breed_name: string; live_weight: number; quantity: number
@@ -46,84 +47,7 @@ const BOEUF_BREEDS: Breed[] = [
   { id: 'angus',            name: 'Aberdeen Angus',     carcassYield: 0.578, avgWeight: '600-750 kg',  origin: 'Écosse/France',    description: 'Persillage exceptionnel dit marbré, viande fondante et savoureuse. Segment premium.' },
   { id: 'hereford',         name: 'Hereford',           carcassYield: 0.565, avgWeight: '550-700 kg',  origin: 'Angleterre/France', description: 'Viande bien persillée, tendre et goûteuse. Qualité constante, appréciée des bouchers exigeants.' },
 ]
-// Découpe bœuf en arborescence (fournie par le boucher). Chaque pièce = une feuille avec son
-// chemin `group` (catégorie → grosse pièce → sous-groupe). yieldPct non utilisé (poids manuel) ;
-// marketPrice = prix de référence indicatif, modifiable par pièce.
-const BOEUF_CUTS: Cut[] = [
-  // ── BCUH ──
-  { id: 'jarret_avec_os',         name: 'Jarret avec os',          category: 'troisieme', yieldPct: 0, marketPrice: 12, group: ['ART8', 'BCUH', 'Jarret'] },
-  { id: 'jarret_sans_os',         name: 'Jarret sans os',          category: 'troisieme', yieldPct: 0, marketPrice: 14, group: ['ART8', 'BCUH', 'Jarret'] },
-  { id: 'araignee_b',             name: 'Araignée',                category: 'premier',   yieldPct: 0, marketPrice: 32, group: ['ART8', 'BCUH', 'Globe'] },
-  { id: 'tranche_grasse_ronde',   name: 'Ronde tranche grasse',    category: 'deuxieme',  yieldPct: 0, marketPrice: 15, group: ['ART8', 'BCUH', 'Globe', 'Tranche grasse'] },
-  { id: 'tranche_grasse_plat',    name: 'Plat de tranche grasse',  category: 'deuxieme',  yieldPct: 0, marketPrice: 15, group: ['ART8', 'BCUH', 'Globe', 'Tranche grasse'] },
-  { id: 'tranche_grasse_mouvante', name: 'Mouvante tranche grasse', category: 'deuxieme', yieldPct: 0, marketPrice: 15, group: ['ART8', 'BCUH', 'Globe', 'Tranche grasse'] },
-  // Tende de tranche : toutes les pièces en direct (Milieu = ex-cœur de tranche)
-  { id: 'coeur_tranche',          name: 'Milieu',                  category: 'deuxieme',  yieldPct: 0, marketPrice: 17, group: ['ART8', 'BCUH', 'Globe', 'Tende de tranche'] },
-  { id: 'fausse_araignee',        name: 'Fausse araignée',         category: 'premier',   yieldPct: 0, marketPrice: 20, group: ['ART8', 'BCUH', 'Globe', 'Tende de tranche'] },
-  { id: 'entame',                 name: 'Entame',                  category: 'deuxieme',  yieldPct: 0, marketPrice: 16, group: ['ART8', 'BCUH', 'Globe', 'Tende de tranche'] },
-  { id: 'poire',                  name: 'Poire',                   category: 'premier',   yieldPct: 0, marketPrice: 26, group: ['ART8', 'BCUH', 'Globe', 'Tende de tranche'] },
-  { id: 'merlan',                 name: 'Merlan',                  category: 'premier',   yieldPct: 0, marketPrice: 26, group: ['ART8', 'BCUH', 'Globe', 'Tende de tranche'] },
-  { id: 'chapeau',                name: 'Chapeau',                 category: 'deuxieme',  yieldPct: 0, marketPrice: 15, group: ['ART8', 'BCUH', 'Globe', 'Tende de tranche'] },
-  { id: 'talon',                  name: 'Talon',                   category: 'troisieme', yieldPct: 0, marketPrice: 12, group: ['ART8', 'BCUH', 'Globe', 'Tende de tranche'] },
-  { id: 'dessus_de_tranche',      name: 'Dessus de tranche',       category: 'deuxieme',  yieldPct: 0, marketPrice: 16, group: ['ART8', 'BCUH', 'Globe', 'Tende de tranche'] },
-  { id: 'gite_noix',              name: 'Gîte à la noix',          category: 'deuxieme',  yieldPct: 0, marketPrice: 17, group: ['ART8', 'BCUH', 'Globe', 'Semelle'] },
-  { id: 'rond_de_gite',           name: 'Rond de gîte',            category: 'deuxieme',  yieldPct: 0, marketPrice: 18, group: ['ART8', 'BCUH', 'Globe', 'Semelle'] },
-  { id: 'nerveux',                name: 'Nerveux',                 category: 'troisieme', yieldPct: 0, marketPrice: 11, group: ['ART8', 'BCUH', 'Globe', 'Semelle'] },
-  { id: 'plat_de_nerveux',        name: 'Plat de nerveux',         category: 'troisieme', yieldPct: 0, marketPrice: 11, group: ['ART8', 'BCUH', 'Globe', 'Semelle'] },
-  { id: 'oreille_gite',           name: 'Oreille de gîte',         category: 'troisieme', yieldPct: 0, marketPrice: 12, group: ['ART8', 'BCUH', 'Globe', 'Semelle'] },
-  { id: 'jarret_semelle',         name: 'Jarret avec os',          category: 'troisieme', yieldPct: 0, marketPrice: 12, group: ['ART8', 'BCUH', 'Globe', 'Semelle'] },
-  { id: 'filet_rtk',              name: 'Filet de rumsteck',       category: 'premier',   yieldPct: 0, marketPrice: 22, group: ['ART8', 'BCUH', 'RTK'] },
-  { id: 'coeur_rtk',              name: 'Cœur de rumsteck',        category: 'premier',   yieldPct: 0, marketPrice: 24, group: ['ART8', 'BCUH', 'RTK'] },
-  { id: 'langue_de_chat',         name: 'Langue de chat',          category: 'premier',   yieldPct: 0, marketPrice: 22, group: ['ART8', 'BCUH', 'RTK'] },
-  { id: 'baronne',                name: 'Aiguillette baronne',     category: 'premier',   yieldPct: 0, marketPrice: 20, group: ['ART8', 'BCUH', 'RTK'] },
-  { id: 'aiguillette_rtk',        name: 'Aiguillette de rumsteck', category: 'premier',   yieldPct: 0, marketPrice: 22, group: ['ART8', 'BCUH', 'RTK'] },
-  // ── DEHMT ──
-  { id: 'faux_filet_b',           name: 'Faux-filet',              category: 'premier',   yieldPct: 0, marketPrice: 29, group: ['ART8', 'DEHMT'] },
-  { id: 'filet_b',                name: 'Filet',                   category: 'premier',   yieldPct: 0, marketPrice: 45, group: ['ART8', 'DEHMT'] },
-  { id: 'onglet_b',               name: 'Onglet',                  category: 'premier',   yieldPct: 0, marketPrice: 28, group: ['ART8', 'DEHMT'] },
-  { id: 'chainette_filet',        name: 'Chaînette de filet',      category: 'deuxieme',  yieldPct: 0, marketPrice: 18, group: ['ART8', 'DEHMT'] },
-  // DEHMT : Dessus de côte et Carré de côte, pièces directes (non dépliables)
-  { id: 'dessus_de_cote',         name: 'Dessus de côte',          category: 'premier',   yieldPct: 0, marketPrice: 18, group: ['ART8', 'DEHMT'] },
-  { id: 'carre_de_cote',          name: 'Carré de côte',           category: 'premier',   yieldPct: 0, marketPrice: 22, group: ['ART8', 'DEHMT'] },
-  // ── BAVETTE ──
-  { id: 'flanchet',               name: 'Flanchet',                category: 'deuxieme',  yieldPct: 0, marketPrice: 12, group: ['ART8', 'BAVETTE'] },
-  { id: 'bavette_aloyau_b',       name: "Bavette d'aloyau",        category: 'premier',   yieldPct: 0, marketPrice: 22, group: ['ART8', 'BAVETTE'] },
-  { id: 'fausse_bavette',         name: 'Fausse bavette',          category: 'deuxieme',  yieldPct: 0, marketPrice: 14, group: ['ART8', 'BAVETTE'] },
-  // ── DIVERS (viandes de fabrication et sous-produits, toute la bête) ──
-  { id: 'boeuf_viande_hachee',       name: 'Viande hachée',        category: 'deuxieme',  yieldPct: 0, marketPrice: 14, group: ['Divers'] },
-  { id: 'boeuf_viandes_fabrication', name: 'Viandes fabrication',  category: 'troisieme', yieldPct: 0, marketPrice: 8,  group: ['Divers'] },
-  { id: 'boeuf_dechets_animaux',     name: 'Déchets animaux',      category: 'troisieme', yieldPct: 0, marketPrice: 0,  group: ['Divers'] },
-  { id: 'boeuf_os_a_moelle',         name: 'Os à moelle',          category: 'os',        yieldPct: 0, marketPrice: 3,  group: ['Divers'] },
-]
-// Découpe B2 — nomenclature CEFIMEV (avant du bœuf : épaule + collier basse-côte).
-// Arborescence : grande pièce → sous-pièce. Prix de référence indicatifs, modifiables.
-const BOEUF_B2_CUTS: Cut[] = [
-  // ── ÉPAULE (B 4.1) ──
-  { id: 'b2_jarret_avant',      name: 'Jarret (avant)',          category: 'troisieme', yieldPct: 0, marketPrice: 12, group: ['AVANTCAPA', 'Épaule'] },
-  { id: 'b2_boite_a_moelle',    name: 'Boîte à moelle',          category: 'deuxieme',  yieldPct: 0, marketPrice: 12, group: ['AVANTCAPA', 'Épaule'] },
-  { id: 'b2_dessus_macreuse',   name: 'Dessus de macreuse',      category: 'premier',   yieldPct: 0, marketPrice: 19, group: ['AVANTCAPA', 'Épaule', 'Macreuse à biftecks'] },
-  { id: 'b2_macreuse_roti',     name: 'Macreuse (rôti)',         category: 'premier',   yieldPct: 0, marketPrice: 18, group: ['AVANTCAPA', 'Épaule', 'Macreuse à biftecks'] },
-  { id: 'b2_paleron',           name: 'Paleron',                 category: 'deuxieme',  yieldPct: 0, marketPrice: 14, group: ['AVANTCAPA', 'Épaule'] },
-  { id: 'b2_dessus_palette',    name: 'Dessus de palette',       category: 'deuxieme',  yieldPct: 0, marketPrice: 13, group: ['AVANTCAPA', 'Épaule'] },
-  { id: 'b2_jumeau',            name: 'Jumeau',                  category: 'premier',   yieldPct: 0, marketPrice: 16, group: ['AVANTCAPA', 'Épaule'] },
-  // ── COLLIER BASSE-CÔTE (B 4.2) ──
-  { id: 'b2_persille',          name: 'Persillé',                category: 'deuxieme',  yieldPct: 0, marketPrice: 15, group: ['AVANTCAPA', 'Collier basse-côte', 'Basse côte'] },
-  { id: 'b2_basse_cote',        name: 'Basse côte (entrecôte minute)', category: 'premier', yieldPct: 0, marketPrice: 17, group: ['AVANTCAPA', 'Collier basse-côte', 'Basse côte'] },
-  { id: 'b2_veine_maigre',      name: 'Veine maigre',            category: 'troisieme', yieldPct: 0, marketPrice: 12, group: ['AVANTCAPA', 'Collier basse-côte', 'Collier'] },
-  { id: 'b2_saliere',           name: 'Salière',                 category: 'deuxieme',  yieldPct: 0, marketPrice: 13, group: ['AVANTCAPA', 'Collier basse-côte', 'Collier'] },
-  { id: 'b2_veine_grasse',      name: 'Veine grasse',            category: 'deuxieme',  yieldPct: 0, marketPrice: 11, group: ['AVANTCAPA', 'Collier basse-côte', 'Collier'] },
-  { id: 'b2_filet_mignon_col',  name: 'Filet mignon (de collier)', category: 'premier', yieldPct: 0, marketPrice: 14, group: ['AVANTCAPA', 'Collier basse-côte', 'Collier'] },
-  // ── CAPA ──
-  { id: 'capa_gros_bout_poitrine', name: 'Gros bout de poitrine sans os', category: 'troisieme', yieldPct: 0, marketPrice: 10, group: ['AVANTCAPA', 'CAPA'] },
-  { id: 'capa_plat_de_capa',       name: 'Plat de capa',                  category: 'deuxieme',  yieldPct: 0, marketPrice: 12, group: ['AVANTCAPA', 'CAPA'] },
-  { id: 'capa_hampe',              name: 'Hampe',                         category: 'premier',   yieldPct: 0, marketPrice: 24, group: ['AVANTCAPA', 'CAPA'] },
-  { id: 'capa_fausse_hampe',       name: 'Fausse hampe',                  category: 'deuxieme',  yieldPct: 0, marketPrice: 16, group: ['AVANTCAPA', 'CAPA'] },
-  { id: 'capa_plat_de_cote',       name: 'Plat de côte',                  category: 'troisieme', yieldPct: 0, marketPrice: 9,  group: ['AVANTCAPA', 'CAPA'] },
-]
 
-// L'arbre bœuf complet : ART8 (arrière) et AVANTCAPA (avant) sont les deux grandes
-// catégories dépliables du détail par pièce — une seule et même bête.
-const BOEUF_ALL_CUTS: Cut[] = [...BOEUF_CUTS, ...BOEUF_B2_CUTS]
 
 // ── Arborescence de découpe (dérivée du champ `group`) ──
 interface TreeNode { name: string; path: string; children: TreeNode[]; cut?: Cut }
@@ -157,33 +81,6 @@ const VEAU_BREEDS: Breed[] = [
   { id: 'veau_lourd',         name: 'Veau lourd finition',     carcassYield: 0.60, avgWeight: '250-300 kg', origin: 'France',    description: 'Animal plus âgé, viande légèrement plus ferme et goûteuse. Fort rendement.' },
   { id: 'veau_blanc_fermier', name: 'Veau blanc fermier IGP',  carcassYield: 0.63, avgWeight: '170-220 kg', origin: 'Aveyron',   description: 'IGP. Élevé sous la mère, lait fermier. Viande très blanche, extrêmement tendre. Produit premium.' },
 ]
-// Découpe veau en arborescence (planche fournie par le boucher) : Le pan (cuisseau + carré
-// de côtes) et La basse (épaule, poitrine, bas de carré). Même mécanique que le bœuf : poids
-// saisi manuellement ; marketPrice = prix de référence indicatif €/kg, modifiable par pièce.
-const VEAU_CUTS: Cut[] = [
-  // ── LE PAN ──
-  { id: 'veau_noix',                name: 'Noix',                          category: 'premier',   yieldPct: 0, marketPrice: 30, group: ['Le pan', 'Le cuisseau'] },
-  { id: 'veau_noix_patissiere',     name: 'Noix pâtissière',               category: 'premier',   yieldPct: 0, marketPrice: 32, group: ['Le pan', 'Le cuisseau'] },
-  { id: 'veau_sous_noix',           name: 'Sous-noix',                     category: 'premier',   yieldPct: 0, marketPrice: 28, group: ['Le pan', 'Le cuisseau'] },
-  { id: 'veau_quasi',               name: 'Quasi',                         category: 'premier',   yieldPct: 0, marketPrice: 30, group: ['Le pan', 'Le cuisseau'] },
-  { id: 'veau_tete_filet',          name: 'Tête de filet',                 category: 'premier',   yieldPct: 0, marketPrice: 34, group: ['Le pan', 'Le cuisseau'] },
-  { id: 'veau_jarret_cuisseau',     name: 'Jarret',                        category: 'deuxieme',  yieldPct: 0, marketPrice: 18, group: ['Le pan', 'Le cuisseau'] },
-  { id: 'veau_aiguillette_baronne', name: 'Aiguillette baronne',           category: 'premier',   yieldPct: 0, marketPrice: 26, group: ['Le pan', 'Le cuisseau'] },
-  { id: 'veau_cotes_filets',        name: 'Côtes filets',                  category: 'premier',   yieldPct: 0, marketPrice: 30, group: ['Le pan', 'Carré de côtes'] },
-  { id: 'veau_cotes_premieres',     name: 'Côtes premières',               category: 'premier',   yieldPct: 0, marketPrice: 24, group: ['Le pan', 'Carré de côtes'] },
-  // ── LA BASSE ──
-  { id: 'veau_epaule_boule',        name: "Boule d'épaule",                category: 'deuxieme',  yieldPct: 0, marketPrice: 18, group: ['La basse', 'Épaule'] },
-  { id: 'veau_epaule_paleron',      name: 'Paleron',                       category: 'deuxieme',  yieldPct: 0, marketPrice: 16, group: ['La basse', 'Épaule'] },
-  { id: 'veau_epaule_jumeau',       name: 'Jumeau',                        category: 'deuxieme',  yieldPct: 0, marketPrice: 17, group: ['La basse', 'Épaule'] },
-  { id: 'veau_epaule_boite_moelle', name: 'Boîte à moelle',                category: 'troisieme', yieldPct: 0, marketPrice: 12, group: ['La basse', 'Épaule'] },
-  { id: 'veau_epaule_jarret_os',    name: 'Jarret avec os',                category: 'deuxieme',  yieldPct: 0, marketPrice: 17, group: ['La basse', 'Épaule'] },
-  { id: 'veau_epaule_jarret_sans',  name: 'Jarret sans os',                category: 'deuxieme',  yieldPct: 0, marketPrice: 18, group: ['La basse', 'Épaule'] },
-  { id: 'veau_poitrine_sans_os',    name: 'Poitrine sans os',              category: 'troisieme', yieldPct: 0, marketPrice: 14, group: ['La basse', 'Poitrine'] },
-  { id: 'veau_tendrons',            name: 'Tendrons',                      category: 'deuxieme',  yieldPct: 0, marketPrice: 14, group: ['La basse', 'Poitrine'] },
-  { id: 'veau_piece_paupiette',     name: 'Pièce à paupiette',             category: 'deuxieme',  yieldPct: 0, marketPrice: 22, group: ['La basse', 'Poitrine'] },
-  { id: 'veau_bas_carre_roti',      name: 'Rôti',                          category: 'deuxieme',  yieldPct: 0, marketPrice: 18, group: ['La basse', 'Bas de carré'] },
-  { id: 'veau_bas_carre_saute',     name: 'Sauté',                         category: 'troisieme', yieldPct: 0, marketPrice: 15, group: ['La basse', 'Bas de carré'] },
-]
 
 // ─── Données Agneau ───────────────────────
 
@@ -196,28 +93,6 @@ const AGNEAU_BREEDS: Breed[] = [
   { id: 'lacaune',           name: 'Lacaune',                    carcassYield: 0.45, avgWeight: '30-40 kg', origin: 'Tarn-Aveyron',        description: 'Race mixte lait/viande. Viande plus maigre, qualité régulière.' },
   { id: 'agneau_lait',       name: 'Agneau de lait Pyrénées',    carcassYield: 0.56, avgWeight: '12-18 kg', origin: 'Pyrénées',            description: 'Très jeune animal, viande blanche rosée, texture fondante. Produit de fête, prix premium.' },
 ]
-// Découpe agneau en arborescence (planche fournie par le boucher) : gigot, côtes, épaule,
-// poitrine, collet. Même mécanique que le bœuf : poids saisi manuellement ; marketPrice =
-// prix de référence indicatif €/kg, modifiable par pièce.
-const AGNEAU_CUTS: Cut[] = [
-  // ── LE GIGOT ──
-  { id: 'agneau_gigot_entier',    name: 'Gigot entier',                   category: 'premier',   yieldPct: 0, marketPrice: 20, group: ['Le gigot'] },
-  { id: 'agneau_souris',          name: 'Souris',                         category: 'deuxieme',  yieldPct: 0, marketPrice: 22, group: ['Le gigot'] },
-  { id: 'agneau_gigot_sans_os',   name: 'Gigot sans os',                  category: 'premier',   yieldPct: 0, marketPrice: 24, group: ['Le gigot'] },
-  { id: 'agneau_selle',           name: 'Selle',                          category: 'premier',   yieldPct: 0, marketPrice: 22, group: ['Le gigot'] },
-  { id: 'agneau_gigot_raccourci', name: 'Gigot raccourci',                category: 'premier',   yieldPct: 0, marketPrice: 21, group: ['Le gigot'] },
-  // ── CÔTES ──
-  { id: 'agneau_cotes_filet',     name: 'Filet',                          category: 'premier',   yieldPct: 0, marketPrice: 26, group: ['Côtes'] },
-  { id: 'agneau_cotes_prem_dec',  name: 'Côtes premières et découvertes', category: 'premier',   yieldPct: 0, marketPrice: 18, group: ['Côtes'] },
-  // ── ÉPAULE ──
-  { id: 'agneau_epaule_avec_os',  name: 'Avec os',                        category: 'deuxieme',  yieldPct: 0, marketPrice: 14, group: ['Épaule'] },
-  { id: 'agneau_epaule_sans_os',  name: 'Sans os',                        category: 'deuxieme',  yieldPct: 0, marketPrice: 16, group: ['Épaule'] },
-  // ── POITRINE ──
-  { id: 'agneau_poitrine_avec_os', name: 'Avec os',                       category: 'troisieme', yieldPct: 0, marketPrice: 8,  group: ['Poitrine'] },
-  { id: 'agneau_poitrine_sans_os', name: 'Sans os',                       category: 'troisieme', yieldPct: 0, marketPrice: 10, group: ['Poitrine'] },
-  // ── VIANDES FABRICATION (pièces sans grande catégorie) ──
-  { id: 'agneau_collet_avec_os',  name: 'Collet avec os',                 category: 'troisieme', yieldPct: 0, marketPrice: 9,  group: ['Viandes fabrication'] },
-]
 
 // ─── Données Porc ─────────────────────────
 
@@ -229,40 +104,6 @@ const PORC_BREEDS: Breed[] = [
   { id: 'noir_bigorre',      name: 'Noir de Bigorre AOP',  carcassYield: 0.72, avgWeight: '110-140 kg', origin: 'Pyrénées',         description: 'AOP. Élevage 12 mois min. Viande persillée, jambon sec exceptionnel. Haut de gamme.' },
   { id: 'cochon_bayeux',     name: 'Cochon de Bayeux',     carcassYield: 0.71, avgWeight: '100-130 kg', origin: 'Normandie',        description: 'Ancienne race normande. Lard abondant, viande goûteuse. Parfait pour rillettes et jambon braisé.' },
 ]
-// Découpe porc en arborescence (planche fournie par le boucher) : Arrière (jambon, poitrine,
-// carré/filet) et Avant (épaule, échine, divers). Même mécanique que le bœuf : poids saisi
-// manuellement ; marketPrice = prix de référence indicatif €/kg, modifiable par pièce.
-const PORC_CUTS: Cut[] = [
-  // ── ARRIÈRE ──
-  { id: 'porc_jambon_avec_os',     name: 'Jambon avec os',                 category: 'premier',   yieldPct: 0, marketPrice: 8,  group: ['Arrière', 'Jambon'] },
-  { id: 'porc_jambon_4d',          name: 'Jambon 4D',                      category: 'premier',   yieldPct: 0, marketPrice: 9,  group: ['Arrière', 'Jambon'] },
-  { id: 'porc_jambon_jb_blanc',    name: 'Jambon pour jambon blanc',       category: 'premier',   yieldPct: 0, marketPrice: 9,  group: ['Arrière', 'Jambon'] },
-  { id: 'porc_jambon_pointe',      name: 'Pointe',                         category: 'deuxieme',  yieldPct: 0, marketPrice: 8,  group: ['Arrière', 'Jambon'] },
-  { id: 'porc_jambon_parure',      name: 'Parure',                         category: 'troisieme', yieldPct: 0, marketPrice: 4,  group: ['Arrière', 'Jambon'] },
-  { id: 'porc_jambon_jarret',      name: 'Jarret avec os',                 category: 'deuxieme',  yieldPct: 0, marketPrice: 6,  group: ['Arrière', 'Jambon'] },
-  { id: 'porc_jambon_araignee',    name: 'Araignée',                       category: 'premier',   yieldPct: 0, marketPrice: 12, group: ['Arrière', 'Jambon'] },
-  { id: 'porc_poitrine_4f',        name: 'Poitrine 4F sans os',            category: 'deuxieme',  yieldPct: 0, marketPrice: 8,  group: ['Arrière', 'Poitrine'] },
-  { id: 'porc_poitrine_parure',    name: 'Parure',                         category: 'troisieme', yieldPct: 0, marketPrice: 4,  group: ['Arrière', 'Poitrine'] },
-  { id: 'porc_poitrine_mouille',   name: 'Mouille',                        category: 'troisieme', yieldPct: 0, marketPrice: 3,  group: ['Arrière', 'Poitrine'] },
-  { id: 'porc_carre_roti_filet',   name: 'Rôti filet',                     category: 'premier',   yieldPct: 0, marketPrice: 13, group: ['Arrière', 'Carré / Filet'] },
-  { id: 'porc_carre_cotes',        name: 'Côtes',                          category: 'premier',   yieldPct: 0, marketPrice: 10, group: ['Arrière', 'Carré / Filet'] },
-  { id: 'porc_carre_parure',       name: 'Parure',                         category: 'troisieme', yieldPct: 0, marketPrice: 4,  group: ['Arrière', 'Carré / Filet'] },
-  { id: 'porc_carre_gras_dur',     name: 'Gras dur',                       category: 'troisieme', yieldPct: 0, marketPrice: 2,  group: ['Arrière', 'Carré / Filet'] },
-  { id: 'porc_carre_filet_mignon', name: 'Filet mignon',                   category: 'premier',   yieldPct: 0, marketPrice: 20, group: ['Arrière', 'Carré / Filet'] },
-  { id: 'porc_carre_grillade',     name: 'Grillade',                       category: 'premier',   yieldPct: 0, marketPrice: 11, group: ['Arrière', 'Carré / Filet'] },
-  { id: 'porc_carre_gras',         name: 'Gras',                           category: 'troisieme', yieldPct: 0, marketPrice: 2,  group: ['Arrière', 'Carré / Filet'] },
-  // ── AVANT ──
-  { id: 'porc_epaule_avec_os',     name: 'Épaule avec os',                 category: 'deuxieme',  yieldPct: 0, marketPrice: 8,  group: ['Avant', 'Épaule'] },
-  { id: 'porc_epaule_sans_os',     name: 'Épaule sans os',                 category: 'deuxieme',  yieldPct: 0, marketPrice: 9,  group: ['Avant', 'Épaule'] },
-  { id: 'porc_echine_avec_os',     name: 'Échine avec os',                 category: 'deuxieme',  yieldPct: 0, marketPrice: 9,  group: ['Avant', 'Échine'] },
-  { id: 'porc_echine_sans_os',     name: 'Échine sans os',                 category: 'deuxieme',  yieldPct: 0, marketPrice: 11, group: ['Avant', 'Échine'] },
-  { id: 'porc_divers_gorge',       name: 'Gorge',                          category: 'troisieme', yieldPct: 0, marketPrice: 4,  group: ['Avant', 'Divers'] },
-  { id: 'porc_divers_joues',       name: 'Joues',                          category: 'abat',      yieldPct: 0, marketPrice: 12, group: ['Avant', 'Divers'] },
-  { id: 'porc_divers_gras_dur',    name: 'Gras dur',                       category: 'troisieme', yieldPct: 0, marketPrice: 2,  group: ['Avant', 'Divers'] },
-  { id: 'porc_divers_gras',        name: 'Gras',                           category: 'troisieme', yieldPct: 0, marketPrice: 2,  group: ['Avant', 'Divers'] },
-  { id: 'porc_divers_parure',      name: 'Parure',                         category: 'troisieme', yieldPct: 0, marketPrice: 4,  group: ['Avant', 'Divers'] },
-  { id: 'porc_divers_pieds',       name: 'Pieds',                          category: 'abat',      yieldPct: 0, marketPrice: 3,  group: ['Avant', 'Divers'] },
-]
 
 // ─── Données Volaille ────────────────────
 const VOLAILLE_BREEDS: Breed[] = [
@@ -272,16 +113,6 @@ const VOLAILLE_BREEDS: Breed[] = [
   { id: 'canard_barbarie',  name: 'Canard de Barbarie',        carcassYield: 0.68, avgWeight: '2.5-4 kg',  origin: 'Sud-Ouest', description: 'Viande maigre et goûteuse. Magret charnu, cuisses moelleuses. Fort potentiel en valorisation.' },
   { id: 'chapon_fermier',   name: 'Chapon fermier',            carcassYield: 0.77, avgWeight: '3-4.5 kg',  origin: 'France',    description: 'Poulet castré, élevé 150 jours min. Chair fondante et persillée. Produit de fête, prix premium.' },
   { id: 'dinde_fermiere',   name: 'Dinde fermière',            carcassYield: 0.74, avgWeight: '4-8 kg',    origin: 'France',    description: 'Chair blanche abondante. Excellent découpe à la pièce. Fort volume fin d\'année.' },
-]
-const VOLAILLE_CUTS: Cut[] = [
-  { id: 'blanc_volaille',   name: 'Blanc / Suprême',          category: 'premier',   yieldPct: 28,  marketPrice: 18 },
-  { id: 'cuisse_entiere',   name: 'Cuisse entière',           category: 'premier',   yieldPct: 22,  marketPrice: 10 },
-  { id: 'haut_cuisse',      name: 'Haut de cuisse',           category: 'premier',   yieldPct: 13,  marketPrice: 9  },
-  { id: 'pilon',            name: 'Pilon',                    category: 'premier',   yieldPct: 9,   marketPrice: 7  },
-  { id: 'aile_volaille',    name: 'Aile',                     category: 'deuxieme',  yieldPct: 10,  marketPrice: 7  },
-  { id: 'foie_volaille',    name: 'Foie (lot)',               category: 'abat',      yieldPct: 1.5, marketPrice: 6  },
-  { id: 'gesier_volaille',  name: 'Gésier',                   category: 'abat',      yieldPct: 1.5, marketPrice: 5  },
-  { id: 'carcasse_bouillon',name: 'Carcasse / Bouillon',      category: 'os',        yieldPct: 15,  marketPrice: 1.5},
 ]
 
 // ─── Config espèces ─── poids et prix par défaut exprimés en CARCASSE ───────────
