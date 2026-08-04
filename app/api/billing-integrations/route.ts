@@ -21,7 +21,7 @@ export async function GET() {
 
   const { data } = await service
     .from('billing_integrations')
-    .select('provider, is_active, last_sync_at, last_sync_status, last_sync_error, invoices_synced, company_id')
+    .select('provider, is_active, last_sync_at, last_sync_status, last_sync_error, invoices_synced, company_id, backfill_at, backfill_imported, backfill_tronque')
     .eq('client_id', clientId)
 
   // Masquer le token, retourner les métadonnées + erreur lisible
