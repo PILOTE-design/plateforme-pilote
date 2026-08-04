@@ -48,6 +48,9 @@ export type ListeRecipe = {
   sell_qty?: number | null
   selling_price_ttc: number | null
   labor_minutes: number
+  /** Formats de vente de la fiche — la ligne résume le format PAR DÉFAUT ;
+   *  les autres se lisent en ouvrant la fiche. */
+  formats?: { id: string }[]
   cost: ListeCost
 }
 
@@ -233,7 +236,18 @@ export default function ListeFiches({
                   onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(r.id) } }}
                   className={`group border-t border-gray-100 cursor-pointer transition-colors focus:outline-none focus:bg-pilote-50/60 ${ouverte ? 'bg-pilote-50/60' : 'hover:bg-gray-50'}`}>
                   <td className="px-3.5 py-3 max-w-[22rem]">
-                    <p className="text-sm font-bold text-gray-900 leading-snug truncate">{r.name}</p>
+                    <p className="text-sm font-bold text-gray-900 leading-snug truncate">
+                      {r.name}
+                      {/* Plusieurs conditionnements pour la même fabrication :
+                          la ligne résume le format par défaut, les autres se
+                          lisent en ouvrant la fiche. Le dire ici évite de croire
+                          que le prix affiché est le seul de la fiche. */}
+                      {(r.formats?.length ?? 0) > 1 && (
+                        <span className="ml-1.5 text-[10px] font-semibold uppercase tracking-wider text-pilote bg-pilote-50 ring-1 ring-pilote-100 rounded-full px-1.5 py-0.5 align-middle">
+                          {r.formats!.length} formats
+                        </span>
+                      )}
+                    </p>
                     <p className="text-[11px] italic text-gray-400 truncate">{sousTitre(r)}</p>
                   </td>
 
