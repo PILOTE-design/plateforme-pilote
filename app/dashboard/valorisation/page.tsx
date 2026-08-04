@@ -7,6 +7,7 @@ import { useToast } from '@/components/ui/toast'
 import { useConfirm } from '@/components/ui/confirm-dialog'
 import {
   BOEUF_ALL_CUTS, VEAU_CUTS, AGNEAU_CUTS, PORC_CUTS, VOLAILLE_CUTS,
+  repartitionCarcasse,
   type AnimalType, type Cut, type CutCategory,
 } from '@/lib/valorisation'
 
@@ -139,6 +140,9 @@ const CATEGORY_COLORS: Record<CutCategory, string> = {
 }
 const CATEGORIES: CutCategory[] = ['premier', 'deuxieme', 'troisieme', 'abat', 'os']
 const MONTHS_FR = ['Jan','Fév','Mar','Avr','Mai','Juin','Juil','Aoû','Sep','Oct','Nov','Déc']
+
+/** Un poids en kilos, lisible : « 133 kg », « 2,4 kg ». */
+function fmtKg(n: number) { return `${n.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} kg` }
 
 function eur(n: number) { return n.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 2 }) }
 function kgStr(n: number) { return n.toFixed(1) + ' kg' }
@@ -298,6 +302,9 @@ export default function ValorisationPage() {
   const [cutPricesByAnimal, setCutPricesByAnimal] = useState<PricesByAnimal>(() => loadPref('valo_prices_v1', DEFAULT_PRICES()))
   // Prix conseillé/kg saisi manuellement par pièce (surcharge le prix auto = réf × coefficient)
   const [sellOverridesByAnimal, setSellOverridesByAnimal] = useState<PricesByAnimal>(() => loadPref('valo_sell_v1', DEFAULT_PRICES()))
+  // COÛTS de revient forcés à la main (lot 56). Jumeau de sellOverrides, mais de
+  // l'autre côté du miroir : ce qu'on paie, pas ce qu'on vend.
+  const [costOverridesByAnimal, setCostOverridesByAnimal] = useState<PricesByAnimal>(() => loadPref('valo_cost_v1', DEFAULT_PRICES()))
   const [purchaseDate,  setPurchaseDate]  = useState(draft.purchaseDate ?? new Date().toISOString().split('T')[0])
   const [notes,         setNotes]         = useState(draft.notes ?? '')
   const [history,       setHistory]       = useState<SavedValo[]>([])
@@ -328,6 +335,10 @@ export default function ValorisationPage() {
   // Prix conseillé/kg : surcharge manuelle si saisie, sinon le prix auto (réf × coefficient)
   const sellOverrides = sellOverridesByAnimal[animalType] ?? {}
   const sellOverrideOf = (cutId: string): number | null => { const v = parseFloat(sellOverrides[cutId] ?? ''); return isNaN(v) ? null : v }
+  const costOverrides = costOverridesByAnimal[animalType] ?? {}
+  function setCostOverride(cutId: string, value: string) {
+    setCostOverridesByAnimal(prev => ({ ...prev, [animalType]: { ...(prev[animalType] ?? {}), [cutId]: value } }))
+  }
   function setSellOverride(cutId: string, value: string) {
     setSellOverridesByAnimal(prev => ({ ...prev, [animalType]: { ...(prev[animalType] ?? {}), [cutId]: value } }))
   }
@@ -345,22 +356,23 @@ export default function ValorisationPage() {
   useEffect(() => {
     try { window.localStorage.setItem('valo_prices_v1', JSON.stringify(cutPricesByAnimal)) } catch {}
     try { window.localStorage.setItem('valo_sell_v1', JSON.stringify(sellOverridesByAnimal)) } catch {}
+    try { window.localStorage.setItem('valo_cost_v1', JSON.stringify(costOverridesByAnimal)) } catch {}
     if (skipPriceSave.current) { skipPriceSave.current = false; return }
     if (priceSaveTimer.current) clearTimeout(priceSaveTimer.current)
     priceSaveTimer.current = setTimeout(() => {
       fetch('/api/valorisation-prices', {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prices: cutPricesByAnimal, sellOverrides: sellOverridesByAnimal }),
+        body: JSON.stringify({ prices: cutPricesByAnimal, sellOverrides: sellOverridesByAnimal, costOverrides: costOverridesByAnimal }),
       }).catch(() => {})
     }, 700)
-  }, [cutPricesByAnimal, sellOverridesByAnimal])
+  }, [cutPricesByAnimal, sellOverridesByAnimal, costOverridesByAnimal])
 
   // Au montage : charge les prix persistés en base (source de vérité), fusionnés au cache local
   useEffect(() => {
     let cancelled = false
     fetch('/api/valorisation-prices')
       .then(r => r.ok ? r.json() : null)
-      .then((payload: { prices?: Partial<PricesByAnimal>; sellOverrides?: Partial<PricesByAnimal> } | null) => {
+      .then((payload: { prices?: Partial<PricesByAnimal>; sellOverrides?: Partial<PricesByAnimal>; costOverrides?: Partial<PricesByAnimal> } | null) => {
         if (cancelled || !payload) return
         const mergeInto = (dbVal?: Partial<PricesByAnimal>) => (prev: PricesByAnimal) => {
           if (!dbVal) return prev
@@ -373,6 +385,7 @@ export default function ValorisationPage() {
         skipPriceSave.current = true
         if (payload.prices) setCutPricesByAnimal(mergeInto(payload.prices))
         if (payload.sellOverrides) setSellOverridesByAnimal(mergeInto(payload.sellOverrides))
+        if (payload.costOverrides) setCostOverridesByAnimal(mergeInto(payload.costOverrides))
       })
       .catch(() => {})
     return () => { cancelled = true }
@@ -480,6 +493,29 @@ export default function ValorisationPage() {
 
   const activeResults   = results.filter(r => r.active)
   const totalRevenue1   = activeResults.reduce((s, r) => s + r.revenue, 0)
+  /**
+   * LE COÛT DE REVIENT PAR MORCEAU — le moteur partagé du lot 52, celui-là même
+   * que lisent la mercuriale et les fiches recettes. On ne recalcule rien ici :
+   * afficher un coût à l'écran qui diffère de celui qui part dans les fiches
+   * serait le pire des deux mondes.
+   *
+   * À ne pas confondre avec le `coefficient` du dessus : celui-ci porte la MARGE
+   * cible et sert au prix de VENTE conseillé. Le coût, lui, répartit la dépense
+   * réelle — achat + frais + main-d'œuvre de découpe — au prorata de la valeur.
+   */
+  const repartitionCout = useMemo(() => repartitionCarcasse({
+    cuts,
+    poids: Object.fromEntries(Object.entries(cutWeights).map(([k, v]) => [k, parseFloat(v) || 0])),
+    coutTotalHT: totalCost1,
+    prixRef: cutPrices,
+    coutsForces: costOverrides,
+  }), [cuts, cutWeights, totalCost1, cutPrices, costOverrides])
+
+  const coutParPiece = useMemo(
+    () => new Map(repartitionCout.morceaux.map(m => [m.cut_id, m])),
+    [repartitionCout],
+  )
+
   const totalSellable1  = activeResults.reduce((s, r) => s + r.weight, 0)
   const actualMargin1   = totalRevenue1 > 0 ? ((totalRevenue1 - totalCost1) / totalRevenue1) * 100 : 0
   const totalRevenueLot = totalRevenue1 * qty
@@ -526,6 +562,31 @@ export default function ValorisationPage() {
               className="w-14 border border-gray-200 rounded-lg px-2 py-1 text-sm text-right tabular-nums text-gray-500 focus:outline-none focus:ring-2 focus:ring-pilote-200" />
             <span className="text-xs text-gray-400">€</span>
           </div>
+        </td>
+        <td className="px-4 py-2.5 text-right">
+          {(() => {
+            // Le coût de revient de la pièce. Vide tant que la carcasse n'a pas
+            // de coût ou que la pièce n'a ni poids ni prix de référence : un
+            // zéro se lirait « gratuit ».
+            const m = coutParPiece.get(r.cut.id)
+            const cout = m && m.cout_kg_ht !== null ? m.cout_kg_ht : null
+            return (
+              <div className="flex items-center justify-end gap-1">
+                <input type="number" min="0" step="0.1"
+                  value={costOverrides[r.cut.id] ?? ''}
+                  onChange={e => setCostOverride(r.cut.id, e.target.value)}
+                  disabled={isExcluded}
+                  placeholder={cout !== null ? String(Math.round(cout * 100) / 100) : '—'}
+                  title={m?.force
+                    ? 'Coût forcé à la main — il ne suit plus la répartition de la carcasse'
+                    : cout !== null
+                      ? `Réparti au prorata de la valeur · ×${m?.coef ?? '—'} du kilo commercial`
+                      : 'Pas de coût : la pièce n’a pas de poids, ou pas de prix de référence'}
+                  className={`w-16 border rounded-lg px-2 py-1 text-sm text-right tabular-nums focus:outline-none focus:ring-2 focus:ring-pilote-200 disabled:bg-gray-50 disabled:text-gray-300 ${m?.force ? 'border-orange-300 text-orange-700 font-semibold' : 'border-gray-200 text-gray-600'}`} />
+                <span className="text-xs text-gray-400">€</span>
+              </div>
+            )
+          })()}
         </td>
         <td className="px-4 py-2.5 text-right">
           <div className="flex items-center justify-end gap-1">
@@ -1346,11 +1407,37 @@ export default function ValorisationPage() {
                     </h2>
                     <span className="text-xs text-gray-400">{isTree ? 'Cliquez une pièce pour la déplier · poids et prix éditables' : 'Prix de référence modifiables · poids saisis'}</span>
                   </div>
+                  {/* ── Ce que dit la colonne « Coût de revient », et ce qu'elle tait ── */}
+                  {(() => {
+                    const rep = repartitionCout
+                    const rien = rep.cout_moyen_kg_ht === null
+                    return (
+                      <div className={`px-5 py-3 border-b text-[11px] leading-relaxed ${rep.nb_forces > 0 ? 'border-orange-100 bg-orange-50/50 text-orange-800' : 'border-gray-100 bg-gray-50/60 text-gray-500'}`}>
+                        {rien ? (
+                          <>Le coût de revient par pièce apparaîtra dès que la carcasse aura un coût et les pièces un poids.</>
+                        ) : (
+                          <>
+                            Votre kilo commercial revient à <strong className="tabular-nums">{eur(rep.cout_moyen_kg_ht as number)}</strong>
+                            {' '}(achat + frais + main-d&apos;œuvre de découpe, sur {fmtKg(rep.kg_commercial)} vendables).
+                            {' '}Chaque pièce en prend sa part au prorata de son prix de référence — le filet coûte plus cher que le collier.
+                            {rep.kg_hors_commerce > 0 && (
+                              <> {fmtKg(rep.kg_hors_commerce)} sans prix de référence ne portent aucun coût : leur part se reporte sur ce qui se vend.</>
+                            )}
+                            {rep.nb_forces > 0 && (
+                              <> <strong>{rep.nb_forces} coût{rep.nb_forces > 1 ? 's' : ''} forcé{rep.nb_forces > 1 ? 's' : ''} à la main</strong> :
+                              la somme des coûts dépasse celui de la carcasse de <strong className="tabular-nums">{eur(rep.ecart_forcage_ht)}</strong>.
+                              Les autres pièces n&apos;ont pas bougé — c&apos;est voulu.</>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    )
+                  })()}
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="bg-gray-50 border-b border-gray-100">
-                          {['Pièce','Poids','Réf. marché/kg','Prix conseillé/kg','CA pièce',''].map((h, hi) => (
+                          {['Pièce','Poids','Réf. marché/kg','Coût de revient/kg','Prix conseillé/kg','CA pièce',''].map((h, hi) => (
                             <th key={hi} className="px-4 py-3 text-left text-[11px] font-semibold uppercase tracking-wider text-gray-500">{h}</th>
                           ))}
                         </tr>
