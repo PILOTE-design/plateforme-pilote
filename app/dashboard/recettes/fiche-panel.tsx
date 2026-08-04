@@ -16,7 +16,7 @@
 
 import { useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import { Pencil, Plus, X, Clock, ShoppingBasket, Package, AlertTriangle, Users, Printer, Copy } from 'lucide-react'
+import { Pencil, Plus, X, Check, Clock, ShoppingBasket, Package, AlertTriangle, Users, Printer, Copy } from 'lucide-react'
 import { useToast } from '@/components/ui/toast'
 import { parseStoredSteps, parseStoredTiers } from '@/lib/recipes'
 
@@ -62,6 +62,26 @@ export type FicheCost = {
   matiere_series_motif?: string | null
 }
 
+/** Un FORMAT DE VENTE de la fiche — même fabrication, autre conditionnement.
+ *  Les quatre derniers champs sont DÉRIVÉS (calculés par le serveur à chaque
+ *  lecture, jamais stockés) : le coût du batch est le même pour tous les
+ *  formats, seule la division par la quantité vendable et le prix changent. */
+export type FicheFormat = {
+  id: string
+  name: string
+  sell_unit: string | null
+  sell_qty: number | null
+  selling_price_ttc: number | null
+  tva_rate: number
+  validated: boolean
+  position: number
+  vente_qty: number
+  cout_unite_ht: number | null
+  pv_unitaire_ht: number | null
+  marge_pct: number | null
+  coefficient: number | null
+}
+
 export type FicheRecipe = {
   id: string; name: string; category: string | null
   yield_qty: number | null; yield_unit: string | null
@@ -71,6 +91,8 @@ export type FicheRecipe = {
   employee_id: string | null
   fabrication_steps?: unknown
   time_tiers?: unknown
+  /** Formats de vente — au moins un depuis la reprise du lot 46 */
+  formats?: FicheFormat[]
   ingredients: FicheIngredient[]
   cost: FicheCost
 }
@@ -94,6 +116,17 @@ function fmtMin(m: number): string {
 }
 
 const fmtDateFr = (s: string) => new Date(s + 'T00:00:00Z').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', timeZone: 'UTC' })
+
+/** Unités de VENTE proposées à la création d'un format — mêmes valeurs que la
+ *  modale de la fiche (page.tsx) : un produit fabriqué à la pièce peut se
+ *  vendre au kilo, et c'est l'unité de VENTE qui porte le prix et la marge. */
+const UNITES_VENTE = [
+  { value: 'kg', label: 'au kg' },
+  { value: '100 g', label: 'aux 100 g' },
+  { value: 'pièce', label: 'à la pièce' },
+  { value: 'portion', label: 'à la portion' },
+  { value: 'litre', label: 'au litre' },
+]
 
 /** « kg » → « au kg », « pièce » → « à la pièce »… pour les phrases de la fiche */
 const venteEnClair = (u: string) =>
@@ -192,6 +225,12 @@ export default function FichePanel({
   // Édition sur place du PV TTC / du coefficient (un seul champ à la fois)
   const [editKpi, setEditKpi] = useState<{ field: 'pv' | 'coef'; value: string } | null>(null)
   const kpiCancelRef = useRef(false)
+  // Format de vente affiché — null tant qu'on n'a pas choisi : c'est le premier
+  // (le format par défaut) qui s'ouvre, comme chez Otami.
+  const [formatId, setFormatId] = useState<string | null>(null)
+  // Création d'un format (« + Format ») — nom, unité de vente, quantité vendable
+  const [editFormat, setEditFormat] = useState<{ mode: 'creer'; nom: string; unite: string; qty: string } | null>(null)
+  const [confirmFormat, setConfirmFormat] = useState(false)
   // Ajout d'ingrédient directement depuis le tableau (comme les étapes)
   const [newIng, setNewIng] = useState<{ query: string; generic: FicheGeneric | null; qty: string; unit: 'kg' | 'g' | 'piece'; loss: string } | null>(null)
   // Retrait d'ingrédient en deux clics (jamais de confirm() natif)
@@ -231,12 +270,29 @@ export default function FichePanel({
   }, { net: 0, brut: 0, horsAssiette: 0 }), [recipe])
 
   const coutMatiere = (c?.matiere_ht ?? 0) + (c?.emballage_ht ?? 0)
-  // Base du PV et du coefficient : le coût PAR UNITÉ DE VENTE quand la fiche se
-  // vend dans une autre unité que sa production (pièces fabriquées, kg vendus).
-  const coutUnite = c ? (c.par_unite_vente_ht ?? c.par_unite_ht ?? c.total_ht) : null
-  const uniteVente = recipe.sell_unit || recipe.yield_unit || 'unité'
+
+  // ── Le FORMAT affiché ──────────────────────────────────────────────────
+  // La fabrication est commune à tous les formats (ingrédients, étapes, temps,
+  // coût du batch) ; ce qui change d'un onglet à l'autre, c'est la quantité
+  // vendable, le prix, et donc la marge. Tout ce bloc ne touche QUE la vente.
+  const formats = useMemo(
+    () => [...(recipe.formats ?? [])].sort((a, b) => a.position - b.position || a.name.localeCompare(b.name, 'fr')),
+    [recipe.formats],
+  )
+  const actif = formats.find(f => f.id === formatId) ?? formats[0] ?? null
+
+  // Base du PV et du coefficient : le coût PAR UNITÉ DE VENTE du format choisi
+  // (pièces fabriquées, kg vendus). Sans format — cas qui ne devrait plus
+  // exister depuis la reprise —, on retombe sur le coût de la fiche.
+  const coutUnite = actif ? actif.cout_unite_ht : (c ? (c.par_unite_vente_ht ?? c.par_unite_ht ?? c.total_ht) : null)
+  const uniteVente = (actif ? actif.sell_unit : recipe.sell_unit) || recipe.yield_unit || 'unité'
   // Quantité VENDABLE du batch (en unités de vente), repli : la production
-  const venteQty = recipe.sell_unit && Number(recipe.sell_qty) > 0 ? Number(recipe.sell_qty) : (Number(recipe.yield_qty) || 0)
+  const venteQty = actif ? actif.vente_qty : (Number(recipe.yield_qty) || 0)
+  const pvTTCActif = actif ? actif.selling_price_ttc : recipe.selling_price_ttc
+  const pvHTActif = actif ? actif.pv_unitaire_ht : (c?.pv_unitaire_ht ?? null)
+  const margeActive = actif ? actif.marge_pct : (c?.marge_pct ?? null)
+  const coefActif = actif ? actif.coefficient : (c?.coefficient ?? null)
+  const tvaActive = actif ? actif.tva_rate : (Number(recipe.tva_rate) || 0)
   // Ingrédients comptés pour ZÉRO dans le coût, nommés. Le moteur refuse déjà de
   // publier marge et coefficient quand il en reste (lib/recipes.ts) ; la
   // conversion coefficient → prix de vente, elle, passait quand même : le coût
@@ -273,16 +329,16 @@ export default function FichePanel({
   const coutIncomplet = (c?.prix_manquants ?? 0) > 0
   // Coût matière (« food cost ») : part de la matière SEULE dans le PV HT d'une
   // unité — calculable uniquement quand rendement et prix de vente sont connus.
-  const foodCostPct = c && c.pv_unitaire_ht !== null && c.pv_unitaire_ht > 0 && venteQty > 0
-    ? Math.round(((c.matiere_ht / venteQty) / c.pv_unitaire_ht) * 100)
+  const foodCostPct = c && pvHTActif !== null && pvHTActif > 0 && venteQty > 0
+    ? Math.round(((c.matiere_ht / venteQty) / pvHTActif) * 100)
     : null
   // Couleur de la marge : contre la CIBLE de la catégorie si elle existe,
   // sinon les repères historiques 50/30.
-  const margeColor = c === null || c.marge_pct === null
+  const margeColor = margeActive === null
     ? 'text-gray-900'
     : target != null
-      ? (c.marge_pct >= target ? 'text-green-600' : c.marge_pct >= target - 10 ? 'text-orange-500' : 'text-red-600')
-      : (c.marge_pct >= 50 ? 'text-green-600' : c.marge_pct >= 30 ? 'text-orange-500' : 'text-red-600')
+      ? (margeActive >= target ? 'text-green-600' : margeActive >= target - 10 ? 'text-orange-500' : 'text-red-600')
+      : (margeActive >= 50 ? 'text-green-600' : margeActive >= 30 ? 'text-orange-500' : 'text-red-600')
   // Coût du palier : matière ×ratio (linéaire), MO ×multiple (économie d'échelle)
   const moScaled = c?.labor_rate_ht != null ? round2(scaledMinutes / 60 * c.labor_rate_ht) : 0
   const coutScaled = round2(coutMatiere * ratio + moScaled)
@@ -392,6 +448,78 @@ export default function FichePanel({
     saveAll({ ingredients: ingPayload().filter((_, i) => i !== idx) })
   }
 
+  // ── Écriture des formats de vente ────────────────────────────────────────
+  // Un format ne porte que des décisions du boucher (nom, unité, quantité
+  // vendable, prix, TVA). Rien de calculé n'est envoyé : le serveur relit coût,
+  // marge et coefficient à chaque lecture.
+
+  /** Envoie l'état COMPLET d'un format (le PUT remplace ses champs), en
+   *  repartant du format actif et en n'écrasant que ce qu'on modifie. */
+  async function saveFormat(patch: Partial<Pick<FicheFormat, 'name' | 'sell_unit' | 'sell_qty' | 'selling_price_ttc' | 'tva_rate' | 'validated'>>) {
+    if (saving || !actif) return
+    setSaving(true)
+    const res = await fetch(`/api/recipes/${recipe.id}/formats`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        format_id: actif.id,
+        name: actif.name, sell_unit: actif.sell_unit, sell_qty: actif.sell_qty,
+        selling_price_ttc: actif.selling_price_ttc, tva_rate: actif.tva_rate, validated: actif.validated,
+        ...patch,
+      }),
+    }).catch(() => null)
+    const data = res ? await res.json().catch(() => null) : null
+    setSaving(false)
+    if (res?.ok) { toast({ variant: 'success', title: 'Format enregistré' }); onSaved() }
+    else toast({ variant: 'error', title: 'Enregistrement impossible', description: data?.error || 'Réessayez.' })
+  }
+
+  /** Crée un format de plus sur la même fabrication — sans prix : une variante
+   *  n'a aucune raison de se vendre au même prix, et un prix hérité en silence
+   *  est un prix qu'on oublie. */
+  async function creerFormat(nom: string, unite: string, qty: string) {
+    if (saving) return
+    const name = nom.trim()
+    if (name.length < 2) return
+    if (unite && !(num(qty) > 0)) {
+      toast({
+        variant: 'error', title: 'Quantité vendable manquante',
+        description: `Vendu en ${unite} : indiquez ce que le batch représente dans cette unité (ex. 6 pièces de 400 g → 2,4).`,
+      })
+      return
+    }
+    setSaving(true)
+    const res = await fetch(`/api/recipes/${recipe.id}/formats`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name, sell_unit: unite || null, sell_qty: unite ? num(qty) : null,
+        selling_price_ttc: null, tva_rate: actif?.tva_rate ?? 5.5,
+      }),
+    }).catch(() => null)
+    const data = res ? await res.json().catch(() => null) : null
+    setSaving(false)
+    if (!res?.ok) {
+      toast({ variant: 'error', title: 'Format non créé', description: data?.error || 'Réessayez.' })
+      return
+    }
+    setEditFormat(null)
+    if (data?.id) setFormatId(String(data.id))
+    toast({ variant: 'success', title: `Format « ${name} » ajouté`, description: 'Le prix de vente est à poser sur ce format.' })
+    onSaved()
+  }
+
+  /** Retire le format affiché (jamais le dernier — la route le refuse aussi) */
+  async function retirerFormat() {
+    if (saving || !actif) return
+    if (!confirmFormat) { setConfirmFormat(true); return }
+    setConfirmFormat(false)
+    setSaving(true)
+    const res = await fetch(`/api/recipes/${recipe.id}/formats?format_id=${encodeURIComponent(actif.id)}`, { method: 'DELETE' }).catch(() => null)
+    const data = res ? await res.json().catch(() => null) : null
+    setSaving(false)
+    if (res?.ok) { setFormatId(null); toast({ variant: 'info', title: 'Format retiré' }); onSaved() }
+    else toast({ variant: 'error', title: 'Retrait impossible', description: data?.error || 'Réessayez.' })
+  }
+
   /** Valide l'édition sur place du PV ou du coef → recalcule et enregistre le PV TTC */
   function commitKpi() {
     if (kpiCancelRef.current) { kpiCancelRef.current = false; setEditKpi(null); return }
@@ -404,14 +532,14 @@ export default function FichePanel({
     // la modale complète, et tant qu'il restait, marge et coefficient affichaient
     // un verdict calculé sur un chiffre que le boucher venait de désavouer.
     if (editKpi.field === 'pv' && brut === '') {
-      if (recipe.selling_price_ttc === null) return
-      saveAll({ selling_price_ttc: null })
+      if (pvTTCActif === null) return
+      saveFormat({ selling_price_ttc: null })
       return
     }
     if (v <= 0) return
     if (editKpi.field === 'pv') {
-      if (recipe.selling_price_ttc !== null && Math.abs(v - recipe.selling_price_ttc) < 0.005) return
-      saveAll({ selling_price_ttc: round2(v) })
+      if (pvTTCActif !== null && Math.abs(v - pvTTCActif) < 0.005) return
+      saveFormat({ selling_price_ttc: round2(v) })
       return
     }
     // Coefficient saisi → PV TTC = coût de revient × coef, remis en TTC
@@ -429,8 +557,8 @@ export default function FichePanel({
       })
       return
     }
-    const pvTTC = round2(coutUnite * v * (1 + (Number(recipe.tva_rate) || 0) / 100))
-    saveAll({ selling_price_ttc: pvTTC })
+    const pvTTC = round2(coutUnite * v * (1 + tvaActive / 100))
+    saveFormat({ selling_price_ttc: pvTTC })
   }
 
   function kpiInput() {
@@ -464,7 +592,7 @@ export default function FichePanel({
           </div>
           <p className="text-xs text-gray-500 mt-0.5">
             {recipe.yield_qty ? `Base : ${fmtQty(recipe.yield_qty)} ${uniteLabel} par batch` : 'Rendement non renseigné'}
-            {recipe.sell_unit && Number(recipe.sell_qty) > 0 ? <>{' · '}vendu {venteEnClair(recipe.sell_unit)} — le batch fait {fmtQty(Number(recipe.sell_qty))} {recipe.sell_unit} vendables</> : null}
+            {actif?.sell_unit && Number(actif.sell_qty) > 0 ? <>{' · '}vendu {venteEnClair(actif.sell_unit)} — le batch fait {fmtQty(Number(actif.sell_qty))} {actif.sell_unit} vendables</> : null}
             {/* « Prix du jour » sans nuance était une promesse que les données
                 ne tiennent pas toujours : le plus ancien prix de la fiche peut
                 dater de plusieurs mois. On dit lequel, et depuis quand. */}
@@ -502,6 +630,90 @@ export default function FichePanel({
         </div>
       </div>
 
+      {/* ── FORMATS DE VENTE ────────────────────────────────────────────────
+          Une recette mère, plusieurs formats : « SAUCISSE MONTAGNARDE » et
+          « SAUCISSE MONTAGNARDE AU KG ». Même fabrication, même coût de batch —
+          seuls la quantité vendable, le prix et donc la marge changent. Sans
+          ces onglets, vendre le même produit à la pièce ET au kilo imposait de
+          dupliquer la fiche entière, ingrédients compris : deux fiches qui
+          divergent au premier changement de recette. */}
+      {formats.length > 0 && (
+        <div className="px-5 py-2.5 border-b border-gray-100 bg-white flex items-center gap-2 flex-wrap">
+          <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mr-1">Format de vente</span>
+          {formats.map(f => {
+            const sel = actif?.id === f.id
+            return (
+              <button key={f.id} onClick={() => { setFormatId(f.id); setEditFormat(null); setConfirmFormat(false) }}
+                title={f.sell_unit && f.sell_qty ? `Vendu en ${f.sell_unit} — le batch en fait ${fmtQty(Number(f.sell_qty))}` : 'Vendu à l’unité produite'}
+                className={`inline-flex items-center gap-1.5 text-xs font-semibold rounded-full px-3 py-1.5 transition-colors ${sel ? 'bg-pilote text-white shadow-card' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'}`}>
+                {f.validated && <Check className={`w-3 h-3 ${sel ? 'text-white/70' : 'text-green-600'}`} />}
+                <span className="max-w-[16rem] truncate">{f.name}</span>
+                {f.marge_pct !== null && (
+                  <span className={`text-[10px] font-bold tabular ${sel ? 'text-white/70' : 'text-gray-400'}`}>{Math.round(f.marge_pct)} %</span>
+                )}
+              </button>
+            )
+          })}
+
+          {editFormat?.mode === 'creer' ? (
+            <span className="inline-flex items-center gap-1.5 bg-white border border-pilote-200 rounded-full pl-3 pr-1.5 py-1">
+              <input autoFocus value={editFormat.nom} placeholder="Nom du format"
+                onChange={e => setEditFormat(p => (p ? { ...p, nom: e.target.value } : p))}
+                className="w-40 text-xs focus:outline-none" />
+              <select value={editFormat.unite}
+                onChange={e => setEditFormat(p => (p ? { ...p, unite: e.target.value } : p))}
+                className="text-[11px] bg-transparent focus:outline-none text-gray-500">
+                <option value="">à l&apos;unité produite</option>
+                {UNITES_VENTE.map(u => <option key={u.value} value={u.value}>{u.label}</option>)}
+              </select>
+              {editFormat.unite && (
+                <input inputMode="decimal" value={editFormat.qty} placeholder="batch"
+                  title={`Ce que le batch représente en ${editFormat.unite}`}
+                  onChange={e => setEditFormat(p => (p ? { ...p, qty: e.target.value } : p))}
+                  className="w-12 text-xs tabular focus:outline-none" />
+              )}
+              <button onClick={() => creerFormat(editFormat.nom, editFormat.unite, editFormat.qty)} disabled={saving}
+                className="w-6 h-6 rounded-full bg-pilote text-white flex items-center justify-center disabled:opacity-50" title="Ajouter ce format">
+                <Plus className="w-3 h-3" />
+              </button>
+              <button onClick={() => setEditFormat(null)} className="w-6 h-6 rounded-full text-gray-400 hover:bg-gray-100 flex items-center justify-center"><X className="w-3 h-3" /></button>
+            </span>
+          ) : (
+            <button onClick={() => setEditFormat({ mode: 'creer', nom: `${recipe.name} `, unite: '', qty: '' })}
+              title="Même fabrication, autre conditionnement — le coût du batch est partagé, seule la vente change"
+              className="inline-flex items-center gap-1 text-xs font-semibold text-pilote border border-dashed border-pilote-200 rounded-full px-3 py-1.5 hover:bg-pilote-50 transition-colors">
+              <Plus className="w-3 h-3" />Format
+            </button>
+          )}
+
+          {/* Gestes sur le format AFFICHÉ — validé, retiré. Le dernier format ne
+              se retire pas : une fiche sans format n'aurait ni prix ni marge. */}
+          {actif && (
+            <span className="ml-auto flex items-center gap-2">
+              <button onClick={() => saveFormat({ validated: !actif.validated })} disabled={saving}
+                title={actif.validated ? 'Format relu et validé — cliquer pour retirer la validation' : 'Marquer ce format comme relu et validé'}
+                className={`inline-flex items-center gap-1 text-[11px] font-semibold rounded-full px-2.5 py-1 transition-colors disabled:opacity-50 ${actif.validated ? 'text-green-700 bg-green-50 ring-1 ring-green-100' : 'text-gray-400 hover:bg-gray-100'}`}>
+                <Check className="w-3 h-3" />{actif.validated ? 'Validé' : 'Valider'}
+              </button>
+              {formats.length > 1 && (
+                confirmFormat ? (
+                  <button onClick={retirerFormat} onBlur={() => setConfirmFormat(false)} disabled={saving}
+                    className="text-[11px] font-bold text-white bg-red-600 hover:bg-red-700 rounded-full px-2.5 py-1 disabled:opacity-50">
+                    Retirer « {actif.name.slice(0, 24)} » ?
+                  </button>
+                ) : (
+                  <button onClick={retirerFormat} disabled={saving}
+                    title="Retirer ce format de vente (la fabrication et les autres formats sont conservés)"
+                    className="p-1 rounded-full text-gray-300 hover:text-red-600 hover:bg-red-50 transition-colors">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )
+              )}
+            </span>
+          )}
+        </div>
+      )}
+
       <div className="p-5">
         {/* Chiffres-clés — PV TTC et coefficient MODIFIABLES sur place */}
         {c && (
@@ -518,21 +730,21 @@ export default function FichePanel({
                   Vendu dans une autre unité : le coût affiché est PAR UNITÉ DE
                   VENTE (la base du PV), l'unité produite reste rappelée. */}
               <p className="text-[11px] text-pilote-200 mt-0.5 tabular">
-                {(c.par_unite_vente_ht ?? c.par_unite_ht) !== null ? `/ ${uniteVente}` : '/ batch'}
-                {recipe.sell_unit && c.par_unite_ht !== null && c.par_unite_vente_ht != null && Math.abs(c.par_unite_ht - c.par_unite_vente_ht) >= 0.005 ? ` · ${fmtEuro(c.par_unite_ht)} / ${unitFr(recipe.yield_unit)}` : ''}
+                {coutUnite !== null && venteQty > 0 ? `/ ${uniteVente}` : '/ batch'}
+                {actif?.sell_unit && c.par_unite_ht !== null && coutUnite !== null && Math.abs(c.par_unite_ht - coutUnite) >= 0.005 ? ` · ${fmtEuro(c.par_unite_ht)} / ${unitFr(recipe.yield_unit)}` : ''}
                 {foodCostPct !== null ? ` · matière seule ${foodCostPct} % du PV HT` : ''}
               </p>
             </div>
 
             <div className="rounded-2xl bg-white border border-gray-100 shadow-card p-4 group cursor-pointer hover:border-pilote-200 transition-colors"
-              onClick={() => !editKpi && setEditKpi({ field: 'pv', value: recipe.selling_price_ttc != null ? String(recipe.selling_price_ttc).replace('.', ',') : '' })}>
+              onClick={() => !editKpi && setEditKpi({ field: 'pv', value: pvTTCActif != null ? String(pvTTCActif).replace('.', ',') : '' })}>
               <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-1">
                 Prix de vente TTC <Pencil className="w-2.5 h-2.5 text-gray-300 group-hover:text-pilote transition-colors" />
               </p>
               {editKpi?.field === 'pv' ? kpiInput() : (
-                <p className="text-xl font-extrabold tracking-tight text-gray-900 tabular mt-1">{recipe.selling_price_ttc != null ? fmtEuro(recipe.selling_price_ttc) : '—'}</p>
+                <p className="text-xl font-extrabold tracking-tight text-gray-900 tabular mt-1">{pvTTCActif != null ? fmtEuro(pvTTCActif) : '—'}</p>
               )}
-              <p className="text-[11px] text-gray-400 mt-0.5 tabular">{c.pv_unitaire_ht !== null ? `${fmtEuro(c.pv_unitaire_ht)} HT / ${uniteVente}` : `cliquer pour saisir — / ${uniteVente}`}</p>
+              <p className="text-[11px] text-gray-400 mt-0.5 tabular">{pvHTActif !== null ? `${fmtEuro(pvHTActif)} HT / ${uniteVente}` : `cliquer pour saisir — / ${uniteVente}`}</p>
             </div>
 
             <div className={`rounded-2xl bg-white border border-gray-100 shadow-card p-4 group transition-colors ${coutIncomplet ? 'cursor-not-allowed' : 'cursor-pointer hover:border-pilote-200'}`}
@@ -545,13 +757,13 @@ export default function FichePanel({
                   })
                   return
                 }
-                setEditKpi({ field: 'coef', value: c.coefficient !== null ? String(c.coefficient).replace('.', ',') : '' })
+                setEditKpi({ field: 'coef', value: coefActif !== null ? String(coefActif).replace('.', ',') : '' })
               }}>
               <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-1">
                 Coef multiplicateur {!coutIncomplet && <Pencil className="w-2.5 h-2.5 text-gray-300 group-hover:text-pilote transition-colors" />}
               </p>
               {editKpi?.field === 'coef' ? kpiInput() : (
-                <p className="text-xl font-extrabold tracking-tight text-gray-900 tabular mt-1">{c.coefficient !== null ? `×${c.coefficient.toLocaleString('fr-FR')}` : '—'}</p>
+                <p className="text-xl font-extrabold tracking-tight text-gray-900 tabular mt-1">{coefActif !== null ? `×${coefActif.toLocaleString('fr-FR')}` : '—'}</p>
               )}
               <p className="text-[11px] text-gray-400 mt-0.5">{coutIncomplet ? 'coût incomplet — prix non calculable' : 'saisir un coef fixe le PV'}</p>
             </div>
@@ -559,10 +771,10 @@ export default function FichePanel({
             <div className="rounded-2xl bg-white border border-gray-100 shadow-card p-4">
               <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Taux de marge</p>
               <p className={`text-xl font-extrabold tracking-tight tabular mt-1 ${margeColor}`}>
-                {c.marge_pct !== null ? `${c.marge_pct.toLocaleString('fr-FR')} %` : '—'}
+                {margeActive !== null ? `${margeActive.toLocaleString('fr-FR')} %` : '—'}
               </p>
               <p className="text-[11px] text-gray-400 mt-0.5 tabular">
-                {c.pv_unitaire_ht !== null && coutUnite !== null ? `marge ${fmtEuro(c.pv_unitaire_ht - coutUnite)} / ${uniteVente}` : 'du PV HT'}
+                {pvHTActif !== null && coutUnite !== null ? `marge ${fmtEuro(pvHTActif - coutUnite)} / ${uniteVente}` : 'du PV HT'}
                 {target != null ? ` · cible ${target.toLocaleString('fr-FR')} %` : ''}
               </p>
             </div>
@@ -604,11 +816,11 @@ export default function FichePanel({
           const deltaUnit = baseQty > 0 ? round2(delta / baseQty) : null
           // Marge qu'aurait la fiche au coût du début de période, à PV inchangé —
           // sur la base de VENTE (celle du PV), pas forcément l'unité produite.
-          const coutVente = c.par_unite_vente_ht ?? c.par_unite_ht
+          const coutVente = coutUnite
           const deltaVente = venteQty > 0 ? round2(delta / venteQty) : null
           let margeAvant: number | null = null
-          if (!stable && c.pv_unitaire_ht !== null && c.pv_unitaire_ht > 0 && coutVente != null && deltaVente !== null) {
-            margeAvant = Math.round(((c.pv_unitaire_ht - (coutVente - deltaVente)) / c.pv_unitaire_ht) * 1000) / 10
+          if (!stable && pvHTActif !== null && pvHTActif > 0 && coutVente != null && deltaVente !== null) {
+            margeAvant = Math.round(((pvHTActif - (coutVente - deltaVente)) / pvHTActif) * 1000) / 10
           }
           return (
             <div className="mb-4 rounded-2xl border border-gray-100 bg-gray-50/60 px-4 py-3 flex items-center gap-4 flex-wrap">
@@ -624,8 +836,8 @@ export default function FichePanel({
                         {delta > 0 ? '+' : '−'}{fmtEuro(Math.abs(delta))} / batch
                         {deltaUnit !== null && Math.abs(deltaUnit) >= 0.005 ? ` (${delta > 0 ? '+' : '−'}${fmtEuro(Math.abs(deltaUnit))} / ${unitFr(recipe.yield_unit)})` : ''}
                       </span>
-                      {margeAvant !== null && c.marge_pct !== null && (
-                        <> · à PV inchangé, marge <span className="font-bold tabular">{margeAvant.toLocaleString('fr-FR')} %</span> → <span className={`font-bold tabular ${delta > 0 ? 'text-red-600' : 'text-green-600'}`}>{c.marge_pct.toLocaleString('fr-FR')} %</span></>
+                      {margeAvant !== null && margeActive !== null && (
+                        <> · à PV inchangé, marge <span className="font-bold tabular">{margeAvant.toLocaleString('fr-FR')} %</span> → <span className={`font-bold tabular ${delta > 0 ? 'text-red-600' : 'text-green-600'}`}>{margeActive.toLocaleString('fr-FR')} %</span></>
                       )}
                     </>
                   )}
