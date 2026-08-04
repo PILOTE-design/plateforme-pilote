@@ -34,6 +34,7 @@ import {
   convertirLignesTTC, extractLinesVision, lireTexteAvecReprise, sommeLignes,
   type ExtractedLine,
 } from '@/lib/invoice-extract'
+import { verdictLigne } from '@/lib/invoice-lines'
 
 // Jusqu'à trois passes de lecture pour une facture qui résiste (texte, reprise,
 // image) : 60 s n'y suffisent plus. 300 s est le plafond réel de la plateforme,
@@ -187,40 +188,12 @@ export async function POST(request: NextRequest) {
        *  échouait, et un prix parfaitement lu partait en quarantaine. Mesuré le
        *  31/07 : 32 prix refusés sur des factures dont la somme des lignes
        *  tombait pourtant au centime près. */
-      /** L'assiette n'est PAS toujours le poids. Sur la même facture DAVID
-       *  MASTER, la colonne « UF » vaut KG sur une ligne et PI sur la suivante :
-       *  « SAUCISSON … KG 3 4,003 22,550 90,27 » se recoupe sur le POIDS
-       *  (4,003 × 22,55 = 90,27), tandis que « ASPIC … PI 12 1,080 1,760 21,12 »
-       *  se recoupe sur les PIÈCES (12 × 1,76 = 21,12) et pas du tout sur son
-       *  poids. Préférer aveuglément le poids rejetait la seconde.
-       *
-       *  On ne devine donc pas l'assiette : on essaie les deux et on retient
-       *  celle qui TOMBE JUSTE. C'est plus sûr qu'une règle — le recoupement
-       *  lui-même désigne la bonne colonne. */
-      const assietteQuiTombeJuste = (l: ExtractedLine): number | null => {
-        if (l.unit_price_ht == null) return null
-        const tol = Math.max(0.05, Math.abs(l.amount_ht) * 0.01)
-        for (const c of [l.weight_kg, l.quantity]) {
-          if (c == null || c === 0) continue
-          if (Math.abs(c * l.unit_price_ht - l.amount_ht) <= tol) return c
-        }
-        return null
-      }
-
-      const ligneVerifiee = (l: ExtractedLine): boolean => {
-        if (l.unit_price_ht == null) return true // rien à contredire
-        const aUneAssiette = (l.weight_kg != null && l.weight_kg !== 0) || (l.quantity != null && l.quantity !== 0)
-        if (!aUneAssiette) return true // prix seul : pas de contradiction vérifiable
-        return assietteQuiTombeJuste(l) !== null
-      }
-      /** Un prix DÉRIVÉ (montant ÷ quantité) n'est pas un prix lu : il n'est
-       *  retenu que si l'unité facturée est exploitable. Sans unité, la quantité
-       *  peut être un nombre de colis pour un montant au kilo — et la mercuriale
-       *  publierait un prix faux sans le moindre signal. */
-      const uniteExploitable = (u: string | null): boolean => {
-        const t = normText(u ?? '')
-        return t !== '' && !/^[-+]?[0-9]/.test(t)
-      }
+      // Le contrôle par ligne (recoupement qté × PU = montant, choix de
+      // l'assiette poids ou pièces, dérivation d'un prix absent) vivait ici. Il
+      // est parti dans `lib/invoice-lines` au lot 57 : un module PUR, couvert
+      // par 56 assertions, qui décide aussi de réparer une quantité plutôt que
+      // de jeter un prix juste. Deux vérités sur le garde-fou le plus sensible
+      // du projet, c'était une de trop.
 
       // 4. Rattachement aux articles — par code fournisseur, sinon libellé normalisé.
       const supplierKey = normalizeSupplierName(supplierSociete(invoice.supplier_name || '')) || ''
@@ -239,25 +212,33 @@ export async function POST(request: NextRequest) {
       for (const l of lines) {
         const nameKey = normText(l.designation)
         let art = (l.article_code && byCode.get(l.article_code)) || byName.get(nameKey) || null
-        const prixLu = l.unit_price_ht
-        // Un poids facturé est une assiette SÛRE : il est en kilos par définition,
-        // donc le prix qu'on en déduit est un prix au kilo — pas besoin que
-        // l'unité de la ligne soit exploitable, elle ne décide de rien ici.
-        const prixDerive = prixLu !== null ? null
-          : l.weight_kg != null && l.weight_kg > 0
-            ? +(l.amount_ht / l.weight_kg).toFixed(4)
-            : l.quantity && l.quantity > 0 && uniteExploitable(l.unit)
-              ? +(l.amount_ht / l.quantity).toFixed(4)
-              : null
-        const unitPrice = prixLu ?? prixDerive
-        // QUARANTAINE : un prix ne devient un point de mercuriale que si la LIGNE
-        // se recoupe (qté × PU = montant) et que la facture n'est pas massivement
-        // fausse. Le seuil de 3 % ne condamne plus l'ensemble : il alerte, le
-        // contrôle ligne à ligne tranche. Sinon l'article est rattaché SANS prix —
-        // « prix manquant » signalé plutôt qu'un prix douteux publié en silence.
-        const promouvoir = !factureSuspecte && ligneVerifiee(l) && unitPrice !== null
-        if (unitPrice !== null) { if (promouvoir) prixPromus++; else prixQuarantaine++ }
-        const prixRetenu = promouvoir ? unitPrice : null
+        // LE VERDICT DE LA LIGNE — lib/invoice-lines, module pur, 56 assertions.
+        //
+        // Il remplace la décision qui vivait ici. Deux changements, tous deux nés
+        // de l'ouverture des PDF le 04/08 :
+        //
+        //  · quand le prix unitaire est LU mais que rien ne se recoupe, c'est la
+        //    QUANTITÉ qu'on répare (montant ÷ prix), pas le prix qu'on jette.
+        //    DAT-SCHAUB écrivait « seau de 10 kg » et on lisait « 1 seau » ;
+        //    METRO éclate sa quantité en « Qté × Colisage » et on n'en lisait
+        //    qu'une. Dans les deux cas le prix imprimé était juste ;
+        //  · un prix écarté est désormais CONSERVÉ dans `unit_price_rejected`.
+        //    Il n'est jamais publié — la quarantaine reste entière — mais on ne
+        //    perd plus l'information, qu'il fallait jusqu'ici rouvrir les PDF
+        //    pour retrouver.
+        const verdict = verdictLigne(l, factureSuspecte)
+        const prixRetenu = verdict.prix_retenu
+        // « Promouvoir » veut dire : ce prix devient le dernier prix connu de
+        // l'article. Exactement les lignes dont le verdict retient un prix.
+        const promouvoir = prixRetenu !== null
+        const unitPrice = prixRetenu
+        // Un AVOIR ne compte ni comme prix publié ni comme prix en quarantaine :
+        // ne pas en tirer de prix est le comportement voulu, pas un échec de
+        // lecture. Les compter gonflait le bilan d'alertes sans rien à faire.
+        if (!verdict.avoir) {
+          if (prixRetenu !== null) prixPromus++
+          else if (verdict.prix_ecarte !== null) prixQuarantaine++
+        }
 
         if (!art && nameKey) {
           const { data: created } = await service.from('articles').insert({
@@ -287,7 +268,13 @@ export async function POST(request: NextRequest) {
 
         rows.push({
           client_id: clientId, invoice_id: invoice.id, article_id: art?.id ?? null,
-          designation: l.designation, article_code: l.article_code, quantity: l.quantity,
+          designation: l.designation, article_code: l.article_code,
+          // La quantité RÉPARÉE prend la place de celle qui a été lue quand le
+          // prix imprimé et le montant désignent une autre valeur ; l'originale
+          // reste dans `quantity_raw`, pour pouvoir revenir en arrière et
+          // mesurer la fréquence du défaut par fournisseur.
+          quantity: verdict.quantite_reparee ?? l.quantity,
+          quantity_raw: verdict.quantite_reparee !== null ? l.quantity : null,
           unit: l.unit,
           // Le poids facturé est CONSERVÉ tel que lu : c'est lui qui porte le prix
           // au kilo, et sans lui la ligne redeviendrait invérifiable à la relecture.
@@ -295,6 +282,9 @@ export async function POST(request: NextRequest) {
           // Prix en quarantaine = null : la mercuriale prend le point de prix le plus
           // récent depuis invoice_lines ; un prix non vérifié n'en est pas un.
           unit_price_ht: prixRetenu,
+          // Le prix LU puis écarté — diagnostic seulement, jamais lu par la
+          // mercuriale ni par les fiches.
+          unit_price_rejected: verdict.prix_ecarte,
           amount_ht: l.amount_ht, tva_rate: l.tva_rate ?? invoice.tva_rate,
         })
       }
