@@ -12,7 +12,7 @@ import {
   type PayrollEmployee, type PayrollEntry,
 } from '@/lib/payroll'
 import VuePostes from './vue-postes'
-import { couvertureParPoste, totalHeures, type EntreePlanning } from '@/lib/planning-postes'
+import { couvertureParPoste, postesDuCreneau, totalHeures, type EntreePlanning } from '@/lib/planning-postes'
 
 type DayType = 'travail' | 'conges' | 'maladie' | 'repos'
 
@@ -1217,31 +1217,54 @@ export default function PlanningPage() {
                                     </div>
                                   )}
 
-                                  {/* Matin row — horaires + poste du créneau */}
-                                  <div className={`flex items-center gap-1 rounded-lg px-1 py-[3px] ${
-                                    sd.matin_debut || catM ? 'bg-gray-50 border border-gray-200/70' : 'bg-gray-50/50'
-                                  }`}>
-                                    <span className="text-[8px] font-bold text-gray-400 w-3 shrink-0">M</span>
-                                    <span className={`text-[9px] font-semibold truncate ${sd.matin_debut ? 'text-gray-700' : 'text-gray-300'}`}>
-                                      {sd.matin_debut ? `${sd.matin_debut}→${sd.matin_fin || '?'}` : '--:--'}
-                                    </span>
-                                    {catM && (
-                                      <span className={`ml-auto text-[8px] px-1 py-px rounded font-bold shrink-0 ${catM.color}`}>{catM.abbr}</span>
-                                    )}
-                                  </div>
-
-                                  {/* Après-midi row — horaires + poste du créneau */}
-                                  <div className={`flex items-center gap-1 rounded-lg px-1 py-[3px] ${
-                                    sd.apmidi_debut || catA ? 'bg-gray-50 border border-gray-200/70' : 'bg-gray-50/50'
-                                  }`}>
-                                    <span className="text-[8px] font-bold text-gray-400 w-3 shrink-0">AM</span>
-                                    <span className={`text-[9px] font-semibold truncate ${sd.apmidi_debut ? 'text-gray-700' : 'text-gray-300'}`}>
-                                      {sd.apmidi_debut ? `${sd.apmidi_debut}→${sd.apmidi_fin || '?'}` : '--:--'}
-                                    </span>
-                                    {catA && (
-                                      <span className={`ml-auto text-[8px] px-1 py-px rounded font-bold shrink-0 ${catA.color}`}>{catA.abbr}</span>
-                                    )}
-                                  </div>
+                                  {/* Les deux créneaux du jour.
+                                      L'horaire tenait sur la MÊME ligne que le
+                                      repère « M » et la pastille du poste : à
+                                      sept colonnes, il ne restait la place que
+                                      pour « 8… ». On empile désormais l'horaire
+                                      au-dessus du poste — c'est la mise en page
+                                      de Skello, et c'est la seule qui laisse
+                                      lire une heure en entier.
+                                      Le repère M / AM disparaît quand l'horaire
+                                      est là : « 08:00 » dit déjà que c'est le
+                                      matin. Il ne reste que sur un créneau vide,
+                                      où il désigne la case à remplir. */}
+                                  {([
+                                    { cle: 'matin' as const, court: 'Matin', debut: sd.matin_debut, fin: sd.matin_fin },
+                                    { cle: 'apmidi' as const, court: 'Après-midi', debut: sd.apmidi_debut, fin: sd.apmidi_fin },
+                                  ]).map(cr => {
+                                    // Tous les postes du créneau, pas seulement
+                                    // le principal : un créneau partagé entre
+                                    // deux rayons n'en montrait qu'un. Même
+                                    // lecture que la vue Postes — une seule
+                                    // vérité (lib/planning-postes).
+                                    const cles = postesDuCreneau(sd as never, cr.cle)
+                                    const defs = cles.map(k => allPostes.find(c => c.key === k)).filter(Boolean) as PosteDef[]
+                                    const rempli = Boolean(cr.debut) || defs.length > 0
+                                    return (
+                                      <div key={cr.cle}
+                                        className={`rounded-lg px-1.5 py-1 ${rempli ? 'bg-gray-50 border border-gray-200/70' : 'bg-gray-50/50'}`}>
+                                        <p className={`text-[10px] font-bold tabular leading-tight whitespace-nowrap ${cr.debut ? 'text-gray-800' : 'text-gray-300'}`}>
+                                          {cr.debut ? `${cr.debut} – ${cr.fin || '?'}` : (
+                                            <span className="font-semibold">{cr.court} —</span>
+                                          )}
+                                        </p>
+                                        {defs.length > 0 && (
+                                          <div className="flex flex-wrap gap-0.5 mt-0.5">
+                                            {defs.map(d => (
+                                              <span key={d.key}
+                                                title={defs.length > 1
+                                                  ? `${d.short} — créneau partagé entre ${defs.length} postes, heures réparties à parts égales`
+                                                  : d.short}
+                                                className={`text-[8px] px-1 py-px rounded font-bold max-w-full truncate ${d.color}`}>
+                                                {defs.length > 1 ? d.abbr : d.short}
+                                              </span>
+                                            ))}
+                                          </div>
+                                        )}
+                                      </div>
+                                    )
+                                  })}
 
                                   {/* Total heures */}
                                   <div className="flex justify-center mt-0.5">
