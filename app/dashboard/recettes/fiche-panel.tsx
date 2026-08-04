@@ -19,179 +19,38 @@ import Link from 'next/link'
 import { Pencil, Plus, X, Check, Clock, ShoppingBasket, Package, AlertTriangle, Users, Printer, Copy } from 'lucide-react'
 import { useToast } from '@/components/ui/toast'
 import { parseStoredSteps, parseStoredTiers } from '@/lib/recipes'
+import {
+  TableauIngredients, TrendSpark,
+  ageJours, fmtDateFr, fmtEuro, fmtMin, fmtQty, ligneKg, num, round2, unitFr,
+  venteEnClair, UNITES_VENTE,
+  type FicheEmployee, type FicheFormat, type FicheGeneric, type FicheRecipe,
+} from './fiche-ui'
 
-export type FicheIngredient = {
-  generic_id: string | null; article_id: string | null; label: string
-  /** Sous-recette : la ligne vise une autre fiche (unités de son rendement) */
-  sub_recipe_id?: string | null
-  sub_incomplete?: boolean
-  quantity: number; qty_unit: string | null; unit: string | null; loss_pct: number | null
-  manual_price_ht?: number | null
-  unit_price_ht: number | null; price_source: string; categorie: 'ingredient' | 'emballage'
-  /** Date de la facture d'où vient le prix mercuriale — l'âge du chiffre */
-  price_date?: string | null
-  /** Réf fournisseur facturée d'où sort le prix, et sa maison — la PROVENANCE
-   *  du chiffre, affichée sous le nom de l'ingrédient. */
-  price_ref_name?: string | null
-  price_ref_supplier?: string | null
-  qty_base: number; qty_brute: number; line_total_ht: number
-}
+// Les TYPES de la fiche vivent dans ./fiche-ui — ils restent ré-exportés ici,
+// c'est de ce module que la liste et la page pleine les importent depuis
+// toujours.
+export type {
+  FicheIngredient, FicheGeneric, FicheCost, FicheFormat, FicheRecipe, FicheEmployee,
+} from './fiche-ui'
 
-/** Article générique de la mercuriale, tel que renvoyé par GET /api/recipes —
- *  nécessaire pour AJOUTER un ingrédient directement depuis la fiche. */
-export type FicheGeneric = {
-  id: string; name: string
-  base_unit: 'kg' | 'piece'
-  category: 'ingredient' | 'emballage'
-  default_loss_pct: number
-  price_ht: number | null
-}
-
-export type FicheCost = {
-  matiere_ht: number; emballage_ht: number; main_oeuvre_ht: number; total_ht: number
-  par_unite_ht: number | null
-  /** Coût par unité de VENTE — la base du PV, de la marge et du coefficient */
-  par_unite_vente_ht?: number | null
-  prix_manquants: number; labor_rate_ht: number | null
-  total_minutes: number
-  pv_unitaire_ht: number | null; marge_pct: number | null; coefficient: number | null
-  /** Coût matière (+ emballage) du batch relu aux prix mercuriale de chaque
-   *  jalon (8 lundis ISO + aujourd'hui) — jalons incomplets absents */
-  matiere_series?: { d: string; v: number }[]
-  /** Pourquoi la courbe n'est pas traçable — null quand elle l'est */
-  matiere_series_motif?: string | null
-}
-
-/** Un FORMAT DE VENTE de la fiche — même fabrication, autre conditionnement.
- *  Les quatre derniers champs sont DÉRIVÉS (calculés par le serveur à chaque
- *  lecture, jamais stockés) : le coût du batch est le même pour tous les
- *  formats, seule la division par la quantité vendable et le prix changent. */
-export type FicheFormat = {
-  id: string
-  name: string
-  sell_unit: string | null
-  sell_qty: number | null
-  selling_price_ttc: number | null
-  tva_rate: number
-  validated: boolean
-  position: number
-  vente_qty: number
-  cout_unite_ht: number | null
-  pv_unitaire_ht: number | null
-  marge_pct: number | null
-  coefficient: number | null
-}
-
-export type FicheRecipe = {
-  id: string; name: string; category: string | null
-  yield_qty: number | null; yield_unit: string | null
-  /** Vendu dans une AUTRE unité que la production (pièces fabriquées, kg vendus) */
-  sell_unit?: string | null; sell_qty?: number | null
-  labor_minutes: number; selling_price_ttc: number | null; tva_rate: number; notes: string | null
-  employee_id: string | null
-  fabrication_steps?: unknown
-  time_tiers?: unknown
-  /** Formats de vente — au moins un depuis la reprise du lot 46 */
-  formats?: FicheFormat[]
-  ingredients: FicheIngredient[]
-  cost: FicheCost
-}
-
-export type FicheEmployee = { id: string; name: string; loaded_rate: number | null }
-
+/** Brouillons de saisie — ils ne quittent jamais ce composant : le serveur
+ *  reçoit des nombres, l'écran manipule des chaînes (virgule décimale, champ
+ *  vidé le temps d'une frappe). */
 type StepDraft = { text: string; minutes: string }
 type TierDraft = { qty: string; mult: string }
 
-const fmtEuro = (n: number) => n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'
-const fmtQty = (n: number) => n.toLocaleString('fr-FR', { maximumFractionDigits: 3 })
-const unitFr = (u: string | null) => (u === 'piece' ? 'pièce' : u || 'u')
-const num = (s: string) => parseFloat(s.replace(',', '.')) || 0
-const round2 = (n: number) => Math.round(n * 100) / 100
-
-/** 45 → « 45 min » ; 90 → « 1 h 30 » */
-function fmtMin(m: number): string {
-  const r = Math.round(m)
-  if (r < 60) return `${(Math.round(m * 10) / 10).toLocaleString('fr-FR')} min`
-  return `${Math.floor(r / 60)} h ${String(r % 60).padStart(2, '0')}`
-}
-
-const fmtDateFr = (s: string) => new Date(s + 'T00:00:00Z').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', timeZone: 'UTC' })
-
-/** Unités de VENTE proposées à la création d'un format — mêmes valeurs que la
- *  modale de la fiche (page.tsx) : un produit fabriqué à la pièce peut se
- *  vendre au kilo, et c'est l'unité de VENTE qui porte le prix et la marge. */
-const UNITES_VENTE = [
-  { value: 'kg', label: 'au kg' },
-  { value: '100 g', label: 'aux 100 g' },
-  { value: 'pièce', label: 'à la pièce' },
-  { value: 'portion', label: 'à la portion' },
-  { value: 'litre', label: 'au litre' },
+/** Les cinq écrans de la fiche. Même découpe que chez Otami — c'est celle qui
+ *  correspond aux moments du métier : ce qu'on met dedans, comment on le fait,
+ *  à combien on le vend, comment ça évolue, et le reste. « Ingrédients » ouvre
+ *  par défaut : c'est là qu'on passe son temps. */
+type Onglet = 'infos' | 'ingredients' | 'fabrication' | 'vente' | 'stats'
+const ONGLETS: { id: Onglet; label: string }[] = [
+  { id: 'infos', label: 'Infos' },
+  { id: 'ingredients', label: 'Ingrédients' },
+  { id: 'fabrication', label: 'Fabrication' },
+  { id: 'vente', label: 'Vente' },
+  { id: 'stats', label: 'Statistiques' },
 ]
-
-/** « kg » → « au kg », « pièce » → « à la pièce »… pour les phrases de la fiche */
-const venteEnClair = (u: string) =>
-  u === 'kg' ? 'au kg'
-  : u === 'pièce' ? 'à la pièce'
-  : u === '100 g' ? 'aux 100 g'
-  : u === 'portion' ? 'à la portion'
-  : u === 'litre' ? 'au litre'
-  : `en ${u}`
-
-/** Un pourcentage en entier — sauf entre 0 et 0,5 %, où « 0 % » se lirait
- *  « rien », alors que la ligne pèse quelque chose. Le poivre d'une terrine
- *  n'est pas nul : il est petit. */
-const pctFmt = (p: number) => (p > 0 && p < 0.5 ? '< 1 %' : `${Math.round(p)} %`)
-
-/** Poids d'une ligne, en kg, NET et BRUT — null quand la ligne n'a pas de poids
- *  connu (comptée à la pièce, ou unité héritée illisible).
- *
- *  Une pièce n'a pas de masse tant que personne n'a dit ce qu'elle pèse : la
- *  compter pour 0 g gonflerait la part de toutes les autres, lui inventer un
- *  poids serait pire. Elle sort donc de l'assiette du « % de poids » — et le
- *  tableau ANNONCE combien de lignes en sortent, plutôt que de publier des
- *  pourcentages qui ne totalisent rien.
- *
- *  Même règle que le pied de tableau : les deux lisent cette fonction, pour que
- *  la part d'une ligne et le total ne puissent pas diverger. */
-function ligneKg(i: FicheIngredient): { net: number; brut: number } | null {
-  if (i.generic_id) {
-    if (i.qty_unit !== 'kg' && i.qty_unit !== 'g') return null
-    return { net: Number(i.qty_base) || 0, brut: Number(i.qty_brute) || 0 }
-  }
-  if ((i.unit || '').toLowerCase().includes('kg')) {
-    const q = Number(i.quantity) || 0
-    return { net: q, brut: Number(i.qty_brute) || q }
-  }
-  return null
-}
-
-/** Âge d'une date de prix, en jours pleins. null si la date est illisible. */
-function ageJours(d: string | null | undefined): number | null {
-  if (!d) return null
-  const t = new Date(String(d).slice(0, 10) + 'T00:00:00Z').getTime()
-  if (!Number.isFinite(t)) return null
-  return Math.max(0, Math.floor((Date.now() - t) / 86400000))
-}
-
-/** Mini-courbe du coût matière : x = jalon hebdomadaire, y = coût du batch.
- *  Trait navy, dernier point orange — même langage que la mercuriale. */
-function TrendSpark({ points }: { points: { d: string; v: number }[] }) {
-  const W = 160, H = 36, PAD = 4
-  const vs = points.map(x => x.v)
-  const min = Math.min(...vs), max = Math.max(...vs)
-  const span = max - min
-  const X = (i: number) => (points.length < 2 ? W / 2 : PAD + (i / (points.length - 1)) * (W - PAD * 2))
-  const Y = (v: number) => (span === 0 ? H / 2 : H - PAD - ((v - min) / span) * (H - PAD * 2))
-  const d = vs.map((v, i) => `${i === 0 ? 'M' : 'L'}${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(' ')
-  return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-40 h-9 flex-shrink-0" role="img" aria-label="Coût matière sur les 8 dernières semaines">
-      {points.length >= 2 && (
-        <path d={d} fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="text-pilote" />
-      )}
-      <circle cx={X(points.length - 1)} cy={Y(vs[vs.length - 1] ?? 0)} r={3} className="fill-pilote-orange" />
-    </svg>
-  )
-}
 
 export default function FichePanel({
   recipe, employees, generics, target = null, historiqueIncomplet = false, onEditFull, onSaved, onClose,
@@ -235,6 +94,8 @@ export default function FichePanel({
   const [newIng, setNewIng] = useState<{ query: string; generic: FicheGeneric | null; qty: string; unit: 'kg' | 'g' | 'piece'; loss: string } | null>(null)
   // Retrait d'ingrédient en deux clics (jamais de confirm() natif)
   const [confirmIng, setConfirmIng] = useState<number | null>(null)
+  // Sous-onglet affiché — « Ingrédients » d'abord, c'est là qu'on travaille
+  const [onglet, setOnglet] = useState<Onglet>('ingredients')
 
   const c = recipe.cost
   const employeeName = useMemo(() =>
@@ -334,6 +195,20 @@ export default function FichePanel({
     : null
   // Couleur de la marge : contre la CIBLE de la catégorie si elle existe,
   // sinon les repères historiques 50/30.
+  // ── Les deux marges du métier, PAR UNITÉ DE VENTE (onglet « Vente ») ──
+  // Marge BRUTE = PV HT − matière (emballage compris) : ce que la vente laisse
+  // avant d'avoir payé le temps de fabrication. Marge NETTE = marge brute −
+  // main-d'œuvre : ce qu'il en reste vraiment. La distinction est celle
+  // d'Otami, et c'est celle que fait un boucher quand il compare un produit
+  // fabriqué maison à un produit acheté tout fait.
+  //
+  // Rien n'est publié tant qu'un prix d'ingrédient manque : le coût serait
+  // sous-évalué, donc les deux marges flattées — même règle que le moteur.
+  const matiereUnite = c && venteQty > 0 ? round2((c.matiere_ht + c.emballage_ht) / venteQty) : null
+  const moUnite = c && venteQty > 0 ? round2(c.main_oeuvre_ht / venteQty) : null
+  const margeBrute = !coutIncomplet && pvHTActif !== null && matiereUnite !== null ? round2(pvHTActif - matiereUnite) : null
+  const margeNette = margeBrute !== null && moUnite !== null ? round2(margeBrute - moUnite) : null
+
   const margeColor = margeActive === null
     ? 'text-gray-900'
     : target != null
@@ -787,6 +662,92 @@ export default function FichePanel({
           </div>
         )}
 
+        {/* ── Sous-onglets ────────────────────────────────────────────────
+            Une fiche longue devient cinq écrans courts — exactement le remède
+            appliqué à la mercuriale au lot 38, et la structure d'Otami
+            (Infos · Ingrédients · Fabrication · Vente · Statistiques).
+            Le bandeau de chiffres-clés ci-dessus, lui, reste TOUJOURS visible :
+            le coût de revient est le chiffre pour lequel on ouvre la fiche, il
+            n'a pas à disparaître parce qu'on regarde les étapes. */}
+        <div className="mb-4 inline-flex items-center gap-1 bg-gray-50 rounded-xl p-1">
+          {ONGLETS.map(o => (
+            <button key={o.id} onClick={() => setOnglet(o.id)}
+              className={`text-xs font-semibold rounded-lg px-3.5 py-2 transition-colors ${onglet === o.id ? 'bg-white text-pilote shadow-card' : 'text-gray-500 hover:text-gray-800'}`}>
+              {o.label}
+              {o.id === 'ingredients' && recipe.ingredients.length > 0 && (
+                <span className={`ml-1.5 tabular ${onglet === o.id ? 'text-pilote-200' : 'text-gray-300'}`}>{recipe.ingredients.length}</span>
+              )}
+              {o.id === 'ingredients' && (c?.prix_manquants ?? 0) > 0 && (
+                <span className="ml-1 w-1.5 h-1.5 rounded-full bg-amber-500 inline-block align-middle" title="Des prix manquent" />
+              )}
+            </button>
+          ))}
+        </div>
+
+        {onglet === 'infos' && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+            <div className="rounded-2xl border border-gray-100 overflow-hidden">
+              <h3 className="px-4 py-2.5 bg-gray-50 text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Ce que produit le batch</h3>
+              <dl className="p-4 space-y-2 text-sm">
+                <div className="flex justify-between gap-3">
+                  <dt className="text-gray-500">Production</dt>
+                  <dd className="font-semibold text-gray-900 tabular text-right">{baseQty > 0 ? `${fmtQty(baseQty)} ${uniteLabel}` : <span className="text-gray-300">non renseignée</span>}</dd>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <dt className="text-gray-500">Poids brut &middot; net</dt>
+                  <dd className="font-semibold text-gray-900 tabular text-right">
+                    {poids.brut > 0
+                      ? <>{fmtQty(poids.brut)} kg <span className="font-normal text-gray-400">&middot; {fmtQty(poids.net)} kg net</span></>
+                      : <span className="text-gray-300">aucune ligne pesable</span>}
+                  </dd>
+                </div>
+                {/* Le coût AU KILO se rapporte au poids NET — ce qui sort de
+                    l'atelier, pas ce qu'on a sorti du frigo. Il n'existe que si
+                    la fiche a des lignes pesables : sinon, tiret. */}
+                <div className="flex justify-between gap-3">
+                  <dt className="text-gray-500">Coût au kg <span className="text-gray-400">(net)</span></dt>
+                  <dd className="font-semibold text-gray-900 tabular text-right">{c && poids.net > 0 ? fmtEuro(round2(c.total_ht / poids.net)) : <span className="text-gray-300">&mdash;</span>}</dd>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <dt className="text-gray-500">Formats de vente</dt>
+                  <dd className="font-semibold text-gray-900 tabular text-right">{formats.length}</dd>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <dt className="text-gray-500">Catégorie</dt>
+                  <dd className="text-right">
+                    {recipe.category
+                      ? <span className="text-[10px] font-semibold uppercase tracking-wider text-pilote bg-pilote-50 ring-1 ring-pilote-100 rounded-full px-2.5 py-1">{recipe.category}</span>
+                      : <span className="text-gray-300 text-sm">sans catégorie</span>}
+                  </dd>
+                </div>
+              </dl>
+            </div>
+
+            <div className="rounded-2xl border border-gray-100 overflow-hidden">
+              <h3 className="px-4 py-2.5 bg-gray-50 text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Qui fabrique, et notes</h3>
+              <div className="p-4 space-y-3 text-sm">
+                <p className="flex items-center gap-1.5 text-gray-600">
+                  <Users className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+                  Fabriqué par <span className="font-semibold text-gray-900">{employeeName ?? 'taux moyen de l&rsquo;équipe'}</span>
+                  {c?.labor_rate_ht != null && <span className="tabular text-gray-400">&middot; {fmtEuro(c.labor_rate_ht)}/h productif</span>}
+                </p>
+                <p className="text-[11px] text-gray-400">
+                  Le taux productif est celui de l&rsquo;heure réellement TRAVAILLÉE (congés, RCR et fériés déduits) — pas de l&rsquo;heure payée.
+                </p>
+                <div>
+                  <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Notes</p>
+                  <p className="text-sm text-gray-700">{recipe.notes || <span className="text-gray-300">aucune note</span>}</p>
+                </div>
+                <p className="text-[11px] text-gray-400 pt-1 border-t border-gray-100">
+                  Nom, production, TVA, employé et ingrédients se modifient via &laquo;&nbsp;Modifier la fiche&nbsp;&raquo;.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {onglet === 'ingredients' && (
+          <>
         {c && c.prix_manquants > 0 && (
           <div className="mb-4 bg-amber-50 border border-amber-200 rounded-xl px-4 py-2 flex items-start gap-2 text-xs text-amber-800">
             <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
@@ -806,299 +767,19 @@ export default function FichePanel({
             </span>
           </div>
         )}
-
-        {/* ── Coût matière dans le temps : la fiche relue aux prix d'hier ── */}
-        {c && Array.isArray(c.matiere_series) && c.matiere_series.length >= 2 && (() => {
-          const s = c.matiere_series
-          const first = s[0], last = s[s.length - 1]
-          const delta = round2(last.v - first.v)
-          const stable = Math.abs(delta) < 0.005
-          const deltaUnit = baseQty > 0 ? round2(delta / baseQty) : null
-          // Marge qu'aurait la fiche au coût du début de période, à PV inchangé —
-          // sur la base de VENTE (celle du PV), pas forcément l'unité produite.
-          const coutVente = coutUnite
-          const deltaVente = venteQty > 0 ? round2(delta / venteQty) : null
-          let margeAvant: number | null = null
-          if (!stable && pvHTActif !== null && pvHTActif > 0 && coutVente != null && deltaVente !== null) {
-            margeAvant = Math.round(((pvHTActif - (coutVente - deltaVente)) / pvHTActif) * 1000) / 10
-          }
-          return (
-            <div className="mb-4 rounded-2xl border border-gray-100 bg-gray-50/60 px-4 py-3 flex items-center gap-4 flex-wrap">
-              <div className="min-w-[240px] flex-1">
-                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Coût matière — 8 dernières semaines</p>
-                <p className="text-xs text-gray-600 mt-1 tabular">
-                  {stable ? (
-                    <>Stable depuis le {fmtDateFr(first.d)} — {fmtEuro(last.v)} le batch, aux prix mercuriale relus à chaque date.</>
-                  ) : (
-                    <>
-                      {fmtEuro(first.v)} le {fmtDateFr(first.d)} → {fmtEuro(last.v)} aujourd&apos;hui :{' '}
-                      <span className={`font-bold ${delta > 0 ? 'text-red-600' : 'text-green-600'}`}>
-                        {delta > 0 ? '+' : '−'}{fmtEuro(Math.abs(delta))} / batch
-                        {deltaUnit !== null && Math.abs(deltaUnit) >= 0.005 ? ` (${delta > 0 ? '+' : '−'}${fmtEuro(Math.abs(deltaUnit))} / ${unitFr(recipe.yield_unit)})` : ''}
-                      </span>
-                      {margeAvant !== null && margeActive !== null && (
-                        <> · à PV inchangé, marge <span className="font-bold tabular">{margeAvant.toLocaleString('fr-FR')} %</span> → <span className={`font-bold tabular ${delta > 0 ? 'text-red-600' : 'text-green-600'}`}>{margeActive.toLocaleString('fr-FR')} %</span></>
-                      )}
-                    </>
-                  )}
-                </p>
-              </div>
-              <TrendSpark points={s} />
-            </div>
-          )
-        })()}
-
-        {/* Courbe impossible à tracer : DIRE POURQUOI. Un bloc simplement absent
-            se lit « le coût matière n'a pas bougé » — c'est l'inverse du sens. */}
-        {c && (!Array.isArray(c.matiere_series) || c.matiere_series.length < 2) && c.matiere_series_motif && (
-          <div className="mb-4 rounded-2xl border border-gray-100 bg-gray-50/60 px-4 py-3">
-            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Coût matière — 8 dernières semaines</p>
-            <p className="text-xs text-gray-500 mt-1">{c.matiere_series_motif}</p>
-          </div>
-        )}
-
-        {/* Historique tronqué : la courbe est partielle, ou absente faute de
-            points. Le silence donnerait à lire « le prix n'a pas bougé ». */}
-        {historiqueIncomplet && (
-          <div className="mb-4 bg-amber-50 border border-amber-200 rounded-xl px-4 py-2 flex items-start gap-2 text-xs text-amber-800">
-            <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-            <span>L&apos;historique des prix n&apos;a pas pu être lu en entier : la courbe du coût matière ci-dessus est partielle. Actualisez ; si le message persiste, signalez-le.</span>
-          </div>
-        )}
-
-        {/* ── Paliers de quantité : pour N produits, temps ×multiple ── */}
-        <div className="mb-4 rounded-2xl border border-gray-100 bg-gray-50/60 px-4 py-3">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mr-1">Quantité produite</span>
-            <button onClick={() => setSelTier(null)}
-              className={`text-xs font-semibold rounded-full px-3 py-1.5 transition-colors tabular ${selTier === null ? 'bg-pilote text-white shadow-card' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-100'}`}>
-              Base{baseQty > 0 ? ` · ${fmtQty(baseQty)} ${uniteLabel}` : ''} · {fmtMin(baseMinutes)}
-            </button>
-            {tiers.map((t, i) => (
-              <span key={i} className={`inline-flex items-center gap-1 rounded-full transition-colors tabular ${selTier === i ? 'bg-pilote text-white shadow-card' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-100'}`}>
-                <button onClick={() => setSelTier(prev => prev === i ? null : i)} className="text-xs font-semibold pl-3 py-1.5">
-                  {fmtQty(num(t.qty))} {uniteLabel} · ×{num(t.mult).toLocaleString('fr-FR')}
-                </button>
-                <button onClick={() => { setTiers(prev => prev.filter((_, j) => j !== i)); setSelTier(p => (p === i ? null : p !== null && p > i ? p - 1 : p)); setDirty(true) }}
-                  className={`pr-2 py-1.5 ${selTier === i ? 'text-white/60 hover:text-white' : 'text-gray-300 hover:text-gray-600'}`} title="Retirer ce palier">
-                  <X className="w-3 h-3" />
-                </button>
-              </span>
-            ))}
-            {newTier ? (
-              <span className="inline-flex items-center gap-1.5 bg-white border border-pilote-200 rounded-full pl-3 pr-1.5 py-1">
-                <input autoFocus inputMode="decimal" value={newTier.qty} placeholder="Qté"
-                  onChange={e => setNewTier(p => (p ? { ...p, qty: e.target.value } : p))}
-                  className="w-12 text-xs tabular focus:outline-none" />
-                <span className="text-[11px] text-gray-400">{uniteLabel} → ×</span>
-                <input inputMode="decimal" value={newTier.mult} placeholder="1,8"
-                  onChange={e => setNewTier(p => (p ? { ...p, mult: e.target.value } : p))}
-                  onKeyDown={e => { if (e.key === 'Enter' && num(newTier.qty) > 0 && num(newTier.mult) > 0) { setTiers(prev => [...prev, newTier]); setNewTier(null); setDirty(true) } }}
-                  className="w-10 text-xs tabular focus:outline-none" />
-                <button onClick={() => { if (num(newTier.qty) > 0 && num(newTier.mult) > 0) { setTiers(prev => [...prev, newTier]); setNewTier(null); setDirty(true) } }}
-                  className="w-6 h-6 rounded-full bg-pilote text-white flex items-center justify-center"><Plus className="w-3 h-3" /></button>
-                <button onClick={() => setNewTier(null)} className="w-6 h-6 rounded-full text-gray-400 hover:bg-gray-100 flex items-center justify-center"><X className="w-3 h-3" /></button>
-              </span>
-            ) : (
-              <button onClick={() => setNewTier({ qty: '', mult: '' })}
-                className="inline-flex items-center gap-1 text-xs font-semibold text-pilote border border-dashed border-pilote-200 rounded-full px-3 py-1.5 hover:bg-pilote-50 transition-colors">
-                <Plus className="w-3 h-3" />Palier
-              </button>
-            )}
-          </div>
-          {active ? (
-            <p className="text-xs text-gray-600 mt-2 tabular">
-              Pour <span className="font-bold">{fmtQty(active.qty)} {uniteLabel}</span> : temps <span className="font-bold">{fmtMin(scaledMinutes)}</span> (×{active.mult.toLocaleString('fr-FR')})
-              {baseQty > 0 && c ? <> · matière {fmtEuro(round2(coutMatiere * ratio))} · MO {fmtEuro(moScaled)} · coût total <span className="font-bold">{fmtEuro(coutScaled)}</span>{active.qty > 0 ? <> soit {fmtEuro(round2(coutScaled / active.qty))} / {unitFr(recipe.yield_unit)}</> : null}</> : null}
-              {baseQty <= 0 && <> · renseignez la production par batch (« Modifier la fiche ») pour multiplier aussi les ingrédients</>}
-            </p>
-          ) : (
-            <p className="text-[11px] text-gray-400 mt-2">Un palier = « pour tant de {uniteLabel}, le temps de base est multiplié par tant » — ex. 20 → ×1,8. Cliquez un palier pour lire temps, quantités et coûts correspondants.</p>
-          )}
-        </div>
-
-        {/* ── Double tableau : étapes à gauche, ingrédients à droite ── */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
-          {/* Étapes de fabrication */}
-          <div className="rounded-2xl border border-gray-100 overflow-hidden">
-            <div className="px-4 py-2.5 bg-gray-50 flex items-center justify-between gap-2">
-              <h3 className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Étapes de fabrication</h3>
-              <span className="text-[11px] text-gray-400 tabular">durées en min</span>
-            </div>
-            <div className="p-3 space-y-2">
-              {steps.length === 0 && (
-                <p className="text-sm text-gray-400 text-center py-5">Ajoutez les étapes du procédé — chaque étape porte sa durée, le temps total est leur somme.</p>
-              )}
-              {steps.map((s, i) => (
-                <div key={i} className="flex items-start gap-2">
-                  <span className="w-6 h-6 rounded-full bg-pilote-50 text-pilote text-[11px] font-extrabold flex items-center justify-center flex-shrink-0 mt-1.5">{i + 1}</span>
-                  <textarea value={s.text} rows={2}
-                    onChange={e => { setSteps(prev => prev.map((x, j) => j === i ? { ...x, text: e.target.value } : x)); setDirty(true) }}
-                    placeholder={`Étape ${i + 1}…`}
-                    className="flex-1 border border-gray-200 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200 resize-y min-w-0" />
-                  <div className="relative flex-shrink-0 mt-1">
-                    <input inputMode="decimal" value={s.minutes} title="Durée de l'étape (minutes)"
-                      onChange={e => { setSteps(prev => prev.map((x, j) => j === i ? { ...x, minutes: e.target.value } : x)); setDirty(true) }}
-                      placeholder="—"
-                      className="w-16 border border-gray-200 rounded-lg pl-2 pr-7 py-1.5 text-sm text-right tabular focus:outline-none focus:ring-2 focus:ring-pilote-200" />
-                    <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-gray-400">min</span>
-                  </div>
-                  {active && num(s.minutes) > 0 && (
-                    <span className="text-[11px] text-pilote font-semibold tabular flex-shrink-0 mt-2.5 w-12 text-right" title={`Durée pour ${fmtQty(active.qty)} ${uniteLabel}`}>
-                      {(Math.round(num(s.minutes) * timeMult * 10) / 10).toLocaleString('fr-FR')}
-                    </span>
-                  )}
-                  <button onClick={() => { setSteps(prev => prev.filter((_, j) => j !== i)); setDirty(true) }}
-                    className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 flex-shrink-0 mt-1"><X className="w-3.5 h-3.5" /></button>
-                </div>
-              ))}
-              <button onClick={() => { setSteps(prev => [...prev, { text: '', minutes: '' }]); setDirty(true) }}
-                className="w-full flex items-center justify-center gap-1.5 text-xs font-semibold text-gray-500 border-2 border-dashed border-gray-200 rounded-xl py-2 hover:border-pilote-200 hover:text-pilote transition-colors">
-                <Plus className="w-3.5 h-3.5" />Ajouter une étape
-              </button>
-            </div>
-            <div className="px-4 py-2.5 bg-pilote text-white flex items-center justify-between gap-2">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-white/60 flex items-center gap-1.5"><Clock className="w-3 h-3" />Temps total</span>
-              <span className="font-bold tabular text-sm">
-                {active ? <>{fmtMin(scaledMinutes)} <span className="text-white/60 font-semibold">(base {fmtMin(baseMinutes)})</span></> : fmtMin(baseMinutes)}
-              </span>
-            </div>
-            {!hasTimed && (Number(recipe.labor_minutes) || 0) > 0 && (
-              <p className="px-4 py-2 text-[11px] text-amber-600 border-t border-gray-100">Étapes non chronométrées — temps repris du champ « minutes » de la fiche ({recipe.labor_minutes} min). Renseignez les durées pour un temps calculé.</p>
-            )}
-          </div>
-
-          {/* Ingrédients — aux quantités du palier choisi */}
-          <div className="rounded-2xl border border-gray-100 overflow-hidden">
-            <div className="overflow-x-auto max-h-[30rem] overflow-y-auto">
-              <table className="w-full min-w-[520px]">
-                <thead className="sticky top-0 z-10">
-                  <tr className="bg-gray-50 text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
-                    <th className="px-3.5 py-2.5 text-left">
-                      Ingrédient
-                      <span className="block text-[10px] font-normal normal-case tracking-normal text-gray-300">dernière réf. fournisseur facturée</span>
-                    </th>
-                    <th className="px-3.5 py-2.5 text-right align-bottom">Qté{active ? ` (×${(Math.round(ratio * 100) / 100).toLocaleString('fr-FR')})` : ''}</th>
-                    <th className="px-3.5 py-2.5 text-right align-bottom">Poids (%)</th>
-                    <th className="px-3.5 py-2.5 text-right align-bottom">Coût (€)</th>
-                    <th className="px-3.5 py-2.5 text-right align-bottom">Coût (%)</th>
-                    <th className="w-8" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {recipe.ingredients.map((ing, i) => {
-                    const coutPct = coutMatiere > 0 ? (ing.line_total_ht / coutMatiere) * 100 : null
-                    // Part de POIDS de la ligne dans le brut total pesable. Lue à
-                    // côté de la part de COÛT, elle répond à la question qu'un
-                    // boucher se pose devant une fiche : « qu'est-ce qui pèse
-                    // dans mon coût, et est-ce que ça pèse dans ma recette ? »
-                    // Un boyau à 1 % du poids et 10 % du coût saute alors aux yeux.
-                    const kg = ligneKg(ing)
-                    const poidsPct = kg !== null && poids.brut > 0 ? (kg.brut / poids.brut) * 100 : null
-                    const loss = Number(ing.loss_pct) || 0
-                    const uniteAffichee = ing.generic_id ? (ing.qty_unit === 'piece' ? 'pièce' : ing.qty_unit || '') : (ing.unit || '')
-                    return (
-                      <tr key={i} className="group border-t border-gray-100 hover:bg-gray-50 transition-colors">
-                        <td className="px-3.5 py-2.5">
-                          <span className="text-sm font-semibold text-gray-900">{ing.label}</span>
-                          {ing.categorie === 'emballage' && <span className="ml-1.5 text-[10px] font-semibold uppercase tracking-wider text-blue-700 bg-blue-50 rounded px-1.5 py-0.5">Emballage</span>}
-                          {ing.sub_recipe_id && (
-                            <Link href={`/dashboard/recettes/${ing.sub_recipe_id}`}
-                              title="Sous-recette — coût complet de la fiche ÷ son rendement, relu en continu. Cliquer pour l'ouvrir."
-                              className="ml-1.5 text-[10px] font-semibold uppercase tracking-wider text-pilote bg-pilote-50 ring-1 ring-pilote-100 rounded px-1.5 py-0.5 hover:bg-pilote-100 transition-colors">
-                              Sous-recette
-                            </Link>
-                          )}
-                          {ing.price_source === 'aucun' && <span className="ml-1.5 text-[10px] font-semibold text-amber-600">{ing.sub_recipe_id ? 'rendement de la sous-fiche requis' : 'prix manquant'}</span>}
-                          {ing.price_source === 'manuel' && <span className="ml-1.5 text-[10px] text-gray-400">prix manuel</span>}
-                          {ing.sub_incomplete && <span className="ml-1.5 text-[10px] font-semibold text-amber-600">coût de la sous-fiche incomplet</span>}
-                          {/* De QUAND date ce prix. Même code que la mercuriale :
-                              au-delà de 30 jours, l'orange signale que le chiffre
-                              a vieilli — c'est sur lui que se décide un PV. */}
-                          {ing.price_source === 'mercuriale' && ing.price_date && (() => {
-                            const j = ageJours(ing.price_date)
-                            if (j === null) return null
-                            return (
-                              <span className={`ml-1.5 text-[10px] tabular ${j > 30 ? 'font-semibold text-orange-500' : 'text-gray-400'}`}
-                                title={`Dernière facture connue pour cet article : ${fmtDateFr(ing.price_date)}`}>
-                                prix du {fmtDateFr(ing.price_date)}{j > 30 ? ` · ${j} j` : ''}
-                              </span>
-                            )
-                          })()}
-                          {/* La réf telle qu'elle est écrite sur la facture : le
-                              générique s'appelle « BOYAUX MOUTON 24 26 », la
-                              ligne facturée « BOYAU MENU MOUTON 24/26A SUR TUB
-                              15 … ». C'est ce nom-là qu'on retrouve chez le
-                              fournisseur quand on veut discuter le prix. */}
-                          {ing.price_ref_name && (
-                            <p className="text-[11px] italic text-gray-400 truncate max-w-[18rem]"
-                              title={`Prix repris de la réf facturée « ${ing.price_ref_name} »${ing.price_ref_supplier ? ` — ${ing.price_ref_supplier}` : ''}`}>
-                              {ing.price_ref_name}{ing.price_ref_supplier ? ` — ${ing.price_ref_supplier}` : ''}
-                            </p>
-                          )}
-                        </td>
-                        <td className="px-3.5 py-2.5 text-right tabular">
-                          <span className="text-sm font-semibold text-gray-900">{fmtQty(ing.quantity * ratio)} {uniteAffichee}</span>
-                          {loss > 0 && <p className="text-[11px] text-gray-400">({fmtQty(ing.qty_brute * ratio)} {ing.generic_id ? unitFr(ing.qty_unit === 'g' ? 'kg' : ing.qty_unit) : uniteAffichee} brut · perte {loss.toLocaleString('fr-FR')} %)</p>}
-                        </td>
-                        <td className="px-3.5 py-2.5 text-right text-sm text-gray-600 tabular">
-                          {poidsPct !== null
-                            ? pctFmt(poidsPct)
-                            : <span className="text-gray-300" title="Ligne comptée à la pièce : sans poids connu, elle ne peut pas prendre de part de poids.">—</span>}
-                        </td>
-                        <td className="px-3.5 py-2.5 text-right text-sm font-semibold text-gray-900 tabular">{ing.unit_price_ht !== null ? fmtEuro(ing.line_total_ht * ratio) : '—'}</td>
-                        <td className="px-3.5 py-2.5 text-right text-sm text-gray-600 tabular">{coutPct !== null && ing.unit_price_ht !== null ? pctFmt(coutPct) : '—'}</td>
-                        <td className="pr-2 text-right">
-                          {confirmIng === i ? (
-                            <button onClick={() => removeIngredient(i)} onBlur={() => setConfirmIng(null)}
-                              className="text-[10px] font-bold text-white bg-red-600 hover:bg-red-700 rounded-lg px-1.5 py-1 whitespace-nowrap" title="Confirmer le retrait">
-                              OK ?
-                            </button>
-                          ) : (
-                            <button onClick={() => removeIngredient(i)} disabled={saving}
-                              className="p-1 rounded-lg text-gray-300 hover:text-red-600 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all" title="Retirer cet ingrédient">
-                              <X className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-                <tfoot>
-                  <tr className="bg-pilote text-white">
-                    <td className="px-3.5 py-2.5 text-[11px] font-bold uppercase tracking-wider text-white/60">Total matière{c && c.emballage_ht > 0 ? ' + emb.' : ''}</td>
-                    <td className="px-3.5 py-2.5 text-right font-bold tabular text-sm">
-                      {poids.brut > 0 ? (
-                        <>
-                          {fmtQty(poids.brut * ratio)} kg <span className="font-semibold text-white/60">brut</span>
-                          {Math.abs(poids.brut - poids.net) >= 0.005 && (
-                            <span className="block text-[10px] font-semibold text-white/60">{fmtQty(poids.net * ratio)} kg net</span>
-                          )}
-                        </>
-                      ) : ''}
-                    </td>
-                    <td className="px-3.5 py-2.5 text-right font-bold tabular text-white/70 text-sm">{poids.brut > 0 ? '100 %' : '—'}</td>
-                    <td className="px-3.5 py-2.5 text-right font-bold tabular text-sm">{fmtEuro(coutMatiere * ratio)}</td>
-                    <td className="px-3.5 py-2.5 text-right font-bold tabular text-white/70 text-sm">100 %</td>
-                    <td />
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
-
-            {/* Ce que la colonne « Poids (%) » ne couvre PAS. Sans cette ligne,
-                une fiche moitié en pièces afficherait des parts de poids qui ne
-                totalisent visiblement pas 100 % sans que rien ne l'explique. */}
-            {poids.horsAssiette > 0 && (
-              <p className="px-3.5 py-2 text-[11px] text-gray-400 border-t border-gray-100">
-                {poids.horsAssiette} ligne{poids.horsAssiette > 1 ? 's' : ''} comptée{poids.horsAssiette > 1 ? 's' : ''} à la pièce
-                {poids.brut > 0
-                  ? <> — sans poids connu, {poids.horsAssiette > 1 ? 'elles restent' : 'elle reste'} hors de l&apos;assiette du % de poids (le % de coût, lui, {poids.horsAssiette > 1 ? 'les' : 'l’'}inclut).</>
-                  : <> : aucune ligne pesable sur cette fiche, la colonne « Poids (%) » n&apos;a rien à répartir.</>}
-              </p>
-            )}
-
+            <div className="rounded-2xl border border-gray-100 overflow-hidden">
+            <TableauIngredients
+              ingredients={recipe.ingredients}
+              ratio={ratio}
+              palierActif={active !== null}
+              coutMatiere={coutMatiere}
+              poids={poids}
+              avecEmballage={Boolean(c && c.emballage_ht > 0)}
+              confirmIng={confirmIng}
+              saving={saving}
+              onRemove={removeIngredient}
+              onCancelConfirm={() => setConfirmIng(null)}
+            />
             {/* Ajout d'ingrédient sur place — comme les étapes, enregistré aussitôt */}
             <div className="px-3 py-2 border-t border-gray-100">
               {newIng ? (
@@ -1175,18 +856,238 @@ export default function FichePanel({
               <span><Clock className="w-3 h-3 inline mr-1 text-gray-400" />Main-d&apos;œuvre {active ? fmtEuro(moScaled) : (c ? fmtEuro(c.main_oeuvre_ht) : '—')}</span>
               <span className="font-bold text-gray-700">Coût {active ? `pour ${fmtQty(active.qty)} ${uniteLabel}` : 'du batch'} : {active ? fmtEuro(coutScaled) : (c ? fmtEuro(c.total_ht) : '—')}</span>
             </div>
-          </div>
-        </div>
+            </div>
+          </>
+        )}
 
-        {/* ── Main-d'œuvre & notes — une ligne, plus d'onglets ── */}
-        <div className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-1.5 text-xs text-gray-500">
-          <span className="flex items-center gap-1.5"><Users className="w-3.5 h-3.5 text-gray-400" />
-            Fabriqué par <span className="font-semibold text-gray-700">{employeeName ?? 'taux moyen de l’équipe'}</span>
-            {c?.labor_rate_ht != null && <span className="tabular">· {fmtEuro(c.labor_rate_ht)}/h productif</span>}
-          </span>
-          {recipe.notes && <span className="text-gray-500">Notes : <span className="text-gray-700">{recipe.notes}</span></span>}
-          <span className="text-gray-400">Nom, production, TVA, employé et ingrédients se modifient via « Modifier la fiche ».</span>
+        {onglet === 'fabrication' && (
+          <>
+        {/* ── Paliers de quantité : pour N produits, temps ×multiple ── */}
+        <div className="mb-4 rounded-2xl border border-gray-100 bg-gray-50/60 px-4 py-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mr-1">Quantité produite</span>
+            <button onClick={() => setSelTier(null)}
+              className={`text-xs font-semibold rounded-full px-3 py-1.5 transition-colors tabular ${selTier === null ? 'bg-pilote text-white shadow-card' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-100'}`}>
+              Base{baseQty > 0 ? ` · ${fmtQty(baseQty)} ${uniteLabel}` : ''} · {fmtMin(baseMinutes)}
+            </button>
+            {tiers.map((t, i) => (
+              <span key={i} className={`inline-flex items-center gap-1 rounded-full transition-colors tabular ${selTier === i ? 'bg-pilote text-white shadow-card' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-100'}`}>
+                <button onClick={() => setSelTier(prev => prev === i ? null : i)} className="text-xs font-semibold pl-3 py-1.5">
+                  {fmtQty(num(t.qty))} {uniteLabel} · ×{num(t.mult).toLocaleString('fr-FR')}
+                </button>
+                <button onClick={() => { setTiers(prev => prev.filter((_, j) => j !== i)); setSelTier(p => (p === i ? null : p !== null && p > i ? p - 1 : p)); setDirty(true) }}
+                  className={`pr-2 py-1.5 ${selTier === i ? 'text-white/60 hover:text-white' : 'text-gray-300 hover:text-gray-600'}`} title="Retirer ce palier">
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            ))}
+            {newTier ? (
+              <span className="inline-flex items-center gap-1.5 bg-white border border-pilote-200 rounded-full pl-3 pr-1.5 py-1">
+                <input autoFocus inputMode="decimal" value={newTier.qty} placeholder="Qté"
+                  onChange={e => setNewTier(p => (p ? { ...p, qty: e.target.value } : p))}
+                  className="w-12 text-xs tabular focus:outline-none" />
+                <span className="text-[11px] text-gray-400">{uniteLabel} → ×</span>
+                <input inputMode="decimal" value={newTier.mult} placeholder="1,8"
+                  onChange={e => setNewTier(p => (p ? { ...p, mult: e.target.value } : p))}
+                  onKeyDown={e => { if (e.key === 'Enter' && num(newTier.qty) > 0 && num(newTier.mult) > 0) { setTiers(prev => [...prev, newTier]); setNewTier(null); setDirty(true) } }}
+                  className="w-10 text-xs tabular focus:outline-none" />
+                <button onClick={() => { if (num(newTier.qty) > 0 && num(newTier.mult) > 0) { setTiers(prev => [...prev, newTier]); setNewTier(null); setDirty(true) } }}
+                  className="w-6 h-6 rounded-full bg-pilote text-white flex items-center justify-center"><Plus className="w-3 h-3" /></button>
+                <button onClick={() => setNewTier(null)} className="w-6 h-6 rounded-full text-gray-400 hover:bg-gray-100 flex items-center justify-center"><X className="w-3 h-3" /></button>
+              </span>
+            ) : (
+              <button onClick={() => setNewTier({ qty: '', mult: '' })}
+                className="inline-flex items-center gap-1 text-xs font-semibold text-pilote border border-dashed border-pilote-200 rounded-full px-3 py-1.5 hover:bg-pilote-50 transition-colors">
+                <Plus className="w-3 h-3" />Palier
+              </button>
+            )}
+          </div>
+          {active ? (
+            <p className="text-xs text-gray-600 mt-2 tabular">
+              Pour <span className="font-bold">{fmtQty(active.qty)} {uniteLabel}</span> : temps <span className="font-bold">{fmtMin(scaledMinutes)}</span> (×{active.mult.toLocaleString('fr-FR')})
+              {baseQty > 0 && c ? <> · matière {fmtEuro(round2(coutMatiere * ratio))} · MO {fmtEuro(moScaled)} · coût total <span className="font-bold">{fmtEuro(coutScaled)}</span>{active.qty > 0 ? <> soit {fmtEuro(round2(coutScaled / active.qty))} / {unitFr(recipe.yield_unit)}</> : null}</> : null}
+              {baseQty <= 0 && <> · renseignez la production par batch (« Modifier la fiche ») pour multiplier aussi les ingrédients</>}
+            </p>
+          ) : (
+            <p className="text-[11px] text-gray-400 mt-2">Un palier = « pour tant de {uniteLabel}, le temps de base est multiplié par tant » — ex. 20 → ×1,8. Cliquez un palier pour lire temps, quantités et coûts correspondants.</p>
+          )}
         </div>
+          <div className="rounded-2xl border border-gray-100 overflow-hidden">
+            <div className="px-4 py-2.5 bg-gray-50 flex items-center justify-between gap-2">
+              <h3 className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Étapes de fabrication</h3>
+              <span className="text-[11px] text-gray-400 tabular">durées en min</span>
+            </div>
+            <div className="p-3 space-y-2">
+              {steps.length === 0 && (
+                <p className="text-sm text-gray-400 text-center py-5">Ajoutez les étapes du procédé — chaque étape porte sa durée, le temps total est leur somme.</p>
+              )}
+              {steps.map((s, i) => (
+                <div key={i} className="flex items-start gap-2">
+                  <span className="w-6 h-6 rounded-full bg-pilote-50 text-pilote text-[11px] font-extrabold flex items-center justify-center flex-shrink-0 mt-1.5">{i + 1}</span>
+                  <textarea value={s.text} rows={2}
+                    onChange={e => { setSteps(prev => prev.map((x, j) => j === i ? { ...x, text: e.target.value } : x)); setDirty(true) }}
+                    placeholder={`Étape ${i + 1}…`}
+                    className="flex-1 border border-gray-200 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200 resize-y min-w-0" />
+                  <div className="relative flex-shrink-0 mt-1">
+                    <input inputMode="decimal" value={s.minutes} title="Durée de l'étape (minutes)"
+                      onChange={e => { setSteps(prev => prev.map((x, j) => j === i ? { ...x, minutes: e.target.value } : x)); setDirty(true) }}
+                      placeholder="—"
+                      className="w-16 border border-gray-200 rounded-lg pl-2 pr-7 py-1.5 text-sm text-right tabular focus:outline-none focus:ring-2 focus:ring-pilote-200" />
+                    <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-gray-400">min</span>
+                  </div>
+                  {active && num(s.minutes) > 0 && (
+                    <span className="text-[11px] text-pilote font-semibold tabular flex-shrink-0 mt-2.5 w-12 text-right" title={`Durée pour ${fmtQty(active.qty)} ${uniteLabel}`}>
+                      {(Math.round(num(s.minutes) * timeMult * 10) / 10).toLocaleString('fr-FR')}
+                    </span>
+                  )}
+                  <button onClick={() => { setSteps(prev => prev.filter((_, j) => j !== i)); setDirty(true) }}
+                    className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 flex-shrink-0 mt-1"><X className="w-3.5 h-3.5" /></button>
+                </div>
+              ))}
+              <button onClick={() => { setSteps(prev => [...prev, { text: '', minutes: '' }]); setDirty(true) }}
+                className="w-full flex items-center justify-center gap-1.5 text-xs font-semibold text-gray-500 border-2 border-dashed border-gray-200 rounded-xl py-2 hover:border-pilote-200 hover:text-pilote transition-colors">
+                <Plus className="w-3.5 h-3.5" />Ajouter une étape
+              </button>
+            </div>
+            <div className="px-4 py-2.5 bg-pilote text-white flex items-center justify-between gap-2">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-white/60 flex items-center gap-1.5"><Clock className="w-3 h-3" />Temps total</span>
+              <span className="font-bold tabular text-sm">
+                {active ? <>{fmtMin(scaledMinutes)} <span className="text-white/60 font-semibold">(base {fmtMin(baseMinutes)})</span></> : fmtMin(baseMinutes)}
+              </span>
+            </div>
+            {!hasTimed && (Number(recipe.labor_minutes) || 0) > 0 && (
+              <p className="px-4 py-2 text-[11px] text-amber-600 border-t border-gray-100">Étapes non chronométrées — temps repris du champ « minutes » de la fiche ({recipe.labor_minutes} min). Renseignez les durées pour un temps calculé.</p>
+            )}
+          </div>
+          </>
+        )}
+
+        {onglet === 'vente' && (
+          <div className="rounded-2xl border border-gray-100 overflow-hidden">
+            <div className="px-4 py-2.5 bg-gray-50 flex items-center justify-between gap-2 flex-wrap">
+              <h3 className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
+                Ce que rapporte {actif ? `le format « ${actif.name} »` : 'la fiche'}
+              </h3>
+              <span className="text-[11px] text-gray-400 tabular">
+                {venteQty > 0 ? `${fmtQty(venteQty)} ${uniteVente} vendables par batch` : 'quantité vendable non renseignée'}
+              </span>
+            </div>
+            {/* Les deux marges du métier, PAR UNITÉ DE VENTE :
+                  · marge BRUTE  = PV HT − matière (emballage compris) ;
+                  · marge NETTE  = marge brute − main-d'œuvre.
+                Elles ne sont PAS publiées tant qu'il manque un prix
+                d'ingrédient : le coût serait sous-évalué et les deux marges
+                flattées — même règle que le moteur. */}
+            <dl className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-2 text-sm">
+              <div className="flex justify-between gap-3">
+                <dt className="text-gray-500">Prix de vente HT</dt>
+                <dd className="font-semibold text-gray-900 tabular">{pvHTActif !== null ? fmtEuro(pvHTActif) : <span className="text-gray-300">&mdash;</span>}</dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt className="text-gray-500">TVA appliquée</dt>
+                <dd className="font-semibold text-gray-900 tabular">{tvaActive.toLocaleString('fr-FR')} %</dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt className="text-gray-500">Matière {c && c.emballage_ht > 0 ? '+ emballage' : ''}</dt>
+                <dd className="font-semibold text-gray-900 tabular">{matiereUnite !== null ? fmtEuro(matiereUnite) : <span className="text-gray-300">&mdash;</span>}</dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt className="text-gray-500">Main-d&rsquo;œuvre</dt>
+                <dd className="font-semibold text-gray-900 tabular">{moUnite !== null ? fmtEuro(moUnite) : <span className="text-gray-300">&mdash;</span>}</dd>
+              </div>
+              <div className="flex justify-between gap-3 pt-2 border-t border-gray-100">
+                <dt className="text-gray-500">Marge brute <span className="text-gray-400">(hors main-d&rsquo;œuvre)</span></dt>
+                <dd className="font-bold text-gray-900 tabular">{margeBrute !== null ? fmtEuro(margeBrute) : <span className="text-gray-300">&mdash;</span>}</dd>
+              </div>
+              <div className="flex justify-between gap-3 pt-2 border-t border-gray-100">
+                <dt className="text-gray-500">Marge nette <span className="text-gray-400">(main-d&rsquo;œuvre déduite)</span></dt>
+                <dd className={`font-bold tabular ${margeNette !== null && margeNette < 0 ? 'text-red-600' : 'text-gray-900'}`}>{margeNette !== null ? fmtEuro(margeNette) : <span className="text-gray-300">&mdash;</span>}</dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt className="text-gray-500">Coût matière dans le PV HT</dt>
+                <dd className="font-semibold text-gray-900 tabular">{foodCostPct !== null ? `${foodCostPct} %` : <span className="text-gray-300">&mdash;</span>}</dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt className="text-gray-500">Coût de revient complet</dt>
+                <dd className="font-semibold text-gray-900 tabular">{coutUnite !== null ? `${fmtEuro(coutUnite)} / ${uniteVente}` : <span className="text-gray-300">&mdash;</span>}</dd>
+              </div>
+            </dl>
+            {coutIncomplet && (
+              <p className="px-4 py-2.5 text-[11px] text-amber-700 bg-amber-50 border-t border-amber-100">
+                {nomsSansPrix} sans prix : les marges ne sont pas calculées tant que le coût est sous-évalué — elles paraîtraient meilleures qu&rsquo;elles ne le sont.
+              </p>
+            )}
+            {formats.length > 1 && (
+              <p className="px-4 py-2 text-[11px] text-gray-400 border-t border-gray-100">
+                Cette fiche a {formats.length} formats de vente : les chiffres ci-dessus sont ceux du format choisi en haut. La fabrication, elle, est commune.
+              </p>
+            )}
+          </div>
+        )}
+
+        {onglet === 'stats' && (
+          <>
+        {/* ── Coût matière dans le temps : la fiche relue aux prix d'hier ── */}
+        {c && Array.isArray(c.matiere_series) && c.matiere_series.length >= 2 && (() => {
+          const s = c.matiere_series
+          const first = s[0], last = s[s.length - 1]
+          const delta = round2(last.v - first.v)
+          const stable = Math.abs(delta) < 0.005
+          const deltaUnit = baseQty > 0 ? round2(delta / baseQty) : null
+          // Marge qu'aurait la fiche au coût du début de période, à PV inchangé —
+          // sur la base de VENTE (celle du PV), pas forcément l'unité produite.
+          const coutVente = coutUnite
+          const deltaVente = venteQty > 0 ? round2(delta / venteQty) : null
+          let margeAvant: number | null = null
+          if (!stable && pvHTActif !== null && pvHTActif > 0 && coutVente != null && deltaVente !== null) {
+            margeAvant = Math.round(((pvHTActif - (coutVente - deltaVente)) / pvHTActif) * 1000) / 10
+          }
+          return (
+            <div className="mb-4 rounded-2xl border border-gray-100 bg-gray-50/60 px-4 py-3 flex items-center gap-4 flex-wrap">
+              <div className="min-w-[240px] flex-1">
+                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Coût matière — 8 dernières semaines</p>
+                <p className="text-xs text-gray-600 mt-1 tabular">
+                  {stable ? (
+                    <>Stable depuis le {fmtDateFr(first.d)} — {fmtEuro(last.v)} le batch, aux prix mercuriale relus à chaque date.</>
+                  ) : (
+                    <>
+                      {fmtEuro(first.v)} le {fmtDateFr(first.d)} → {fmtEuro(last.v)} aujourd&apos;hui :{' '}
+                      <span className={`font-bold ${delta > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                        {delta > 0 ? '+' : '−'}{fmtEuro(Math.abs(delta))} / batch
+                        {deltaUnit !== null && Math.abs(deltaUnit) >= 0.005 ? ` (${delta > 0 ? '+' : '−'}${fmtEuro(Math.abs(deltaUnit))} / ${unitFr(recipe.yield_unit)})` : ''}
+                      </span>
+                      {margeAvant !== null && margeActive !== null && (
+                        <> · à PV inchangé, marge <span className="font-bold tabular">{margeAvant.toLocaleString('fr-FR')} %</span> → <span className={`font-bold tabular ${delta > 0 ? 'text-red-600' : 'text-green-600'}`}>{margeActive.toLocaleString('fr-FR')} %</span></>
+                      )}
+                    </>
+                  )}
+                </p>
+              </div>
+              <TrendSpark points={s} />
+            </div>
+          )
+        })()}
+
+        {/* Courbe impossible à tracer : DIRE POURQUOI. Un bloc simplement absent
+            se lit « le coût matière n'a pas bougé » — c'est l'inverse du sens. */}
+        {c && (!Array.isArray(c.matiere_series) || c.matiere_series.length < 2) && c.matiere_series_motif && (
+          <div className="mb-4 rounded-2xl border border-gray-100 bg-gray-50/60 px-4 py-3">
+            <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Coût matière — 8 dernières semaines</p>
+            <p className="text-xs text-gray-500 mt-1">{c.matiere_series_motif}</p>
+          </div>
+        )}
+
+        {/* Historique tronqué : la courbe est partielle, ou absente faute de
+            points. Le silence donnerait à lire « le prix n'a pas bougé ». */}
+        {historiqueIncomplet && (
+          <div className="mb-4 bg-amber-50 border border-amber-200 rounded-xl px-4 py-2 flex items-start gap-2 text-xs text-amber-800">
+            <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+            <span>L&apos;historique des prix n&apos;a pas pu être lu en entier : la courbe du coût matière ci-dessus est partielle. Actualisez ; si le message persiste, signalez-le.</span>
+          </div>
+        )}
+          </>
+        )}
+
       </div>
     </div>
   )
