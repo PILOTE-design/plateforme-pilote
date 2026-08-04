@@ -56,6 +56,11 @@ const ESPECE_FR: Record<AnimalType, string> = {
 
 type Row = Record<string, unknown>
 
+/** Part MINIMALE du poids de carcasse qui doit être pesée pour qu'on accepte de
+ *  répartir son coût. En dessous, la saisie est inachevée et le coût au kilo
+ *  qu'on en tirerait serait faux — on préfère ne rien publier. */
+export const SEUIL_COUVERTURE = 0.4
+
 /**
  * Coût au kg de chaque morceau, pour un client, d'après sa DERNIÈRE découpe de
  * chaque espèce.
@@ -77,7 +82,7 @@ export async function coutsMorceauxDuClient(
 
   const { data, error } = await service
     .from('valorisations')
-    .select('id, client_id, profile_id, animal_type, purchase_date, total_cost, cut_weights')
+    .select('id, client_id, profile_id, animal_type, purchase_date, total_cost, carcass_weight, cut_weights')
     .eq('client_id', clientId)
     .order('purchase_date', { ascending: false })
   let lignes = (data as Row[] | null) ?? []
@@ -88,7 +93,7 @@ export async function coutsMorceauxDuClient(
   if (lignes.length === 0 && profileIdFallback) {
     const { data: repli } = await service
       .from('valorisations')
-      .select('id, client_id, profile_id, animal_type, purchase_date, total_cost, cut_weights')
+      .select('id, client_id, profile_id, animal_type, purchase_date, total_cost, carcass_weight, cut_weights')
       .eq('profile_id', profileIdFallback)
       .order('purchase_date', { ascending: false })
     lignes = (repli as Row[] | null) ?? []
@@ -128,6 +133,33 @@ export async function coutsMorceauxDuClient(
     const espece = String(v.animal_type || '') as AnimalType
     if (!ANIMAL_TYPES.includes(espece) || vue.has(espece)) continue
     vue.add(espece)
+
+    // ── LA CARCASSE EST-ELLE ASSEZ PESÉE POUR QU'ON RÉPARTISSE SON COÛT ? ──
+    //
+    // Le coût total se répartit sur les pièces PESÉES. C'est la bonne règle
+    // quand la découpe est saisie : le prix de la bête se porte sur ce qui se
+    // vend, les os et les chutes n'ayant pas de coût propre. Mais si le boucher
+    // n'a saisi que deux poids sur cent vingt-trois, la totalité du prix tombe
+    // sur ces deux pièces — et le kilo devient onze fois trop cher.
+    //
+    // Mesuré en production le 04/08/2026 : une carcasse de 520 kg à 3 270 €
+    // avec 46 kg pesés (9 %) publiait « Jarret avec os — découpe » à
+    // 65,62 €/kg. Un jarret vaut le sixième de ça. Rien à l'écran ne le disait,
+    // et ce prix serait entré tel quel dans le coût de revient d'une fiche.
+    //
+    // Le plancher est PONDÉRAL, pas économique : la part du poids carcasse
+    // effectivement pesée. Il est posé BAS — 40 % — franchement sous tout
+    // rendement commercial réel (65 à 75 % en bœuf), pour ne refuser qu'une
+    // saisie manifestement inachevée et jamais une découpe honnête. Sans poids
+    // de carcasse saisi, il n'y a rien à comparer : on publie, comme avant.
+    const poidsCarcasse = Number(v.carcass_weight) || 0
+    const poidsPeses = Object.values((v.cut_weights as Record<string, unknown> | null) ?? {})
+      .reduce<number>((s, x) => { const n = Number(x); return s + (Number.isFinite(n) && n > 0 ? n : 0) }, 0)
+    if (poidsCarcasse > 0 && poidsPeses < poidsCarcasse * SEUIL_COUVERTURE) {
+      console.warn(`[valorisation-source] découpe ${String(v.id)} trop peu pesée `
+        + `(${poidsPeses.toFixed(1)} kg sur ${poidsCarcasse.toFixed(1)} kg) : coûts non publiés`)
+      continue
+    }
 
     const prefs = await prefsDuProfil(String(v.profile_id || '') || profileIdFallback || '')
     const repartition = repartitionCarcasse({
