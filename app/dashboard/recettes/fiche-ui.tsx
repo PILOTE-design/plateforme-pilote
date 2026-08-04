@@ -14,6 +14,7 @@
 
 import Link from 'next/link'
 import { X } from 'lucide-react'
+import { nomFournisseur } from '@/lib/supplier-name'
 
 export type FicheIngredient = {
   generic_id: string | null; article_id: string | null; label: string
@@ -127,6 +128,33 @@ export const UNITES_VENTE = [
   { value: 'portion', label: 'à la portion' },
   { value: 'litre', label: 'au litre' },
 ]
+
+/** Unités de MESURE — elles ne prennent pas la marque du pluriel derrière un
+ *  nombre (« 10 kg », « 2 g », « 3 cl »). Le litre, lui, en prend une. */
+const UNITES_INVARIABLES = new Set(['kg', 'g', 'mg', '100 g', 'cl', 'ml', 'l'])
+
+/**
+ * L'unité de vente accordée avec la quantité : « 10 portions », « 1 pièce »,
+ * « 10 kg ».
+ *
+ * Écrit « le batch fait 10 portion vendables » pendant six lots. Ce n'est pas
+ * qu'une coquille : la fiche est le document que le boucher imprime, montre à
+ * son équipe et relit devant un client. Une faute d'accord dans la phrase qui
+ * porte le chiffre le plus important de l'écran abîme la confiance dans le
+ * chiffre lui-même.
+ *
+ * Une unité écrite au pluriel par le client (« portions ») est laissée telle
+ * quelle, et une unité inconnue reçoit un « s » — c'est la règle par défaut du
+ * français, et le champ est libre.
+ */
+export function uniteAuPluriel(qty: number, unite: string): string {
+  const u = (unite || '').trim()
+  if (!u) return ''
+  if (Math.abs(qty) < 2) return u
+  if (UNITES_INVARIABLES.has(u.toLowerCase())) return u
+  if (/s$|x$|z$/i.test(u)) return u
+  return `${u}s`
+}
 
 /** « kg » → « au kg », « pièce » → « à la pièce »… pour les phrases de la fiche */
 export const venteEnClair = (u: string) =>
@@ -403,12 +431,22 @@ export function TableauIngredients({
                         ligne facturée « BOYAU MENU MOUTON 24/26A SUR TUB
                         15 … ». C'est ce nom-là qu'on retrouve chez le
                         fournisseur quand on veut discuter le prix. */}
-                    {ing.price_ref_name && (
-                      <p className="text-[11px] italic text-gray-400 truncate max-w-[18rem]"
-                        title={`Prix repris de la réf facturée « ${ing.price_ref_name} »${ing.price_ref_supplier ? ` — ${ing.price_ref_supplier}` : ''}`}>
-                        {ing.price_ref_name}{ing.price_ref_supplier ? ` — ${ing.price_ref_supplier}` : ''}
-                      </p>
-                    )}
+                    {ing.price_ref_name && (() => {
+                      // Le libellé stocké est celui du connecteur : « Facture
+                      // DAVID MASTELLA - 608488 ». Affiché brut, il faisait
+                      // passer une nature de pièce et un numéro de facture pour
+                      // le nom d'une maison. Même nettoyage que la mercuriale,
+                      // même fonction — et rien quand il ne reste pas une seule
+                      // lettre exploitable.
+                      const maison = nomFournisseur(ing.price_ref_supplier)
+                      const suffixe = maison ? ` — ${maison}` : ''
+                      return (
+                        <p className="text-[11px] italic text-gray-400 truncate max-w-[18rem]"
+                          title={`Prix repris de la réf facturée « ${ing.price_ref_name} »${suffixe}`}>
+                          {ing.price_ref_name}{suffixe}
+                        </p>
+                      )
+                    })()}
                   </td>
                   <td className="px-3.5 py-2.5 text-right tabular">
                     <span className="text-sm font-semibold text-gray-900">{fmtQty(ing.quantity * ratio)} {uniteAffichee}</span>
