@@ -130,6 +130,18 @@ export type GenericInfo = {
    *  apparence, alors que c'est le chiffre sur lequel se décide un prix de
    *  vente. La mercuriale, elle, sait déjà signaler un prix de plus de 30 jours. */
   price_date: string | null
+  /** La RÉF FOURNISSEUR d'où sort ce prix, telle qu'elle est écrite sur la
+   *  facture, et la maison qui l'a envoyée.
+   *
+   *  Un générique porte un nom de métier court (« BOYAUX MOUTON 24 26 ») ; la
+   *  ligne de facture qui lui donne son prix, elle, s'appelle « BOYAU MENU
+   *  MOUTON 24/26A SUR TUB 15 MASSE X90M 24K ». Sans ce nom-là sous
+   *  l'ingrédient, un coût de revient est un chiffre sans provenance : pour le
+   *  contester chez le fournisseur, il faut savoir QUELLE référence il chiffre.
+   *
+   *  null : aucune réf n'a donné de prix (prix manquant, ou en quarantaine). */
+  ref_name: string | null
+  ref_supplier: string | null
 }
 
 export type IngredientCost = IngredientRow & {
@@ -138,6 +150,11 @@ export type IngredientCost = IngredientRow & {
   /** Date de la facture d'où vient le prix mercuriale (null : prix manuel,
    *  sous-recette, ou aucun prix) — l'âge du chiffre, affiché sur la fiche. */
   price_date?: string | null
+  /** Réf fournisseur facturée d'où sort le prix mercuriale, et sa maison —
+   *  affichées sous le nom de l'ingrédient (cf. GenericInfo.ref_name). null
+   *  pour un prix manuel, une sous-recette ou une ligne héritée. */
+  price_ref_name?: string | null
+  price_ref_supplier?: string | null
   categorie: 'ingredient' | 'emballage'
   /** Sous-recette au coût sous-évalué (elle-même a des prix manquants) */
   sub_incomplete?: boolean
@@ -252,6 +269,8 @@ export function costIngredients(
         unit_price_ht: price,
         price_source: source,
         price_date: source === 'mercuriale' ? generic.price_date : null,
+        price_ref_name: source === 'mercuriale' ? generic.ref_name : null,
+        price_ref_supplier: source === 'mercuriale' ? generic.ref_supplier : null,
         categorie: generic.category,
         qty_base: qtyBase,
         qty_brute: qtyBrute,
@@ -466,7 +485,11 @@ export function buildGenericMap(
   const baseById = new Map<string, 'kg' | 'piece'>(
     generics.map(g => [String(g.id), g.base_unit === 'piece' ? 'piece' : 'kg']),
   )
-  const bestByGeneric = new Map<string, { date: string; price: number }>()
+  // La réf RETENUE voyage avec son prix : c'est elle qui répond à « d'où sort
+  // ce chiffre ». Les colonnes `name` / `supplier_name` peuvent manquer d'un
+  // appelant à l'autre (tous les select ne les demandent pas) — dans ce cas la
+  // provenance est simplement absente, jamais devinée.
+  const bestByGeneric = new Map<string, { date: string; price: number; refName: string | null; refSupplier: string | null }>()
   for (const a of articles) {
     const gid = a.generic_id as string | null
     if (!gid || a.last_price_ht == null) continue
@@ -479,7 +502,11 @@ export function buildGenericMap(
     const conv = hasConv ? Number(a.conversion_factor) : 1
     const date = String(a.last_price_date || '')
     const cur = bestByGeneric.get(gid)
-    if (!cur || date.localeCompare(cur.date) > 0) bestByGeneric.set(gid, { date, price: raw / conv })
+    if (!cur || date.localeCompare(cur.date) > 0) {
+      const nom = typeof a.name === 'string' && a.name.trim() ? a.name.trim() : null
+      const maison = typeof a.supplier_name === 'string' && a.supplier_name.trim() ? a.supplier_name.trim() : null
+      bestByGeneric.set(gid, { date, price: raw / conv, refName: nom, refSupplier: maison })
+    }
   }
   const map = new Map<string, GenericInfo>()
   for (const g of generics) {
@@ -492,6 +519,8 @@ export function buildGenericMap(
       default_loss_pct: Number(g.default_loss_pct) || 0,
       price_ht: bestByGeneric.has(id) ? round4(bestByGeneric.get(id)!.price) : null,
       price_date: bestByGeneric.get(id)?.date || null,
+      ref_name: bestByGeneric.get(id)?.refName ?? null,
+      ref_supplier: bestByGeneric.get(id)?.refSupplier ?? null,
     })
   }
   return map

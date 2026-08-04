@@ -44,7 +44,10 @@ export async function GET() {
     service.from('employees').select(PAYROLL_EMPLOYEE_COLUMNS).eq('client_id', clientId),
     fetchAllPages<any>(apres => {
       let q = service.from('articles')
-        .select('id, unit, last_price_ht, last_price_date, generic_id, conversion_factor')
+        // `name` et `supplier_name` : la réf fournisseur telle qu'elle est
+        // écrite sur la facture, affichée sous l'ingrédient de la fiche —
+        // la provenance du prix, pas seulement sa valeur.
+        .select('id, name, supplier_name, unit, last_price_ht, last_price_date, generic_id, conversion_factor')
         .eq('client_id', clientId)
       if (apres) q = q.gt('id', apres)
       return q.order('id', { ascending: true })

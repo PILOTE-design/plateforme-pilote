@@ -30,6 +30,10 @@ export type FicheIngredient = {
   unit_price_ht: number | null; price_source: string; categorie: 'ingredient' | 'emballage'
   /** Date de la facture d'où vient le prix mercuriale — l'âge du chiffre */
   price_date?: string | null
+  /** Réf fournisseur facturée d'où sort le prix, et sa maison — la PROVENANCE
+   *  du chiffre, affichée sous le nom de l'ingrédient. */
+  price_ref_name?: string | null
+  price_ref_supplier?: string | null
   qty_base: number; qty_brute: number; line_total_ht: number
 }
 
@@ -99,6 +103,34 @@ const venteEnClair = (u: string) =>
   : u === 'portion' ? 'à la portion'
   : u === 'litre' ? 'au litre'
   : `en ${u}`
+
+/** Un pourcentage en entier — sauf entre 0 et 0,5 %, où « 0 % » se lirait
+ *  « rien », alors que la ligne pèse quelque chose. Le poivre d'une terrine
+ *  n'est pas nul : il est petit. */
+const pctFmt = (p: number) => (p > 0 && p < 0.5 ? '< 1 %' : `${Math.round(p)} %`)
+
+/** Poids d'une ligne, en kg, NET et BRUT — null quand la ligne n'a pas de poids
+ *  connu (comptée à la pièce, ou unité héritée illisible).
+ *
+ *  Une pièce n'a pas de masse tant que personne n'a dit ce qu'elle pèse : la
+ *  compter pour 0 g gonflerait la part de toutes les autres, lui inventer un
+ *  poids serait pire. Elle sort donc de l'assiette du « % de poids » — et le
+ *  tableau ANNONCE combien de lignes en sortent, plutôt que de publier des
+ *  pourcentages qui ne totalisent rien.
+ *
+ *  Même règle que le pied de tableau : les deux lisent cette fonction, pour que
+ *  la part d'une ligne et le total ne puissent pas diverger. */
+function ligneKg(i: FicheIngredient): { net: number; brut: number } | null {
+  if (i.generic_id) {
+    if (i.qty_unit !== 'kg' && i.qty_unit !== 'g') return null
+    return { net: Number(i.qty_base) || 0, brut: Number(i.qty_brute) || 0 }
+  }
+  if ((i.unit || '').toLowerCase().includes('kg')) {
+    const q = Number(i.quantity) || 0
+    return { net: q, brut: Number(i.qty_brute) || q }
+  }
+  return null
+}
 
 /** Âge d'une date de prix, en jours pleins. null si la date est illisible. */
 function ageJours(d: string | null | undefined): number | null {
@@ -188,14 +220,15 @@ export default function FichePanel({
   // sort du frigo, perte comprise — alors que le pied ne sommait que le NET,
   // dans la même colonne. Sur une fiche à 15 % de perte l'écart saute aux yeux
   // et jette le doute sur le reste des chiffres. Les deux sont affichés.
+  //
+  // `horsAssiette` compte les lignes SANS poids connu : elles ne peuvent pas
+  // recevoir de « % de poids », et leur nombre est affiché sous le tableau —
+  // une colonne dont on ignore ce qui manque est une colonne qui ment.
   const poids = useMemo(() => recipe.ingredients.reduce((acc, i) => {
-    if (i.generic_id && (i.qty_unit === 'kg' || i.qty_unit === 'g')) return { net: acc.net + i.qty_base, brut: acc.brut + i.qty_brute }
-    if (!i.generic_id && (i.unit || '').toLowerCase().includes('kg')) {
-      const q = Number(i.quantity) || 0
-      return { net: acc.net + q, brut: acc.brut + (Number(i.qty_brute) || q) }
-    }
-    return acc
-  }, { net: 0, brut: 0 }), [recipe])
+    const kg = ligneKg(i)
+    if (kg === null) return { ...acc, horsAssiette: acc.horsAssiette + 1 }
+    return { net: acc.net + kg.net, brut: acc.brut + kg.brut, horsAssiette: acc.horsAssiette }
+  }, { net: 0, brut: 0, horsAssiette: 0 }), [recipe])
 
   const coutMatiere = (c?.matiere_ht ?? 0) + (c?.emballage_ht ?? 0)
   // Base du PV et du coefficient : le coût PAR UNITÉ DE VENTE quand la fiche se
@@ -726,19 +759,30 @@ export default function FichePanel({
           {/* Ingrédients — aux quantités du palier choisi */}
           <div className="rounded-2xl border border-gray-100 overflow-hidden">
             <div className="overflow-x-auto max-h-[30rem] overflow-y-auto">
-              <table className="w-full min-w-[420px]">
+              <table className="w-full min-w-[520px]">
                 <thead className="sticky top-0 z-10">
                   <tr className="bg-gray-50 text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
-                    <th className="px-3.5 py-2.5 text-left">Ingrédient</th>
-                    <th className="px-3.5 py-2.5 text-right">Qté{active ? ` (×${(Math.round(ratio * 100) / 100).toLocaleString('fr-FR')})` : ''}</th>
-                    <th className="px-3.5 py-2.5 text-right">Coût (€)</th>
-                    <th className="px-3.5 py-2.5 text-right">%</th>
+                    <th className="px-3.5 py-2.5 text-left">
+                      Ingrédient
+                      <span className="block text-[10px] font-normal normal-case tracking-normal text-gray-300">dernière réf. fournisseur facturée</span>
+                    </th>
+                    <th className="px-3.5 py-2.5 text-right align-bottom">Qté{active ? ` (×${(Math.round(ratio * 100) / 100).toLocaleString('fr-FR')})` : ''}</th>
+                    <th className="px-3.5 py-2.5 text-right align-bottom">Poids (%)</th>
+                    <th className="px-3.5 py-2.5 text-right align-bottom">Coût (€)</th>
+                    <th className="px-3.5 py-2.5 text-right align-bottom">Coût (%)</th>
                     <th className="w-8" />
                   </tr>
                 </thead>
                 <tbody>
                   {recipe.ingredients.map((ing, i) => {
                     const coutPct = coutMatiere > 0 ? (ing.line_total_ht / coutMatiere) * 100 : null
+                    // Part de POIDS de la ligne dans le brut total pesable. Lue à
+                    // côté de la part de COÛT, elle répond à la question qu'un
+                    // boucher se pose devant une fiche : « qu'est-ce qui pèse
+                    // dans mon coût, et est-ce que ça pèse dans ma recette ? »
+                    // Un boyau à 1 % du poids et 10 % du coût saute alors aux yeux.
+                    const kg = ligneKg(ing)
+                    const poidsPct = kg !== null && poids.brut > 0 ? (kg.brut / poids.brut) * 100 : null
                     const loss = Number(ing.loss_pct) || 0
                     const uniteAffichee = ing.generic_id ? (ing.qty_unit === 'piece' ? 'pièce' : ing.qty_unit || '') : (ing.unit || '')
                     return (
@@ -769,13 +813,29 @@ export default function FichePanel({
                               </span>
                             )
                           })()}
+                          {/* La réf telle qu'elle est écrite sur la facture : le
+                              générique s'appelle « BOYAUX MOUTON 24 26 », la
+                              ligne facturée « BOYAU MENU MOUTON 24/26A SUR TUB
+                              15 … ». C'est ce nom-là qu'on retrouve chez le
+                              fournisseur quand on veut discuter le prix. */}
+                          {ing.price_ref_name && (
+                            <p className="text-[11px] italic text-gray-400 truncate max-w-[18rem]"
+                              title={`Prix repris de la réf facturée « ${ing.price_ref_name} »${ing.price_ref_supplier ? ` — ${ing.price_ref_supplier}` : ''}`}>
+                              {ing.price_ref_name}{ing.price_ref_supplier ? ` — ${ing.price_ref_supplier}` : ''}
+                            </p>
+                          )}
                         </td>
                         <td className="px-3.5 py-2.5 text-right tabular">
                           <span className="text-sm font-semibold text-gray-900">{fmtQty(ing.quantity * ratio)} {uniteAffichee}</span>
                           {loss > 0 && <p className="text-[11px] text-gray-400">({fmtQty(ing.qty_brute * ratio)} {ing.generic_id ? unitFr(ing.qty_unit === 'g' ? 'kg' : ing.qty_unit) : uniteAffichee} brut · perte {loss.toLocaleString('fr-FR')} %)</p>}
                         </td>
+                        <td className="px-3.5 py-2.5 text-right text-sm text-gray-600 tabular">
+                          {poidsPct !== null
+                            ? pctFmt(poidsPct)
+                            : <span className="text-gray-300" title="Ligne comptée à la pièce : sans poids connu, elle ne peut pas prendre de part de poids.">—</span>}
+                        </td>
                         <td className="px-3.5 py-2.5 text-right text-sm font-semibold text-gray-900 tabular">{ing.unit_price_ht !== null ? fmtEuro(ing.line_total_ht * ratio) : '—'}</td>
-                        <td className="px-3.5 py-2.5 text-right text-sm text-gray-600 tabular">{coutPct !== null && ing.unit_price_ht !== null ? `${Math.round(coutPct)} %` : '—'}</td>
+                        <td className="px-3.5 py-2.5 text-right text-sm text-gray-600 tabular">{coutPct !== null && ing.unit_price_ht !== null ? pctFmt(coutPct) : '—'}</td>
                         <td className="pr-2 text-right">
                           {confirmIng === i ? (
                             <button onClick={() => removeIngredient(i)} onBlur={() => setConfirmIng(null)}
@@ -806,6 +866,7 @@ export default function FichePanel({
                         </>
                       ) : ''}
                     </td>
+                    <td className="px-3.5 py-2.5 text-right font-bold tabular text-white/70 text-sm">{poids.brut > 0 ? '100 %' : '—'}</td>
                     <td className="px-3.5 py-2.5 text-right font-bold tabular text-sm">{fmtEuro(coutMatiere * ratio)}</td>
                     <td className="px-3.5 py-2.5 text-right font-bold tabular text-white/70 text-sm">100 %</td>
                     <td />
@@ -813,6 +874,18 @@ export default function FichePanel({
                 </tfoot>
               </table>
             </div>
+
+            {/* Ce que la colonne « Poids (%) » ne couvre PAS. Sans cette ligne,
+                une fiche moitié en pièces afficherait des parts de poids qui ne
+                totalisent visiblement pas 100 % sans que rien ne l'explique. */}
+            {poids.horsAssiette > 0 && (
+              <p className="px-3.5 py-2 text-[11px] text-gray-400 border-t border-gray-100">
+                {poids.horsAssiette} ligne{poids.horsAssiette > 1 ? 's' : ''} comptée{poids.horsAssiette > 1 ? 's' : ''} à la pièce
+                {poids.brut > 0
+                  ? <> — sans poids connu, {poids.horsAssiette > 1 ? 'elles restent' : 'elle reste'} hors de l&apos;assiette du % de poids (le % de coût, lui, {poids.horsAssiette > 1 ? 'les' : 'l’'}inclut).</>
+                  : <> : aucune ligne pesable sur cette fiche, la colonne « Poids (%) » n&apos;a rien à répartir.</>}
+              </p>
+            )}
 
             {/* Ajout d'ingrédient sur place — comme les étapes, enregistré aussitôt */}
             <div className="px-3 py-2 border-t border-gray-100">
