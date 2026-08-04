@@ -9,6 +9,7 @@
 import { useMemo } from 'react'
 import { TrendingUp, TrendingDown, Store, ChevronRight, Lock } from 'lucide-react'
 import { matchFamilyId, type MarginFamily } from '@/lib/margin-families'
+import { nomFournisseur } from '@/lib/supplier-name'
 
 // ── Formats partagés ──────────────────────────────────────
 
@@ -18,19 +19,12 @@ export const fmtDate = (s: string | null) => (s ? new Date(s + 'T00:00:00Z').toL
 
 /** Nom de fournisseur LISIBLE. Le connecteur stocke des libellés générés du
  *  genre « Facture AURIBAULT OIRY - 15299292 (label généré) » : affichés tels
- *  quels, ils noient le nom qui compte au milieu d'un numéro de pièce. On garde
- *  la maison, pas la référence de la facture. */
-export const nomFournisseur = (s: string | null | undefined): string => {
-  const t = String(s ?? '').trim()
-  if (!t) return ''
-  return t
-    .replace(/^(facture|avoir)\s+/i, '')
-    .replace(/\s*\(label\s+g[ée]n[ée]r[ée]\)\s*$/i, '')
-    // Numéro de pièce en fin de libellé : EXIGE un espace avant le tiret et au
-    // moins un chiffre — sinon « SOCIETE JEAN-CHARLES » perdrait son Charles.
-    .replace(/\s+-\s*(?=[A-Za-z0-9/-]*\d)[A-Za-z0-9/-]{4,}$/, '')
-    .trim() || t
-}
+ *  quels, ils noient le nom qui compte au milieu d'un numéro de pièce.
+ *
+ *  Le nettoyage vit désormais dans `lib/supplier-name` — les fiches recettes
+ *  l'affichent AUSSI, sous chaque ingrédient, depuis le lot 44. Ré-exporté ici
+ *  pour que les vingt appels de la page n'aient pas à changer d'import. */
+export { nomFournisseur }
 export const unitLabel = (u: 'kg' | 'piece') => (u === 'kg' ? 'kg' : 'pièce')
 
 /** Âge d'un prix en jours — au-delà de 30 j, les écrans le signalent */
