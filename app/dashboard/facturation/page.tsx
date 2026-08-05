@@ -81,25 +81,84 @@ type Summary = {
 /** Mémoire fournisseur : dernière catégorie et dernier taux de TVA utilisés */
 type SupplierMemo = { name: string; category: string; tva_rate: number | null }
 
-/** Répartition d'un fournisseur sur les rayons (en %) */
-type RayonSplit = { supplier_key: string; supplier_label: string | null; pct_boucherie: number; pct_charcuterie: number; pct_traiteur: number; pct_divers: number }
+/** Répartition d'un fournisseur sur les FAMILLES de la boutique (en %) */
+type RayonSplit = {
+  supplier_key: string; supplier_label: string | null
+  /** { id de famille → % }. Les colonnes pct_* que l'API renvoie encore sont
+   *  DÉRIVÉES côté serveur : cet écran ne les lit plus et n'en envoie plus. */
+  parts: Record<string, number>
+}
 
 /** Famille du référentiel margin_families (ventilation par facture + charges) */
 type VentFamily = { id: string; parent_id: string | null; name: string; is_rachat: boolean }
-// Champs de ventilation d'un fournisseur : les 3 métiers + « divers ». Le divers n'est
-// plus redistribué au prorata du CA — il alimente son propre bloc de marge, en face du
-// CA de rachat, d'épicerie, de boissons et de fruits & légumes. Code couleur ALIGNÉ sur
-// la page Marges : un même métier garde la même couleur partout dans l'application.
-const VENT_FIELDS = [
-  { key: 'boucherie',   label: 'Boucherie',   dot: '#b91c1c' },
-  { key: 'charcuterie', label: 'Charcuterie', dot: '#c2410c' },
-  { key: 'traiteur',    label: 'Traiteur',    dot: '#047857' },
-  { key: 'divers',      label: 'Divers',      dot: '#9ca3af' },
-] as const
-type VentKey = typeof VENT_FIELDS[number]['key']
-type VentDraft = Record<VentKey, string>
-const emptyVent = (): VentDraft => ({ boucherie: '', charcuterie: '', traiteur: '', divers: '' })
+
+/** Famille de la boutique, telle que /api/supplier-splits la sert : les MÊMES
+ *  que celles sur lesquelles le CA est ventilé. Les achats se répartissent
+ *  désormais dessus — dix racines, sous-familles comprises — au lieu de quatre
+ *  rayons écrits en dur qui écrasaient tout le reste dans « divers ». */
+type RayonFamille = { id: string; parent_id: string | null; name: string; position: number; is_rachat: boolean }
+
+/** Répartition en cours de saisie : { id de famille → pourcentage tapé } */
+type VentDraft = Record<string, string>
+const emptyVent = (): VentDraft => ({})
 const DIVERS_DOT = '#9ca3af'
+
+/** Les familles dans l'ordre de la boutique : chaque racine à sa position,
+ *  immédiatement suivie de ses sous-familles. Une famille orpheline (racine
+ *  disparue) reste en fin de liste plutôt que d'être escamotée — une part
+ *  posée dessus doit rester visible, donc modifiable. */
+function ordonnerFamilles(list: RayonFamille[]): RayonFamille[] {
+  const parPosition = [...list].sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
+  const out: RayonFamille[] = []
+  for (const r of parPosition) {
+    if (r.parent_id) continue
+    out.push(r, ...parPosition.filter(f => f.parent_id === r.id))
+  }
+  const vus = new Set(out.map(f => f.id))
+  return [...out, ...parPosition.filter(f => !vus.has(f.id))]
+}
+
+/** Le pourcentage tapé dans une case, tel quel — jamais redressé. */
+const pctSaisi = (v: unknown): number => parseFloat(String(v ?? '').replace(',', '.')) || 0
+/** Le total d'une répartition. 100 est la cible, rien ne l'impose : une société
+ *  répartie à 80 % garde 20 % non attribués, et ça se DIT — ça ne se corrige
+ *  pas d'office. */
+const totalVent = (d: VentDraft): number => Object.values(d).reduce((s, v) => s + pctSaisi(v), 0)
+const fmtPct = (n: number) => n.toLocaleString('fr-FR', { maximumFractionDigits: 1 })
+
+/** Les parts telles qu'elles partent à l'API : les cases vides disparaissent.
+ *  Un objet vide vaut « retirer la règle de cette société » — c'est déjà ce que
+ *  l'API en fait, on ne la contrarie pas. */
+function partsPayload(d: VentDraft): Record<string, number> {
+  const out: Record<string, number> = {}
+  for (const [id, v] of Object.entries(d)) { const n = pctSaisi(v); if (n > 0) out[id] = n }
+  return out
+}
+/** Le brouillon de saisie reconstruit depuis les parts enregistrées. */
+function draftFromParts(parts: Record<string, number> | null | undefined): VentDraft {
+  const out: VentDraft = {}
+  for (const [id, v] of Object.entries(parts ?? {})) { const n = Number(v) || 0; if (n > 0) out[id] = String(n) }
+  return out
+}
+/** Racine d'une famille : une sous-famille (« Viande de bœuf ») prend la
+ *  catégorie d'achat de sa racine (« Boucherie »). */
+function racineFamille(f: RayonFamille, parId: Map<string, RayonFamille>): RayonFamille {
+  let cur = f
+  for (let i = 0; i < 8 && cur.parent_id; i++) {
+    const p = parId.get(cur.parent_id)
+    if (!p) break
+    cur = p
+  }
+  return cur
+}
+/** La famille qui pèse le plus lourd dans une répartition — l'ordre des
+ *  familles tranche en cas d'égalité, jamais l'ordre d'un objet. */
+function familleDominante(d: VentDraft, familles: RayonFamille[]): RayonFamille | null {
+  let best: RayonFamille | null = null
+  let max = 0
+  for (const f of familles) { const p = pctSaisi(d[f.id]); if (p > max) { max = p; best = f } }
+  return best
+}
 
 // Identité visuelle des familles classiques — une famille personnalisée dont le
 // libellé ressemble à un métier classique (« boucher » ≈ « boucherie ») hérite de sa
@@ -145,13 +204,17 @@ function sameSupplierFam(a: string, b: string): boolean {
   const [short, long] = na.length <= nb.length ? [na, nb] : [nb, na]
   return long.startsWith(short) && !/[\p{L}\p{N}]/u.test(long.charAt(short.length))
 }
-// Rayon dominant de la ventilation → catégorie d'achat (viande / charcuterie / … / autre)
+// Famille dominante de la ventilation → catégorie d'achat de la facture. Les
+// catégories, elles, restent au nombre de quatre : c'est le plan comptable de
+// cet écran, un autre axe. Une famille qui n'est ni boucherie, ni charcuterie,
+// ni traiteur donne « frais divers » — même règle que l'API, qui recatégorise.
 const RAYON_TO_CATEGORY: Record<string, string> = { boucherie: 'boucherie', charcuterie: 'charcuterie', traiteur: 'traiteur', divers: 'frais_divers' }
-function categoryFromSplit(sp: Record<string, string>): string | null {
-  const entries = VENT_FIELDS.map(f => [f.key, parseFloat((sp as any)[f.key]) || 0] as [string, number])
-  const top = entries.slice().sort((a, b) => b[1] - a[1])[0]
-  if (!top || top[1] <= 0) return null
-  return RAYON_TO_CATEGORY[top[0]] ?? null
+function categoryFromSplit(d: VentDraft, familles: RayonFamille[]): string | null {
+  const dom = familleDominante(d, familles)
+  if (!dom) return null
+  const racine = racineFamille(dom, new Map(familles.map(f => [f.id, f])))
+  const c = classicFor('', racine.name)
+  return (c ? RAYON_TO_CATEGORY[c.key] : null) ?? RAYON_TO_CATEGORY.divers
 }
 function matchSplit(name: string, splits: RayonSplit[]): RayonSplit | null {
   const q = normSupplier(societeName(name))
@@ -328,10 +391,16 @@ export default function FacturationPage() {
   const [ventInvoice,    setVentInvoice]    = useState<Invoice | null>(null)
   const [splits,         setSplits]         = useState<RayonSplit[]>([])
   const [splitSuppliers, setSplitSuppliers] = useState<{ key: string; name: string }[]>([])
-  const [splitDraft,     setSplitDraft]     = useState<Record<string, VentDraft & { label: string }>>({})
+  // Les familles de la boutique sur lesquelles les achats se répartissent
+  const [splitFamilles,  setSplitFamilles]  = useState<RayonFamille[]>([])
+  const [splitDraft,     setSplitDraft]     = useState<Record<string, { label: string; parts: VentDraft }>>({})
   const [splitSaving,    setSplitSaving]    = useState(false)
   // Onglet actif de la modale : « à répartir » (sociétés sans ventilation) ou « toutes »
   const [splitsTab,      setSplitsTab]      = useState<'todo' | 'all'>('todo')
+  // Filtre par nom + carte dépliée (une seule à la fois : quinze familles par
+  // société feraient un mur si tout s'ouvrait ensemble)
+  const [splitSearch,    setSplitSearch]    = useState('')
+  const [splitOpen,      setSplitOpen]      = useState<string | null>(null)
   // Répartition saisie sur la facture en cours (mémorisée par société)
   const [newSplit,       setNewSplit]       = useState<VentDraft>(emptyVent())
   const [splitTouched,   setSplitTouched]   = useState(false)
@@ -482,6 +551,7 @@ export default function FacturationPage() {
     if (!data) return
     setSplits(Array.isArray(data.splits) ? data.splits : [])
     setSplitSuppliers(Array.isArray(data.suppliers) ? data.suppliers : [])
+    setSplitFamilles(Array.isArray(data.familles) ? data.familles : [])
   }, [])
 
   useEffect(() => { load() }, [load])
@@ -517,25 +587,18 @@ export default function FacturationPage() {
     setShowAdd(true)
   }
 
-  // La catégorie d'achat suit le rayon dominant de la ventilation (sauf choix manuel)
+  // La catégorie d'achat suit la famille dominante de la ventilation (sauf choix manuel)
   useEffect(() => {
     if (!showAdd || categoryTouched) return
-    const cat = categoryFromSplit(newSplit)
+    const cat = categoryFromSplit(newSplit, splitFamilles)
     if (cat) setNewInvoice((p: any) => (p.category === cat ? p : { ...p, category: cat }))
-  }, [newSplit, showAdd, categoryTouched])
+  }, [newSplit, splitFamilles, showAdd, categoryTouched])
 
   // Pré-remplit la répartition depuis la mémoire de la société saisie (tant qu'on n'y a pas touché)
   useEffect(() => {
     if (!showAdd || splitTouched) return
     const m = matchSplit(newInvoice.supplier_name || '', splits)
-    setNewSplit(m
-      ? {
-          boucherie:   m.pct_boucherie   ? String(m.pct_boucherie)   : '',
-          charcuterie: m.pct_charcuterie ? String(m.pct_charcuterie) : '',
-          traiteur:    m.pct_traiteur    ? String(m.pct_traiteur)    : '',
-          divers:            m.pct_divers            ? String(m.pct_divers)            : '',
-        }
-      : emptyVent())
+    setNewSplit(m ? draftFromParts(m.parts) : emptyVent())
   }, [newInvoice.supplier_name, splits, showAdd, splitTouched])
 
   /** Construit le brouillon d'édition en fusionnant fournisseurs connus + règles enregistrées */
@@ -543,39 +606,38 @@ export default function FacturationPage() {
     suppliers: { key: string; name: string }[],
     splitList: RayonSplit[],
   ) {
-    const draft: Record<string, VentDraft & { label: string }> = {}
+    const draft: Record<string, { label: string; parts: VentDraft }> = {}
     for (const s of suppliers) {
-      draft[s.key] = { label: s.name || s.key, ...emptyVent() }
+      draft[s.key] = { label: s.name || s.key, parts: emptyVent() }
     }
     for (const sp of splitList) {
       draft[sp.supplier_key] = {
         label: sp.supplier_label || draft[sp.supplier_key]?.label || sp.supplier_key,
-        boucherie:   sp.pct_boucherie   ? String(sp.pct_boucherie)   : '',
-        charcuterie: sp.pct_charcuterie ? String(sp.pct_charcuterie) : '',
-        traiteur:    sp.pct_traiteur    ? String(sp.pct_traiteur)    : '',
-        divers:            sp.pct_divers            ? String(sp.pct_divers)            : '',
+        parts: draftFromParts(sp.parts),
       }
     }
     return draft
   }
 
-  /** Ouvre la répartition par rayon sur l'onglet « à répartir » */
+  /** Ouvre la répartition, filtrée sur les sociétés non réparties */
   function openSplits() {
     setSplitDraft(buildSplitDraft(splitSuppliers, splits))
     setSplitsTab('todo')
+    setSplitSearch('')
+    setSplitOpen(null)
     setShowSplits(true)
   }
 
   async function saveSplits() {
     setSplitSaving(true)
     try {
+      // Les colonnes pct_* ne partent plus : elles sont dérivées côté serveur.
+      // Une société dont toutes les cases sont vides part avec des parts vides —
+      // l'API y lit « retirer la règle », ce qui la renvoie dans « à répartir ».
       const rows = Object.entries(splitDraft).map(([key, v]) => ({
         supplier_key: key,
         supplier_label: v.label,
-        pct_boucherie:   parseFloat(v.boucherie)   || 0,
-        pct_charcuterie: parseFloat(v.charcuterie) || 0,
-        pct_traiteur:    parseFloat(v.traiteur)    || 0,
-        pct_divers:            parseFloat(v.divers)            || 0,
+        parts: partsPayload(v.parts),
       }))
       const res = await fetch('/api/supplier-splits', {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
@@ -617,17 +679,12 @@ export default function FacturationPage() {
       return
     }
     if (data.id) {
-      // Mémorise la répartition par rayon de cette société — ré-appliquée à ses prochaines factures
-      const pcts = {
-        pct_boucherie:   parseFloat(newSplit.boucherie)   || 0,
-        pct_charcuterie: parseFloat(newSplit.charcuterie) || 0,
-        pct_traiteur:    parseFloat(newSplit.traiteur)    || 0,
-        pct_divers:            parseFloat(newSplit.divers)            || 0,
-      }
-      if (pcts.pct_boucherie || pcts.pct_charcuterie || pcts.pct_traiteur || pcts.pct_divers) {
+      // Mémorise la répartition par famille de cette société — ré-appliquée à ses prochaines factures
+      const parts = partsPayload(newSplit)
+      if (Object.keys(parts).length > 0) {
         await fetch('/api/supplier-splits', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ split: { supplier_key: newInvoice.supplier_name, supplier_label: newInvoice.supplier_name, ...pcts } }),
+          body: JSON.stringify({ split: { supplier_key: newInvoice.supplier_name, supplier_label: newInvoice.supplier_name, parts } }),
         }).catch(() => {})
         loadSplits()
       }
@@ -1012,6 +1069,8 @@ export default function FacturationPage() {
   const splitEntries = Object.entries(splitDraft).sort((a, b) => a[1].label.localeCompare(b[1].label, 'fr'))
   const splitsTodo = splitEntries.filter(([key]) => !repartiKeys.has(key))
   const splitsDone = splitEntries.filter(([key]) => repartiKeys.has(key))
+  // Les familles de la boutique, racines à leur position et sous-familles juste après
+  const famillesOrdonnees = ordonnerFamilles(splitFamilles)
   const variableTotalHt  = variableInvoices.reduce((s, i) => s + i.amount_ht, 0)
   const variableTotalTtc = variableInvoices.reduce((s, i) => s + i.amount_ttc, 0)
 
@@ -1026,7 +1085,11 @@ export default function FacturationPage() {
   const renderInvoiceRow = (inv: Invoice) => {
     const cat = catInfo(inv.category)
     const sp = matchSplit(inv.supplier_name, splits)
-    const ventil = sp ? VENT_FIELDS.map(r => ({ label: r.label, dot: r.dot, pct: Number((sp as any)[`pct_${r.key}`]) || 0 })).filter(p => p.pct > 0) : []
+    const ventil = sp
+      ? famillesOrdonnees
+          .map(f => ({ label: f.name, dot: familleDot('', f.name), pct: Number(sp.parts?.[f.id]) || 0 }))
+          .filter(p => p.pct > 0)
+      : []
     const ownSplits = invSplits[inv.id] ?? []
     return (
       <tr key={inv.id} className="border-t border-gray-50 hover:bg-gray-50 group transition-colors">
@@ -1901,24 +1964,43 @@ export default function FacturationPage() {
                 <Input value={newInvoice.notes} onChange={e => setNewInvoice((p: any) => ({ ...p, notes: e.target.value }))} placeholder="Livraison lundi matin..." />
               </div>
               <div className="border-t border-gray-100 pt-3">
-                <label className="block text-xs font-semibold text-gray-600 mb-0.5">Répartition par rayon (%)</label>
+                <label className="block text-xs font-semibold text-gray-600 mb-0.5">Répartition par famille (%)</label>
                 <p className="text-[11px] text-gray-400 mb-2">Mémorisée pour <span className="font-semibold text-gray-600">{newInvoice.supplier_name || 'cette société'}</span> — ré-appliquée automatiquement à ses prochaines factures.</p>
-                <div className="grid grid-cols-3 gap-2">
-                  {VENT_FIELDS.map(r => (
-                    <div key={r.key}>
-                      <span className="flex items-center gap-1 text-[10px] text-gray-400 mb-0.5"><span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: r.dot }} />{r.label}</span>
-                      <Input type="number" min="0" max="100" value={(newSplit as any)[r.key]}
-                        onChange={e => { setSplitTouched(true); setNewSplit((p) => ({ ...p, [r.key]: e.target.value })) }}
-                        placeholder="0" />
+                {famillesOrdonnees.length === 0 ? (
+                  <p className="text-[11px] text-gray-400">Aucune famille de vente pour l&apos;instant — la répartition s&apos;ouvrira dès que vos familles seront créées.</p>
+                ) : (
+                  <>
+                    <div className="max-h-56 overflow-y-auto pr-1">
+                      <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
+                        {famillesOrdonnees.map(f => {
+                          const sousFamille = f.parent_id !== null
+                          return (
+                            <div key={f.id} className={`flex items-center gap-1.5 ${sousFamille ? 'pl-3' : ''}`}>
+                              <span className={`flex-1 min-w-0 truncate ${sousFamille ? 'text-[11px] text-gray-500' : 'text-[11px] font-semibold text-gray-700'}`} title={f.name}>
+                                {sousFamille ? `› ${f.name}` : f.name}
+                              </span>
+                              <input type="number" min="0" max="100" value={newSplit[f.id] ?? ''}
+                                onChange={e => { setSplitTouched(true); setNewSplit(p => ({ ...p, [f.id]: e.target.value })) }}
+                                placeholder="0"
+                                className="w-12 flex-shrink-0 border border-gray-200 rounded-lg px-1.5 py-1 text-xs text-right tabular focus:outline-none focus:ring-2 focus:ring-pilote-200" />
+                              <span className="text-[10px] text-gray-400 flex-shrink-0">%</span>
+                            </div>
+                          )
+                        })}
+                      </div>
                     </div>
-                  ))}
-                </div>
-                {(() => {
-                  const t = VENT_FIELDS.reduce((s, f) => s + (parseFloat((newSplit as any)[f.key]) || 0), 0)
-                  if (!t) return null
-                  const ok = Math.abs(t - 100) < 0.5
-                  return <p className={`text-[11px] mt-1.5 ${ok ? 'text-gray-400' : 'text-orange-500'}`}>Total {Math.round(t)} %{ok ? '' : ' — devrait faire 100 %'} · le « divers » alimente son propre bloc de marge</p>
-                })()}
+                    {(() => {
+                      const t = totalVent(newSplit)
+                      if (!t) return null
+                      const ok = t >= 99.5 && t <= 100.5
+                      return (
+                        <p className={`text-[11px] mt-2 ${ok ? 'text-gray-400' : 'text-amber-600'}`}>
+                          Total réparti {fmtPct(t)} %{ok ? '' : t < 100 ? ` — il reste ${fmtPct(100 - t)} %` : ` — ${fmtPct(t - 100)} % de trop`}
+                        </p>
+                      )
+                    })()}
+                  </>
+                )}
               </div>
               <div className="flex gap-3 pt-1">
                 <Button variant="outline" className="flex-1" onClick={() => setShowAdd(false)}>Annuler</Button>
@@ -1935,31 +2017,41 @@ export default function FacturationPage() {
       {/* Modal : Répartition des achats par rayon (par fournisseur) */}
       {showSplits && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 backdrop-blur-sm p-4" onClick={() => setShowSplits(false)}>
-          <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
+          <div className="bg-white rounded-2xl w-full max-w-4xl shadow-2xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
             <div className="flex items-start justify-between p-5 pb-3 border-b border-gray-100">
               <div>
                 <h2 className="text-base font-bold text-gray-900">Répartition des achats par rayon</h2>
-                <p className="text-xs text-gray-500 mt-0.5 max-w-md">Pour chaque société, indiquez la part (%) de ses achats affectée à chaque rayon. Appliqué automatiquement à toutes ses factures.</p>
+                <p className="text-xs text-gray-500 mt-0.5 max-w-xl">Pour chaque société, indiquez la part (%) de ses achats affectée à chaque famille de votre boutique — les mêmes familles que celles de votre chiffre d&apos;affaires. Appliqué automatiquement à toutes ses factures.</p>
               </div>
               <button onClick={() => setShowSplits(false)} className="p-1.5 rounded-xl hover:bg-gray-100"><X className="w-4 h-4 text-gray-500" /></button>
             </div>
-            {/* Onglets : à répartir (sociétés sans ventilation) / toutes les répartitions déjà faites */}
-            <div className="flex items-center gap-1.5 px-5 pt-3 pb-1">
-              <button onClick={() => setSplitsTab('todo')}
-                className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold transition-all ${splitsTab === 'todo' ? 'bg-pilote text-white shadow-card' : 'text-gray-500 hover:bg-gray-100'}`}>
-                À répartir
-                <span className={`rounded-full px-1.5 text-[10px] tabular ${splitsTab === 'todo' ? 'bg-white/20 text-white' : 'bg-gray-200 text-gray-600'}`}>{splitsTodo.length}</span>
-              </button>
-              <button onClick={() => setSplitsTab('all')}
-                className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-semibold transition-all ${splitsTab === 'all' ? 'bg-pilote text-white shadow-card' : 'text-gray-500 hover:bg-gray-100'}`}>
-                Toutes mes répartitions
-                <span className={`rounded-full px-1.5 text-[10px] tabular ${splitsTab === 'all' ? 'bg-white/20 text-white' : 'bg-gray-200 text-gray-600'}`}>{splitsDone.length}</span>
-              </button>
+            {/* Chercher une société + ne garder que celles qui restent à répartir */}
+            <div className="flex flex-col sm:flex-row sm:items-center gap-2 px-5 pt-3 pb-1">
+              <input value={splitSearch} onChange={e => setSplitSearch(e.target.value)} placeholder="Rechercher une société…"
+                className="flex-1 border border-gray-200 rounded-xl px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200" />
+              <label className="flex items-center gap-2 text-xs font-semibold text-gray-600 cursor-pointer select-none flex-shrink-0">
+                <input type="checkbox" checked={splitsTab === 'todo'}
+                  onChange={e => { setSplitsTab(e.target.checked ? 'todo' : 'all'); setSplitOpen(null) }}
+                  className="w-4 h-4 rounded border-gray-300 accent-pilote" />
+                Seulement les sociétés non réparties
+                <span className="rounded-full bg-gray-100 text-gray-600 px-1.5 text-[10px] font-bold tabular">{splitsTodo.length}</span>
+              </label>
             </div>
             <div className="p-5 pt-2 overflow-y-auto">
               {(() => {
-                const list = splitsTab === 'todo' ? splitsTodo : splitsDone
+                const base = splitsTab === 'todo' ? splitsTodo : splitEntries
+                const q = normSupplier(splitSearch)
+                const list = q ? base.filter(([, v]) => normSupplier(v.label).includes(q)) : base
                 if (list.length === 0) {
+                  if (q) {
+                    return (
+                      <div className="text-center py-12">
+                        <div className="w-11 h-11 rounded-lg bg-gray-50 flex items-center justify-center mx-auto mb-3"><PieChart className="w-5 h-5 text-gray-300" /></div>
+                        <p className="text-sm font-semibold text-gray-700">Aucune société ne correspond à « {splitSearch.trim()} »</p>
+                        <p className="text-xs text-gray-400 mt-1">{splitsTab === 'todo' ? 'Décochez le filtre pour chercher parmi toutes vos sociétés.' : 'Vérifiez l’orthographe du nom.'}</p>
+                      </div>
+                    )
+                  }
                   return splitsTab === 'todo' ? (
                     <div className="text-center py-12">
                       <div className="w-11 h-11 rounded-lg bg-pilote-50 flex items-center justify-center mx-auto mb-3"><Check className="w-5 h-5 text-pilote" /></div>
@@ -1969,49 +2061,88 @@ export default function FacturationPage() {
                   ) : (
                     <div className="text-center py-12">
                       <div className="w-11 h-11 rounded-lg bg-gray-50 flex items-center justify-center mx-auto mb-3"><PieChart className="w-5 h-5 text-gray-300" /></div>
-                      <p className="text-sm font-semibold text-gray-700">Aucune répartition enregistrée</p>
-                      <p className="text-xs text-gray-400 mt-1">Renseignez une société dans « À répartir » pour la retrouver ici.</p>
+                      <p className="text-sm font-semibold text-gray-700">Aucune société connue</p>
+                      <p className="text-xs text-gray-400 mt-1">Ajoutez des factures d&apos;achat : leurs sociétés apparaîtront ici.</p>
                     </div>
                   )
                 }
                 return (
                   <>
-                    <div className="hidden md:flex items-center gap-2 px-2 pb-2 text-[10px] font-semibold leading-tight text-gray-400">
-                      <span className="flex-1">Société</span>
-                      <span className="w-16 text-center">Boucherie</span>
-                      <span className="w-16 text-center">Charcuterie</span>
-                      <span className="w-16 text-center">Traiteur</span>
-                      <span className="w-16 text-center">Fruits &amp; légumes</span>
-                      <span className="w-16 text-center">Divers</span>
-                      <span className="w-16 text-center">Total</span>
-                      <span className="w-8 flex-shrink-0" />
+                    <div className="flex items-center justify-between px-1 pb-2 text-[10px] font-semibold uppercase tracking-wider text-gray-400">
+                      <span>{list.length} société{list.length > 1 ? 's' : ''}</span>
+                      <span className="tabular">{splitsDone.length} répartie{splitsDone.length > 1 ? 's' : ''} sur {splitEntries.length}</span>
                     </div>
-                    <div className="space-y-1.5">
+                    <div className="space-y-2">
                       {list.map(([key, v]) => {
-                        const tot = VENT_FIELDS.reduce((s, f) => s + (parseFloat((v as any)[f.key]) || 0), 0)
-                        const totOk = tot === 0 || Math.abs(tot - 100) < 0.5
-                        const upd = (field: string, val: string) =>
-                          setSplitDraft(prev => ({ ...prev, [key]: { ...prev[key], [field]: val } }))
-                        const clearRow = () =>
-                          setSplitDraft(prev => ({ ...prev, [key]: { ...prev[key], ...emptyVent() } }))
+                        const tot = totalVent(v.parts)
+                        const ouverte = splitOpen === key
+                        // Les deux familles les plus lourdes — le résumé qui dit d'un coup d'œil
+                        // ce que fait cette société, sans déplier quinze cases.
+                        const lourdes = famillesOrdonnees
+                          .map(f => ({ nom: f.name, pct: pctSaisi(v.parts[f.id]) }))
+                          .filter(x => x.pct > 0)
+                          .sort((a, b) => b.pct - a.pct)
+                        const resume = lourdes.slice(0, 2).map(x => `${fmtPct(x.pct)} % ${x.nom}`).join(' · ')
+                        const autres = lourdes.length - 2
+                        const upd = (id: string, val: string) =>
+                          setSplitDraft(prev => ({ ...prev, [key]: { ...prev[key], parts: { ...prev[key].parts, [id]: val } } }))
+                        const vider = () =>
+                          setSplitDraft(prev => ({ ...prev, [key]: { ...prev[key], parts: emptyVent() } }))
                         return (
-                          <div key={key} className="group flex flex-col md:flex-row md:items-center gap-2 p-2 rounded-lg hover:bg-gray-50">
-                            <span className="flex-1 text-sm font-medium text-gray-800 truncate" title={v.label}>{v.label}</span>
-                            <div className="flex items-center gap-2">
-                              {VENT_FIELDS.map(f => (
-                                <input key={f.key} type="number" min="0" max="100" value={(v as any)[f.key]} onChange={e => upd(f.key, e.target.value)}
-                                  placeholder="0" className="w-16 border border-gray-200 rounded-lg px-1.5 py-1 text-sm text-right tabular focus:outline-none focus:ring-2 focus:ring-pilote-200" />
-                              ))}
-                              <span className={`w-16 text-center text-xs font-bold tabular ${totOk ? 'text-gray-400' : 'text-orange-500'}`}>{tot ? `${Math.round(tot)}%` : '—'}</span>
-                            </div>
-                            <div className="w-8 flex-shrink-0 flex justify-center self-end md:self-auto">
-                              {splitsTab === 'all' && (
-                                <button onClick={clearRow} title="Retirer cette répartition"
-                                  className="md:opacity-0 md:group-hover:opacity-100 transition-all p-1.5 rounded-xl text-gray-400 hover:text-red-500 hover:bg-red-50">
-                                  <Trash2 className="w-4 h-4" />
-                                </button>
+                          <div key={key} className={`rounded-2xl border bg-white transition-all ${ouverte ? 'border-pilote-200 shadow-card' : 'border-gray-100 hover:border-gray-200'}`}>
+                            <button onClick={() => setSplitOpen(o => (o === key ? null : key))}
+                              className="w-full flex items-center gap-3 px-4 py-3 text-left">
+                              <ChevronRight className={`w-4 h-4 flex-shrink-0 transition-transform ${ouverte ? 'rotate-90 text-pilote' : 'text-gray-300'}`} />
+                              <span className="flex-1 min-w-0 truncate text-sm font-semibold text-gray-900" title={v.label}>{v.label}</span>
+                              <span className={`hidden sm:block max-w-[16rem] truncate text-xs ${tot > 0 ? 'text-gray-500' : 'text-gray-400'}`}>
+                                {tot > 0 ? `${resume}${autres > 0 ? ` · +${autres}` : ''}` : 'non réparti'}
+                              </span>
+                              {tot > 0 && (
+                                <span className={`flex-shrink-0 rounded-full px-2.5 py-0.5 text-[11px] font-bold tabular ${
+                                  tot >= 99.5 && tot <= 100.5 ? 'bg-green-50 text-green-700'
+                                    : tot < 99.5 ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-600'
+                                }`}>
+                                  {tot >= 99.5 && tot <= 100.5
+                                    ? `${fmtPct(tot)} %`
+                                    : tot < 99.5
+                                      ? `${fmtPct(tot)} % · il reste ${fmtPct(100 - tot)} %`
+                                      : `${fmtPct(tot)} % · ${fmtPct(tot - 100)} % de trop`}
+                                </span>
                               )}
-                            </div>
+                            </button>
+                            {ouverte && (
+                              <div className="border-t border-gray-100 px-4 py-3">
+                                {famillesOrdonnees.length === 0 ? (
+                                  <p className="text-xs text-gray-400">Aucune famille de vente pour l&apos;instant — la répartition s&apos;ouvrira dès que vos familles seront créées.</p>
+                                ) : (
+                                  <>
+                                    <div className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-1.5">
+                                      {famillesOrdonnees.map(f => {
+                                        const sousFamille = f.parent_id !== null
+                                        return (
+                                          <div key={f.id} className={`flex items-center gap-1.5 ${sousFamille ? 'pl-3' : ''}`}>
+                                            <span className={`flex-1 min-w-0 truncate ${sousFamille ? 'text-[11px] text-gray-500' : 'text-xs font-semibold text-gray-700'}`} title={f.name}>
+                                              {sousFamille ? `› ${f.name}` : f.name}
+                                            </span>
+                                            <input type="number" min="0" max="100" value={v.parts[f.id] ?? ''} onChange={e => upd(f.id, e.target.value)}
+                                              placeholder="0"
+                                              className="w-14 flex-shrink-0 border border-gray-200 rounded-lg px-1.5 py-1 text-sm text-right tabular focus:outline-none focus:ring-2 focus:ring-pilote-200" />
+                                            <span className="text-[10px] text-gray-400 flex-shrink-0">%</span>
+                                          </div>
+                                        )
+                                      })}
+                                    </div>
+                                    <div className="flex items-center justify-between mt-3 pt-2 border-t border-gray-50">
+                                      <button onClick={vider}
+                                        className="text-[11px] font-semibold text-gray-400 hover:text-red-500 rounded-lg px-2 py-1 hover:bg-red-50 transition-colors">
+                                        Vider
+                                      </button>
+                                      <span className="text-[11px] text-gray-400">Une sous-famille compte dans sa famille.</span>
+                                    </div>
+                                  </>
+                                )}
+                              </div>
+                            )}
                           </div>
                         )
                       })}
@@ -2019,7 +2150,7 @@ export default function FacturationPage() {
                   </>
                 )
               })()}
-              <p className="text-[11px] text-gray-400 mt-3">Le total par société devrait faire 100 %. Une société laissée à 0 reste « non répartie » et n&apos;entre pas dans la marge par rayon. Retirer une répartition la renvoie dans « À répartir » après enregistrement.</p>
+              <p className="text-[11px] text-gray-400 mt-3">Le total par société devrait faire 100 %. Une société laissée vide reste « non répartie » et n&apos;entre pas dans la marge par famille. Vider une répartition la renvoie dans les sociétés non réparties après enregistrement.</p>
             </div>
             <div className="flex gap-2 p-5 border-t border-gray-100">
               <Button variant="outline" className="flex-1" onClick={() => setShowSplits(false)}>Fermer</Button>
