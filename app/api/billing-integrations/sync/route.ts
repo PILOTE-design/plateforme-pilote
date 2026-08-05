@@ -130,13 +130,25 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // LES RELEVÉS ÉCARTÉS — dits, jamais tus.
+    //
+    // Ne pas importer est un geste fort : le boucher doit savoir ce qui n'est
+    // pas entré et pourquoi, sinon le refus se remarquera le jour où un
+    // chiffre manque, et alors plus personne ne saura d'où vient le trou.
+    const rejets = syncResult.rejets ?? []
+    const rejetInfo = rejets.length > 0
+      ? `${rejets.length} relevé${rejets.length > 1 ? 's' : ''} écarté${rejets.length > 1 ? 's' : ''} (non importé${rejets.length > 1 ? 's' : ''}) : `
+        + rejets.slice(0, 3).map(r => r.supplier_name).join(', ')
+        + (rejets.length > 3 ? `, et ${rejets.length - 3} autre${rejets.length - 3 > 1 ? 's' : ''}` : '')
+      : null
+
     const ok = syncResult.success && !syncError
 
     await service.from('billing_integrations').update({
       last_sync_at:     new Date().toISOString(),
       last_sync_status: ok ? 'success' : 'error',
       // En succès, on stocke l'éventuel diagnostic (champs de date côté API) — non bloquant
-      last_sync_error:  syncError ?? [pdfInfo, syncResult.debug].filter(Boolean).join(' · ') ?? null,
+      last_sync_error:  syncError ?? [pdfInfo, rejetInfo, syncResult.debug].filter(Boolean).join(' · ') ?? null,
       invoices_synced:  imported,
       updated_at:       new Date().toISOString(),
     }).eq('id', integ.id)
@@ -146,6 +158,9 @@ export async function POST(req: NextRequest) {
       imported,
       error:    syncError,
       debug:    syncResult.debug ?? null,
+      // Le DÉTAIL des documents écartés, pas seulement leur nombre : c'est ce
+      // qui permet de vérifier qu'aucune vraie facture n'est tombée dedans.
+      rejets,
     }
   }
 
