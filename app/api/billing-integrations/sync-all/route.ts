@@ -150,18 +150,29 @@ async function runSyncAll(req: NextRequest) {
       }
     }
 
+    // Les relevés écartés (cf. lib/document-releve) : consignés comme sur la
+    // sync manuelle. La lecture de nuit n'a personne devant elle — raison de
+    // plus pour que la trace reste.
+    const rejets = syncResult.rejets ?? []
+    const rejetInfo = rejets.length > 0
+      ? `${rejets.length} relevé${rejets.length > 1 ? 's' : ''} écarté${rejets.length > 1 ? 's' : ''} (non importé${rejets.length > 1 ? 's' : ''}) : `
+        + rejets.slice(0, 3).map(r => r.supplier_name).join(', ')
+        + (rejets.length > 3 ? `, et ${rejets.length - 3} autre${rejets.length - 3 > 1 ? 's' : ''}` : '')
+      : null
+
     const ok = syncResult.success && !syncError
 
     await service.from('billing_integrations').update({
       last_sync_at:     new Date().toISOString(),
       last_sync_status: ok ? 'success' : 'error',
-      last_sync_error:  syncError ?? pdfInfo,
+      last_sync_error:  syncError ?? [pdfInfo, rejetInfo].filter(Boolean).join(' · ') ?? null,
       invoices_synced:  imported,
     }).eq('id', integ.id)
 
     results[`${integ.client_id}:${integ.provider}`] = {
       success:  ok,
       imported,
+      rejets:   rejets.length,
       error:    syncError,
     }
   }
