@@ -144,6 +144,10 @@ function mapInvoice(inv: any, fallbackDate: string): ProviderInvoice {
     is_fixed_charge: isFixed,
     period_days:     periodDays,
     prorata_ht:      prorataHt,
+    // La période ci-dessus est DEVINÉE sur un mot-clé du libellé (30 jours par
+    // défaut) : on le dit, pour que le moteur hebdomadaire refuse de la
+    // réinjecter telle quelle dans le résultat.
+    period_source:   periodDays ? 'defaut' : undefined,
   }
 }
 

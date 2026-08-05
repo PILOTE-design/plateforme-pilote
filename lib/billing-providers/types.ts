@@ -14,6 +14,9 @@ export interface ProviderInvoice {
   is_fixed_charge?: boolean // facture de charge fixe (loyer, assurance, énergie, télécom…)
   period_days?: number      // durée couverte estimée (30 mensuel, 91 trimestriel, 182 semestriel, 365 annuel)
   prorata_ht?: number       // part hebdomadaire HT = amount_ht × 7 / period_days
+  period_source?: string    // origine de period_days : 'defaut' (devinée par le connecteur) ou
+                            // 'document' (lue sur le PDF). Seule une période LUE autorise la
+                            // réinjection du prorata dans le résultat (cf. lib/charges-fixes).
 }
 
 /** Un document ÉCARTÉ à l'import, et pourquoi.
