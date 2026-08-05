@@ -714,8 +714,25 @@ export default function ValorisationPage() {
         toast({ variant: 'error', title: 'Enregistrement impossible', description: err?.error || `Erreur ${res.status}` })
         return
       }
+      // LA CARCASSE DEVIENT DES INGRÉDIENTS — et personne ne le disait.
+      //
+      // Depuis le lot 63, enregistrer une découpe crée les articles génériques
+      // de ses morceaux : le boucher peut les poser dans une fiche recette avec
+      // leur coût au kilo. L'écran, lui, se contentait d'une coche verte
+      // « enregistré ». Rien n'indiquait que quelque chose venait d'entrer dans
+      // la mercuriale, donc rien n'invitait à aller s'en servir — le lien entre
+      // les deux écrans n'existait que dans le code.
+      const cree = await res.json().catch(() => null) as { morceaux_crees?: number } | null
       setSaved(true)
       setTimeout(() => setSaved(false), 2500)
+      const n = Number(cree?.morceaux_crees) || 0
+      toast({
+        variant: 'success',
+        title: 'Découpe enregistrée',
+        description: n > 0
+          ? `${n} morceau${n > 1 ? 'x' : ''} ${n > 1 ? 'entrent' : 'entre'} dans votre mercuriale : posez-${n > 1 ? 'les' : 'le'} comme ingrédient${n > 1 ? 's' : ''} dans une fiche recette, ${n > 1 ? 'ils portent' : 'il porte'} le coût au kilo de cette carcasse.`
+          : `Les morceaux pesés portent maintenant le coût au kilo de cette carcasse : retrouvez-les comme ingrédients dans vos fiches recettes.`,
+      })
       loadHistory()
     } catch {
       toast({ variant: 'error', title: 'Erreur réseau', description: "La valorisation n'a pas été enregistrée." })
