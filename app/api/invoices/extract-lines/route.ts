@@ -356,9 +356,12 @@ export async function POST(request: NextRequest) {
           quantity: verdict.quantite_reparee ?? l.quantity,
           quantity_raw: verdict.quantite_reparee !== null ? l.quantity : null,
           unit: l.unit,
-          // Le poids facturé est CONSERVÉ tel que lu : c'est lui qui porte le prix
-          // au kilo, et sans lui la ligne redeviendrait invérifiable à la relecture.
-          weight_kg: l.weight_kg,
+          // Le poids facturé est CONSERVÉ tel que lu — sauf quand les deux
+          // colonnes ont été échangées, cas où le « poids » lu était le prix.
+          // Il n'est alors pas perdu : c'est lui qui devient `unit_price_ht`
+          // sur la même ligne, et le poids rendu ici est le conditionnement
+          // annoncé par le libellé (« 5L » × 2 bidons = 10 L).
+          weight_kg: verdict.poids_repare ?? l.weight_kg,
           // Prix en quarantaine = null : la mercuriale prend le point de prix le plus
           // récent depuis invoice_lines ; un prix non vérifié n'en est pas un.
           unit_price_ht: prixRetenu,
