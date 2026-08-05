@@ -1347,6 +1347,7 @@ export default function ValorisationPage() {
 
             {/* ── RÉSULTATS ── */}
             <div className="xl:col-span-2 space-y-5">
+
               {qty > 1 && totalRevenue1 > 0 && (
                 <div className="bg-pilote rounded-2xl p-4 text-white shadow-card">
                   <p className="text-[11px] font-semibold text-pilote-200 mb-2 uppercase tracking-wider">Récapitulatif lot — {qty} {isHalf ? `demis (${config.label.toLowerCase()})` : `${config.label.toLowerCase()}x`}</p>
