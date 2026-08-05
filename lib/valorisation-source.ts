@@ -31,11 +31,16 @@ export type PrixMorceau = {
   price: number
   /** Date de l'achat de la carcasse */
   date: string
-  /** « Bœuf du 20/07/2026 » — ce qui répond à « d'où sort ce chiffre » */
+  /** « Bœuf du 20/07/2026 » — ce qui répond à « d'où sort ce chiffre ».
+   *  Quand la carcasse est peu pesée, la part pesée y est écrite : c'est le
+   *  seul endroit qui traverse tous les écrans sans qu'aucun n'ait à changer. */
   refName: string
   refSupplier: string | null
   /** Coût saisi à la main par le boucher plutôt que réparti */
   force: boolean
+  /** Part du poids de carcasse effectivement pesée, entre 0 et 1. `null` quand
+   *  aucun poids de carcasse n'a été saisi : il n'y a alors rien à comparer. */
+  couverture: number | null
 }
 
 /** Le nom sous lequel une pièce apparaît dans la mercuriale. Le suffixe est
@@ -60,6 +65,22 @@ type Row = Record<string, unknown>
  *  répartir son coût. En dessous, la saisie est inachevée et le coût au kilo
  *  qu'on en tirerait serait faux — on préfère ne rien publier. */
 export const SEUIL_COUVERTURE = 0.4
+
+/** En dessous de cette couverture, la découpe est PUBLIÉE mais ANNONCÉE.
+ *
+ * Entre les deux seuils s'ouvrait un silence : une carcasse pesée à 45 %
+ * passait le plancher du lot 65, ses coûts entraient dans les fiches, et rien
+ * nulle part ne disait qu'ils étaient portés par moins de la moitié de la bête.
+ * Or un rendement commercial réel tourne entre 65 et 75 % en bœuf : sous 65 %,
+ * la saisie est probablement inachevée, et le coût au kilo est d'autant trop
+ * élevé que le poids pesé est faible.
+ *
+ * On ne refuse pas — refuser une découpe honnête mais partielle coûterait plus
+ * que de la signaler. On l'écrit dans la PROVENANCE (« Bœuf du 20/07/2026 —
+ * 52 % de la carcasse pesée »), qui est déjà affichée partout où ce prix
+ * apparaît : mercuriale, fiche recette, fiche atelier. Aucun écran à changer,
+ * et surtout aucun écran oublié. */
+export const SEUIL_ANNONCE = 0.65
 
 /**
  * Coût au kg de chaque morceau, pour un client, d'après sa DERNIÈRE découpe de
@@ -170,6 +191,14 @@ export async function coutsMorceauxDuClient(
       coutsForces: prefs.forces[espece] ?? null,
     })
     const date = String(v.purchase_date || '').slice(0, 10)
+    // La provenance porte la RÉSERVE quand il y en a une. Entre le plancher de
+    // refus (40 %) et le rendement plausible (65 %), le coût au kilo est publié
+    // mais reposé sur une carcasse à moitié pesée : le dire ici le fait
+    // apparaître partout d'un coup, sans qu'un écran puisse l'oublier.
+    const couverture = poidsCarcasse > 0 ? poidsPeses / poidsCarcasse : null
+    const reserve = couverture !== null && couverture < SEUIL_ANNONCE
+      ? ` — ${Math.round(couverture * 100)} % de la carcasse pesée`
+      : ''
     for (const m of repartition.morceaux) {
       // Un morceau sans coût (déchets, ou carcasse sans prix de référence) n'a
       // rien à donner : on ne pose pas un zéro qui se lirait « gratuit ».
@@ -177,9 +206,10 @@ export async function coutsMorceauxDuClient(
       out.set(m.cut_id, {
         price: m.cout_kg_ht,
         date,
-        refName: `${ESPECE_FR[espece]} du ${JOUR_FR(date)}`,
+        refName: `${ESPECE_FR[espece]} du ${JOUR_FR(date)}${reserve}`,
         refSupplier: null,
         force: m.force,
+        couverture,
       })
     }
   }

@@ -30,14 +30,22 @@ export const unitLabel = (u: 'kg' | 'piece') => (u === 'kg' ? 'kg' : 'pièce')
 /** Âge d'un prix en jours — au-delà de 30 j, les écrans le signalent */
 export const priceAge = (d: string | null) => (d ? Math.floor((Date.now() - new Date(d + 'T00:00:00Z').getTime()) / 86400000) : null)
 
-/** « Pas de prix » a quatre causes qui appellent quatre gestes différents.
+/** « Pas de prix » a cinq causes qui appellent cinq gestes différents.
  *  Les nommer, c'est la différence entre un écran qui constate et un écran
- *  qui dit quoi faire. */
+ *  qui dit quoi faire.
+ *
+ *  `decoupe_sans_carcasse` corrige un reproche injuste : un morceau de découpe
+ *  n'a PAS de fournisseur, et lui demander d'en rattacher un envoyait le
+ *  boucher chercher quelque chose qui n'existe pas. Son prix vient d'une
+ *  carcasse enregistrée — c'est le seul geste qui le lui donnera. */
+export type MotifPrix = 'aucune_ref' | 'conversion' | 'quarantaine' | 'jamais_facture' | 'decoupe_sans_carcasse'
+
 export const MOTIF_PRIX: Record<string, { court: string; quoi_faire: string }> = {
   aucune_ref:      { court: 'aucune réf rattachée',   quoi_faire: 'Rattachez une réf fournisseur à cet article depuis l’onglet « À traiter ».' },
   conversion:      { court: 'conversion manquante',   quoi_faire: 'Une réf est facturée dans une autre unité : indiquez sa conversion dans l’onglet « À traiter ».' },
   quarantaine:     { court: 'prix refusés à la lecture', quoi_faire: 'Des prix ont été lus mais écartés faute de vérification. Relancez la lecture de la facture concernée.' },
   jamais_facture:  { court: 'jamais facturé',         quoi_faire: 'Aucune facture lue ne porte encore cet article — le prix arrivera à la prochaine lecture.' },
+  decoupe_sans_carcasse: { court: 'aucune carcasse chiffrée', quoi_faire: 'Ce morceau vient de la découpe, pas d’un fournisseur : son prix arrivera dès que vous aurez enregistré une carcasse de cette espèce avec son poids et son coût, dans l’écran Valorisation.' },
 }
 
 // ── Types de la fiche enrichie (lot 41) ──────────────────
