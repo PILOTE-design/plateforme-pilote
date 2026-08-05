@@ -101,6 +101,7 @@ export async function POST(req: NextRequest) {
         is_fixed_charge: inv.is_fixed_charge ?? false,
         period_days:     inv.period_days ?? null,
         prorata_ht:      inv.prorata_ht ?? null,
+        period_source:   inv.period_source ?? null,
         notes: `Importé depuis ${prov.name}${inv.external_id ? ` (${inv.external_id})` : ''}`,
         }
       })
