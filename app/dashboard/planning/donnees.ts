@@ -321,3 +321,4 @@ export function calcHoursFromSd(sd: ScheduleDetail): number | null {
   if (matin === null && apmidi === null) return null
   return (matin || 0) + (apmidi || 0)
 }
+
