@@ -36,6 +36,7 @@ import {
 } from '@/lib/invoice-extract'
 import { verdictLigne } from '@/lib/invoice-lines'
 import { dernierPrix, memePrix } from '@/lib/article-price'
+import { cleCodeArticle } from '@/lib/article-code'
 
 // Jusqu'à trois passes de lecture pour une facture qui résiste (texte, reprise,
 // image) : 60 s n'y suffisent plus. 300 s est le plafond réel de la plateforme,
@@ -44,13 +45,19 @@ export const maxDuration = 300
 
 type Service = ReturnType<typeof createServiceClient>
 
-/** Les articles que les lignes ACTUELLES de cette facture alimentent. À relever
- *  AVANT de purger les lignes : après, plus rien ne dit lesquels étaient
- *  concernés, et leur prix resterait figé sur une lecture disparue. */
-async function articlesDeLaFacture(service: Service, clientId: string, invoiceId: string): Promise<string[]> {
+/** L'état des lignes ACTUELLES de cette facture. À relever AVANT de les purger :
+ *  après, plus rien ne dit lesquels articles étaient concernés — leur prix
+ *  resterait figé sur une lecture disparue — ni combien de prix la lecture
+ *  précédente publiait. */
+async function etatDesLignes(
+  service: Service, clientId: string, invoiceId: string,
+): Promise<{ articles: string[]; prixPublies: number }> {
   const { data } = await service.from('invoice_lines')
-    .select('article_id').eq('invoice_id', invoiceId).eq('client_id', clientId)
-  return (data || []).map(r => r.article_id).filter(Boolean) as string[]
+    .select('article_id, unit_price_ht').eq('invoice_id', invoiceId).eq('client_id', clientId)
+  return {
+    articles: (data || []).map(r => r.article_id).filter(Boolean) as string[],
+    prixPublies: (data || []).filter(r => r.unit_price_ht !== null).length,
+  }
 }
 
 /**
@@ -282,10 +289,15 @@ export async function POST(request: NextRequest) {
       const { data: existing } = await service.from('articles')
         .select('id, article_code, name_key, last_price_date, price_count')
         .eq('client_id', clientId).eq('supplier_key', supplierKey)
+      // Le code fournisseur est rangé sous sa CLÉ, pas sous son écriture :
+      // « 003180 » et « 3180 » sont le même produit, et les distinguer créait
+      // un second article qui repartait sans prix ni historique (lot 70,
+      // cf. lib/article-code).
       const byCode = new Map<string, any>()
       const byName = new Map<string, any>()
       for (const a of existing || []) {
-        if (a.article_code) byCode.set(String(a.article_code), a)
+        const cle = cleCodeArticle(a.article_code)
+        if (cle) byCode.set(cle, a)
         else byName.set(String(a.name_key), a)
       }
 
@@ -293,7 +305,8 @@ export async function POST(request: NextRequest) {
       let prixPromus = 0, prixQuarantaine = 0
       for (const l of lines) {
         const nameKey = normText(l.designation)
-        let art = (l.article_code && byCode.get(l.article_code)) || byName.get(nameKey) || null
+        const cleCode = cleCodeArticle(l.article_code)
+        let art = (cleCode && byCode.get(cleCode)) || byName.get(nameKey) || null
         // LE VERDICT DE LA LIGNE — lib/invoice-lines, module pur, 56 assertions.
         //
         // Il remplace la décision qui vivait ici. Deux changements, tous deux nés
@@ -331,7 +344,8 @@ export async function POST(request: NextRequest) {
           }).select('id, article_code, name_key, last_price_date, price_count').single()
           if (created) {
             art = created
-            if (created.article_code) byCode.set(String(created.article_code), created)
+            const cle = cleCodeArticle(created.article_code)
+            if (cle) byCode.set(cle, created)
             else byName.set(String(created.name_key), created)
           }
         }
@@ -377,7 +391,7 @@ export async function POST(request: NextRequest) {
       // Les articles que portaient les ANCIENNES lignes sont relevés avant la
       // purge : si la relecture n'en publie plus le prix, ce sont eux qu'il
       // faut recaler — et après la purge, plus rien ne dirait lesquels.
-      const avant = await articlesDeLaFacture(service, clientId, invoice.id)
+      const avant = await etatDesLignes(service, clientId, invoice.id)
       const { error: delErr } = await service.from('invoice_lines').delete().eq('invoice_id', invoice.id).eq('client_id', clientId)
       if (delErr) throw new Error(`Purge des anciennes lignes : ${delErr.message}`)
       const { error: insErr } = await service.from('invoice_lines').insert(rows)
@@ -386,7 +400,7 @@ export async function POST(request: NextRequest) {
       // Le dernier prix des articles touchés, RECALCULÉ depuis leurs lignes.
       // Ni avant ni pendant : après, quand les lignes disent la vérité.
       await recalerArticles(service, clientId, [
-        ...avant,
+        ...avant.articles,
         ...rows.map(r => r.article_id as string | null),
       ])
 
@@ -396,12 +410,31 @@ export async function POST(request: NextRequest) {
       // « Lue complètement » exige au moins UN prix publié : une facture dont
       // aucune ligne n'a de prix calculable passait pour un succès (quarantaine
       // à zéro) alors qu'elle n'apportait rien à la mercuriale.
-      const complet = coherent && !tronque && prixQuarantaine === 0 && prixPromus > 0
+      //
+      // UNE RELECTURE PEUT FAIRE PERDRE DES PRIX — et ne le disait à personne.
+      //
+      // Mesuré le 05/08 : la MÊME facture METRO, lue trois fois, a donné 19,
+      // puis 10, puis 9 prix. La lecture n'est pas stable (la colonne poids est
+      // parfois captée, parfois pas, et l'unité passe de « l » à « pièce »), et
+      // la publication REMPLACE les lignes précédentes sans jamais regarder ce
+      // qu'elle efface. Un boucher qui relance une lecture pour arranger une
+      // ligne peut en perdre neuf, sans un mot à l'écran.
+      //
+      // On ne BLOQUE pas pour autant : le lot 60 retirait des prix VOLONTAIREMENT
+      // — ils étaient faux — et « moins de prix » n'est donc pas « moins bien ».
+      // La règle de la maison s'applique telle quelle : on annonce, on ne cache
+      // pas, et on laisse le boucher décider. Une relecture qui régresse n'est
+      // simplement plus « lue complètement » : elle reste à regarder.
+      const perteDePrix = avant.prixPublies > 0 && prixPromus < avant.prixPublies
+      const complet = coherent && !tronque && prixQuarantaine === 0 && prixPromus > 0 && !perteDePrix
       // Motif d'une lecture PARTIELLE : les deux chiffres qui expliquent tout —
       // l'écart somme/total et le nombre de prix écartés — étaient jusqu'ici
       // calculés, renvoyés dans le JSON, puis perdus. Ils sont maintenant écrits.
       const ecart = +(somme - totalHT).toFixed(2)
       const motifPartiel = complet ? null : [
+        perteDePrix
+          ? `Cette relecture publie ${prixPromus} prix, contre ${avant.prixPublies} à la lecture précédente : ${avant.prixPublies - prixPromus} prix ${avant.prixPublies - prixPromus > 1 ? 'ont disparu' : 'a disparu'} de la mercuriale. Si la lecture d'avant était meilleure, relancez-en une autre — le document n'a pas changé, c'est la lecture qui varie.`
+          : null,
         tronque
           ? `La réponse de lecture a été coupée : il manque des lignes en fin de facture. Les prix ne sont pas publiés tant que la lecture n'est pas entière.`
           : null,
@@ -481,6 +514,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({
           success: true, status: complet ? 'done' : 'partial', mode: ctx.mode,
           lines: rows.length, prix_promus: prixPromus, prix_en_quarantaine: prixQuarantaine,
+          prix_avant: avant.prixPublies, perte_de_prix: perteDePrix,
           somme: +somme.toFixed(2), total_facture: totalHT,
           motif: motifFinal,
         })
@@ -730,7 +764,7 @@ export async function POST(request: NextRequest) {
       // Une facture requalifiée en charge retire ses points de prix de la
       // mercuriale : les articles qu'elle alimentait doivent retomber sur leur
       // dernière facture d'achat, ou n'avoir plus de prix du tout.
-      const touches = await articlesDeLaFacture(service, clientId, invoice.id)
+      const touches = (await etatDesLignes(service, clientId, invoice.id)).articles
       await service.from('invoice_lines').delete().eq('invoice_id', invoice.id).eq('client_id', clientId)
       await recalerArticles(service, clientId, touches)
       const patch: Record<string, unknown> = {}
