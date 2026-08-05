@@ -100,6 +100,10 @@ export default function MercurialePage() {
   // ── ASSOCIATION PAR SÉLECTION : « Associer » sur une réf l'ajoute au lot,
   // « Associer » sur une autre l'ajoute aussi ; tout part vers le même générique.
   const [selIds, setSelIds] = useState<string[]>([])
+  // ANCRE : la dernière réf mise dans le lot. Le panneau d'association s'ouvre
+  // SOUS sa ligne, dans la file — le boucher choisit le générique et valide à
+  // l'endroit exact du produit qu'il regarde, sans remonter en haut de page.
+  const [ancreSel, setAncreSel] = useState<string | null>(null)
   const [selTarget, setSelTarget] = useState({ choice: '', newName: '', newUnit: 'kg' as 'kg' | 'piece', newCat: 'ingredient' as 'ingredient' | 'emballage' })
   const [factors, setFactors] = useState<Record<string, string>>({})
   const [selSaving, setSelSaving] = useState(false)
@@ -347,6 +351,15 @@ export default function MercurialePage() {
   function toggleSel(r: Ref) {
     const adding = !selIds.includes(r.id)
     setSelIds(prev => adding ? [...prev, r.id] : prev.filter(x => x !== r.id))
+    // L'ancre suit le dernier clic : on AJOUTE → le panneau descend sous cette
+    // réf ; on RETIRE → il retombe sur la dernière réf encore sélectionnée, et
+    // disparaît quand le lot se vide.
+    setAncreSel(prev => {
+      if (adding) return r.id
+      const reste = selIds.filter(x => x !== r.id)
+      if (prev && prev !== r.id && reste.includes(prev)) return prev
+      return reste[reste.length - 1] ?? null
+    })
     if (adding && selIds.length === 0) {
       // Première réf du lot : suggestion si un générique partage sa clé
       nameTouchedRef.current = false
@@ -365,6 +378,7 @@ export default function MercurialePage() {
 
   function clearSel() {
     setSelIds([])
+    setAncreSel(null)
     setFactors({})
     nameTouchedRef.current = false
     // La CIBLE aussi : sans ça, le lot suivant repartait avec le générique
@@ -790,6 +804,28 @@ export default function MercurialePage() {
 
   const nonProductRefs = useMemo(() => visibleQueue.filter(r => r.non_product), [visibleQueue])
   const productRefCount = visibleQueue.length - nonProductRefs.length
+
+  /** Les réfs RÉELLEMENT dessinées dans la file en ce moment — la file est
+   *  repliée aux dix premiers groupes, filtrée par la recherche, et les lignes
+   *  non-produit sont pliées. Sans cette liste, le panneau pourrait s'ancrer à
+   *  une ligne absente de l'écran : plus rien pour valider le lot. */
+  const refsAffichees = useMemo(() => {
+    const ids = new Set<string>()
+    if (view !== 'traiter') return ids
+    for (const grp of queueAll ? queueGroups : queueGroups.slice(0, 10)) for (const r of grp.refs) ids.add(r.id)
+    if (showNonProduct) for (const r of nonProductRefs) ids.add(r.id)
+    return ids
+  }, [view, queueAll, queueGroups, showNonProduct, nonProductRefs])
+
+  /** Sous QUELLE ligne ouvrir le panneau. `null` = aucune ligne du lot n'est à
+   *  l'écran (onglet changé, recherche filtrante) : repli en bandeau collant. */
+  const ancreAffichee = useMemo(() => {
+    if (selIds.length === 0) return null
+    if (ancreSel && selIds.includes(ancreSel) && refsAffichees.has(ancreSel)) return ancreSel
+    let dernier: string | null = null
+    for (const id of selIds) if (refsAffichees.has(id)) dernier = id
+    return dernier
+  }, [ancreSel, selIds, refsAffichees])
   // Décompte du KPI, sur la file ENTIÈRE (jamais sur le filtre de recherche) et
   // avec la même définition que la liste : un « produit à rapprocher » n'est ni
   // écarté ni non-produit. Le KPI affichait `queue.length`, tout compris.
@@ -959,6 +995,110 @@ export default function MercurialePage() {
       </div>
     )
   }
+
+  /** Le PANNEAU d'association : recherche du générique, réfs du lot, facteurs
+   *  de conversion, « Associer N réfs ». Un seul contenu, deux emplacements —
+   *  sous la ligne cliquée (cas normal), ou en bandeau collant (repli). */
+  const carteAssociation = selRefs.length === 0 ? null : (
+    <div className="bg-white rounded-2xl border-2 border-pilote-200 shadow-card-hover p-4">
+      <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
+        <p className="text-sm font-bold text-gray-900">
+          Association en cours
+          <span className="ml-2 text-[11px] font-bold text-pilote bg-pilote-50 rounded-full px-2 py-0.5 tabular">{selRefs.length} réf{selRefs.length > 1 ? 's' : ''}</span>
+        </p>
+        <p className="text-[11px] text-gray-400">Cliquez « Associer » sur d&apos;autres réfs pour les ajouter — tout partira vers le même générique.</p>
+      </div>
+      <div className="space-y-1.5 mb-3 max-h-56 overflow-y-auto">
+        {selRefs.map(r => {
+          const kind = unitKind(r.unit)
+          const needFactor = targetBase !== null && kind !== null && kind !== targetBase
+          return (
+            <div key={r.id} className="flex items-center gap-3 bg-gray-50 rounded-lg px-3 py-2 flex-wrap">
+              <span className="text-sm font-semibold text-gray-900 flex-1 min-w-[150px]">{r.name}</span>
+              <span className="text-[11px] text-gray-400">{nomFournisseur(r.supplier_name) || '—'}</span>
+              <span className="text-xs text-gray-500 tabular">{r.last_price_ht !== null ? `${fmtEuro(Number(r.last_price_ht))}${r.unit ? ` / ${r.unit}` : ''}` : '—'}</span>
+              {targetBase !== null && (
+                <span className={`flex items-center gap-1.5 text-[11px] rounded-lg px-2 py-1 tabular ${needFactor ? 'text-amber-700 bg-amber-50 ring-1 ring-amber-200' : 'text-gray-400'}`}>
+                  1 {r.unit || 'unité'} =
+                  <input value={factors[r.id] ?? ''} inputMode="decimal" placeholder={needFactor ? '?' : '1'}
+                    onChange={e => setFactors(p => ({ ...p, [r.id]: e.target.value }))}
+                    className={`w-14 border rounded px-1.5 py-0.5 text-right tabular bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200 ${needFactor ? 'border-amber-300' : 'border-gray-200'}`} />
+                  {unitLabel(targetBase)}{needFactor ? ' (requis)' : ''}
+                </span>
+              )}
+              <button onClick={() => toggleSel(r)} className="p-1 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50" title="Retirer de la sélection">
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )
+        })}
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+        <div className={selTarget.choice === 'new' ? '' : 'md:col-span-2'}>
+          <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1">Vers l&apos;article générique</label>
+          <select value={selTarget.choice}
+            onChange={e => {
+              const v = e.target.value
+              setSelTarget(t => ({ ...t, choice: v, newName: v === 'new' && !t.newName ? commonLabel(selRefs.map(x => x.name)) : t.newName }))
+            }}
+            className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200">
+            <option value="">— Choisir —</option>
+            <option value="new">Créer un nouvel article générique</option>
+            {generics.map(g => <option key={g.id} value={g.id}>{g.name} (/ {unitLabel(g.base_unit)})</option>)}
+          </select>
+        </div>
+        {selTarget.choice === 'new' && (
+          <>
+            <div>
+              <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1">Nom</label>
+              <input value={selTarget.newName}
+                onChange={e => { nameTouchedRef.current = true; setSelTarget(t => ({ ...t, newName: e.target.value })) }}
+                placeholder="Filet de poulet"
+                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200" />
+            </div>
+            <div>
+              <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1">Unité de base</label>
+              <select value={selTarget.newUnit} onChange={e => setSelTarget(t => ({ ...t, newUnit: e.target.value as 'kg' | 'piece' }))}
+                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200">
+                <option value="kg">au kg</option>
+                <option value="piece">à la pièce</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1">Catégorie</label>
+              <select value={selTarget.newCat} onChange={e => setSelTarget(t => ({ ...t, newCat: e.target.value as 'ingredient' | 'emballage' }))}
+                className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200">
+                <option value="ingredient">Ingrédient</option>
+                <option value="emballage">Emballage</option>
+              </select>
+            </div>
+          </>
+        )}
+        <div className={`flex items-end justify-end gap-2 ${selTarget.choice === 'new' ? 'md:col-span-4' : 'md:col-span-2'}`}>
+          <button onClick={clearSel} className="text-xs font-semibold text-gray-500 rounded-xl px-3.5 py-2 hover:bg-gray-100 transition-colors">Tout annuler</button>
+          <button onClick={submitSelection} disabled={selSaving}
+            className="text-xs font-bold text-white bg-pilote hover:bg-pilote-hover rounded-xl px-4 py-2 shadow-card active:scale-[0.98] transition-all disabled:opacity-50">
+            {selSaving ? 'Association…' : `Associer ${selRefs.length} réf${selRefs.length > 1 ? 's' : ''}`}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+
+  /** Une ligne de la file, suivie du panneau si c'est ELLE qui l'ancre. Le
+   *  panneau s'ouvre là où le boucher regarde déjà : encadré, décalé, sur fond
+   *  navy clair, il se lit comme un tiroir de la ligne, pas comme une réf de
+   *  plus. Aucun défilement n'est provoqué — l'écran ne bouge pas. */
+  const renderRefAncree = (r: Ref) => (
+    <div key={r.id}>
+      {renderRef(r)}
+      {ancreAffichee === r.id && (
+        <div className="border-l-[3px] border-pilote bg-pilote-50/70 pl-4 pr-3 pb-3 pt-2">
+          {carteAssociation}
+        </div>
+      )}
+    </div>
+  )
 
   return (
     <div className="p-6 md:p-8 max-w-6xl mx-auto">
@@ -1143,93 +1283,13 @@ export default function MercurialePage() {
         )}
       </div>
 
-      {/* ── Association en cours (sélection par les boutons « Associer ») —
-          elle vit avec la file, dans « À traiter ». ── */}
-      {view === 'traiter' && selRefs.length > 0 && (
+      {/* ── Association en cours — REPLI. Le panneau vit normalement SOUS la
+          ligne cliquée, dans la file. Ici seulement quand aucune réf du lot
+          n'est à l'écran (autre onglet, recherche filtrante) : sans ça, une
+          sélection en cours n'aurait plus aucun bouton pour la valider. ── */}
+      {selRefs.length > 0 && ancreAffichee === null && (
         <div className="sticky top-2 z-30 mb-5">
-          <div className="bg-white rounded-2xl border-2 border-pilote-200 shadow-card-hover p-4">
-            <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
-              <p className="text-sm font-bold text-gray-900">
-                Association en cours
-                <span className="ml-2 text-[11px] font-bold text-pilote bg-pilote-50 rounded-full px-2 py-0.5 tabular">{selRefs.length} réf{selRefs.length > 1 ? 's' : ''}</span>
-              </p>
-              <p className="text-[11px] text-gray-400">Cliquez « Associer » sur d&apos;autres réfs pour les ajouter — tout partira vers le même générique.</p>
-            </div>
-            <div className="space-y-1.5 mb-3 max-h-56 overflow-y-auto">
-              {selRefs.map(r => {
-                const kind = unitKind(r.unit)
-                const needFactor = targetBase !== null && kind !== null && kind !== targetBase
-                return (
-                  <div key={r.id} className="flex items-center gap-3 bg-gray-50 rounded-lg px-3 py-2 flex-wrap">
-                    <span className="text-sm font-semibold text-gray-900 flex-1 min-w-[150px]">{r.name}</span>
-                    <span className="text-[11px] text-gray-400">{nomFournisseur(r.supplier_name) || '—'}</span>
-                    <span className="text-xs text-gray-500 tabular">{r.last_price_ht !== null ? `${fmtEuro(Number(r.last_price_ht))}${r.unit ? ` / ${r.unit}` : ''}` : '—'}</span>
-                    {targetBase !== null && (
-                      <span className={`flex items-center gap-1.5 text-[11px] rounded-lg px-2 py-1 tabular ${needFactor ? 'text-amber-700 bg-amber-50 ring-1 ring-amber-200' : 'text-gray-400'}`}>
-                        1 {r.unit || 'unité'} =
-                        <input value={factors[r.id] ?? ''} inputMode="decimal" placeholder={needFactor ? '?' : '1'}
-                          onChange={e => setFactors(p => ({ ...p, [r.id]: e.target.value }))}
-                          className={`w-14 border rounded px-1.5 py-0.5 text-right tabular bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200 ${needFactor ? 'border-amber-300' : 'border-gray-200'}`} />
-                        {unitLabel(targetBase)}{needFactor ? ' (requis)' : ''}
-                      </span>
-                    )}
-                    <button onClick={() => toggleSel(r)} className="p-1 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50" title="Retirer de la sélection">
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                )
-              })}
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-              <div className={selTarget.choice === 'new' ? '' : 'md:col-span-2'}>
-                <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1">Vers l&apos;article générique</label>
-                <select value={selTarget.choice}
-                  onChange={e => {
-                    const v = e.target.value
-                    setSelTarget(t => ({ ...t, choice: v, newName: v === 'new' && !t.newName ? commonLabel(selRefs.map(x => x.name)) : t.newName }))
-                  }}
-                  className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200">
-                  <option value="">— Choisir —</option>
-                  <option value="new">Créer un nouvel article générique</option>
-                  {generics.map(g => <option key={g.id} value={g.id}>{g.name} (/ {unitLabel(g.base_unit)})</option>)}
-                </select>
-              </div>
-              {selTarget.choice === 'new' && (
-                <>
-                  <div>
-                    <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1">Nom</label>
-                    <input value={selTarget.newName}
-                      onChange={e => { nameTouchedRef.current = true; setSelTarget(t => ({ ...t, newName: e.target.value })) }}
-                      placeholder="Filet de poulet"
-                      className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200" />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1">Unité de base</label>
-                    <select value={selTarget.newUnit} onChange={e => setSelTarget(t => ({ ...t, newUnit: e.target.value as 'kg' | 'piece' }))}
-                      className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200">
-                      <option value="kg">au kg</option>
-                      <option value="piece">à la pièce</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1">Catégorie</label>
-                    <select value={selTarget.newCat} onChange={e => setSelTarget(t => ({ ...t, newCat: e.target.value as 'ingredient' | 'emballage' }))}
-                      className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200">
-                      <option value="ingredient">Ingrédient</option>
-                      <option value="emballage">Emballage</option>
-                    </select>
-                  </div>
-                </>
-              )}
-              <div className={`flex items-end justify-end gap-2 ${selTarget.choice === 'new' ? 'md:col-span-4' : 'md:col-span-2'}`}>
-                <button onClick={clearSel} className="text-xs font-semibold text-gray-500 rounded-xl px-3.5 py-2 hover:bg-gray-100 transition-colors">Tout annuler</button>
-                <button onClick={submitSelection} disabled={selSaving}
-                  className="text-xs font-bold text-white bg-pilote hover:bg-pilote-hover rounded-xl px-4 py-2 shadow-card active:scale-[0.98] transition-all disabled:opacity-50">
-                  {selSaving ? 'Association…' : `Associer ${selRefs.length} réf${selRefs.length > 1 ? 's' : ''}`}
-                </button>
-              </div>
-            </div>
-          </div>
+          {carteAssociation}
         </div>
       )}
 
@@ -1416,7 +1476,7 @@ export default function MercurialePage() {
                       </button>
                     </div>
                     <div className="divide-y divide-gray-100">
-                      {grp.refs.map(renderRef)}
+                      {grp.refs.map(renderRefAncree)}
                     </div>
                   </div>
                 ))}
@@ -1452,7 +1512,7 @@ export default function MercurialePage() {
                       </span>
                     </button>
                     {showNonProduct && (
-                      <div className="divide-y divide-gray-100 border-t border-gray-100">{nonProductRefs.map(renderRef)}</div>
+                      <div className="divide-y divide-gray-100 border-t border-gray-100">{nonProductRefs.map(renderRefAncree)}</div>
                     )}
                   </div>
                 )}
