@@ -404,7 +404,14 @@ export default async function MargesPage() {
                         </td>
                         <td className="px-4 py-3 text-right text-sm text-gray-700 tabular">{fmt(f.ca)} €</td>
                         <td className="px-4 py-3 text-right text-sm text-gray-700 tabular">{fmt(f.achats)} €</td>
-                        <td className={`px-4 py-3 text-right text-sm font-semibold tabular ${f.achats <= 0 ? 'text-gray-400' : f.ca - f.achats >= 0 ? 'text-gray-900' : 'text-red-600'}`}>{fmt(f.ca - f.achats)} €</td>
+                        {/* La marge en euros se tait exactement quand le taux se tait.
+                            Sans achats rattachés, « CA − achats » vaut le CA : la ligne
+                            affichait 13 429 € de marge en face d'un taux « — », deux
+                            chiffres contradictoires à trois centimètres l'un de l'autre. */}
+                        <td className={`px-4 py-3 text-right text-sm font-semibold tabular ${f.taux === null ? 'text-gray-300' : f.ca - f.achats >= 0 ? 'text-gray-900' : 'text-red-600'}`}
+                          title={f.taux === null ? 'Sans achats rattachés à cette famille, la marge en euros vaudrait le chiffre d’affaires. Ventilez les fournisseurs concernés pour l’obtenir.' : undefined}>
+                          {f.taux === null ? '—' : `${fmt(f.ca - f.achats)} €`}
+                        </td>
                         <td className={`px-4 py-3 text-right text-sm font-bold tabular ${f.fiable ? margeColor(f.taux, f.refFam) : 'text-amber-600'}`}>{pct(f.taux)}{!f.fiable && f.taux !== null && <sup className="ml-0.5 text-[9px] font-bold text-amber-500">!</sup>}</td>
                         <td className="px-4 py-3 text-right whitespace-nowrap">
                           <RepereEditor familyId={f.refFam?.id ?? null} lo={f.refFam?.benchmark_lo ?? null} hi={f.refFam?.benchmark_hi ?? null} />
@@ -440,7 +447,11 @@ export default async function MargesPage() {
                       </td>
                       <td className="px-4 py-3 text-right text-sm text-gray-700 tabular">{fmt(diversRow.ca)} €</td>
                       <td className="px-4 py-3 text-right text-sm text-gray-700 tabular">{fmt(diversRow.achats)} €</td>
-                      <td className={`px-4 py-3 text-right text-sm font-semibold tabular ${diversRow.ca - diversRow.achats >= 0 ? 'text-gray-900' : 'text-red-600'}`}>{fmt(diversRow.ca - diversRow.achats)} €</td>
+                      {/* Même règle que les familles : la marge en euros se tait quand le taux se tait. */}
+                      <td className={`px-4 py-3 text-right text-sm font-semibold tabular ${diversTaux === null ? 'text-gray-300' : diversRow.ca - diversRow.achats >= 0 ? 'text-gray-900' : 'text-red-600'}`}
+                        title={diversTaux === null ? 'Sans achats rattachés à ce bloc, la marge en euros vaudrait le chiffre d’affaires. Ventilez les fournisseurs concernés pour l’obtenir.' : undefined}>
+                        {diversTaux === null ? '—' : `${fmt(diversRow.ca - diversRow.achats)} €`}
+                      </td>
                       <td className="px-4 py-3 text-right text-sm font-bold tabular text-gray-600">{pct(diversTaux)}</td>
                       <td className="px-4 py-3 text-right text-[11px] text-gray-400">—</td>
                       <td className="px-4 py-3 text-right text-xs text-gray-500 tabular">{diversRow.salaires > 0 ? `${fmt(diversRow.salaires)} €` : '—'}</td>
