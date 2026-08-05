@@ -16,7 +16,7 @@
 //     sa pastille, avec la CIBLE de la boutique rappelée dans l'en-tête de
 //     colonne : on voit si la ligne est au-dessus ou en dessous sans calcul ;
 //   · la FLÈCHE de tendance collée au coût — le sens du mouvement se lit avant
-//     la valeur ;
+//     la valeur, et depuis le lot 67 elle dit aussi DE COMBIEN ;
 //   · les CHIPS de catégorie dans leur propre colonne, pas fondues dans le nom ;
 //   · des en-têtes TRIABLES dont l'icône de tri est visible en permanence, pas
 //     au survol.
@@ -129,17 +129,56 @@ export function verdictAffiche(l: ListeLigne, avecMainOeuvre: boolean) {
   return margeEtCoef(l.cost.pv_unitaire_ht, coutUniteAffiche(l, avecMainOeuvre), l.cost.prix_manquants)
 }
 
-/** Sens du coût matière sur les 8 dernières semaines. null : pas de courbe
- *  traçable — on n'affiche alors AUCUNE flèche (une flèche « stable » se
- *  lirait « je sais que ça n'a pas bougé », ce qui est faux).
+/** Le mouvement du coût matière sur les 8 dernières semaines — son SENS, et de
+ *  COMBIEN.
+ *
+ *  La flèche seule répondait « ça monte » ; elle laissait le boucher devant la
+ *  seule question qui compte ensuite : de beaucoup ? Un coût matière qui gagne
+ *  0,3 % ne se traite pas comme un qui gagne 9 %, et rien à l'écran ne les
+ *  distinguait. Relevé chez Otami le 04/08/2026 : leur tableau des mouvements
+ *  de prix montre toujours l'ancien ET le nouveau prix, jamais une flèche nue.
+ *
+ *  Le POURCENTAGE est ce qui s'affiche : il se lit pareil que la fiche soit
+ *  chiffrée au batch ou à l'unité, alors que l'écart en euros porte, lui, sur
+ *  le batch — il reste donc dans l'infobulle, avec sa date de départ, où il ne
+ *  peut pas être pris pour un écart à l'unité.
+ *
+ *  null : pas de courbe traçable, ou mouvement sous le demi-centime — on
+ *  n'affiche alors AUCUNE flèche (une flèche « stable » se lirait « je sais que
+ *  ça n'a pas bougé », ce qui est faux).
+ *
  *  La série est celle du BATCH : deux formats d'une même fiche portent donc la
  *  même tendance, et c'est juste — c'est la même matière qui bouge. */
-export function tendance(l: ListeLigne): 'hausse' | 'baisse' | null {
+export type Mouvement = {
+  sens: 'hausse' | 'baisse'
+  /** Écart en % entre le premier et le dernier point de la fenêtre */
+  pct: number | null
+  /** Écart en euros SUR LE BATCH */
+  ecart_batch: number
+  /** Date du premier point — « depuis le … » */
+  depuis: string
+}
+
+export function tendance(l: ListeLigne): Mouvement | null {
   const s = l.cost.matiere_series
   if (!Array.isArray(s) || s.length < 2) return null
-  const delta = s[s.length - 1].v - s[0].v
+  const depart = s[0]
+  const arrivee = s[s.length - 1]
+  const delta = arrivee.v - depart.v
   if (Math.abs(delta) < 0.005) return null
-  return delta > 0 ? 'hausse' : 'baisse'
+  // Un départ à zéro ne donne pas de pourcentage : on montre la flèche et
+  // l'écart en euros, sans inventer un « +∞ % ».
+  const pct = depart.v > 0 ? Math.round((delta / depart.v) * 1000) / 10 : null
+  return { sens: delta > 0 ? 'hausse' : 'baisse', pct, ecart_batch: delta, depuis: depart.d }
+}
+
+/** « 2026-06-09 » → « 9 juin ». Rend la chaîne telle quelle si elle n'est pas
+ *  une date — l'infobulle ne doit jamais afficher « Invalid Date ». */
+function jourCourt(iso: string): string {
+  const t = String(iso || '').slice(0, 10)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(t)) return t
+  const d = new Date(t + 'T00:00:00Z')
+  return d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', timeZone: 'UTC' })
 }
 
 /** Couleur d'une marge : jugée contre la CIBLE de sa catégorie quand elle
@@ -304,11 +343,16 @@ export default function ListeFiches({
                           hausse en rouge, baisse en vert (langage de la mercuriale). */}
                       {t !== null && (
                         <span
-                          title={t === 'hausse'
-                            ? 'Coût matière en hausse sur les 8 dernières semaines'
-                            : 'Coût matière en baisse sur les 8 dernières semaines'}
-                          className={`w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0 ${t === 'hausse' ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'}`}>
-                          {t === 'hausse' ? <ArrowUp className="w-2.5 h-2.5" /> : <ArrowDown className="w-2.5 h-2.5" />}
+                          title={`Coût matière en ${t.sens} depuis le ${jourCourt(t.depuis)}`
+                            + ` : ${t.ecart_batch > 0 ? '+' : '−'}${fmtEuro(Math.abs(t.ecart_batch))} sur le batch`
+                            + (t.pct !== null ? ` (${t.pct > 0 ? '+' : '−'}${Math.abs(t.pct).toLocaleString('fr-FR')} %)` : '')}
+                          className={`inline-flex items-center gap-0.5 rounded-full pl-0.5 pr-1.5 py-0.5 flex-shrink-0 ${t.sens === 'hausse' ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'}`}>
+                          {t.sens === 'hausse' ? <ArrowUp className="w-2.5 h-2.5" /> : <ArrowDown className="w-2.5 h-2.5" />}
+                          {/* DE COMBIEN — en pourcentage, seule écriture qui se
+                              lise pareil au batch et à l'unité. */}
+                          {t.pct !== null && (
+                            <span className="text-[10px] font-bold tabular">{Math.abs(t.pct).toLocaleString('fr-FR')} %</span>
+                          )}
                         </span>
                       )}
                     </span>
