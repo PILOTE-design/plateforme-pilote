@@ -31,6 +31,7 @@ import { appliquerDictionnaire } from '@/lib/association-dictionary'
 import { fetchAllPages } from '@/lib/fetch-all'
 import { coutsMorceauxDuClient, ensureGeneriquesDecoupe } from '@/lib/valorisation-source'
 import { nomFournisseur } from '@/lib/supplier-name'
+import { sortieDeFile, libelleSortie, STATUT_ABANDONNE } from '@/lib/lecture-file'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -111,13 +112,17 @@ export async function GET() {
     // prompt ou le seuil ne débloquait rien, la facture restait figée. Idem
     // pour un `no_file` à qui on vient de poser un PDF. Les quatre états
     // relisables sont maintenant dans la file, les jamais-lues d'abord.
+    // Les factures ABANDONNÉES sont demandées ici AUSSI (lot 80) : elles
+    // quittent la file plus bas, mais si la requête ne les ramenait pas,
+    // l'écran ne pourrait plus ni les nommer ni proposer de les réessayer —
+    // elles disparaîtraient, ce qui est exactement le contraire du geste.
     fetchAllPages<any>(apres => {
       let q = service.from('invoices')
-        .select('id, supplier_name, invoice_date, amount_ht, lines_status, lines_error, lines_checked_at')
+        .select('id, supplier_name, invoice_date, amount_ht, lines_status, lines_error, lines_checked_at, lectures_echouees')
         .eq('client_id', clientId)
         .eq('is_fixed_charge', false)
         .not('file_path', 'is', null)
-        .or('lines_status.is.null,lines_status.eq.error,lines_status.eq.no_file,lines_status.eq.partial')
+        .or(`lines_status.is.null,lines_status.eq.error,lines_status.eq.no_file,lines_status.eq.partial,lines_status.eq.${STATUT_ABANDONNE}`)
       if (apres) q = q.gt('id', apres)
       return q.order('id', { ascending: true })
     }, { max: 5000 }),
@@ -143,7 +148,27 @@ export async function GET() {
     .map((a: any) => ({ ...a, supplier_name: nomFournisseur(a.supplier_name) || null }))
     .sort((a: any, b: any) => String(b.updated_at || '').localeCompare(String(a.updated_at || '')))
   const pricePoints = pointsPage.rows
-  const pending = pendingPage.rows
+
+  // ── SORTIE DE FILE (lot 80) ────────────────────────────────────────────────
+  // Une facture illisible restait proposée à la lecture indéfiniment, et le
+  // bouton « Lire les N factures » la repassait au modèle à chaque clic, à nos
+  // frais. Le partage se fait ICI, une fois : ce qui reste dans `pending` est
+  // ce qu'on accepte encore de lire ; le reste est RANGÉ, avec son motif, et se
+  // réessaie d'un clic. Aucune facture n'est supprimée — le montant reste
+  // compté dans les achats, la marge et le résultat de sa semaine.
+  const maintenant = Date.now()
+  const pending: any[] = []
+  const lecturesAbandonnees: any[] = []
+  for (const f of (pendingPage.rows || []) as any[]) {
+    const sortie = sortieDeFile(f, maintenant)
+    if (!sortie) { pending.push(f); continue }
+    lecturesAbandonnees.push({
+      ...f,
+      motif: sortie.motif,
+      phrase: sortie.phrase,
+      libelle: libelleSortie(sortie.motif),
+    })
+  }
 
   // Fiches recettes utilisatrices — pour « utilisé dans N fiches » et l'impact
   // d'un mouvement de prix (Δprix × quantité brute). Lignes génériques seulement.
@@ -529,6 +554,11 @@ export async function GET() {
     rang(a.lines_status) - rang(b.lines_status)
     || String(b.invoice_date || '').localeCompare(String(a.invoice_date || '')))
 
+  // Les sorties de file, la plus récente d'abord : c'est celle dont le boucher
+  // se souvient, et donc celle qu'il voudra réessayer en premier.
+  const abandonneesOut = [...lecturesAbandonnees].sort((a: any, b: any) =>
+    String(b.invoice_date || '').localeCompare(String(a.invoice_date || '')))
+
   // Factures SANS PDF : elles n'entrent pas dans la file (rien à lire), mais
   // elles pèsent — leurs prix manquent à la mercuriale. Le compte est remonté
   // pour que l'écran propose le rattrapage au lieu de laisser un trou muet.
@@ -600,6 +630,7 @@ export async function GET() {
     generics: genericsOut,
     queue: queueOut,
     pending: pendingOut,
+    lectures_abandonnees: abandonneesOut,
     fournisseurs: fournisseursOut,
     depense_hors_catalogue_12m: depenseHorsCatalogue,
     ecarts_bloques: ecartsOut,
