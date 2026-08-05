@@ -3,7 +3,7 @@ import { resolveClientId } from '@/lib/resolve-client-id'
 import { computeWeekEconomics, htConverter, type WeekEconomics } from '@/lib/week-economics'
 import { familleMatchesText, margeFiabilite, effectiveCaStems, DEFAULT_TVA_RATE } from '@/lib/postes'
 import { ensureMarginFamilies, caByFamily, type MarginFamily } from '@/lib/margin-families'
-import { normalizeSupplierName, sameSupplierFamily, supplierSociete } from '@/lib/supplier-memory'
+import { ventilationAchats, seauxDesFamilles, RAYONS_METIER, type FamilleRef } from '@/lib/ventilation-achats'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Percent, Info, Settings2, AlertTriangle } from 'lucide-react'
 import Link from 'next/link'
@@ -69,6 +69,10 @@ export default async function MargesPage() {
   let ca12Rows: any[] = []
   let inv12Rows: any[] = []
   let splitRows: any[] = []
+  // Les répartitions saisies facture par facture : elles priment sur celle du
+  // fournisseur. Le cumul 12 mois les ignorait — il ventilait donc autrement
+  // que le moteur hebdomadaire sur les mêmes factures.
+  let ifsRows: any[] = []
   let rowsRaw: any[] = []
   // Vocabulaire de reconnaissance du client (clients.ca_stems) — le cumul 12 mois
   // ci-dessous rattache les libellés de vente aux familles EXACTEMENT comme le
@@ -79,24 +83,27 @@ export default async function MargesPage() {
   // comme le moteur hebdo, pour ne pas comparer du CA TTC à des achats HT.
   let tvaRate = DEFAULT_TVA_RATE
   if (clientId) {
-    const [{ data: caData }, { data: invData }, { data: splitData }, { data: clientRow }] = await Promise.all([
+    const [{ data: caData }, { data: invData }, { data: splitData }, { data: clientRow }, { data: ifsData }] = await Promise.all([
       serviceSupabase.from('weekly_ca')
         .select('week_number, year, ca_total, families_detail, ca_boucherie, ca_charcuterie, ca_traiteur')
         .eq('client_id', clientId).in('year', [currentYear - 1, currentYear]),
       serviceSupabase.from('invoices')
-        .select('amount_ht, supplier_name, is_fixed_charge, status, week_number, year')
+        .select('id, amount_ht, supplier_name, is_fixed_charge, status, week_number, year')
         .eq('client_id', clientId).in('year', [currentYear - 1, currentYear])
         .eq('is_fixed_charge', false),
       serviceSupabase.from('supplier_rayon_splits')
-        .select('supplier_key, pct_boucherie, pct_charcuterie, pct_traiteur, pct_fruits_et_legumes, pct_divers')
+        .select('supplier_key, parts, pct_boucherie, pct_charcuterie, pct_traiteur, pct_fruits_et_legumes, pct_divers')
         .eq('client_id', clientId),
       serviceSupabase.from('clients').select('ca_stems, tva_rate').eq('id', clientId).maybeSingle(),
+      serviceSupabase.from('invoice_family_splits')
+        .select('invoice_id, family_id, pct').eq('client_id', clientId),
     ])
     caStemsRaw = (clientRow as { ca_stems?: unknown } | null)?.ca_stems ?? null
     tvaRate = Number((clientRow as { tva_rate?: unknown } | null)?.tva_rate ?? DEFAULT_TVA_RATE) || DEFAULT_TVA_RATE
     ca12Rows = (caData || []).filter((r: any) => inWindow(r.year, r.week_number) && parseFloat(String(r.ca_total || 0)) > 0)
     inv12Rows = (invData || []).filter((r: any) => inWindow(r.year, r.week_number) && r.status === 'validee')
     splitRows = splitData || []
+    ifsRows = ifsData || []
     rowsRaw = [...ca12Rows].filter((r: any) => r.year === currentYear)
       .sort((a: any, b: any) => b.week_number - a.week_number).slice(0, 4)
   }
@@ -154,31 +161,23 @@ export default async function MargesPage() {
   const ca12Fam = famDefs.map(f =>
     toHT(entries12.reduce((s, e) => s + (familleMatchesText(f.key, f.label, String(e?.nom ?? ''), String(e?.nom ?? ''), caStems) ? (Number(e?.montant) || 0) : 0), 0)))
 
-  // Ventilation 12 mois des achats — même règle que le moteur (splits fournisseur,
-  // fruits & légumes replié dans divers), réécrite ici sur la fenêtre longue.
-  const splitFor = (supplierName: string) => {
-    const q = normalizeSupplierName(supplierSociete(supplierName || ''))
-    if (!q) return null
-    let best: any = null
-    for (const s of splitRows) {
-      if (s.supplier_key === q) return s
-      if (sameSupplierFamily(s.supplier_key, q) && (best === null || String(s.supplier_key).length > String(best.supplier_key).length)) best = s
+  // Ventilation 12 mois des achats — LE MÊME module que le moteur hebdomadaire
+  // (lib/ventilation-achats). Cette page en portait sa propre copie, qui lisait
+  // les colonnes `pct_*` et ignorait les répartitions saisies facture par
+  // facture : deux implémentations d'une même règle finissent toujours par ne
+  // plus dire la même chose. La fenêtre change, la règle non.
+  const seaux12 = seauxDesFamilles(families as unknown as FamilleRef[], racine => {
+    for (const r of RAYONS_METIER) {
+      if (familleMatchesText(r.key, r.label, String(racine.name_key || ''), String(racine.name || ''), caStems)) return r.key
     }
-    return best
-  }
-  const achats12 = { boucherie: 0, charcuterie: 0, traiteur: 0, divers: 0, non_ventiles: 0, total: 0 }
-  for (const inv of inv12Rows) {
-    const amt = parseFloat(String(inv.amount_ht || 0)) || 0
-    if (!amt) continue
-    achats12.total += amt
-    const sp = splitFor(inv.supplier_name)
-    const pDivers = Number(sp?.pct_divers || 0) + Number(sp?.pct_fruits_et_legumes || 0)
-    const tot = sp ? (Number(sp.pct_boucherie) + Number(sp.pct_charcuterie) + Number(sp.pct_traiteur) + pDivers) : 0
-    if (!sp || tot <= 0) { achats12.non_ventiles += amt; continue }
-    achats12.boucherie   += amt * (Number(sp.pct_boucherie)   / tot)
-    achats12.charcuterie += amt * (Number(sp.pct_charcuterie) / tot)
-    achats12.traiteur    += amt * (Number(sp.pct_traiteur)    / tot)
-    achats12.divers      += amt * (pDivers                    / tot)
+    return null
+  })
+  const vent12 = ventilationAchats(
+    inv12Rows, splitRows, families as unknown as FamilleRef[], ifsRows, seaux12)
+  const achats12: Record<string, number> = {
+    ...vent12.parRayon,
+    non_ventiles: vent12.nonVentiles,
+    total: vent12.total,
   }
 
   // ── Lignes familles métier (période lissée + colonne 12 mois) ──
@@ -190,7 +189,7 @@ export default async function MargesPage() {
     const ca       = sum(e => e.familles[i]?.ca || 0)
     const achats   = sum(e => e.familles[i]?.achats || 0)
     const salaires = sum(e => e.familles[i]?.salaires || 0)
-    const a12 = (achats12 as Record<string, number>)[f.key] ?? 0
+    const a12 = achats12[f.key] ?? 0
     const c12 = ca12Fam[i] || 0
     // Voir lib/week-economics : sans achats rattachés, le taux vaudrait 100 % et
     // serait peint en vert. On n'affiche rien plutôt qu'un chiffre faux.
