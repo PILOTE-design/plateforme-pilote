@@ -53,6 +53,7 @@ import { resolveClientId } from '@/lib/resolve-client-id'
 import { loadSupplierCategories, rememberedCategory } from '@/lib/supplier-memory'
 import { weekForInvoice, plausibleDelivery } from '@/lib/invoice-week'
 import { pdfToLines } from '@/lib/pdf-lines'
+import { verdictReleve, phraseReleve } from '@/lib/document-releve'
 import { randomUUID, createHmac, timingSafeEqual } from 'crypto'
 import Anthropic from '@anthropic-ai/sdk'
 
@@ -452,6 +453,23 @@ Si montant HT absent, déduire de TTC : HT = TTC / 1.{tva_rate/100+1}`
 
   if (!invoiceData.supplier_name || !invoiceData.amount_ht) {
     return NextResponse.json({ error: 'Données insuffisantes dans la facture' }, { status: 422 })
+  }
+
+  // UN RELEVÉ N'EST PAS UNE FACTURE — seconde ligne de défense.
+  //
+  // Le connecteur Pennylane écarte les relevés sur leur libellé (cf.
+  // lib/document-releve). Ici, mieux : le TEXTE du PDF est déjà lu, et un
+  // relevé s'annonce dans son en-tête. Un relevé importé compte l'argent deux
+  // fois — achats, marge, résultat, rapport PDF — et ses lignes, qui sont des
+  // totaux et des numéros de pièce, fabriquent des prix qui n'en sont pas.
+  //
+  // Le document n'entre pas, et le refus est TRACÉ : un import silencieux qui
+  // avale une pièce est pire qu'un import qui la refuse en le disant.
+  const verdictDoc = verdictReleve({ libelle: invoiceData.supplier_name, texte: pdfText })
+  if (verdictDoc.releve) {
+    const motif = phraseReleve(verdictDoc, invoiceData.supplier_name)
+    console.warn(`[inbound] ${motif}`)
+    return NextResponse.json({ ok: true, ignored: 'releve', motif }, { status: 200 })
   }
 
   const invoiceDate = new Date(invoiceData.invoice_date || new Date().toISOString().slice(0, 10))

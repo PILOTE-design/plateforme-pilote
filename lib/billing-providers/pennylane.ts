@@ -1,4 +1,5 @@
-import type { BillingProvider, ProviderInvoice } from './types'
+import type { BillingProvider, ProviderInvoice, ProviderRejet } from './types'
+import { verdictReleve, phraseReleve } from '@/lib/document-releve'
 
 const BASE = 'https://app.pennylane.com/api/external/v2'
 
@@ -75,6 +76,14 @@ function pickInvoiceDate(inv: any): string | null {
     if (typeof c === 'string' && /^\d{4}-\d{2}-\d{2}/.test(c)) return c.split('T')[0]
   }
   return null
+}
+
+/** Un montant lisible, ou rien. Sert au bilan des documents écartés, où le
+ *  montant n'est là que pour aider le boucher à reconnaître la pièce. */
+function montantLisible(v: unknown): number | undefined {
+  if (v === null || v === undefined || v === '') return undefined
+  const n = parseFloat(String(v))
+  return Number.isFinite(n) ? n : undefined
 }
 
 function mapInvoice(inv: any, fallbackDate: string): ProviderInvoice {
@@ -204,8 +213,41 @@ export const pennylane: BillingProvider = {
         }
       }
 
+      // UN RELEVÉ N'EST PAS UNE FACTURE — et il n'entre pas.
+      //
+      // Un relevé de compte, un relevé de factures ou un échéancier récapitule
+      // ce qui a DÉJÀ été facturé. Importé comme une facture, il compte
+      // l'argent deux fois — achats, marge, résultat, rapport PDF, tous faux
+      // du montant du relevé — et ses lignes, qui sont des totaux et des
+      // numéros de pièce, fabriquent des prix qui n'en sont pas dans la
+      // mercuriale. Il coûte en plus une lecture payante à chaque passage.
+      //
+      // Le tri se fait ICI, dans le connecteur, parce que c'est le point
+      // unique par lequel passent les trois voies Pennylane : la sync
+      // manuelle, la sync de nuit et le rattrapage. Le même contrôle posé
+      // dans les trois routes aurait divergé.
+      //
+      // On juge sur le LIBELLÉ du document, jamais sur le nom du fournisseur
+      // seul : un fournisseur peut s'appeler « RELEVÉ SARL ». Une facture
+      // écartée à tort est invisible ; un relevé importé se voit dans les
+      // chiffres. En cas de doute, on importe.
+      const rejets: ProviderRejet[] = []
+      const items2 = items.filter((inv: any) => {
+        const v = verdictReleve({ libelle: typeof inv?.label === 'string' ? inv.label : null })
+        if (!v.releve) return true
+        const nom = inv?.supplier?.name ?? inv?.third_party?.name ?? inv?.vendor?.name ?? inv?.label ?? 'Fournisseur inconnu'
+        rejets.push({
+          supplier_name: String(nom),
+          invoice_number: inv?.invoice_number ?? inv?.number ?? inv?.reference ?? undefined,
+          invoice_date: pickInvoiceDate(inv) ?? undefined,
+          amount_ht: montantLisible(inv?.currency_amount_before_tax ?? inv?.amount_before_tax),
+          motif: phraseReleve(v, String(nom)),
+        })
+        return false
+      })
+
       // Avoirs inclus (montants négatifs) — seuls les montants nuls sont écartés
-      let mapped = items.map((inv: any) => mapInvoice(inv, dateFrom))
+      let mapped = items2.map((inv: any) => mapInvoice(inv, dateFrom))
         .filter((i: ProviderInvoice) => Number.isFinite(i.amount_ht) && i.amount_ht !== 0)
 
       if (!serverFiltered) {
@@ -229,7 +271,7 @@ export const pennylane: BillingProvider = {
         }
       }
 
-      return { success: true, invoices: mapped }
+      return { success: true, invoices: mapped, rejets }
     } catch (err) {
       return { success: false, invoices: [], error: String(err) }
     }

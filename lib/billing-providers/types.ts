@@ -16,9 +16,25 @@ export interface ProviderInvoice {
   prorata_ht?: number       // part hebdomadaire HT = amount_ht × 7 / period_days
 }
 
+/** Un document ÉCARTÉ à l'import, et pourquoi.
+ *
+ *  Ne pas importer est un geste fort : il faut pouvoir dire au boucher ce qui
+ *  n'est pas entré, et sur quel motif. Un refus silencieux se remarque le jour
+ *  où un chiffre manque, et alors plus personne ne sait pourquoi. */
+export interface ProviderRejet {
+  supplier_name: string
+  invoice_number?: string
+  invoice_date?: string
+  amount_ht?: number
+  /** Motif en français, affichable tel quel */
+  motif: string
+}
+
 export interface SyncResult {
   success: boolean
   invoices: ProviderInvoice[]
+  /** Documents reconnus comme des relevés / échéanciers, non importés. */
+  rejets?: ProviderRejet[]
   error?: string
   debug?: string          // diagnostic non bloquant (ex: champs de date disponibles côté API)
 }
