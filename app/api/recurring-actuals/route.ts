@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { resolveClientId } from '@/lib/resolve-client-id'
+import { reelsChevauchants, phraseChevauchement, type RecurringActual } from '@/lib/recurring-charges'
 
 export const dynamic = 'force-dynamic'
 
@@ -30,6 +31,21 @@ export async function POST(req: NextRequest) {
   const { data: charge } = await svc
     .from('recurring_charges').select('id').eq('id', rcId).eq('client_id', clientId).maybeSingle()
   if (!charge) return NextResponse.json({ error: 'Charge introuvable' }, { status: 404 })
+
+  // Un relevé qui en recoupe un autre donnerait deux montants pour une seule
+  // dépense. Le moteur sait départager — il le doit, pour ce qui est déjà en
+  // base — mais un départage n'est pas une intention : c'est au boucher de dire
+  // lequel vaut. On refuse, en nommant celui qui gêne.
+  const { data: existants } = await svc
+    .from('recurring_actuals')
+    .select('id, recurring_charge_id, period_start, period_end, amount_ht, created_at')
+    .eq('client_id', clientId)
+    .eq('recurring_charge_id', rcId)
+
+  const genants = reelsChevauchants((existants || []) as RecurringActual[], rcId, b.period_start, b.period_end)
+  if (genants.length > 0) {
+    return NextResponse.json({ error: phraseChevauchement(genants) }, { status: 409 })
+  }
 
   const row = {
     client_id: clientId,

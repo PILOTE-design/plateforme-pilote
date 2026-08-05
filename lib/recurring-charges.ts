@@ -130,6 +130,69 @@ function actualOn(actuals: RecurringActual[], chargeId: string, d: Date): Recurr
   return best
 }
 
+/**
+ * Les réels que le MOTEUR retient réellement sur une fenêtre, dans l'ordre des
+ * jours, sans doublon.
+ *
+ * Le modal de réconciliation prenait « le premier réel qui chevauche la
+ * période », dans l'ordre où Postgres les avait renvoyés. Le moteur, lui, prend
+ * la fenêtre la plus étroite, jour par jour. Deux règles, donc deux réponses :
+ * l'écran pouvait afficher 420 € en face d'une occurrence dont le résultat de la
+ * semaine comptait 480 €. Ici, une seule règle — celle du calcul.
+ *
+ * Le tableau contient PLUSIEURS réels quand ils se partagent la période. Ce
+ * n'est pas un cas d'école : une facture, puis une régularisation sur une partie
+ * du mois, et l'occurrence est couverte par deux relevés. L'écran doit le dire
+ * plutôt que d'en élire un au hasard.
+ */
+export function reelsDeLaFenetre(
+  actuals: RecurringActual[],
+  chargeId: string,
+  startISO: string,
+  endISO: string,
+): RecurringActual[] {
+  const start = parseISO(startISO), end = parseISO(endISO)
+  const vus = new Set<string>()
+  const out: RecurringActual[] = []
+  for (let d = new Date(start.getTime()); d.getTime() <= end.getTime(); d = addDays(d, 1)) {
+    const a = actualOn(actuals, chargeId, d)
+    if (a && !vus.has(a.id)) { vus.add(a.id); out.push(a) }
+  }
+  return out
+}
+
+/**
+ * Les réels déjà enregistrés qui empiètent sur la fenêtre qu'on veut saisir.
+ *
+ * Rien n'empêchait deux relevés de se chevaucher : l'insertion ne regardait pas
+ * l'existant. Le moteur sait départager — il le doit, pour les chevauchements
+ * déjà en base — mais un départage n'est pas une intention. Quand un chevauchement
+ * s'apprête à naître, c'est au boucher de dire lequel des deux montants vaut,
+ * pas à une règle de tri.
+ */
+export function reelsChevauchants(
+  actuals: RecurringActual[],
+  chargeId: string,
+  startISO: string,
+  endISO: string,
+): RecurringActual[] {
+  return (actuals || []).filter(a =>
+    a.recurring_charge_id === chargeId
+    && String(a.period_start) <= String(endISO)
+    && String(a.period_end) >= String(startISO))
+}
+
+/** La phrase du refus, quand un relevé en chevaucherait un autre. */
+export function phraseChevauchement(existants: RecurringActual[]): string {
+  const liste = existants
+    .map(a => `du ${a.period_start} au ${a.period_end} (${Number(a.amount_ht).toFixed(2)} €)`)
+    .join(', ')
+  const pluriel = existants.length > 1
+  return `Cette période recoupe ${pluriel ? 'des relevés déjà enregistrés' : 'un relevé déjà enregistré'} :`
+    + ` ${liste}. Deux relevés sur les mêmes jours donneraient deux montants pour une seule dépense.`
+    + ` Retirez ${pluriel ? 'celui qui ne vaut plus' : 'l\'ancien'} avant d'enregistrer ${pluriel ? 'le nouveau' : 'celui-ci'}.`
+}
+
 /** Taux journalier d'une charge le jour `d` (réel si présent, sinon provision), 0 si inactive. */
 export function dailyRate(charge: RecurringCharge, actuals: RecurringActual[], d: Date): number {
   if (!activeOn(charge, d)) return 0

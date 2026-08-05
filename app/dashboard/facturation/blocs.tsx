@@ -7,14 +7,15 @@
 // de publication : aucun état, aucun effet, aucun appel API ici — la page garde
 // tout cela et ne passe que des données et des gestes.
 
-import { type Dispatch, type SetStateAction } from 'react'
+import { useState, type Dispatch, type SetStateAction } from 'react'
 import {
   Plus, Trash2, Save, X, Check, Loader2, AlertCircle, ChevronLeft, ChevronRight,
   Repeat, PieChart, Pencil, CalendarClock, Scale, AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
-  costForWindow, provisionForWindow, enumeratePeriods,
+  costForWindow, provisionForWindow, enumeratePeriods, reelsDeLaFenetre,
+  reelsChevauchants, phraseChevauchement,
   type RecurringCharge, type RecurringActual, type Periodicity,
 } from '@/lib/recurring-charges'
 import { libelleMotif, PERIODE_LUE, type MotifEcart } from '@/lib/charges-fixes'
@@ -551,6 +552,9 @@ export function ModaleReconciliation({
   saveActual: (chargeId: string, period_start: string, period_end: string, amount: number) => void
   deleteActual: (id: string) => void
 }) {
+  // Le refus d'un relevé qui en recouvrirait un autre, attaché à SA période :
+  // la phrase s'affiche là où le boucher vient de cliquer, pas en haut de l'écran.
+  const [refus, setRefus] = useState<{ cle: string; texte: string } | null>(null)
   return (
     <>
       {/* Modal : Réconciliation provisionné vs réel */}
@@ -594,7 +598,12 @@ export function ModaleReconciliation({
                         const sISO = occ.start.toISOString().slice(0, 10)
                         const eISO = occ.end.toISOString().slice(0, 10)
                         const prov = provisionForWindow(c, sISO, eISO)
-                        const act = recurringActuals.find(a => a.recurring_charge_id === c.id && a.period_start <= eISO && a.period_end >= sISO)
+                        // La MÊME règle que le moteur : la fenêtre la plus étroite, jour par
+                        // jour. Chercher « le premier qui chevauche » pouvait afficher un
+                        // montant que le résultat de la semaine ne comptait pas.
+                        const reels = reelsDeLaFenetre(recurringActuals, c.id, sISO, eISO)
+                        const act = reels[0] ?? null
+                        const partage = reels.length > 1
                         const draft = actualDraft[occ.key] ?? ''
                         const ecart = act ? Number(act.amount_ht) - prov : 0
                         return (
@@ -603,7 +612,14 @@ export function ModaleReconciliation({
                             <span className="flex-1 text-right text-sm text-gray-600 tabular">{fmtEuro(prov)}</span>
                             {act ? (
                               <>
-                                <span className="flex-1 text-right text-sm font-semibold text-gray-900 tabular">{fmtEuro(Number(act.amount_ht))}</span>
+                                <span className="flex-1 text-right text-sm font-semibold text-gray-900 tabular">
+                                  {fmtEuro(Number(act.amount_ht))}
+                                  {partage && (
+                                    <span className="block text-[10px] font-medium text-amber-600" title={reels.map(r => `${r.period_start} → ${r.period_end} : ${Number(r.amount_ht).toFixed(2)} €`).join(' · ')}>
+                                      {reels.length} relevés sur cette période
+                                    </span>
+                                  )}
+                                </span>
                                 <span className={`flex-1 text-right text-sm font-bold tabular ${ecart > 0 ? 'text-red-500' : ecart < 0 ? 'text-green-600' : 'text-gray-400'}`}>{ecart > 0 ? '+' : ''}{fmtEuro(ecart)}</span>
                                 <span className="w-24 flex justify-end"><button onClick={() => deleteActual(act.id)} className="text-xs font-medium text-gray-400 hover:text-red-500">Retirer</button></span>
                               </>
@@ -614,9 +630,28 @@ export function ModaleReconciliation({
                                 </div>
                                 <span className="flex-1 text-right text-xs text-gray-300">—</span>
                                 <span className="w-24 flex justify-end">
-                                  <button disabled={!draft} onClick={() => { saveActual(c.id, sISO, eISO, parseFloat(draft) || 0); setActualDraft(p => { const n = { ...p }; delete n[occ.key]; return n }) }} className="text-xs font-semibold text-pilote hover:underline disabled:opacity-40">Enregistrer</button>
+                                  <button
+                                    disabled={!draft}
+                                    onClick={() => {
+                                      // La MÊME fonction que le serveur. Le serveur reste
+                                      // l'arbitre — il refuse en 409 —, mais c'est ici que
+                                      // le boucher lit POURQUOI, avant d'avoir cliqué dans
+                                      // le vide.
+                                      const genants = reelsChevauchants(recurringActuals, c.id, sISO, eISO)
+                                      if (genants.length > 0) { setRefus({ cle: occ.key, texte: phraseChevauchement(genants) }); return }
+                                      setRefus(null)
+                                      saveActual(c.id, sISO, eISO, parseFloat(draft) || 0)
+                                      setActualDraft(p => { const n = { ...p }; delete n[occ.key]; return n })
+                                    }}
+                                    className="text-xs font-semibold text-pilote hover:underline disabled:opacity-40"
+                                  >Enregistrer</button>
                                 </span>
                               </>
+                            )}
+                            {refus?.cle === occ.key && (
+                              <p className="w-full text-[11px] leading-relaxed text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-2">
+                                {refus.texte}
+                              </p>
                             )}
                           </div>
                         )
