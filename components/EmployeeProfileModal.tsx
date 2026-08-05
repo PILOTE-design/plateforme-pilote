@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { X, Save, User, Phone, Mail, FileText, Calendar, AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { TYPES_CONTRAT, heuresContrat, contratADuree } from '@/lib/contrat'
 
 // ─── Types ────────────────────────────────────────────────────────────────────────
 
@@ -36,14 +37,9 @@ interface Props {
   onSaved: (updated: EmployeeProfile) => void
 }
 
-const CONTRACT_OPTS = [
-  { value: 'CDI_35', label: 'CDI · 35h' },
-  { value: 'CDI_39', label: 'CDI · 39h' },
-  { value: 'CDD_35', label: 'CDD · 35h' },
-  { value: 'CDD_39', label: 'CDD · 39h' },
-  { value: 'APPRENTI', label: 'Apprenti' },
-  { value: 'INTERIM', label: 'Intérim' },
-]
+// La liste vit dans lib/contrat — elle était recopiée ici, dans le planning et
+// côté admin, avec trois contenus différents. Une seule source désormais.
+const CONTRACT_OPTS = TYPES_CONTRAT.map(t => ({ value: t.key, label: t.label }))
 
 const POSITIONS = [
   'boucher', 'charcutier', 'traiteur', 'vendeur', 'apprenti boucher',
@@ -121,7 +117,7 @@ export default function EmployeeProfileModal({ employee, onClose, onSaved }: Pro
     : null
 
   // Alerte CDD expiration
-  const cddAlert = form.contract_end_date && (form.contract_type.startsWith('CDD'))
+  const cddAlert = form.contract_end_date && contratADuree(form.contract_type)
     ? (() => {
         const diff = new Date(form.contract_end_date).getTime() - Date.now()
         const days = Math.ceil(diff / (1000 * 60 * 60 * 24))
@@ -237,10 +233,12 @@ export default function EmployeeProfileModal({ employee, onClose, onSaved }: Pro
                 <select
                   value={form.contract_type}
                   onChange={e => {
-                    const opt = CONTRACT_OPTS.find(o => o.value === e.target.value)
-                    const hours = e.target.value.includes('39') ? 39 : 35
                     set('contract_type', e.target.value)
-                    if (opt) set('contract_hours', hours)
+                    // Le type PROPOSE des heures ; il ne les impose pas. Une clé
+                    // inconnue laisse les heures déjà saisies en place plutôt que
+                    // d'en inventer.
+                    const heures = heuresContrat(e.target.value)
+                    if (heures !== null) set('contract_hours', heures)
                   }}
                   className="w-full h-9 rounded-lg border border-gray-200 bg-white text-sm px-3 focus:outline-none focus:ring-2 focus:ring-[#1E3A5F]/30"
                 >
@@ -337,7 +335,7 @@ export default function EmployeeProfileModal({ employee, onClose, onSaved }: Pro
                   <p className="text-xs text-gray-400 mt-1">Ancienneté : {seniority}</p>
                 )}
               </div>
-              {form.contract_type.startsWith('CDD') && (
+              {contratADuree(form.contract_type) && (
                 <div>
                   <label className="block text-xs text-gray-500 mb-1 flex items-center gap-1">
                     <Calendar className="w-3 h-3" />Fin de contrat

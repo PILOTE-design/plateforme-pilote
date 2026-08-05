@@ -7,6 +7,7 @@ import {
   Mail, Calendar, CalendarDays, ChevronLeft, ChevronRight,
   Receipt, ShoppingCart, Users, Loader2, AlertCircle,
 } from 'lucide-react'
+import { heuresContrat } from '@/lib/contrat'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -53,9 +54,15 @@ const JOURS_SHORT = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim']
 const JOURS_DB    = ['lundi','mardi','mercredi','jeudi','vendredi','samedi','dimanche'] as const
 type JourDB = typeof JOURS_DB[number]
 
-const CONTRACT_H: Record<string, number> = {
-  CDI_35: 35, CDI_39: 39, CDD_35: 35, CDD_39: 39,
-}
+/** Les heures hebdomadaires d'un salarié.
+ *
+ *  `contract_hours` D'ABORD : c'est le champ que lit le moteur de paie, et le
+ *  seul que le gérant peut ajuster (un apprenti à 30 h, un intérimaire à 39 h).
+ *  Cette page faisait l'inverse — le TYPE écrasait les heures enregistrées —,
+ *  et affichait donc 35 h pour un contrat saisi à 30 h. Le type ne sert plus
+ *  que de repli, via la liste unique de lib/contrat. */
+const heuresDe = (e: { contract_type?: string; contract_hours?: number | null }): number =>
+  e.contract_hours ?? heuresContrat(e.contract_type) ?? 35
 const TYPE_STYLE: Record<DayType, string> = {
   travail: 'bg-blue-50 text-blue-700',
   conges:  'bg-sky-100 text-sky-700',
@@ -267,7 +274,7 @@ function PlanningTab({ clientId }: { clientId: string }) {
 
   const dates   = getWeekDates(week, year)
   const totalH  = employees.reduce((s, e) => {
-    const ch = CONTRACT_H[e.contract_type] ?? e.contract_hours ?? 35
+    const ch = heuresDe(e)
     return s + calcH(getEntry(entries, e.id, week, year), ch)
   }, 0)
 
@@ -304,7 +311,7 @@ function PlanningTab({ clientId }: { clientId: string }) {
               {employees.map((emp, idx) => {
                 const pal   = EMP_PAL[idx % EMP_PAL.length]
                 const entry = getEntry(entries, emp.id, week, year)
-                const ch    = CONTRACT_H[emp.contract_type] ?? emp.contract_hours ?? 35
+                const ch    = heuresDe(emp)
                 const total = calcH(entry, ch)
                 const hasOT = total > ch
                 return (
@@ -351,7 +358,7 @@ function PlanningTab({ clientId }: { clientId: string }) {
                     const e    = getEntry(entries, emp.id, week, year)
                     const tKey = (jour + '_type') as keyof PlanningEntry
                     const t    = (e[tKey] as DayType) || 'travail'
-                    const ch   = CONTRACT_H[emp.contract_type] ?? emp.contract_hours ?? 35
+                    const ch   = heuresDe(emp)
                     if (t === 'conges')   return s + (ch >= 39 ? 7.83 : 7)
                     if (t !== 'travail') return s
                     return s + ((e[jour as keyof PlanningEntry] as number) || 0)
