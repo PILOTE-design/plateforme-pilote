@@ -138,6 +138,13 @@ export function assietteQuiTombeJuste(l: LigneBrute): { base: 'poids' | 'quantit
  * bien lue sur une autre facture, est à 1,998 €/L : c'est en comparant les deux
  * lectures du MÊME article qu'on voit le défaut, jamais en relisant le calcul.
  *
+ * Le relevé complet de la boucherie en donne ONZE, chez le même fournisseur et
+ * jamais sur de la viande : FROMAGE BLC 1KG « pesé » 3,01 · MC MOUTARDE DIJON
+ * 5KG « pesé » 1,898 · MINI PENNE 5KG « pesé » 2,714 · QUINOA 1KG « pesé »
+ * 5,76 · TAGLIATELLE 1KG « pesé » 4,24 · OEUF LIQ 1KG « pesé » 5,54 · MC
+ * LASAGNES 3KG « pesé » 4,013. À chaque fois le « prix unitaire » vaut le
+ * chiffre de l'étiquette, et le « poids » vaut le prix.
+ *
  * Il faut donc un témoin EXTÉRIEUR au calcul. Le libellé en est un : « 5L » dit
  * cinq litres, pas cinq euros. */
 
@@ -162,54 +169,89 @@ const RE_CONTENANCE = new RegExp(
 /**
  * Le conditionnement annoncé par le libellé, exprimé dans l'unité de la ligne.
  *
- * Rendu SEULEMENT s'il est sans ambiguïté : une seule valeur, dans la même
- * famille que l'unité facturée. « 2X5L » ou « 5L 1L » ne donnent rien — deux
- * lectures possibles ne valent pas mieux qu'aucune.
+ * Rendu SEULEMENT s'il est sans ambiguïté : une seule valeur, une seule
+ * famille. « 2X5L » ou « 5L 1L » ne donnent rien — deux lectures possibles ne
+ * valent pas mieux qu'aucune.
+ *
+ * L'unité de la LIGNE ne sert qu'à deux choses, et jamais à refuser :
+ *  · si c'est une unité de mesure, sa famille doit être celle du libellé (un
+ *    libellé en kilos sur une ligne au litre, c'est deux choses différentes) ;
+ *  · elle donne l'unité du résultat (« 500 G » sur une ligne au kilo → 0,5).
+ *
+ * Quand la ligne est facturée « à la pièce » — ou sans unité —, le libellé
+ * décide seul, en kilos ou en litres. Cette tolérance n'est pas cosmétique :
+ * mesuré en production le 05/08, trois des onze lignes échangées de la
+ * boucherie portent l'unité « pièce » pour un pot d'un kilo (FROMAGE BLC 1KG,
+ * OEUF LIQ 1KG, TAGLIATELLE 1KG) — exiger une unité de mesure les laissait
+ * toutes les trois avec leur prix faux.
  */
 export function contenanceAnnoncee(
   designation: string | null | undefined,
   unit: string | null | undefined,
 ): number | null {
-  const uniteLigne = FAMILLE[norm(unit)]
-  if (!uniteLigne) return null
   const texte = String(designation ?? '')
   if (!texte) return null
+  // `null` = la ligne n'est pas facturée dans une unité de mesure (pièce,
+  // colis, rien du tout). Le libellé tranche alors seul.
+  const uniteLigne = FAMILLE[norm(unit)] ?? null
 
   // Boucle `exec` plutôt que `matchAll` : ce module est le garde-fou le plus
   // sensible du projet, il ne doit dépendre d'aucun réglage de compilation.
   const valeurs: number[] = []
+  const familles: Array<'poids' | 'volume'> = []
   RE_CONTENANCE.lastIndex = 0
   let m: RegExpExecArray | null
   while ((m = RE_CONTENANCE.exec(texte)) !== null) {
     const brut = Number(String(m[1]).replace(',', '.'))
     const u = FAMILLE[norm(m[2])]
-    if (!u || u.famille !== uniteLigne.famille) continue
+    if (!u) continue
+    if (uniteLigne && u.famille !== uniteLigne.famille) continue
     if (!Number.isFinite(brut) || brut <= 0) continue
-    // Ramené à l'unité de la LIGNE : « 500 G » sur une ligne au kilo vaut 0,5.
-    const v = round4((brut * u.enBase) / uniteLigne.enBase)
+    // Ramené à l'unité de la LIGNE quand elle en est une, à l'unité de base
+    // (kilo ou litre) sinon.
+    const v = round4((brut * u.enBase) / (uniteLigne ? uniteLigne.enBase : 1))
     if (valeurs.indexOf(v) === -1) valeurs.push(v)
+    if (familles.indexOf(u.famille) === -1) familles.push(u.famille)
   }
-  if (valeurs.length !== 1) return null
+  // Une seule valeur ET une seule famille : « 5L 5KG » dit deux choses, même
+  // si le nombre est le même.
+  if (valeurs.length !== 1 || familles.length !== 1) return null
   return valeurs[0] > 0 ? valeurs[0] : null
 }
+
+/** Au-delà de cet écart relatif, le nombre logé dans la colonne poids n'est
+ *  plus un poids plausible pour le conditionnement annoncé. Un pot de 5 kg qui
+ *  « pèse » 1,898 est à 62 % de son étiquette : ce n'est pas une variation de
+ *  pesée, c'est un prix. Le plus serré des onze cas réels mesurés le 05/08 est
+ *  à 34 % (MC LASAGNES 3KG, « poids » 4,013) — d'où 25 %, qui les garde tous
+ *  et laisse tranquilles les pièces à poids variable, dont l'écart à
+ *  l'étiquette se compte en pour cent. */
+export const ECART_POIDS_MINIMAL = 0.25
 
 /**
  * LES DEUX COLONNES ONT-ELLES ÉTÉ ÉCHANGÉES ?
  *
- * Trois conditions, toutes nécessaires — la troisième est celle qui rend la
- * règle sûre :
+ * Quatre conditions, toutes nécessaires :
  *
  *  1. le libellé annonce un conditionnement C, sans ambiguïté ;
  *  2. le « prix unitaire » lu VAUT ce conditionnement (5L → « PU » 5,00) ;
- *  3. et la colonne poids porte, elle, EXACTEMENT le prix qu'on recalcule
- *     depuis le montant. C'est la signature d'un échange, et non d'une
- *     coïncidence : les deux nombres se retrouvent chacun à la place de
- *     l'autre.
+ *  3. la colonne poids porte, elle, EXACTEMENT le prix qu'on recalcule depuis
+ *     le montant — les deux nombres se retrouvent chacun à la place de
+ *     l'autre ;
+ *  4. et ce nombre n'est PAS un poids plausible pour le conditionnement
+ *     annoncé (au moins 25 % d'écart avec C × quantité).
  *
- * Sans la condition 3, une huile facturée pour de vrai 5 € le litre en
- * bidon de 5 L serait « corrigée » sur une simple ressemblance. Avec elle, ce
- * cas-là donne de toute façon le même prix — la règle ne peut pas rendre un
- * résultat différent de la lecture quand la lecture est juste.
+ * La condition 4 a été ajoutée après coup, en vérifiant la 3 par le calcul
+ * plutôt qu'à l'œil. Quand la quantité vaut 1 et que la ligne se recoupe sur
+ * le poids, `montant = poids × PU` : avec PU = C, le prix recalculé vaut
+ * exactement le poids, et la condition 3 est vraie D'AVANCE. Elle ne prouvait
+ * donc rien sur ces lignes-là.
+ *
+ * Sans la 4, une pièce étiquetée « 2KG », facturée 2,5 kg à 2,00 €/kg, aurait
+ * été « corrigée » en 2,50 €/kg : le prix juste remplacé par un faux, sur une
+ * coïncidence de nombres ronds. Avec elle, la règle ne se déclenche que quand
+ * le poids annoncé et le poids facturé se contredisent franchement — c'est-à-
+ * dire quand l'un des deux n'est pas un poids.
  *
  * On ne dérive rien ici : le prix rendu est le nombre qui était DÉJÀ sur la
  * ligne, remis dans la bonne colonne.
@@ -237,6 +279,11 @@ export function colonnesInversees(l: LigneBrute): { prix: number; assiette: numb
   const autre = l.weight_kg
   if (autre == null || !Number.isFinite(autre)) return null
   if (Math.abs(autre - prix) > Math.max(0.005, prix * 0.005)) return null
+
+  // 4. ET CE N'EST PAS UN POIDS. Un pot de 5 kg ne pèse pas 1,898 kg ; une
+  //    pièce étiquetée 2 kg qui en pèse 2,5 en est un, elle, et la ligne
+  //    doit alors rester telle qu'elle a été lue.
+  if (Math.abs(autre - assiette) <= assiette * ECART_POIDS_MINIMAL) return null
 
   return { prix: round4(prix), assiette }
 }
