@@ -35,6 +35,7 @@ import {
   type ExtractedLine,
 } from '@/lib/invoice-extract'
 import { verdictLigne } from '@/lib/invoice-lines'
+import { PERIODE_LUE } from '@/lib/charges-fixes'
 import { compteurApres } from '@/lib/lecture-file'
 import { dernierPrix, memePrix } from '@/lib/article-price'
 import { cleCodeArticle } from '@/lib/article-code'
@@ -803,6 +804,9 @@ export async function POST(request: NextRequest) {
         if (jours >= 1 && jours <= 400 && auVoisinage && montantCharge !== 0) {
           patch.period_days = jours
           patch.prorata_ht = Math.round((montantCharge * 7 / jours) * 100) / 100
+          // C'est la SEULE période vérifiée du projet : on la marque comme lue,
+          // ce qui autorise le moteur hebdomadaire à réinjecter ce prorata.
+          patch.period_source = PERIODE_LUE
           patch.is_fixed_charge = true
           motifPeriode = ` Période facturée lue sur le document : du ${du} au ${au} (${jours} jours) — part hebdomadaire recalculée.`
         }
