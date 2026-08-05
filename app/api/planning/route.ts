@@ -1,6 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { resolveClientId } from '@/lib/resolve-client-id'
+import { motifRefus, type VerrouSemaine } from '@/lib/planning-lock'
+
+/** Le verrou de la semaine, s'il existe, pour ce client. */
+async function verrouDeLaSemaine(
+  serviceSupabase: ReturnType<typeof createServiceClient>,
+  clientId: string, week: number, year: number,
+): Promise<VerrouSemaine | null> {
+  const { data } = await serviceSupabase
+    .from('planning_locks')
+    .select('week_number, year, locked_at, locked_by, note')
+    .eq('client_id', clientId)
+    .eq('week_number', week)
+    .eq('year', year)
+    .maybeSingle()
+  return (data as VerrouSemaine | null) ?? null
+}
 
 export async function GET(req: NextRequest) {
   const supabase = createClient()
@@ -11,14 +27,18 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const week = parseInt(searchParams.get('week') || '0')
   const year = parseInt(searchParams.get('year') || '0')
-  if (!week || !year) return NextResponse.json([])
+  if (!week || !year) return NextResponse.json({ entries: [], verrou: null })
 
   const clientId = await resolveClientId(serviceSupabase, user.id, user.email)
-  if (!clientId) return NextResponse.json([])
+  if (!clientId) return NextResponse.json({ entries: [], verrou: null })
+
+  // Le verrou part avec les entrées : l'écran sait dès le premier chargement
+  // si la semaine affichée est figée, sans second aller-retour.
+  const verrou = await verrouDeLaSemaine(serviceSupabase, clientId, week, year)
 
   const { data: empList } = await serviceSupabase
     .from('employees').select('id').eq('client_id', clientId)
-  if (!empList || empList.length === 0) return NextResponse.json([])
+  if (!empList || empList.length === 0) return NextResponse.json({ entries: [], verrou })
 
   const { data: entries } = await serviceSupabase
     .from('planning_entries')
@@ -27,7 +47,7 @@ export async function GET(req: NextRequest) {
     .eq('week_number', week)
     .eq('year', year)
 
-  return NextResponse.json(entries || [])
+  return NextResponse.json({ entries: entries || [], verrou })
 }
 
 export async function POST(req: NextRequest) {
@@ -56,6 +76,12 @@ export async function POST(req: NextRequest) {
     .eq('client_id', clientId)
     .maybeSingle()
   if (!ownedEmp) return NextResponse.json({ error: 'Employé introuvable pour ce client' }, { status: 403 })
+
+  // LE GARDE-FOU. Cette route est le seul écrivain de planning_entries : c'est
+  // donc ici, et nulle part ailleurs, que le verrou d'une semaine devient réel.
+  // Un verrou qui ne vit que dans l'écran n'est pas un verrou.
+  const verrou = await verrouDeLaSemaine(serviceSupabase, clientId, Number(week_number), Number(year))
+  if (verrou) return NextResponse.json({ error: motifRefus(verrou) }, { status: 409 })
 
   const { data, error } = await serviceSupabase
     .from('planning_entries')

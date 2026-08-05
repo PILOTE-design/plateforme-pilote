@@ -181,7 +181,7 @@ export default function ValorisationPage() {
     const { week: w, year: y } = getISOWeek(purchaseDate)
     if (!w || !y || isNaN(w)) { setWeekLabor(null); return }
     Promise.all([
-      fetch(`/api/planning?week=${w}&year=${y}`).then(r => r.json()).catch(() => []),
+      fetch(`/api/planning?week=${w}&year=${y}`).then(r => r.json()).then(d => Array.isArray(d) ? d : (d?.entries ?? [])).catch(() => []),
       fetch('/api/employees').then(r => r.json()).catch(() => []),
     ]).then(([entries, emps]) => {
       if (!Array.isArray(entries) || !Array.isArray(emps)) { setWeekLabor(null); return }

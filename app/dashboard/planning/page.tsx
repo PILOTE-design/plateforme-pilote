@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useToast } from '@/components/ui/toast'
 import { useConfirm } from '@/components/ui/confirm-dialog'
-import { Plus, ChevronLeft, ChevronRight, Trash2, CalendarDays, FileDown, Copy, Clipboard, BarChart2, X, AlertTriangle, Send } from 'lucide-react'
+import { Plus, ChevronLeft, ChevronRight, Trash2, CalendarDays, FileDown, Copy, Clipboard, BarChart2, X, AlertTriangle, Send, Lock, Unlock } from 'lucide-react'
 import EmployeeProfileModal, { EmployeeProfile } from '@/components/EmployeeProfileModal'
 import {
   getWeekDates, frenchHolidayNames, entryHours, entryBrutCost, chargeMultiplier,
@@ -13,6 +13,7 @@ import {
 } from '@/lib/payroll'
 import VuePostes from './vue-postes'
 import { couvertureParPoste, postesDuCreneau, totalHeures, type EntreePlanning } from '@/lib/planning-postes'
+import { estFigee, bandeauFigee, type VerrouSemaine } from '@/lib/planning-lock'
 
 type DayType = 'travail' | 'conges' | 'maladie' | 'repos'
 
@@ -351,6 +352,10 @@ export default function PlanningPage() {
   const [vue, setVue] = useState<'employes' | 'postes'>('employes')
   const [newPosteLabel,  setNewPosteLabel]  = useState('')
   const [savingPostes,   setSavingPostes]   = useState(false)
+  // Semaines FIGÉES du client (cf. lib/planning-lock). Une semaine figée
+  // s'affiche, s'imprime et se compte comme avant — elle ne s'écrit plus.
+  const [verrous,        setVerrous]        = useState<VerrouSemaine[]>([])
+  const [verrouillage,   setVerrouillage]   = useState(false)
 
   const allPostes: PosteDef[] = [
     ...CATEGORIES,
@@ -465,26 +470,104 @@ export default function PlanningPage() {
 
   useEffect(() => { refreshCpUsed() }, [refreshCpUsed])
 
+  /** Remplace (ou retire) le verrou d'une semaine dans la liste locale. */
+  const majVerrou = useCallback((w: number, y: number, v: VerrouSemaine | null) => {
+    setVerrous(prev => {
+      const autres = prev.filter(x => !(Number(x.week_number) === w && Number(x.year) === y))
+      return v ? [...autres, { ...v, week_number: w, year: y }] : autres
+    })
+  }, [])
+
+  // Les verrous de l'année, chargés d'un coup : en changeant de semaine, la
+  // grille sait tout de suite qu'elle est figée — elle ne s'offre pas à la
+  // saisie le temps d'un aller-retour.
+  useEffect(() => {
+    let vivant = true
+    fetch(`/api/planning/lock?year=${year}`).then(r => r.json()).then(data => {
+      if (!vivant || !Array.isArray(data)) return
+      setVerrous(prev => [...prev.filter(v => Number(v.year) !== year), ...(data as VerrouSemaine[])])
+    }).catch(() => {})
+    return () => { vivant = false }
+  }, [year])
+
   const loadEntries = useCallback(() => {
     fetch(`/api/planning?week=${week}&year=${year}`).then(r => r.json()).then(data => {
-      if (Array.isArray(data)) {
+      const liste = Array.isArray(data) ? data : (Array.isArray(data?.entries) ? data.entries : null)
+      if (liste) {
         const map: EntriesMap = {}
-        for (const e of data) map[e.employee_id] = e
+        for (const e of liste) map[e.employee_id] = e
         setEntries(map); entriesRef.current = map
       }
+      if (!Array.isArray(data)) majVerrou(week, year, (data?.verrou as VerrouSemaine | null) ?? null)
     })
-  }, [week, year])
+  }, [week, year, majVerrou])
 
   useEffect(() => { loadEntries() }, [loadEntries])
+
+  /** La semaine affichée est-elle figée ? (la question passe par lib/planning-lock) */
+  const figee = estFigee(verrous, week, year)
+  const verrouCourant = verrous.find(v => Number(v.week_number) === week && Number(v.year) === year) ?? null
 
   function getEntry(empId: string)      { return entriesRef.current[empId] ?? emptyEntry(empId, week, year) }
   function getEntryState(empId: string) { return entries[empId] ?? emptyEntry(empId, week, year) }
 
   async function saveEntryValues(empId: string, entry: PlanningEntry) {
-    await fetch('/api/planning', {
+    if (figee) return
+    const res = await fetch('/api/planning', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...entry, employee_id: empId, week_number: week, year }),
     })
+    // Le serveur a le dernier mot : si la semaine a été figée entre-temps, on
+    // dit son refus tel quel et on recharge ce qui est réellement enregistré.
+    if (res.status === 409) {
+      const data = await res.json().catch(() => null)
+      toast({ variant: 'error', title: 'Modification refusée', description: data?.error || `Erreur ${res.status}` })
+      loadEntries()
+    }
+  }
+
+  /** Figer / libérer la semaine affichée. */
+  async function basculerVerrou() {
+    if (verrouillage) return
+    const ok = await confirmAction(figee
+      ? {
+          title: `Déverrouiller la semaine ${week} ?`,
+          description: `Cette semaine a servi de base : ses heures sont parties dans le rapport hebdomadaire et dans les plannings envoyés aux employés. La modifier maintenant fera diverger ce qui a déjà été envoyé de ce que dit la plateforme.`,
+          confirmLabel: 'Déverrouiller',
+          variant: 'danger',
+        }
+      : {
+          title: `Figer la semaine ${week} ?`,
+          description: `La semaine passe en lecture seule : ses heures ne bougeront plus, ni à l'écran ni depuis le serveur. Les impressions, le récapitulatif du mois et les calculs continuent de la lire normalement. C'est réversible à tout moment.`,
+          confirmLabel: 'Figer la semaine',
+          variant: 'default',
+        })
+    if (!ok) return
+    setVerrouillage(true)
+    try {
+      const res = await fetch('/api/planning/lock', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ week, year, locked: !figee }),
+      })
+      const data = await res.json().catch(() => null)
+      if (!res.ok) {
+        toast({
+          variant: 'error',
+          title: figee ? 'Déverrouillage impossible' : 'Verrouillage impossible',
+          description: data?.error || `Erreur ${res.status}`,
+        })
+        return
+      }
+      const nouveau = (data?.verrou as VerrouSemaine | null) ?? null
+      majVerrou(week, year, nouveau)
+      toast({
+        variant: 'success',
+        title: nouveau ? `Semaine ${week} figée` : `Semaine ${week} déverrouillée`,
+        description: nouveau ? bandeauFigee(nouveau) : 'La saisie est de nouveau ouverte sur cette semaine.',
+      })
+    } finally {
+      setVerrouillage(false)
+    }
   }
 
   async function updateContract(empId: string, contractKey: ContractKey) {
@@ -500,6 +583,7 @@ export default function PlanningPage() {
   }
 
   async function changeType(empId: string, jour: JourDB, newType: DayType) {
+    if (figee) return
     const typeKey = `${jour}_type` as keyof PlanningEntry
     const currentH = getEntry(empId)[jour] || 0
     const emp = employees.find(e => e.id === empId)
@@ -515,11 +599,13 @@ export default function PlanningPage() {
   }
 
   function updateHours(empId: string, jour: JourDB, value: string) {
+    if (figee) return
     const hours = value === '' ? 0 : Math.max(0, Math.min(24, parseFloat(value) || 0))
     setEntriesSync(prev => ({ ...prev, [empId]: { ...getEntry(empId), [jour]: hours } }))
   }
 
   function handleScheduleDetailChange(empId: string, jour: JourDB, field: keyof ScheduleDetail, value: string) {
+    if (figee) return
     const current = getEntry(empId)
     const currentSd = ((current.schedule_details || {}) as ScheduleDetails)
     const newDaySd = { ...(currentSd[jour] || {}), [field]: value }
@@ -534,6 +620,7 @@ export default function PlanningPage() {
 
   /** Sélectionne le poste d'un créneau (matin/après-midi) et efface l'ancien poste global */
   function setSlotCategory(empId: string, jour: JourDB, slot: 'categorie_matin' | 'categorie_apmidi', value: string) {
+    if (figee) return
     const current = getEntry(empId)
     const currentSd = ((current.schedule_details || {}) as ScheduleDetails)
     const newDaySd: ScheduleDetail = { ...(currentSd[jour] || {}), [slot]: value, categorie: '' }
@@ -551,6 +638,7 @@ export default function PlanningPage() {
    *  categorie_matin/apmidi — l'impression et l'envoi aux employés le lisent et
    *  ne changent donc PAS. */
   function toggleSlotPoste(empId: string, jour: JourDB, slot: 'matin' | 'apmidi', key: string) {
+    if (figee) return
     const current = getEntry(empId)
     const currentSd = ((current.schedule_details || {}) as ScheduleDetails)
     const daySd = currentSd[jour] || {}
@@ -624,13 +712,15 @@ export default function PlanningPage() {
   }
 
   async function copyPrevWeek() {
-    if (copying) return
+    // On peut copier DEPUIS une semaine figée ; jamais DANS une semaine figée.
+    if (copying || figee) return
     const prevY = week === 1 ? year - 1 : year
     const prevW = week === 1 ? isoWeeksInYear(prevY) : week - 1
     setCopying(true)
     try {
       const res = await fetch(`/api/planning?week=${prevW}&year=${prevY}`)
-      const data = await res.json()
+      const payload = await res.json()
+      const data = Array.isArray(payload) ? payload : (Array.isArray(payload?.entries) ? payload.entries : null)
       if (!Array.isArray(data) || data.length === 0) {
         toast({ variant: 'info', title: 'Aucun planning à copier', description: `Aucun planning trouvé pour la semaine ${prevW} (${prevY}).` })
         return
@@ -655,7 +745,14 @@ export default function PlanningPage() {
           body: JSON.stringify({ ...entryData, week_number: week, year }),
         })
       })
-      await Promise.all(posts)
+      const resultats = await Promise.all(posts)
+      const refus = resultats.find(r => r.status === 409)
+      if (refus) {
+        const d = await refus.json().catch(() => null)
+        toast({ variant: 'error', title: 'Copie refusée', description: d?.error || `Erreur ${refus.status}` })
+        loadEntries()
+        return
+      }
       loadEntries()
       toast({ variant: 'success', title: 'Planning copié', description: `Semaine ${prevW} copiée vers la semaine ${week}.` })
     } finally {
@@ -693,7 +790,7 @@ export default function PlanningPage() {
   }
 
   function pasteDay(toEmpId: string, toJour: JourDB) {
-    if (!copiedCell) return
+    if (!copiedCell || figee) return
     const fromEntry = getEntryState(copiedCell.empId)
     const fromType  = (fromEntry[`${copiedCell.jour}_type` as keyof PlanningEntry] as DayType) || 'travail'
     const fromHours = (fromEntry[copiedCell.jour as keyof PlanningEntry] as number) || 0
@@ -720,7 +817,9 @@ export default function PlanningPage() {
     try {
       const allResults = await Promise.all(
         weeks.map(({ week: w, year: y }) =>
-          fetch(`/api/planning?week=${w}&year=${y}`).then(r => r.json()).catch(() => [])
+          fetch(`/api/planning?week=${w}&year=${y}`).then(r => r.json())
+            .then(d => Array.isArray(d) ? d : (Array.isArray(d?.entries) ? d.entries : []))
+            .catch(() => [])
         )
       )
       const holidayCache: Record<number, Map<string, string>> = {}
@@ -889,6 +988,24 @@ export default function PlanningPage() {
           <span className="font-semibold text-gray-900 text-sm">Semaine {week}</span>
           <span className="hidden md:inline text-xs text-gray-400">{getWeekLabel(week, year)}</span>
           {isCurrentWeek && <span className="text-[10px] bg-pilote text-white px-1.5 py-0.5 rounded font-medium">Actuelle</span>}
+          {/* Le cadenas de la semaine — ouvert : la saisie est libre ; fermé : la
+              semaine est figée. Il ne touche jamais à la lecture. */}
+          <button
+            type="button"
+            onClick={basculerVerrou}
+            disabled={verrouillage}
+            title={figee
+              ? 'Semaine figée — cliquer pour la déverrouiller'
+              : 'Figer cette semaine : ses heures ne bougeront plus'}
+            className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold transition-all active:scale-[0.98] disabled:opacity-40 ${
+              figee
+                ? 'bg-pilote text-white hover:bg-pilote-hover shadow-card'
+                : 'border border-gray-200 text-gray-500 hover:text-gray-800 hover:bg-gray-50'
+            }`}
+          >
+            {figee ? <Lock className="w-3 h-3" /> : <Unlock className="w-3 h-3" />}
+            {figee ? 'Figée' : 'Figer'}
+          </button>
         </div>
         <button onClick={nextWeek} className="p-1.5 rounded hover:bg-gray-100 transition-colors"><ChevronRight className="w-4 h-4 text-gray-500" /></button>
         {!isCurrentWeek && (
@@ -896,7 +1013,7 @@ export default function PlanningPage() {
         )}
         <button
           onClick={copyPrevWeek}
-          disabled={copying}
+          disabled={copying || figee}
           className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-800 border border-gray-200 rounded-xl px-2.5 py-1 hover:bg-gray-50 transition-colors disabled:opacity-40"
         >
           <Copy className="w-3 h-3" />
@@ -964,6 +1081,14 @@ export default function PlanningPage() {
               ))}
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ── Semaine figée : le bandeau, en haut de la grille ── */}
+      {figee && verrouCourant && (
+        <div className="mx-6 mt-3 flex items-center gap-2 rounded-xl border border-pilote-100 bg-pilote-50 px-3 py-2">
+          <Lock className="w-3.5 h-3.5 text-pilote flex-shrink-0" />
+          <p className="text-xs font-medium text-pilote-800">{bandeauFigee(verrouCourant)}</p>
         </div>
       )}
 
@@ -1190,7 +1315,7 @@ export default function PlanningPage() {
                                     >
                                       <Copy className="w-2.5 h-2.5" />
                                     </button>
-                                    {copiedCell && !(copiedCell.empId === emp.id && copiedCell.jour === jour) && (
+                                    {copiedCell && !figee && !(copiedCell.empId === emp.id && copiedCell.jour === jour) && (
                                       <button
                                         className="p-0.5 rounded bg-white/60 text-pilote hover:text-pilote-hover opacity-0 group-hover/cell:opacity-100 transition-all"
                                         onClick={e => { e.stopPropagation(); pasteDay(emp.id, jour) }}
@@ -1420,12 +1545,20 @@ export default function PlanningPage() {
 
               <div className="px-5 py-4 space-y-4">
 
+                {/* Semaine figée : la fiche du jour se lit, elle ne se saisit plus */}
+                {figee && verrouCourant && (
+                  <p className="flex items-center gap-1.5 text-[11px] font-medium text-pilote-800 bg-pilote-50 border border-pilote-100 rounded-lg px-2.5 py-1.5">
+                    <Lock className="w-3 h-3 flex-shrink-0 text-pilote" />{bandeauFigee(verrouCourant)}
+                  </p>
+                )}
+
                 {/* Segmented control type */}
                 <div className="flex bg-gray-100 rounded-xl p-1 gap-0.5">
                   {(['travail', 'conges', 'maladie', 'repos'] as DayType[]).map(t => (
                     <button key={t}
                       onClick={() => changeType(detailModal.empId, mJour, t)}
-                      className={`flex-1 py-1.5 text-[11px] font-semibold rounded-[9px] transition-all ${
+                      disabled={figee}
+                      className={`flex-1 py-1.5 text-[11px] font-semibold rounded-[9px] transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
                         mType === t ? 'bg-white shadow-sm text-gray-900' : 'text-gray-400 hover:text-gray-600'
                       }`}
                     >
@@ -1459,8 +1592,9 @@ export default function PlanningPage() {
                           return (
                             <button key={cat.key}
                               onClick={() => toggleSlotPoste(detailModal.empId, mJour, 'matin', cat.key)}
+                              disabled={figee}
                               title={isPrimary ? 'Poste principal (affiché à l’impression et dans l’envoi)' : 'Cliquer pour ajouter/retirer — plusieurs postes possibles sur le créneau'}
-                              className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
+                              className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
                                 isSel ? cat.color : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
                               }${isPrimary ? ' ring-2 ring-offset-1 ring-gray-300' : ''}`}
                             >
@@ -1484,8 +1618,9 @@ export default function PlanningPage() {
                           return (
                             <button key={cat.key}
                               onClick={() => toggleSlotPoste(detailModal.empId, mJour, 'apmidi', cat.key)}
+                              disabled={figee}
                               title={isPrimary ? 'Poste principal (affiché à l’impression et dans l’envoi)' : 'Cliquer pour ajouter/retirer — plusieurs postes possibles sur le créneau'}
-                              className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
+                              className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
                                 isSel ? cat.color : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
                               }${isPrimary ? ' ring-2 ring-offset-1 ring-gray-300' : ''}`}
                             >
@@ -1514,47 +1649,47 @@ export default function PlanningPage() {
                             <span className="text-[11px] text-gray-500 font-medium w-16 shrink-0">{label}</span>
                             {/* Début */}
                             <div className="flex items-center border border-gray-300 rounded-lg overflow-hidden focus-within:border-gray-500 transition-colors">
-                              <input type="text" inputMode="numeric" placeholder="--" maxLength={2}
+                              <input type="text" inputMode="numeric" placeholder="--" maxLength={2} disabled={figee}
                                 value={parseTimePart(mSd[startF] || '', 'h')}
                                 onChange={e => {
                                   const m = parseTimePart(mSd[startF] || '', 'm')
                                   handleScheduleDetailChange(detailModal.empId, mJour, startF, combineTime(e.target.value, m))
                                 }}
                                 onBlur={() => handleScheduleDetailBlur(detailModal.empId)}
-                                className="w-6 text-right text-xs text-gray-900 font-semibold py-1.5 pl-1 focus:outline-none bg-transparent"
+                                className="w-6 text-right text-xs text-gray-900 font-semibold py-1.5 pl-1 focus:outline-none bg-transparent disabled:text-gray-400"
                               />
                               <span className="text-[11px] font-bold text-gray-400 select-none px-px">h</span>
-                              <input type="text" inputMode="numeric" placeholder="--" maxLength={2}
+                              <input type="text" inputMode="numeric" placeholder="--" maxLength={2} disabled={figee}
                                 value={parseTimePart(mSd[startF] || '', 'm')}
                                 onChange={e => {
                                   const h = parseTimePart(mSd[startF] || '', 'h')
                                   handleScheduleDetailChange(detailModal.empId, mJour, startF, combineTime(h, e.target.value))
                                 }}
                                 onBlur={() => handleScheduleDetailBlur(detailModal.empId)}
-                                className="w-7 text-left text-xs text-gray-900 font-semibold py-1.5 pr-1 focus:outline-none bg-transparent"
+                                className="w-7 text-left text-xs text-gray-900 font-semibold py-1.5 pr-1 focus:outline-none bg-transparent disabled:text-gray-400"
                               />
                             </div>
                             <span className="text-gray-400 text-xs">→</span>
                             {/* Fin */}
                             <div className="flex items-center border border-gray-300 rounded-lg overflow-hidden focus-within:border-gray-500 transition-colors">
-                              <input type="text" inputMode="numeric" placeholder="--" maxLength={2}
+                              <input type="text" inputMode="numeric" placeholder="--" maxLength={2} disabled={figee}
                                 value={parseTimePart(mSd[endF] || '', 'h')}
                                 onChange={e => {
                                   const m = parseTimePart(mSd[endF] || '', 'm')
                                   handleScheduleDetailChange(detailModal.empId, mJour, endF, combineTime(e.target.value, m))
                                 }}
                                 onBlur={() => handleScheduleDetailBlur(detailModal.empId)}
-                                className="w-6 text-right text-xs text-gray-900 font-semibold py-1.5 pl-1 focus:outline-none bg-transparent"
+                                className="w-6 text-right text-xs text-gray-900 font-semibold py-1.5 pl-1 focus:outline-none bg-transparent disabled:text-gray-400"
                               />
                               <span className="text-[11px] font-bold text-gray-400 select-none px-px">h</span>
-                              <input type="text" inputMode="numeric" placeholder="--" maxLength={2}
+                              <input type="text" inputMode="numeric" placeholder="--" maxLength={2} disabled={figee}
                                 value={parseTimePart(mSd[endF] || '', 'm')}
                                 onChange={e => {
                                   const h = parseTimePart(mSd[endF] || '', 'h')
                                   handleScheduleDetailChange(detailModal.empId, mJour, endF, combineTime(h, e.target.value))
                                 }}
                                 onBlur={() => handleScheduleDetailBlur(detailModal.empId)}
-                                className="w-7 text-left text-xs text-gray-900 font-semibold py-1.5 pr-1 focus:outline-none bg-transparent"
+                                className="w-7 text-left text-xs text-gray-900 font-semibold py-1.5 pr-1 focus:outline-none bg-transparent disabled:text-gray-400"
                               />
                             </div>
                           </div>
@@ -1574,11 +1709,12 @@ export default function PlanningPage() {
                         <div className="flex items-center gap-1.5">
                           <input
                             type="number" min="0" max="24" step="0.5"
+                            disabled={figee}
                             value={mHours || ''}
                             onChange={e => updateHours(detailModal.empId, mJour, e.target.value)}
                             onBlur={() => handleBlur(detailModal.empId)}
                             placeholder="0"
-                            className="w-16 border border-gray-300 rounded-lg px-2 py-1.5 text-sm font-semibold text-gray-900 text-center focus:outline-none focus:border-gray-500 transition-colors"
+                            className="w-16 border border-gray-300 rounded-lg px-2 py-1.5 text-sm font-semibold text-gray-900 text-center focus:outline-none focus:border-gray-500 transition-colors disabled:bg-gray-50 disabled:text-gray-400"
                           />
                           <span className="text-xs text-gray-400">h</span>
                         </div>
@@ -1593,11 +1729,12 @@ export default function PlanningPage() {
                         <div className="flex items-center gap-1.5">
                           <input
                             type="number" min="0" max="600" step="1"
+                            disabled={figee}
                             value={mSd.decoupe ?? ''}
                             onChange={e => handleScheduleDetailChange(detailModal.empId, mJour, 'decoupe', e.target.value)}
                             onBlur={() => handleScheduleDetailBlur(detailModal.empId)}
                             placeholder="ex : 120"
-                            className="w-16 border border-gray-300 rounded-lg px-2 py-1.5 text-sm font-semibold text-gray-900 text-center focus:outline-none focus:border-gray-500 transition-colors"
+                            className="w-16 border border-gray-300 rounded-lg px-2 py-1.5 text-sm font-semibold text-gray-900 text-center focus:outline-none focus:border-gray-500 transition-colors disabled:bg-gray-50 disabled:text-gray-400"
                           />
                           <span className="text-xs text-gray-400">min de découpe</span>
                         </div>
