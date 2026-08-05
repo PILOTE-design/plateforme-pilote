@@ -38,6 +38,10 @@
 
 /** Ce qu'une ligne offre au contrôle. */
 export type LigneBrute = {
+  /** Libellé lu. Il porte souvent le CONDITIONNEMENT (« … 5L », « SEAU DE
+   *  10 KG ») : c'est le seul témoin extérieur au calcul, et le seul moyen de
+   *  distinguer un poids d'un prix quand les deux colonnes ont été échangées. */
+  designation?: string | null
   /** Quantité lue (nombre de colis, de pièces, de kilos… selon le fournisseur) */
   quantity: number | null
   /** Poids facturé en kilos, quand la ligne en porte un. Assiette SÛRE. */
@@ -53,6 +57,7 @@ export type BaseVerdict =
   | 'poids'              // le prix se recoupe sur le poids facturé
   | 'quantite'           // … sur la quantité lue
   | 'quantite_reparee'   // … sur une quantité reconstruite depuis le prix
+  | 'colonnes_inversees' // le « prix » lu était le conditionnement : on rend les deux à leur place
   | 'derive_poids'       // prix absent, déduit du poids (assiette sûre)
   | 'derive_quantite'    // prix absent, déduit de la quantité (unité sûre)
   | 'prix_seul'          // prix lu, rien pour le contredire
@@ -65,6 +70,9 @@ export type VerdictLigne = {
   prix_ecarte: number | null
   /** Quantité reconstruite, quand elle a été réparée. null sinon. */
   quantite_reparee: number | null
+  /** Poids/volume facturé reconstruit, quand les deux colonnes étaient
+   *  échangées. null sinon. */
+  poids_repare: number | null
   base: BaseVerdict
   /** Un avoir : montant négatif. Ce n'est PAS un échec de lecture. */
   avoir: boolean
@@ -112,6 +120,125 @@ export function assietteQuiTombeJuste(l: LigneBrute): { base: 'poids' | 'quantit
     if (Math.abs(c.valeur * l.unit_price_ht - l.amount_ht) <= tol) return { base: c.base, valeur: c.valeur }
   }
   return null
+}
+
+/* ─── LE CONDITIONNEMENT ANNONCÉ PAR LE LIBELLÉ ──────────────────────────────
+ *
+ * `qté × PU = montant` ne sait pas distinguer un poids d'un prix : la
+ * multiplication est commutative. Si l'extraction échange les deux colonnes,
+ * le contrôle tombe juste QUAND MÊME, et c'est le conditionnement qui est
+ * publié comme prix. Mesuré en production le 05/08 chez METRO :
+ *
+ *   MAUREL HLE TOURNESOL 5L   « poids » 1,998 · « PU » 5,00 · montant 9,99
+ *   MAUREL HLE TOURNESOL 10L  « poids » 1,925 · « PU » 10,00 · montant 19,25
+ *
+ * Les deux lignes se recoupent parfaitement (1,998 × 5 = 9,99), et les deux
+ * publient un prix faux — 5 €/L pour une huile à 1,998 €/L, deux fois et demie
+ * trop cher dans toutes les fiches recettes qui l'utilisent. La même huile,
+ * bien lue sur une autre facture, est à 1,998 €/L : c'est en comparant les deux
+ * lectures du MÊME article qu'on voit le défaut, jamais en relisant le calcul.
+ *
+ * Il faut donc un témoin EXTÉRIEUR au calcul. Le libellé en est un : « 5L » dit
+ * cinq litres, pas cinq euros. */
+
+/** Familles d'unités : deux valeurs ne se comparent que dans la même. */
+const FAMILLE: Record<string, { famille: 'poids' | 'volume'; enBase: number }> = {
+  kg: { famille: 'poids', enBase: 1 }, kgs: { famille: 'poids', enBase: 1 },
+  kilo: { famille: 'poids', enBase: 1 }, kilos: { famille: 'poids', enBase: 1 },
+  g: { famille: 'poids', enBase: 0.001 }, gr: { famille: 'poids', enBase: 0.001 },
+  gramme: { famille: 'poids', enBase: 0.001 }, grammes: { famille: 'poids', enBase: 0.001 },
+  l: { famille: 'volume', enBase: 1 }, lt: { famille: 'volume', enBase: 1 },
+  ltr: { famille: 'volume', enBase: 1 }, litre: { famille: 'volume', enBase: 1 },
+  litres: { famille: 'volume', enBase: 1 },
+  cl: { famille: 'volume', enBase: 0.01 }, ml: { famille: 'volume', enBase: 0.001 },
+}
+
+const UNITES_LIBELLE = 'kgs|kg|kilos|kilo|grammes|gramme|gr|g|litres|litre|ltr|lt|cl|ml|l'
+const RE_CONTENANCE = new RegExp(
+  `(?<![A-Za-z0-9.,])(\\d+(?:[.,]\\d+)?)\\s*(${UNITES_LIBELLE})(?![A-Za-z])`,
+  'gi',
+)
+
+/**
+ * Le conditionnement annoncé par le libellé, exprimé dans l'unité de la ligne.
+ *
+ * Rendu SEULEMENT s'il est sans ambiguïté : une seule valeur, dans la même
+ * famille que l'unité facturée. « 2X5L » ou « 5L 1L » ne donnent rien — deux
+ * lectures possibles ne valent pas mieux qu'aucune.
+ */
+export function contenanceAnnoncee(
+  designation: string | null | undefined,
+  unit: string | null | undefined,
+): number | null {
+  const uniteLigne = FAMILLE[norm(unit)]
+  if (!uniteLigne) return null
+  const texte = String(designation ?? '')
+  if (!texte) return null
+
+  // Boucle `exec` plutôt que `matchAll` : ce module est le garde-fou le plus
+  // sensible du projet, il ne doit dépendre d'aucun réglage de compilation.
+  const valeurs: number[] = []
+  RE_CONTENANCE.lastIndex = 0
+  let m: RegExpExecArray | null
+  while ((m = RE_CONTENANCE.exec(texte)) !== null) {
+    const brut = Number(String(m[1]).replace(',', '.'))
+    const u = FAMILLE[norm(m[2])]
+    if (!u || u.famille !== uniteLigne.famille) continue
+    if (!Number.isFinite(brut) || brut <= 0) continue
+    // Ramené à l'unité de la LIGNE : « 500 G » sur une ligne au kilo vaut 0,5.
+    const v = round4((brut * u.enBase) / uniteLigne.enBase)
+    if (valeurs.indexOf(v) === -1) valeurs.push(v)
+  }
+  if (valeurs.length !== 1) return null
+  return valeurs[0] > 0 ? valeurs[0] : null
+}
+
+/**
+ * LES DEUX COLONNES ONT-ELLES ÉTÉ ÉCHANGÉES ?
+ *
+ * Trois conditions, toutes nécessaires — la troisième est celle qui rend la
+ * règle sûre :
+ *
+ *  1. le libellé annonce un conditionnement C, sans ambiguïté ;
+ *  2. le « prix unitaire » lu VAUT ce conditionnement (5L → « PU » 5,00) ;
+ *  3. et la colonne poids porte, elle, EXACTEMENT le prix qu'on recalcule
+ *     depuis le montant. C'est la signature d'un échange, et non d'une
+ *     coïncidence : les deux nombres se retrouvent chacun à la place de
+ *     l'autre.
+ *
+ * Sans la condition 3, une huile facturée pour de vrai 5 € le litre en
+ * bidon de 5 L serait « corrigée » sur une simple ressemblance. Avec elle, ce
+ * cas-là donne de toute façon le même prix — la règle ne peut pas rendre un
+ * résultat différent de la lecture quand la lecture est juste.
+ *
+ * On ne dérive rien ici : le prix rendu est le nombre qui était DÉJÀ sur la
+ * ligne, remis dans la bonne colonne.
+ */
+export function colonnesInversees(l: LigneBrute): { prix: number; assiette: number } | null {
+  const pu = l.unit_price_ht
+  if (pu == null || !Number.isFinite(pu) || pu <= 0) return null
+  if (!Number.isFinite(l.amount_ht) || l.amount_ht <= 0) return null
+
+  const c = contenanceAnnoncee(l.designation, l.unit)
+  if (c == null) return null
+  // 2. le « prix » lu est le conditionnement.
+  if (Math.abs(pu - c) > 0.005) return null
+
+  const q = l.quantity != null && Number.isFinite(l.quantity) ? Math.abs(l.quantity) : null
+  if (q == null || q <= 0) return null
+  // Le vrai poids/volume facturé : le conditionnement, autant de fois qu'il y
+  // a d'unités. 2 bidons de 5 L font 10 L.
+  const assiette = round4(c * q)
+  if (assiette <= 0) return null
+  const prix = l.amount_ht / assiette
+  if (!Number.isFinite(prix) || prix <= 0) return null
+
+  // 3. LA CONFIRMATION. La colonne poids doit porter ce prix-là.
+  const autre = l.weight_kg
+  if (autre == null || !Number.isFinite(autre)) return null
+  if (Math.abs(autre - prix) > Math.max(0.005, prix * 0.005)) return null
+
+  return { prix: round4(prix), assiette }
 }
 
 /**
@@ -190,7 +317,7 @@ export function quantiteReparee(l: LigneBrute): number | null {
  */
 export function verdictLigne(l: LigneBrute, factureSuspecte = false): VerdictLigne {
   const avoir = Number.isFinite(l.amount_ht) && l.amount_ht < 0
-  const vide: VerdictLigne = { prix_retenu: null, prix_ecarte: null, quantite_reparee: null, base: null, avoir }
+  const vide: VerdictLigne = { prix_retenu: null, prix_ecarte: null, quantite_reparee: null, poids_repare: null, base: null, avoir }
 
   // UN AVOIR NE DONNE JAMAIS DE PRIX — et ce n'est pas un échec.
   // Le prix qui y figure est celui d'un achat passé, souvent ancien : le
@@ -202,6 +329,17 @@ export function verdictLigne(l: LigneBrute, factureSuspecte = false): VerdictLig
   const pu = l.unit_price_ht
 
   if (pu != null && Number.isFinite(pu) && pu !== 0) {
+    // D'ABORD l'échange de colonnes — AVANT le recoupement, parce que le
+    // recoupement tombe juste sur une ligne échangée et publierait le
+    // conditionnement en guise de prix. C'est le seul cas où `qté × PU =
+    // montant` a raison sur le calcul et tort sur le sens.
+    const inverse = colonnesInversees(l)
+    if (inverse) {
+      return factureSuspecte
+        ? { ...vide, prix_ecarte: round4(pu) }
+        : { ...vide, prix_retenu: inverse.prix, poids_repare: inverse.assiette, base: 'colonnes_inversees' }
+    }
+
     const assiette = assietteQuiTombeJuste(l)
     if (assiette) {
       return factureSuspecte
