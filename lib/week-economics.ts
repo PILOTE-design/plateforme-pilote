@@ -17,7 +17,7 @@
 // `ca_ttc` reste exposé pour l'affichage du chiffre de caisse tel que le gérant le
 // connaît.
 
-import { normalizeSupplierName, sameSupplierFamily, supplierSociete } from '@/lib/supplier-memory'
+import { ventilationAchats, seauxDesFamilles, RAYONS_METIER, type FamilleRef } from '@/lib/ventilation-achats'
 import { weekRecurringCost } from '@/lib/recurring-charges'
 import { chargesFixesDeLaSemaine, type MotifEcart } from '@/lib/charges-fixes'
 import {
@@ -84,7 +84,13 @@ export type WeekEconomics = {
   achats_a_verifier: number
   achats_by_category: Record<string, number>
   achats_by_rayon: Record<string, number>
+  /** Achats ventilés sur CHAQUE famille du référentiel de la boutique — pas
+   *  seulement les trois rayons figés. C'est ce que `parts` permet enfin de
+   *  restituer : fromages, alcool, prestation, rachat, sous-familles. */
+  achats_par_famille: Record<string, number>
   achats_non_ventiles: number
+  /** Combien de factures sont restées hors ventilation, faute de règle. */
+  achats_factures_non_ventilees: number
   achats_divers: number
   familles: FamilleEconomics[]
   /** 4e bloc : rachat, épicerie, boissons, fruits & légumes, prestations… — CA et achats
@@ -112,15 +118,10 @@ export type WeekEconomics = {
   ratio_ms: number | null
 }
 
-// Les 3 rayons MÉTIER de la ventilation fournisseur. Le 4e champ, « divers », n'est
-// pas un métier : il ne se rattache à aucune famille et n'est plus redistribué au
-// prorata du CA — un cageot de tomates n'a rien à faire dans la marge boucherie.
-// La colonne historique pct_fruits_et_legumes est repliée dans divers à la lecture.
-const VENT_RAYONS = [
-  { key: 'boucherie',   label: 'Boucherie' },
-  { key: 'charcuterie', label: 'Charcuterie' },
-  { key: 'traiteur',    label: 'Traiteur' },
-] as const
+// Les 3 rayons MÉTIER de la ventilation fournisseur — définis une seule fois,
+// dans lib/ventilation-achats, avec le module qui s'en sert. La colonne
+// historique pct_fruits_et_legumes est repliée dans divers à la lecture.
+const VENT_RAYONS = RAYONS_METIER
 
 /** Dates ISO (lundi, dimanche) d'une semaine — dérivées du calendrier de lib/payroll */
 function weekBoundsISO(week: number, year: number): [string, string] {
@@ -201,82 +202,51 @@ export async function computeWeekEconomics(
     achats_by_category[cat] = (achats_by_category[cat] || 0) + parseFloat(inv.amount_ht || 0)
   }
 
-  // 1 bis. Ventilation des achats par rayon (répartition par fournisseur)
+  // 1 bis. LA VENTILATION DES ACHATS — moteur unique lib/ventilation-achats.
+  //
+  // La répartition d'un fournisseur vit dans `parts` depuis le lot 77 : autant
+  // de familles qu'il en faut. Ce moteur lisait pourtant encore les cinq
+  // colonnes `pct_*` DÉRIVÉES, donc quatre seaux — la finesse saisie par le
+  // boucher était écrasée à la lecture, et la marge par famille s'arrêtait aux
+  // trois métiers.
+  //
+  // On ventile désormais vers les FAMILLES, et les quatre seaux historiques en
+  // sont DÉDUITS : deux lectures d'un même partage, plus deux calculs qui
+  // peuvent diverger. L'écran Marges appliquait d'ailleurs sa propre copie de
+  // cette logique ; il appelle maintenant le même module.
   const { data: splitRows } = await supabase
     .from('supplier_rayon_splits')
-    .select('supplier_key, pct_boucherie, pct_charcuterie, pct_traiteur, pct_fruits_et_legumes, pct_divers')
+    .select('supplier_key, parts, pct_boucherie, pct_charcuterie, pct_traiteur, pct_fruits_et_legumes, pct_divers')
     .eq('client_id', clientId)
-  const splitList = splitRows || []
 
-  const splitFor = (supplierName: string) => {
-    const q = normalizeSupplierName(supplierSociete(supplierName))
-    if (!q) return null
-    let best: any = null
-    for (const s of splitList) {
-      if (s.supplier_key === q) return s
-      if (sameSupplierFamily(s.supplier_key, q) && (best === null || String(s.supplier_key).length > String(best.supplier_key).length)) best = s
-    }
-    return best
-  }
-
-  // 1 ter. Ventilation PROPRE À UNE FACTURE (référentiel margin_families) : elle
-  // PRIME sur la répartition fournisseur, sans toucher les autres factures du
-  // même fournisseur. Chaque famille visée est ramenée à son rayon moteur : sa
-  // RACINE si c'est une sous-famille, puis boucherie/charcuterie/traiteur si la
-  // racine correspond à un rayon métier, divers sinon (rachat compris).
+  // La répartition PROPRE À UNE FACTURE prime sur celle du fournisseur : elle
+  // vise directement des familles, sans toucher les autres factures.
   const invIds = varInv.map((i: any) => i.id).filter(Boolean)
   const { data: ifsRows } = invIds.length > 0
     ? await supabase.from('invoice_family_splits')
         .select('invoice_id, family_id, pct').eq('client_id', clientId).in('invoice_id', invIds)
     : { data: [] as any[] }
-  let bucketOfFamily = new Map<string, string>()
-  if ((ifsRows || []).length > 0) {
-    const { data: mfRows } = await supabase.from('margin_families')
-      .select('id, parent_id, name, name_key, is_rachat')
-      .eq('client_id', clientId).eq('active', true)
-    const byId = new Map<string, any>((mfRows || []).map((m: any) => [m.id, m]))
-    bucketOfFamily = new Map((mfRows || []).map((m: any) => {
-      const root = m.parent_id ? (byId.get(m.parent_id) ?? m) : m
-      let bucket = 'divers'
-      if (!root.is_rachat && !m.is_rachat) {
-        for (const r of VENT_RAYONS) {
-          if (familleMatchesText(r.key, r.label, String(root.name_key || ''), String(root.name || ''), caStems)) { bucket = r.key; break }
-        }
-      }
-      return [String(m.id), bucket]
-    }))
-  }
-  const overridesByInvoice = new Map<string, { bucket: string; pct: number }[]>()
-  for (const s of (ifsRows || []) as any[]) {
-    const arr = overridesByInvoice.get(s.invoice_id) || []
-    arr.push({ bucket: bucketOfFamily.get(String(s.family_id)) ?? 'divers', pct: Number(s.pct) || 0 })
-    overridesByInvoice.set(s.invoice_id, arr)
-  }
 
-  // 3 rayons métier + divers. pct_fruits_et_legumes (colonne historique) est replié
-  // dans divers : les fruits & légumes ne sont plus un rayon, c'est de l'achat-revente.
-  const achats_by_rayon: Record<string, number> = { boucherie: 0, charcuterie: 0, traiteur: 0, divers: 0 }
-  let achats_non_ventiles = 0
-  for (const inv of varInv) {
-    const amt = parseFloat(inv.amount_ht || 0)
-    if (!amt) continue
-    const ov = inv.id ? overridesByInvoice.get(inv.id) : undefined
-    if (ov && ov.length > 0) {
-      const totOv = ov.reduce((s, o) => s + o.pct, 0)
-      if (totOv > 0) {
-        for (const o of ov) achats_by_rayon[o.bucket] = (achats_by_rayon[o.bucket] || 0) + amt * (o.pct / totOv)
-        continue
-      }
+  // Le référentiel de familles est désormais nécessaire dans TOUS les cas :
+  // c'est lui qui donne un sens aux identifiants portés par `parts`.
+  const { data: mfRows } = await supabase.from('margin_families')
+    .select('id, parent_id, name, name_key, is_rachat')
+    .eq('client_id', clientId).eq('active', true)
+  const refFamilles = (mfRows || []) as FamilleRef[]
+
+  // Le seau historique d'une famille : sa RACINE décide, par la reconnaissance
+  // floue des libellés de vente de la boutique (« boucher » ≈ « boucherie »).
+  const seauxFamilles = seauxDesFamilles(refFamilles, racine => {
+    for (const r of VENT_RAYONS) {
+      if (familleMatchesText(r.key, r.label, String(racine.name_key || ''), String(racine.name || ''), caStems)) return r.key
     }
-    const sp = splitFor(inv.supplier_name)
-    const pDivers = Number(sp?.pct_divers || 0) + Number(sp?.pct_fruits_et_legumes || 0)
-    const tot = sp ? (Number(sp.pct_boucherie) + Number(sp.pct_charcuterie) + Number(sp.pct_traiteur) + pDivers) : 0
-    if (!sp || tot <= 0) { achats_non_ventiles += amt; continue }
-    achats_by_rayon.boucherie   += amt * (Number(sp.pct_boucherie)   / tot)
-    achats_by_rayon.charcuterie += amt * (Number(sp.pct_charcuterie) / tot)
-    achats_by_rayon.traiteur    += amt * (Number(sp.pct_traiteur)    / tot)
-    achats_by_rayon.divers      += amt * (pDivers                    / tot)
-  }
+    return null
+  })
+
+  const vent = ventilationAchats(
+    varInv as any[], (splitRows || []) as any[], refFamilles, (ifsRows || []) as any[], seauxFamilles)
+  const achats_by_rayon = vent.parRayon
+  const achats_non_ventiles = vent.nonVentiles
   const achats_divers = achats_by_rayon.divers
 
   // 2. Masse salariale CHARGÉE depuis le planning — moteur partagé lib/payroll (CCN 992).
@@ -512,7 +482,9 @@ export async function computeWeekEconomics(
     achats_a_verifier: round2(achats_a_verifier),
     achats_by_category,
     achats_by_rayon: Object.fromEntries(Object.entries(achats_by_rayon).map(([k, v]) => [k, round2(v)])),
+    achats_par_famille: vent.parFamille,
     achats_non_ventiles: round2(achats_non_ventiles),
+    achats_factures_non_ventilees: vent.facturesNonVentilees,
     achats_divers: round2(achats_divers),
     familles: famillesOut,
     divers,
