@@ -26,6 +26,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ShoppingBasket, FileSearch, Search, RefreshCw, Link2, ChevronDown, ChevronRight, X, Check, AlertTriangle, ChefHat, HelpCircle } from 'lucide-react'
 import { useToast } from '@/components/ui/toast'
+import { useConfirm } from '@/components/ui/confirm-dialog'
 import { guessBaseUnit, unitKind } from '@/lib/mercuriale-auto'
 import { matchFamilyId, type MarginFamily } from '@/lib/margin-families'
 // Briques d'affichage de la mercuriale (formats, courbes, blocs de la fiche
@@ -46,9 +47,21 @@ import {
   type PendingInvoice, type DouteInvoice,
 } from './catalogue'
 import { VueOrganiser, VueFournisseurs } from './onglets'
+import type { MotifSortie } from '@/lib/lecture-file'
+
+/** Une facture SORTIE de la file de lecture (lot 80) : la facture telle que la
+ *  file la connaît, plus la raison de sa sortie — motif technique, phrase en
+ *  clair et pastille courte, toutes trois calculées côté API par
+ *  lib/lecture-file. La page n'en rejuge aucune : elle affiche. */
+type LectureAbandonnee = PendingInvoice & {
+  motif: MotifSortie
+  phrase: string
+  libelle: string
+}
 
 export default function MercurialePage() {
   const { toast } = useToast()
+  const { confirm: confirmAction } = useConfirm()
   const [generics, setGenerics] = useState<Generic[]>([])
   const [queue, setQueue] = useState<Ref[]>([])
   const [pending, setPending] = useState<PendingInvoice[]>([])
@@ -85,6 +98,12 @@ export default function MercurialePage() {
   // Motifs d'échec / de lecture partielle (lot 1) : dépliables, relisibles un par un
   const [showMotifs, setShowMotifs] = useState(false)
   const [relisant, setRelisant] = useState<string | null>(null)
+  // Lectures ABANDONNÉES (lot 80) : sorties de la file — à la main, après trois
+  // échecs, ou faute de reprise depuis une semaine. Rangées, jamais supprimées :
+  // leur montant reste compté dans les achats. Repliées, réessayables d'un clic.
+  const [abandonnees, setAbandonnees] = useState<LectureAbandonnee[]>([])
+  const [showAbandons, setShowAbandons] = useState(false)
+  const [abandonnant, setAbandonnant] = useState<string | null>(null)
   // File de doute matière/charge (lot 29) : classements fragiles, un clic tranche
   const [doutes, setDoutes] = useState<DouteInvoice[]>([])
   const [tranchant, setTranchant] = useState<string | null>(null)
@@ -150,6 +169,7 @@ export default function MercurialePage() {
       setGenerics(Array.isArray(data.generics) ? data.generics : [])
       setQueue(Array.isArray(data.queue) ? data.queue : [])
       setPending(Array.isArray(data.pending) ? data.pending : [])
+      setAbandonnees(Array.isArray(data.lectures_abandonnees) ? data.lectures_abandonnees : [])
       setDoutes(Array.isArray(data.doutes) ? data.doutes : [])
       setMoves(Array.isArray(data.moves) ? data.moves : [])
       setMovesTotal(Number(data.moves_total) || 0)
@@ -291,6 +311,40 @@ export default function MercurialePage() {
       toast({ variant: 'error', title: `${inv.supplier_name} : lecture en échec`, description: data?.error || 'Réessayez.' })
     }
     rafraichirBientot()
+  }
+
+  /** Sort une facture de la file de lecture, ou l'y remet (lot 80).
+   *
+   *  L'abandon est CONFIRMÉ, parce qu'il faut dire noir sur blanc ce qui ne
+   *  bouge pas : le montant de la facture reste dans les achats, la marge et le
+   *  résultat de sa semaine. Seules ses LIGNES manquent à la mercuriale. Et le
+   *  geste est réversible d'un clic — c'est ce qui permet de l'oser. */
+  async function changerLecture(inv: { id: string; supplier_name: string }, abandon: boolean) {
+    if (abandonnant || relisant || processing) return
+    if (abandon) {
+      const ok = await confirmAction({
+        title: `Ne plus essayer de lire cette facture ?`,
+        description: `${nomFournisseur(inv.supplier_name) || 'Cette facture'} sortira de la file de lecture et ne sera plus repassée au lecteur. Son montant reste compté dans vos achats, votre marge et le résultat de sa semaine — seules ses lignes manqueront à la mercuriale. Réversible d’un clic.`,
+        confirmLabel: 'Ne plus essayer',
+        variant: 'default',
+      })
+      if (!ok) return
+    }
+    setAbandonnant(inv.id)
+    const res = await fetch(`/api/invoices/${inv.id}/lecture`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ abandon }),
+    }).catch(() => null)
+    const data = res ? await res.json().catch(() => null) : null
+    setAbandonnant(null)
+    if (res?.ok) {
+      toast(abandon
+        ? { variant: 'info', title: `${nomFournisseur(inv.supplier_name) || 'Facture'} : lecture abandonnée`, description: 'Rangée dans « Lectures abandonnées », en bas de la file. Son montant reste compté dans vos achats.' }
+        : { variant: 'success', title: `${nomFournisseur(inv.supplier_name) || 'Facture'} : de retour dans la file`, description: 'Elle sera relue au prochain « Lire les factures ».' })
+    } else {
+      toast({ variant: 'error', title: data?.error || 'Geste impossible', description: 'Réessayez.' })
+    }
+    load({ silencieux: true })
   }
 
   /** Tranche un doute matière/charge d'un clic (lot 29). « Charge » retire les
@@ -1371,6 +1425,14 @@ export default function MercurialePage() {
                                   className="text-[11px] font-bold text-white bg-pilote hover:bg-pilote-hover rounded-lg px-2.5 py-1 shadow-card disabled:opacity-50">
                                   {relisant === p.id ? 'Lecture…' : 'Relire'}
                                 </button>
+                                {/* Sortie de file assumée : chaque tentative repasse le
+                                    document au lecteur, et certaines factures ne seront
+                                    jamais lisibles. Réversible d'un clic plus bas. */}
+                                <button onClick={() => changerLecture(p, true)} disabled={processing || abandonnant !== null || relisant !== null}
+                                  title="Sortir cette facture de la file de lecture — son montant reste compté dans vos achats"
+                                  className="text-[11px] font-semibold text-gray-500 border border-gray-200 bg-white rounded-lg px-2.5 py-1 hover:text-red-600 hover:border-red-200 transition-colors disabled:opacity-50">
+                                  {abandonnant === p.id ? '…' : 'Ne plus essayer'}
+                                </button>
                               </span>
                             </div>
                           ))}
@@ -1381,6 +1443,51 @@ export default function MercurialePage() {
                 </div>
                 )
               })()}
+
+              {/* 2 bis. LECTURES ABANDONNÉES (lot 80) — sorties de la file, pas
+                  des comptes. À la main, après trois échecs, ou faute de reprise
+                  depuis une semaine. Repliées comme « Lignes non-produit » et
+                  « Réfs écartées » : ce n'est plus un travail à faire, c'est un
+                  rangement consultable — et chaque ligne se réessaie d'un clic. */}
+              {abandonnees.length > 0 && (
+                <div className="mb-6 bg-white rounded-2xl border border-gray-100 shadow-card overflow-hidden">
+                  <button onClick={() => setShowAbandons(v => !v)}
+                    className="w-full px-4 py-2.5 flex items-center justify-between gap-3 hover:bg-gray-50 transition-colors">
+                    <p className="text-xs font-semibold text-gray-500 text-left">
+                      Lectures abandonnées ({abandonnees.length})
+                      <span className="text-gray-400 font-normal"> — plus proposées à la lecture ; leur montant reste compté dans vos achats, seules leurs lignes manquent ici</span>
+                    </p>
+                    <span className="text-[11px] font-bold text-gray-400 tabular flex items-center gap-1 flex-shrink-0">
+                      {abandonnees.length}
+                      {showAbandons ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                    </span>
+                  </button>
+                  {showAbandons && (
+                    <div className="divide-y divide-gray-100 border-t border-gray-100">
+                      {abandonnees.map(a => (
+                        <div key={a.id} className="px-4 py-2.5 flex items-start gap-3 flex-wrap">
+                          <span className="text-[11px] text-gray-400 tabular flex-shrink-0 w-16 pt-0.5">{fmtDate(a.invoice_date)}</span>
+                          <span className="flex-1 min-w-[220px]">
+                            <span className="text-xs font-semibold text-gray-900">{nomFournisseur(a.supplier_name) || '—'}</span>
+                            <span className="text-xs text-gray-500 tabular"> · {fmtEuro(Number(a.amount_ht) || 0)}</span>
+                            <span className="ml-2 inline-block rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-bold text-gray-500 align-middle">{a.libelle}</span>
+                            <span className="block text-[11px] text-gray-500 leading-snug mt-0.5">{a.phrase}</span>
+                          </span>
+                          <span className="flex items-center gap-2 flex-shrink-0">
+                            <button onClick={() => window.open(`/api/invoices/${a.id}/file`, '_blank')}
+                              className="text-[11px] font-semibold text-gray-500 hover:text-pilote underline">voir la facture</button>
+                            <button onClick={() => changerLecture(a, false)} disabled={processing || abandonnant !== null || relisant !== null}
+                              title="Remettre cette facture dans la file de lecture"
+                              className="text-[11px] font-bold text-pilote border border-pilote-200 bg-white rounded-lg px-3 py-1 hover:bg-pilote-50 transition-colors disabled:opacity-50">
+                              {abandonnant === a.id ? '…' : 'Réessayer'}
+                            </button>
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* 3. File de doute matière/charge (lot 29) — le tri dit quand il
                   n'est pas sûr, et c'est le boucher qui tranche, d'un clic. */}
