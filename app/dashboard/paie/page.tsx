@@ -57,10 +57,15 @@ export default function PaiePage() {
     return { mois: m, annee: p.annee }
   })
 
-  /** Les semaines de la période dont les heures peuvent encore bouger. */
+  /** Les semaines de la période dont les heures peuvent encore bouger.
+   *
+   *  EXACTEMENT le filtre du bandeau de réserves, côté serveur. La première
+   *  version ne retenait que les semaines où un salarié avait déjà du planning :
+   *  le bandeau annonçait cinq semaines libres et le bouton proposait d'en figer
+   *  une seule. Une semaine vide se fige aussi — c'est même tout l'intérêt,
+   *  puisque c'est là qu'on peut encore ajouter des heures après l'envoi. */
   const libres = useMemo(
-    () => (rapport?.semaines ?? []).filter(s => s.rattachee)
-      .filter(s => (rapport?.employes ?? []).some(e => e.semaines.some(w => w.week === s.week && w.year === s.year && !w.figee))),
+    () => (rapport?.semaines ?? []).filter(s => s.rattachee && !s.figee),
     [rapport],
   )
 

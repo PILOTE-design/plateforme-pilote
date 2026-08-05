@@ -210,7 +210,12 @@ export type RapportComptable = {
   debut: string
   fin: string
   employes: LigneEmploye[]
-  semaines: SemaineDuMois[]
+  /** Les semaines touchées par le mois, AVEC leur état de verrou : le bandeau
+   *  de réserves et le bouton « figer la période » doivent compter la même
+   *  chose. Filtrer côté écran sur « une semaine où quelqu'un a du planning »
+   *  donnait un bouton qui proposait d'en figer une pendant que le bandeau en
+   *  annonçait cinq. */
+  semaines: (SemaineDuMois & { figee: boolean })[]
   /** Ce que le rapport ne peut pas garantir. Jamais tu, jamais résumé. */
   avertissements: string[]
 }
@@ -336,7 +341,8 @@ export function rapportDuMois(
 
   return {
     mois: m, annee: y, libelle: libelleMois(m, y), debut, fin,
-    employes: lignes, semaines,
+    employes: lignes,
+    semaines: contexte.map(c => ({ ...c.s, figee: c.figee })),
     avertissements: avertissements(lignes, contexte.map(c => ({ ...c.s, figee: c.figee })), m, y),
   }
 }
