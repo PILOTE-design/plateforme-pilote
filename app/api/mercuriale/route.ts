@@ -401,20 +401,6 @@ export async function GET() {
       ? Math.round(((prixJour - prevPoint.p) / prevPoint.p) * 1000) / 10
       : null
 
-    // POURQUOI ce générique n'a-t-il pas de prix ? Quatre causes distinctes,
-    // qui appelaient chacune une action différente et s'affichaient toutes
-    // « pas de prix ». On les nomme.
-    const prixEnQuarantaine = refs.reduce((n, r) => n + (quarantaineParArticle.get(String(r.id)) || 0), 0)
-    const price_missing_reason: string | null = best && best.price_base !== null
-      ? null
-      : refs.length === 0
-        ? 'aucune_ref'
-        : refs.some(r => r.needs_conversion)
-          ? 'conversion'
-          : prixEnQuarantaine > 0
-            ? 'quarantaine'
-            : 'jamais_facture'
-
     // Un morceau de découpe tire son prix de la dernière carcasse, pas d'une
     // facture : il écrase donc le prix de facture (il n'y en a jamais) et fait
     // taire le motif de prix manquant. `price_supplier` reste vide — écrire
@@ -422,6 +408,30 @@ export async function GET() {
     // recette qui porte la provenance en toutes lettres.
     const cutId = typeof (g as any).valorisation_cut_id === 'string' ? String((g as any).valorisation_cut_id) : null
     const coutDecoupe = cutId ? coutsDecoupe.get(cutId) ?? null : null
+
+    // POURQUOI ce générique n'a-t-il pas de prix ? Cinq causes distinctes,
+    // qui appelaient chacune une action différente et s'affichaient toutes
+    // « pas de prix ». On les nomme.
+    //
+    // LA CINQUIÈME est un reproche qu'on adressait à tort. Un morceau de
+    // découpe sans carcasse chiffrée n'a évidemment aucune réf fournisseur —
+    // il n'en aura jamais — et on lui affichait « aucune réf rattachée », avec
+    // le geste « rattachez une réf fournisseur depuis l'onglet À traiter ».
+    // Le boucher pouvait chercher longtemps : il n'y a pas de fournisseur de
+    // Paleron, il y a une carcasse à enregistrer. C'est le seul geste qui
+    // donne un prix à ce morceau, et c'est celui qu'il faut écrire.
+    const prixEnQuarantaine = refs.reduce((n, r) => n + (quarantaineParArticle.get(String(r.id)) || 0), 0)
+    const price_missing_reason: string | null = best && best.price_base !== null
+      ? null
+      : cutId !== null
+        ? 'decoupe_sans_carcasse'
+        : refs.length === 0
+          ? 'aucune_ref'
+          : refs.some(r => r.needs_conversion)
+            ? 'conversion'
+            : prixEnQuarantaine > 0
+              ? 'quarantaine'
+              : 'jamais_facture'
 
     return {
       ...g,
