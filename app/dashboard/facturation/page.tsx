@@ -13,11 +13,17 @@ import {
   TrendingUp, TrendingDown, ShoppingCart, Users, Euro,
   Save, X, Settings, Check, Loader2, AlertCircle,
   Link2, Link2Off, RefreshCw, ArrowUpRight, Repeat, PieChart,
-  Pencil, CalendarClock, Scale, Mail, Copy, History} from 'lucide-react'
+  Pencil, CalendarClock, Scale, Mail, Copy, History, AlertTriangle} from 'lucide-react'
 import {
   costForWindow, weekRecurringCost, provisionForWindow, enumeratePeriods,
   type RecurringCharge, type RecurringActual, type Periodicity,
 } from '@/lib/recurring-charges'
+import type { DoubleEmploiVu } from '@/lib/charges-doublon'
+
+/** Une charge récurrente TELLE QUE L'API LA REND : la définition, plus le
+ *  contrôle de cohérence avec les achats (cf. lib/charges-doublon). Le champ
+ *  est optionnel — un moteur qui ne le calcule pas ne casse rien. */
+type ChargeVue = RecurringCharge & { double_emploi?: DoubleEmploiVu | null }
 import { labelsMatch, DEFAULT_MARGIN_FAMILIES, DEFAULT_TVA_RATE, MATIERE_BENCH, DIVERS_POSTE, type Poste } from '@/lib/postes'
 import { nomFournisseur } from '@/lib/supplier-name'
 
@@ -299,7 +305,7 @@ export default function FacturationPage() {
   const [year, setYear] = useState(lastWeek.year)
   const [invoices,  setInvoices]  = useState<Invoice[]>([])
   // Charges récurrentes (définition/provision) + réels (réconciliation)
-  const [recurringCharges, setRecurringCharges] = useState<RecurringCharge[]>([])
+  const [recurringCharges, setRecurringCharges] = useState<ChargeVue[]>([])
   const [recurringActuals, setRecurringActuals] = useState<RecurringActual[]>([])
   const [showRecurring, setShowRecurring] = useState(false)          // modale édition d'une charge
   const [recForm, setRecForm] = useState<typeof EMPTY_RECURRING>(EMPTY_RECURRING)
@@ -1578,6 +1584,20 @@ export default function FacturationPage() {
                           <div>
                             <div className="font-semibold text-sm text-gray-900">{c.label}</div>
                             {!c.active && <div className="text-[10px] font-semibold text-gray-400">clôturée</div>}
+                            {/* LE MÊME FOURNISSEUR DES DEUX CÔTÉS.
+                                Une charge récurrente s'AJOUTE aux factures du
+                                même fournisseur, elle ne les remplace pas :
+                                sans ce mot, l'argent sort deux fois du
+                                résultat, une fois en achats et une fois en
+                                charges de structure. On pose la question, on
+                                ne tranche pas — un fournisseur peut livrer de
+                                la marchandise ET louer du matériel. */}
+                            {c.double_emploi && (
+                              <div className="mt-1 flex items-start gap-1.5 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1 max-w-md">
+                                <AlertTriangle className="w-3 h-3 flex-shrink-0 mt-px" />
+                                <span className="font-medium leading-snug">{c.double_emploi.phrase}</span>
+                              </div>
+                            )}
                           </div>
                         </div>
                       </td>

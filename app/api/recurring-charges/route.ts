@@ -1,8 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { resolveClientId } from '@/lib/resolve-client-id'
+import { doublesEmplois, phraseDoubleEmploi } from '@/lib/charges-doublon'
 
 export const dynamic = 'force-dynamic'
+
+/** Les factures qui comptent dans les ACHATS — celles qui peuvent doublonner
+ *  avec une provision. Quatre colonnes, pas une de plus : c'est un contrôle de
+ *  cohérence, pas une seconde source de chiffres. */
+async function facturesEnAchats(svc: ReturnType<typeof createServiceClient>, clientId: string) {
+  const { data } = await svc
+    .from('invoices')
+    .select('supplier_name, amount_ht, is_fixed_charge, invoice_date')
+    .eq('client_id', clientId)
+    .eq('is_fixed_charge', false)
+  return data || []
+}
 
 const VALID_CATEGORIES = ['boucherie', 'charcuterie', 'traiteur', 'frais_divers']
 const VALID_PERIODICITY = ['weekly', 'monthly', 'quarterly', 'semester', 'annual']
@@ -26,13 +39,31 @@ export async function GET() {
     .eq('client_id', clientId)
     .order('label', { ascending: true })
 
+  // `created_at` est LU ici, et ce n'est pas décoratif : c'est lui qui départage
+  // deux réels de même durée qui se chevauchent (cf. `actualOn` dans
+  // lib/recurring-charges). Sans lui, cet écran retombait sur l'ordre du
+  // tableau là où le moteur hebdomadaire, qui le sélectionne, tranchait
+  // autrement — la divergence écran/PDF que ce départage avait justement été
+  // écrit pour supprimer.
   const { data: actuals } = await svc
     .from('recurring_actuals')
-    .select('id, recurring_charge_id, period_start, period_end, amount_ht, tva_rate, invoice_number, invoice_date, notes')
+    .select('id, recurring_charge_id, period_start, period_end, amount_ht, tva_rate, invoice_number, invoice_date, notes, created_at')
     .eq('client_id', clientId)
     .order('period_start', { ascending: false })
 
-  return NextResponse.json({ charges: charges || [], actuals: actuals || [] })
+  // LE MÊME FOURNISSEUR DES DEUX CÔTÉS ? (cf. lib/charges-doublon)
+  //
+  // Une charge récurrente s'AJOUTE aux factures du même fournisseur, elle ne
+  // les remplace pas. Le contrôle est fait ici plutôt que dans l'écran pour que
+  // la réponse porte la question avec elle : un écran qui devrait penser à la
+  // poser finit par l'oublier.
+  const doubles = doublesEmplois(charges || [], await facturesEnAchats(svc, clientId))
+  const chargesVues = (charges || []).map(c => {
+    const d = doubles.get(String(c.id))
+    return d ? { ...c, double_emploi: { ...d, phrase: phraseDoubleEmploi(d) } } : { ...c, double_emploi: null }
+  })
+
+  return NextResponse.json({ charges: chargesVues, actuals: actuals || [] })
 }
 
 // POST → crée une charge récurrente
@@ -67,7 +98,15 @@ export async function POST(req: NextRequest) {
 
   const { data, error } = await svc.from('recurring_charges').insert(row).select().single()
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json(data)
+
+  // LE MOMENT OÙ LA QUESTION SE POSE. Une charge récurrente se crée en un clic
+  // depuis une facture : c'est là, et pas trois semaines plus tard dans un
+  // tableau, qu'il faut dire que ce fournisseur figure déjà dans les achats.
+  // La charge est bien CRÉÉE — on n'a aucune raison de refuser, le cas
+  // légitime existe (un fournisseur qui livre ET qui loue du matériel).
+  const d = doublesEmplois([{ id: String(data.id), label, active: row.active }], await facturesEnAchats(svc, clientId))
+    .get(String(data.id))
+  return NextResponse.json({ ...data, double_emploi: d ? { ...d, phrase: phraseDoubleEmploi(d) } : null })
 }
 
 // PATCH → met à jour une charge (partiel). body.id requis.
