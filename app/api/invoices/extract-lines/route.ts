@@ -35,6 +35,7 @@ import {
   type ExtractedLine,
 } from '@/lib/invoice-extract'
 import { verdictLigne } from '@/lib/invoice-lines'
+import { compteurApres } from '@/lib/lecture-file'
 import { dernierPrix, memePrix } from '@/lib/article-price'
 import { cleCodeArticle } from '@/lib/article-code'
 
@@ -170,6 +171,12 @@ export async function POST(request: NextRequest) {
    *  correction de l'extraction n'est mesurable — c'est le préalable à tout le
    *  reste. Le motif est écrit en FRANÇAIS LISIBLE : il s'affiche tel quel au
    *  boucher, qui doit pouvoir décider quoi faire sans lire du code. */
+
+  /** Le compteur d'échecs LU EN BASE au début de cette lecture (lot 80). Il est
+   *  relevé une fois, après la lecture de la facture, et sert au seul endroit
+   *  qui écrit l'issue : `marquer`. Compter dans les six appelants, c'est
+   *  garantir qu'un jour l'un d'eux oubliera. */
+  let echecsAvant = 0
   const marquer = async (
     invoiceId: string,
     status: 'done' | 'partial' | 'error' | 'no_file' | 'hors_matiere' | 'scan_illisible',
@@ -180,6 +187,9 @@ export async function POST(request: NextRequest) {
       lines_status: status,
       lines_error: motif,
       lines_checked_at: new Date().toISOString(),
+      // Une lecture qui échoue rapproche le document de la sortie de file ; une
+      // lecture qui aboutit efface son passé (cf. lib/lecture-file).
+      lectures_echouees: compteurApres(echecsAvant, status),
       ...extra,
     }).eq('id', invoiceId)
   }
@@ -188,9 +198,10 @@ export async function POST(request: NextRequest) {
   if (!invoice_id) return NextResponse.json({ error: 'invoice_id requis' }, { status: 400 })
 
   const { data: invoice } = await service.from('invoices')
-    .select('id, supplier_name, invoice_date, amount_ht, amount_ttc, tva_rate, file_path, delivery_date, due_date, is_fixed_charge')
+    .select('id, supplier_name, invoice_date, amount_ht, amount_ttc, tva_rate, file_path, delivery_date, due_date, is_fixed_charge, lectures_echouees')
     .eq('id', invoice_id).eq('client_id', clientId).maybeSingle()
   if (!invoice) return NextResponse.json({ error: 'Facture introuvable' }, { status: 404 })
+  echecsAvant = Number(invoice.lectures_echouees) || 0
 
   // Clé du fournisseur, calculée une fois pour toute la requête : elle sert à
   // choisir les exemples de mise en page AVANT la lecture, et à ranger la
