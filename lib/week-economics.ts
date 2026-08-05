@@ -19,6 +19,7 @@
 
 import { normalizeSupplierName, sameSupplierFamily, supplierSociete } from '@/lib/supplier-memory'
 import { weekRecurringCost } from '@/lib/recurring-charges'
+import { chargesFixesDeLaSemaine, type MotifEcart } from '@/lib/charges-fixes'
 import {
   entryCost, entryPosteHours, weekHolidayFlags, getWeekDates,
   PAYROLL_EMPLOYEE_COLUMNS, PAYROLL_ENTRY_COLUMNS,
@@ -53,6 +54,31 @@ export type FamilleEconomics = {
   taux_totale: number | null
 }
 
+/** Une ligne du poste « charges fixes » de la semaine. DEUX sources désormais :
+ *  la provision d'une charge RÉCURRENTE déclarée à la main, et la part
+ *  hebdomadaire d'une FACTURE étiquetée charge fixe (cf. lib/charges-fixes, qui
+ *  porte la règle : seule une période LUE sur le document donne droit à la
+ *  réinjection). Les champs historiques — id, label, category, cost, hasActual —
+ *  sont portés par les deux, pour que les lecteurs actuels ne voient aucune
+ *  différence ; `origine` dit d'où vient la ligne à qui le demande.
+ *
+ *  Les lignes ÉCARTÉES y figurent aussi, `retenue: false` et `cost: 0`, avec
+ *  leur motif et leur phrase : une charge qui n'entre pas dans le résultat est
+ *  une information, pas un silence. Elles ne comptent pas dans `charges_fixes`. */
+export type ChargeFixeLine = ReturnType<typeof weekRecurringCost>['lines'][number] & {
+  origine: 'recurrent' | 'facture'
+  /** false = ligne écartée : elle est affichée, elle ne compte pas. */
+  retenue: boolean
+  /** Pourquoi elle est écartée. null quand elle est retenue. */
+  motif: MotifEcart | null
+  /** Phrase prête à afficher, sur les lignes de facture. */
+  phrase: string | null
+  /** Facture seulement : montant total de la pièce, pour la reconnaître. */
+  montant_facture?: number
+  /** Facture seulement : durée couverte, en jours. */
+  jours?: number | null
+}
+
 export type WeekEconomics = {
   achats_ht: number
   achats_a_verifier: number
@@ -71,7 +97,7 @@ export type WeekEconomics = {
   /** Reliquat vraiment non réparti — uniquement quand il n'y a aucun CA pour arbitrer */
   salaires_non_affectes: number
   charges_fixes: number
-  charges_fixes_lines: ReturnType<typeof weekRecurringCost>['lines']
+  charges_fixes_lines: ChargeFixeLine[]
   /** CA HT — base de TOUS les taux de ce module (achats et salaires sont HT) */
   ca_total: number
   /** CA caisse tel que saisi / extrait du rapport, TVA comprise */
@@ -148,7 +174,7 @@ export async function computeWeekEconomics(
   // 1. Achats HT de la semaine
   const { data: invoicesData } = await supabase
     .from('invoices')
-    .select('id, amount_ht, category, supplier_name, is_fixed_charge, status')
+    .select('id, invoice_date, amount_ht, category, supplier_name, is_fixed_charge, status, period_days, period_source, prorata_ht')
     .eq('client_id', clientId)
     .eq('week_number', week)
     .eq('year', year)
@@ -305,7 +331,34 @@ export async function computeWeekEconomics(
     .eq('client_id', clientId)
     .order('created_at', { ascending: false })
   const recur = weekRecurringCost((recCharges || []) as any, (recActuals || []) as any, monISO, sunISO)
-  const charges_fixes = recur.total
+  // Les FACTURES étiquetées charge fixe rejoignent enfin le calcul : retirées des
+  // achats, elles ne revenaient nulle part et le résultat net était trop beau
+  // d'autant. La règle — seule une période LUE sur le document autorise la
+  // réinjection, et jamais deux fois le même fournisseur — vit dans
+  // lib/charges-fixes, pas ici.
+  const bilanFactures = chargesFixesDeLaSemaine(
+    (invoicesData || []) as any, (recCharges || []) as any, monISO, sunISO)
+  const categorieDeFacture = new Map<string, string>(
+    (invoicesData || []).map((inv: any) => [String(inv.id), String(inv.category || 'autre')]))
+  const charges_fixes_lines: ChargeFixeLine[] = [
+    ...recur.lines.map(l => ({
+      ...l, origine: 'recurrent' as const, retenue: true, motif: null, phrase: null,
+    })),
+    ...bilanFactures.lignes.map(l => ({
+      id: l.invoice_id,
+      label: l.fournisseur,
+      category: categorieDeFacture.get(l.invoice_id) ?? 'autre',
+      cost: l.montant,
+      hasActual: false,
+      origine: 'facture' as const,
+      retenue: l.retenue,
+      motif: l.motif,
+      phrase: l.phrase,
+      montant_facture: l.montant_facture,
+      jours: l.jours,
+    })),
+  ]
+  const charges_fixes = recur.total + bilanFactures.total
 
   // 4. CA — fourni par l'appelant, TTC (chiffre de caisse), ramené en HT ici.
   // C'est le seul endroit où la conversion a lieu : tout ce qui suit est HT, et les
@@ -468,7 +521,7 @@ export async function computeWeekEconomics(
     salaires_repartis: round2(salaires_repartis),
     salaires_non_affectes: round2(salaires_non_affectes),
     charges_fixes: round2(charges_fixes),
-    charges_fixes_lines: recur.lines,
+    charges_fixes_lines,
     ca_total,
     ca_ttc: round2(ca_ttc),
     tva_rate,
