@@ -135,6 +135,7 @@ export async function POST(_req: NextRequest) {
         is_fixed_charge: inv.is_fixed_charge ?? false,
         period_days: inv.period_days ?? null,
         prorata_ht: inv.prorata_ht ?? null,
+        period_source: inv.period_source ?? null,
         notes: `Rattrapage ${prov.name} — 2 derniers mois${inv.external_id ? ` (${inv.external_id})` : ''}`,
       }
     })
