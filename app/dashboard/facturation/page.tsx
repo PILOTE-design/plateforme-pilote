@@ -13,349 +13,27 @@ import {
   TrendingUp, TrendingDown, ShoppingCart, Users, Euro,
   Save, X, Settings, Check, Loader2, AlertCircle,
   Link2, Link2Off, RefreshCw, ArrowUpRight, Repeat, PieChart,
-  Pencil, CalendarClock, Scale, Mail, Copy, History, AlertTriangle} from 'lucide-react'
+  Mail, Copy, History} from 'lucide-react'
 import {
-  costForWindow, weekRecurringCost, provisionForWindow, enumeratePeriods,
-  type RecurringCharge, type RecurringActual, type Periodicity,
+  weekRecurringCost,
+  type RecurringCharge, type RecurringActual,
 } from '@/lib/recurring-charges'
-import type { DoubleEmploiVu } from '@/lib/charges-doublon'
-
-/** Une charge récurrente TELLE QUE L'API LA REND : la définition, plus le
- *  contrôle de cohérence avec les achats (cf. lib/charges-doublon). Le champ
- *  est optionnel — un moteur qui ne le calcule pas ne casse rien. */
-type ChargeVue = RecurringCharge & { double_emploi?: DoubleEmploiVu | null }
-import { labelsMatch, DEFAULT_MARGIN_FAMILIES, DEFAULT_TVA_RATE, MATIERE_BENCH, DIVERS_POSTE, type Poste } from '@/lib/postes'
+import { periodeCouvreSemaine } from '@/lib/charges-fixes'
+import { DEFAULT_MARGIN_FAMILIES, DEFAULT_TVA_RATE, DIVERS_POSTE, type Poste } from '@/lib/postes'
 import { nomFournisseur } from '@/lib/supplier-name'
-
-// ─── Types ──────────────────
-
-type Invoice = {
-  id: string; supplier_name: string; invoice_number?: string; invoice_date: string
-  category: string; amount_ht: number; tva_rate: number; amount_ttc: number
-  notes?: string; week_number: number; year: number
-  is_fixed_charge?: boolean; period_days?: number | null; prorata_ht?: number | null
-  status?: string | null
-  /** Document archivé + issue de sa lecture — pour proposer le téléversement
-   *  (lot 31) uniquement quand la facture n'a pas de lecture exploitable. */
-  file_path?: string | null
-  lines_status?: string | null
-}
-
-/** Statuts SANS lecture exploitable : le document peut être (re)fourni. Même
- *  liste que la route de téléversement — les deux doivent dire pareil. */
-const SANS_LECTURE = new Set(['no_file', 'scan_illisible', 'error', 'hors_matiere'])
-const documentRemplacable = (inv: Invoice) => !inv.file_path || SANS_LECTURE.has(String(inv.lines_status ?? ''))
-
-type WeeklyCA = {
-  ca_total: number; ca_boucherie: number; ca_charcuterie: number; ca_traiteur: number
-  ca_divers: number; ca_vente: number
-  families_detail?: { nom: string; montant: number }[] | null
-}
-
-/** Marge d'une famille choisie par le client (clé de poste du planning) */
-type FamilleMargin = {
-  key: string; label: string
-  ca: number; achats: number; achats_ventiles?: boolean; salaires?: number
-  marge: number; taux: number | null
-  marge_totale?: number; taux_totale?: number | null
-}
-type Summary = {
-  achats_ht: number; achats_by_category: Record<string, number>; masse_salariale: number
-  salaires_affectes?: number
-  salaires_repartis?: number
-  salaires_non_affectes?: number
-  achats_a_verifier?: number
-  charges_fixes?: number; charges_fixes_lines?: { id: string; label: string; category: string; cost: number; hasActual: boolean }[]
-  ca_total: number; ca_ttc?: number; tva_rate?: number; ca_detail: WeeklyCA | null; marge_brute: number
-  taux_marge: number | null; resultat_net: number; ratio_ms: number | null
-  marge_apres_salaires?: number
-  taux_apres_salaires?: number | null
-  achats_by_rayon?: Record<string, number>
-  achats_non_ventiles?: number
-  achats_divers?: number
-  familles?: FamilleMargin[]
-  /** 4e bloc : rachat, épicerie, boissons, fruits & légumes, prestations… */
-  divers?: FamilleMargin
-}
-
-/** Mémoire fournisseur : dernière catégorie et dernier taux de TVA utilisés */
-type SupplierMemo = { name: string; category: string; tva_rate: number | null }
-
-/** Répartition d'un fournisseur sur les FAMILLES de la boutique (en %) */
-type RayonSplit = {
-  supplier_key: string; supplier_label: string | null
-  /** { id de famille → % }. Les colonnes pct_* que l'API renvoie encore sont
-   *  DÉRIVÉES côté serveur : cet écran ne les lit plus et n'en envoie plus. */
-  parts: Record<string, number>
-}
-
-/** Famille du référentiel margin_families (ventilation par facture + charges) */
-type VentFamily = { id: string; parent_id: string | null; name: string; is_rachat: boolean }
-
-/** Famille de la boutique, telle que /api/supplier-splits la sert : les MÊMES
- *  que celles sur lesquelles le CA est ventilé. Les achats se répartissent
- *  désormais dessus — dix racines, sous-familles comprises — au lieu de quatre
- *  rayons écrits en dur qui écrasaient tout le reste dans « divers ». */
-type RayonFamille = { id: string; parent_id: string | null; name: string; position: number; is_rachat: boolean }
-
-/** Répartition en cours de saisie : { id de famille → pourcentage tapé } */
-type VentDraft = Record<string, string>
-const emptyVent = (): VentDraft => ({})
-const DIVERS_DOT = '#9ca3af'
-
-/** Les familles dans l'ordre de la boutique : chaque racine à sa position,
- *  immédiatement suivie de ses sous-familles. Une famille orpheline (racine
- *  disparue) reste en fin de liste plutôt que d'être escamotée — une part
- *  posée dessus doit rester visible, donc modifiable. */
-function ordonnerFamilles(list: RayonFamille[]): RayonFamille[] {
-  const parPosition = [...list].sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
-  const out: RayonFamille[] = []
-  for (const r of parPosition) {
-    if (r.parent_id) continue
-    out.push(r, ...parPosition.filter(f => f.parent_id === r.id))
-  }
-  const vus = new Set(out.map(f => f.id))
-  return [...out, ...parPosition.filter(f => !vus.has(f.id))]
-}
-
-/** Le pourcentage tapé dans une case, tel quel — jamais redressé. */
-const pctSaisi = (v: unknown): number => parseFloat(String(v ?? '').replace(',', '.')) || 0
-/** Le total d'une répartition. 100 est la cible, rien ne l'impose : une société
- *  répartie à 80 % garde 20 % non attribués, et ça se DIT — ça ne se corrige
- *  pas d'office. */
-const totalVent = (d: VentDraft): number => Object.values(d).reduce((s, v) => s + pctSaisi(v), 0)
-const fmtPct = (n: number) => n.toLocaleString('fr-FR', { maximumFractionDigits: 1 })
-
-/** Les parts telles qu'elles partent à l'API : les cases vides disparaissent.
- *  Un objet vide vaut « retirer la règle de cette société » — c'est déjà ce que
- *  l'API en fait, on ne la contrarie pas. */
-function partsPayload(d: VentDraft): Record<string, number> {
-  const out: Record<string, number> = {}
-  for (const [id, v] of Object.entries(d)) { const n = pctSaisi(v); if (n > 0) out[id] = n }
-  return out
-}
-/** Le brouillon de saisie reconstruit depuis les parts enregistrées. */
-function draftFromParts(parts: Record<string, number> | null | undefined): VentDraft {
-  const out: VentDraft = {}
-  for (const [id, v] of Object.entries(parts ?? {})) { const n = Number(v) || 0; if (n > 0) out[id] = String(n) }
-  return out
-}
-/** Racine d'une famille : une sous-famille (« Viande de bœuf ») prend la
- *  catégorie d'achat de sa racine (« Boucherie »). */
-function racineFamille(f: RayonFamille, parId: Map<string, RayonFamille>): RayonFamille {
-  let cur = f
-  for (let i = 0; i < 8 && cur.parent_id; i++) {
-    const p = parId.get(cur.parent_id)
-    if (!p) break
-    cur = p
-  }
-  return cur
-}
-/** La famille qui pèse le plus lourd dans une répartition — l'ordre des
- *  familles tranche en cas d'égalité, jamais l'ordre d'un objet. */
-function familleDominante(d: VentDraft, familles: RayonFamille[]): RayonFamille | null {
-  let best: RayonFamille | null = null
-  let max = 0
-  for (const f of familles) { const p = pctSaisi(d[f.id]); if (p > max) { max = p; best = f } }
-  return best
-}
-
-// Identité visuelle des familles classiques — une famille personnalisée dont le
-// libellé ressemble à un métier classique (« boucher » ≈ « boucherie ») hérite de sa
-// couleur et de son repère de marge matière (MATIERE_BENCH, table partagée avec la
-// page Marges et le rapport PDF) ; sinon point gris ardoise, pas de repère.
-const CLASSIC_FAMILLES = [
-  { key: 'boucherie',   label: 'Boucherie',   dot: '#b91c1c' },
-  { key: 'charcuterie', label: 'Charcuterie', dot: '#c2410c' },
-  { key: 'traiteur',    label: 'Traiteur',    dot: '#047857' },
-  { key: 'vente',       label: 'Vente',       dot: '#0369a1' },
-] as const
-function classicFor(key: string, label: string) {
-  return CLASSIC_FAMILLES.find(c => c.key === key || labelsMatch(c.label, label)) ?? null
-}
-function familleDot(key: string, label: string): string {
-  return classicFor(key, label)?.dot ?? '#475569'
-}
-function familleBench(key: string, label: string): [number, number] | null {
-  const c = classicFor(key, label)
-  return c ? MATIERE_BENCH[c.key] ?? null : null
-}
-function matiereColorFor(bench: [number, number] | null, taux: number | null): string {
-  if (taux === null) return 'text-gray-400'
-  if (!bench) return taux >= 40 ? 'text-green-600' : taux >= 30 ? 'text-orange-500' : 'text-red-500'
-  if (taux >= bench[0]) return 'text-green-600'
-  if (taux >= bench[0] - 5) return 'text-orange-500'
-  return 'text-red-500'
-}
-
-// Correspondance société → répartition mémorisée (exacte ou par famille de noms).
-// Réutilise normSupplier (défini plus bas, hoisté).
-// « Facture X - 6109622F… » → « X » : on mémorise par société, pas par n° de facture.
-function societeName(raw: string): string {
-  let s = String(raw || '').trim()
-  s = s.replace(/^factures?\s+/i, '')
-  s = s.split(/\s+[-–—]\s+/)[0]
-  return s.trim()
-}
-function sameSupplierFam(a: string, b: string): boolean {
-  const na = normSupplier(a), nb = normSupplier(b)
-  if (!na || !nb) return false
-  if (na === nb) return true
-  const [short, long] = na.length <= nb.length ? [na, nb] : [nb, na]
-  return long.startsWith(short) && !/[\p{L}\p{N}]/u.test(long.charAt(short.length))
-}
-// Famille dominante de la ventilation → catégorie d'achat de la facture. Les
-// catégories, elles, restent au nombre de quatre : c'est le plan comptable de
-// cet écran, un autre axe. Une famille qui n'est ni boucherie, ni charcuterie,
-// ni traiteur donne « frais divers » — même règle que l'API, qui recatégorise.
-const RAYON_TO_CATEGORY: Record<string, string> = { boucherie: 'boucherie', charcuterie: 'charcuterie', traiteur: 'traiteur', divers: 'frais_divers' }
-function categoryFromSplit(d: VentDraft, familles: RayonFamille[]): string | null {
-  const dom = familleDominante(d, familles)
-  if (!dom) return null
-  const racine = racineFamille(dom, new Map(familles.map(f => [f.id, f])))
-  const c = classicFor('', racine.name)
-  return (c ? RAYON_TO_CATEGORY[c.key] : null) ?? RAYON_TO_CATEGORY.divers
-}
-function matchSplit(name: string, splits: RayonSplit[]): RayonSplit | null {
-  const q = normSupplier(societeName(name))
-  if (!q) return null
-  let best: RayonSplit | null = null
-  for (const s of splits) {
-    if (s.supplier_key === q) return s
-    if (sameSupplierFam(s.supplier_key, q) && (best === null || s.supplier_key.length > best.supplier_key.length)) best = s
-  }
-  return best
-}
-
-type BillingIntegration = {
-  provider: string; is_active: boolean; last_sync_at?: string
-  last_sync_status?: 'success' | 'error' | 'pending'; invoices_synced?: number; company_id?: string
-  /** Rattrapage initial des 2 derniers mois — une DATE, pas un drapeau : quand
-   *  le bouton n'est plus là, l'écran peut dire quand il a servi. */
-  backfill_at?: string | null
-  backfill_imported?: number | null
-  backfill_tronque?: boolean | null
-}
-
-type ProviderMeta = {
-  id: string; name: string; logo: string; color: string; tokenLabel: string
-  tokenPlaceholder: string; needsCompanyId: boolean; companyIdLabel?: string
-  helpUrl: string; description: string
-}
-
-// ─── Constantes ──────────────
-
-// Palette catégories : teintes sourdes (fond -50, texte -700), ALIGNÉE sur le code
-// couleur des rayons et de la page Marges — boucherie rouge, charcuterie orange,
-// traiteur émeraude ; « frais divers » en gris neutre.
-const CATEGORIES = [
-  { key: 'boucherie',    label: 'Boucherie',    color: 'bg-red-50 text-red-700',         dot: '#b91c1c' },
-  { key: 'charcuterie',  label: 'Charcuterie',  color: 'bg-orange-50 text-orange-700',   dot: '#c2410c' },
-  { key: 'traiteur',     label: 'Traiteur',     color: 'bg-emerald-50 text-emerald-700', dot: '#047857' },
-  { key: 'frais_divers', label: 'Frais divers', color: 'bg-gray-100 text-gray-600',      dot: '#64748b' },
-]
-
-const TVA_RATES = [0, 5.5, 10, 20]
-
-// Périodicités des charges récurrentes (montant saisi = montant PAR période)
-const PERIODICITY_OPTIONS: { key: Periodicity; label: string; short: string }[] = [
-  { key: 'weekly',    label: 'Hebdomadaire', short: '/sem'  },
-  { key: 'monthly',   label: 'Mensuel',      short: '/mois' },
-  { key: 'quarterly', label: 'Trimestriel',  short: '/trim' },
-  { key: 'semester',  label: 'Semestriel',   short: '/sem.' },
-  { key: 'annual',    label: 'Annuel',       short: '/an'   },
-]
-const periodicityLabel = (p: string) => PERIODICITY_OPTIONS.find(o => o.key === p)?.label || p
-const periodicityShort = (p: string) => PERIODICITY_OPTIONS.find(o => o.key === p)?.short || ''
-
-const EMPTY_RECURRING = {
-  id: '', label: '', category: 'frais_divers', amount_ht: '', tva_rate: '20',
-  periodicity: 'monthly' as Periodicity, start_date: '', end_date: '', active: true,
-}
-
-const EMPTY_INVOICE = {
-  supplier_name: '', invoice_number: '', invoice_date: '',
-  category: 'boucherie', amount_ht: '', tva_rate: '20', notes: ''
-}
-
-const PROVIDERS_META: ProviderMeta[] = [
-  { id: 'pennylane', name: 'Pennylane', logo: 'PL', color: 'bg-blue-600', tokenLabel: 'Token API Pennylane', tokenPlaceholder: 'eyJhbGci...', needsCompanyId: false, helpUrl: 'https://help.pennylane.com/fr/articles/developer-api', description: 'Importation automatique des factures fournisseurs via l\'API Pennylane' },
-  { id: 'sage',      name: 'Sage',      logo: 'SG', color: 'bg-green-600', tokenLabel: 'Access Token Sage', tokenPlaceholder: 'Bearer token issu de Sage OAuth2', needsCompanyId: false, helpUrl: 'https://developer.sage.com/accounting/', description: 'Sage Business Cloud Comptabilité — factures achats' },
-  { id: 'cegid',     name: 'Cegid',     logo: 'CG', color: 'bg-purple-600', tokenLabel: 'Clé API Cegid', tokenPlaceholder: 'Clé depuis votre espace Cegid', needsCompanyId: true, companyIdLabel: 'ID Entreprise Cegid', helpUrl: 'https://developers.cegid.com', description: 'Cegid Loop — import automatique des factures d\'achat' },
-  { id: 'ebp',       name: 'EBP',       logo: 'EBP', color: 'bg-orange-500', tokenLabel: 'Token API EBP en ligne', tokenPlaceholder: 'Token depuis EBP → Paramètres → API', needsCompanyId: true, companyIdLabel: 'Identifiant dossier EBP', helpUrl: 'https://developer.ebp.com', description: 'EBP en ligne — import factures fournisseurs automatique' },
-]
-
-// ─── Helpers ────────────────────────────────────────────────────────────────────────────────────────────
-
-function getISOWeek(date: Date) {
-  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
-  const day = d.getUTCDay() || 7
-  d.setUTCDate(d.getUTCDate() + 4 - day)
-  const y = new Date(Date.UTC(d.getUTCFullYear(), 0, 1))
-  return { week: Math.ceil((((d.getTime() - y.getTime()) / 86400000) + 1) / 7), year: d.getUTCFullYear() }
-}
-
-function getWeekDates(week: number, year: number): [Date, Date] {
-  const jan4 = new Date(Date.UTC(year, 0, 4))
-  const dow = jan4.getUTCDay() || 7
-  const mon = new Date(jan4)
-  mon.setUTCDate(jan4.getUTCDate() - dow + 1 + (week - 1) * 7)
-  const sun = new Date(mon); sun.setUTCDate(mon.getUTCDate() + 6)
-  return [mon, sun]
-}
-
-function fmtDate(d: Date) { return d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', timeZone: 'UTC' }) }
-function fmtEuro(n: number) { return n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €' }
-function catInfo(key: string) { return CATEGORIES.find(c => c.key === key) ?? CATEGORIES[CATEGORIES.length - 1] }
-
-/** Initiales du fournisseur pour la pastille d'avatar (2 lettres max) */
-function initials(name: string) {
-  return name.trim().split(/\s+/).slice(0, 2).map(w => w[0] || '').join('').toUpperCase() || '·'
-}
-
-/** Normalise un nom fournisseur pour comparaison : casse, espaces superflus */
-function normSupplier(name: string): string {
-  return name.trim().toLowerCase().replace(/\s+/g, ' ')
-}
-
-/**
- * Retrouve le fournisseur mémorisé correspondant à la saisie :
- * 1. correspondance exacte (insensible à la casse) ;
- * 2. FAMILLE de noms : un fournisseur connu est le début de la saisie sur une
- *    limite de mot — « DAVID MASTER SAS » retrouve « DAVID MASTER » (le connu
- *    le plus long l'emporte) ;
- * 3. préfixe UNIQUE à partir de 3 caractères — « Big » suffit pour Bigard.
- */
-function matchSupplier(input: string, memos: SupplierMemo[]): SupplierMemo | null {
-  const q = normSupplier(input)
-  if (!q) return null
-  const exact = memos.find(m => normSupplier(m.name) === q)
-  if (exact) return exact
-  let fam: SupplierMemo | null = null
-  let famLen = 0
-  for (const m of memos) {
-    const n = normSupplier(m.name)
-    if (n.length < q.length && q.startsWith(n) && !/[\p{L}\p{N}]/u.test(q.charAt(n.length)) && n.length > famLen) {
-      fam = m; famLen = n.length
-    }
-  }
-  if (fam) return fam
-  if (q.length < 3) return null
-  const byPrefix = memos.filter(m => normSupplier(m.name).startsWith(q))
-  return byPrefix.length === 1 ? byPrefix[0] : null
-}
-
-/** Nombre de semaines ISO de l'année (52 ou 53) — le 28 décembre est toujours dans la dernière */
-function isoWeeksInYear(y: number): number {
-  return getISOWeek(new Date(y, 11, 28)).week
-}
-
-/** Semaine écoulée (ISO) : celle que le gérant doit voir en arrivant le lundi */
-function getLastWeek() {
-  const ref = new Date()
-  ref.setDate(ref.getDate() - 7)
-  return getISOWeek(ref)
-}
+import {
+  BlocChargesFixesSemaine, BlocChargesRecurrentes, BlocChargesStructure,
+  ModaleChargeRecurrente, ModaleReconciliation, ModaleRepartitionRayons,
+} from './blocs'
+import {
+  CATEGORIES, TVA_RATES, EMPTY_RECURRING, EMPTY_INVOICE, PROVIDERS_META,
+  emptyVent, ordonnerFamilles, totalVent, fmtPct, partsPayload, draftFromParts,
+  familleDot, categoryFromSplit, matchSplit, getISOWeek, getWeekDates,
+  fmtDate, fmtEuro, catInfo, initials, matchSupplier, isoWeeksInYear, getLastWeek,
+  type BillingIntegration, type ChargeVue, type Invoice, type ProviderMeta,
+  type RayonFamille, type RayonSplit, type SupplierMemo, type Summary,
+  type VentDraft, type VentFamily,
+} from './donnees'
 
 // ─── Composant principal ────────────────────────────────────────
 
@@ -367,6 +45,14 @@ export default function FacturationPage() {
   const [week, setWeek] = useState(lastWeek.week)
   const [year, setYear] = useState(lastWeek.year)
   const [invoices,  setInvoices]  = useState<Invoice[]>([])
+  // Les factures étiquetées CHARGE FIXE, toutes semaines confondues (?fixed=all).
+  // Liste distincte, jamais fondue dans `invoices` : les achats variables ne
+  // doivent gagner aucune charge fixe. Une charge structurelle vit au-delà de sa
+  // date de facture — c'est la PÉRIODE, pas la semaine de facturation, qui dit
+  // si elle concerne la semaine affichée.
+  const [fixedInvoices, setFixedInvoices] = useState<Invoice[]>([])
+  // Le pli « N charge(s) non comptée(s) » du bloc « Charges de structure »
+  const [ecarteesOuvertes, setEcarteesOuvertes] = useState(false)
   // Charges récurrentes (définition/provision) + réels (réconciliation)
   const [recurringCharges, setRecurringCharges] = useState<ChargeVue[]>([])
   const [recurringActuals, setRecurringActuals] = useState<RecurringActual[]>([])
@@ -465,8 +151,12 @@ export default function FacturationPage() {
     const reqId = ++reqIdRef.current
     setLoading(true)
     const noStore: RequestInit = { cache: 'no-store' }
-    const [invRes, recRes, sumRes, caRes, settRes, ventRes] = await Promise.all([
+    const [invRes, fixRes, recRes, sumRes, caRes, settRes, ventRes] = await Promise.all([
       fetch(`/api/invoices?week=${week}&year=${year}`, noStore).then(r => r.json()).catch(() => []),
+      // Second appel, EN PARALLÈLE : la branche par défaut ci-dessus force
+      // `is_fixed_charge = false` — sans celui-ci le bloc des charges fixes
+      // filtre une liste qui n'en contient aucune.
+      fetch(`/api/invoices?fixed=all`, noStore).then(r => r.json()).catch(() => []),
       fetch(`/api/recurring-charges`, noStore).then(r => r.json()).catch(() => ({ charges: [], actuals: [] })),
       fetch(`/api/facturation/summary?week=${week}&year=${year}`, noStore).then(r => r.json()).catch(() => null),
       fetch(`/api/weekly-ca?week=${week}&year=${year}`, noStore).then(r => r.json()).catch(() => null),
@@ -475,6 +165,7 @@ export default function FacturationPage() {
     ])
     if (reqId !== reqIdRef.current) return // une navigation plus récente a eu lieu — on jette cette réponse
     setInvoices(Array.isArray(invRes) ? invRes : [])
+    setFixedInvoices(Array.isArray(fixRes) ? fixRes : [])
     if (ventRes && !ventRes.error) {
       setVentFamilies(Array.isArray(ventRes.families) ? ventRes.families : [])
       setChargeFamilies(Array.isArray(ventRes.chargeFamilies) ? ventRes.chargeFamilies : [])
@@ -1081,6 +772,31 @@ export default function FacturationPage() {
   for (const l of recurWeek.lines) chargeHasActualThisWeek[l.id] = l.hasActual
   const activeRecurring = [...recurringCharges].sort((a, b) => a.label.localeCompare(b.label, 'fr'))
 
+  // ── Les FACTURES de charge qui concernent la semaine affichée ──
+  // Le critère n'est pas la semaine de facturation mais le CHEVAUCHEMENT de la
+  // période : un loyer facturé le 28 court sur les semaines suivantes. La règle
+  // vit dans lib/charges-fixes et n'est pas recopiée ici — l'écran et le calcul
+  // tranchent avec la même fonction.
+  const fixedThisWeek = fixedInvoices
+    .filter(i => periodeCouvreSemaine(i.invoice_date, i.period_days, monISO, sunISO))
+    .sort((a, b) => (b.invoice_date || '').localeCompare(a.invoice_date || '') || b.amount_ht - a.amount_ht)
+
+  // ── Le DÉTAIL du poste « charges de structure », tel que le moteur le rend ──
+  // Aucun chiffre n'est reconstruit ici : le total qui fait foi est
+  // `charges_fixes` du résumé. On additionne les lignes retenues uniquement pour
+  // VÉRIFIER qu'elles tombent dessus — et on affiche l'écart s'il y en a un.
+  const structureLines    = summary?.charges_fixes_lines ?? []
+  const structureRetenues = structureLines.filter(l => l.retenue !== false)
+  const structureEcartees = structureLines.filter(l => l.retenue === false)
+  const structureGroupes  = [
+    { key: 'recurrent' as const, titre: 'Provisions récurrentes', lignes: structureRetenues.filter(l => l.origine !== 'facture') },
+    { key: 'facture'   as const, titre: 'Factures de charge',     lignes: structureRetenues.filter(l => l.origine === 'facture') },
+  ].filter(g => g.lignes.length > 0)
+  const structureTotal  = summary?.charges_fixes ?? 0
+  const structureSomme  = Math.round(structureRetenues.reduce((s, l) => s + (Number(l.cost) || 0), 0) * 100) / 100
+  const structureEcart  = Math.round((structureSomme - structureTotal) * 100) / 100
+  const ecarteesPieces  = Math.round(structureEcartees.reduce((s, l) => s + (Number(l.montant_facture) || 0), 0) * 100) / 100
+
   /** Ligne du tableau d'achats — partagée entre la vue « par date » et la vue « par catégorie » */
   const renderInvoiceRow = (inv: Invoice) => {
     const cat = catInfo(inv.category)
@@ -1540,320 +1256,36 @@ export default function FacturationPage() {
           )}
         </div>
 
-        {/* ── Factures déplacées en charges fixes cette semaine : hors marges
-            matière, classées dans une famille de charge PERSONNALISABLE ── */}
-        {invoices.filter(i => i.is_fixed_charge).length > 0 && (
-          <div className="bg-white rounded-2xl border border-gray-100 shadow-card overflow-hidden">
-            <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between gap-2">
-              <div>
-                <h2 className="font-bold text-gray-900 text-sm">En charges fixes cette semaine</h2>
-                <p className="text-[11px] text-gray-400">Sorties des achats matière — elles ne pèsent sur aucune marge. Classez-les dans une famille de charge.</p>
-              </div>
-            </div>
-            <div className="divide-y divide-gray-50">
-              {invoices.filter(i => i.is_fixed_charge).map(inv => (
-                <div key={inv.id} className="px-5 py-2.5 flex items-center gap-3 flex-wrap">
-                  <div className="flex-1 min-w-[180px]">
-                    <p className="text-sm font-semibold text-gray-900">{nomFournisseur(inv.supplier_name) || inv.supplier_name}</p>
-                    <p className="text-[11px] text-gray-400 tabular">{new Date(inv.invoice_date).toLocaleDateString('fr-FR')}{inv.invoice_number ? ` · ${inv.invoice_number}` : ''}</p>
-                  </div>
-                  <span className="text-sm font-semibold text-gray-700 tabular">{fmtEuro(inv.amount_ht)}</span>
-                  <select value={(inv as any).charge_family_id ?? ''} onChange={e => setChargeFam(inv, e.target.value)}
-                    className="border border-gray-200 rounded-lg px-2 py-1.5 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200">
-                    <option value="">Famille de charge…</option>
-                    {chargeFamilies.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
-                  </select>
-                  {/* Facture mal transmise ? Le boucher fournit le document, la
-                      lecture juge sur pièce : matière → retour en achats tout
-                      seul ; charge → elle reste ici, confirmée. (lot 31) */}
-                  {documentRemplacable(inv) && (
-                    <label className={`text-[11px] font-bold rounded-lg px-2.5 py-1.5 cursor-pointer transition-colors ${televersant === inv.id ? 'text-gray-400 bg-gray-100' : 'text-white bg-pilote hover:bg-pilote-hover shadow-card'}`}
-                      title="Joindre le PDF de cette facture : sa lecture décidera si c'est de la matière (retour en achats) ou bien une charge">
-                      {televersant === inv.id ? 'Lecture…' : 'Téléverser la facture'}
-                      <input type="file" accept="application/pdf,.pdf" className="hidden" disabled={televersant !== null}
-                        onChange={e => { const f = e.target.files?.[0] ?? null; e.target.value = ''; televerserDocument(inv, f) }} />
-                    </label>
-                  )}
-                  <button onClick={() => moveBackToVariable(inv)}
-                    className="text-[11px] font-semibold text-gray-400 hover:text-pilote hover:underline">Repasser en achats</button>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+        <BlocChargesFixesSemaine
+          fixedThisWeek={fixedThisWeek} week={week} chargeFamilies={chargeFamilies} televersant={televersant}
+          setChargeFam={setChargeFam} moveBackToVariable={moveBackToVariable} televerserDocument={televerserDocument} />
 
-        {/* ── Charges fixes & récurrentes (provision au jour près) ── */}
-        <div className="bg-white rounded-2xl border border-pilote-100 shadow-card overflow-hidden">
-          <div className="px-5 py-3.5 border-b border-pilote-100 bg-pilote-50/60 flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2.5 min-w-0">
-              <div className="w-8 h-8 rounded-lg bg-white ring-1 ring-pilote-200/60 flex items-center justify-center flex-shrink-0"><Repeat className="w-4 h-4 text-pilote" /></div>
-              <div className="min-w-0">
-                <h2 className="font-bold text-gray-900">Charges fixes &amp; récurrentes</h2>
-                <p className="text-[11px] text-gray-400">Loyer, énergie, assurance, crédit… étalées au jour près sur chaque semaine. Le réel remplace la provision sur sa période.</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 flex-shrink-0">
-              <div className="text-right mr-1 hidden sm:block">
-                <p className="text-sm font-bold text-pilote tabular">≈ {fmtEuro(recurringWeekly)}/sem</p>
-                <p className="text-[10px] text-gray-400">semaine {week}</p>
-              </div>
-              <button onClick={() => { setReconYear(year); setReconChargeId(activeRecurring[0]?.id || ''); setActualDraft({}); setShowReconcile(true) }}
-                disabled={activeRecurring.length === 0}
-                className="inline-flex items-center gap-1.5 rounded-xl border border-pilote-200 text-pilote bg-white hover:bg-pilote-50 px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-40">
-                <Scale className="w-3.5 h-3.5" />Réconcilier
-              </button>
-              <button onClick={openNewRecurring}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-pilote hover:bg-pilote-hover text-white px-3 py-1.5 text-xs font-semibold shadow-card active:scale-[0.98] transition-all">
-                <Plus className="w-3.5 h-3.5" />Ajouter
-              </button>
-            </div>
-          </div>
-          {loading ? (
-            <div className="p-6 animate-pulse"><div className="h-10 bg-gray-100 rounded-lg" /></div>
-          ) : activeRecurring.length === 0 ? (
-            <div className="py-10 flex flex-col items-center justify-center text-center">
-              <div className="w-12 h-12 rounded-lg bg-gray-50 ring-1 ring-gray-200/70 flex items-center justify-center mb-3">
-                <Repeat className="w-5 h-5 text-gray-300" />
-              </div>
-              <p className="text-sm font-semibold text-gray-700">Aucune charge récurrente</p>
-              <p className="text-xs text-gray-400 mt-1 max-w-sm">Ajoutez vos charges fixes (loyer, énergie, assurance, crédit, abonnements). Elles pèseront automatiquement, au jour près, sur chaque semaine.</p>
-              <button onClick={openNewRecurring} className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-pilote hover:bg-pilote-hover text-white px-3.5 py-2 text-xs font-semibold shadow-card active:scale-[0.98] transition-all"><Plus className="w-3.5 h-3.5" />Ajouter une charge</button>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-            <table className="w-full tabular min-w-[720px]">
-              <thead>
-                <tr className="bg-gray-50 text-[11px] font-semibold text-gray-400 uppercase tracking-wider">
-                  <th className="px-4 py-2.5 text-left">Charge</th>
-                  <th className="px-4 py-2.5 text-left">Catégorie</th>
-                  <th className="px-4 py-2.5 text-right">Montant</th>
-                  <th className="px-4 py-2.5 text-center">Périodicité</th>
-                  <th className="px-4 py-2.5 text-left">Période active</th>
-                  <th className="px-4 py-2.5 text-right">Provision hebdo</th>
-                  <th className="px-4 py-2.5 text-center w-24"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {activeRecurring.map((c, i) => {
-                  const wk = costForWindow(c, recurringActuals, monISO, sunISO)
-                  const hasAct = chargeHasActualThisWeek[c.id]
-                  const ended = !!c.end_date && c.end_date < monISO
-                  const notStarted = c.start_date > sunISO
-                  return (
-                    <tr key={c.id} className={`border-t border-gray-100 hover:bg-pilote-50/40 group transition-colors ${i % 2 === 0 ? '' : 'bg-gray-50/50'} ${c.active ? '' : 'opacity-60'}`}>
-                      <td className="px-4 py-2.5">
-                        <div className="flex items-center gap-2.5">
-                          <div className="w-8 h-8 rounded-lg bg-gray-100 text-gray-500 flex items-center justify-center flex-shrink-0"><CalendarClock className="w-4 h-4" /></div>
-                          <div>
-                            <div className="font-semibold text-sm text-gray-900">{c.label}</div>
-                            {!c.active && <div className="text-[10px] font-semibold text-gray-400">clôturée</div>}
-                            {/* LE MÊME FOURNISSEUR DES DEUX CÔTÉS.
-                                Une charge récurrente s'AJOUTE aux factures du
-                                même fournisseur, elle ne les remplace pas :
-                                sans ce mot, l'argent sort deux fois du
-                                résultat, une fois en achats et une fois en
-                                charges de structure. On pose la question, on
-                                ne tranche pas — un fournisseur peut livrer de
-                                la marchandise ET louer du matériel. */}
-                            {c.double_emploi && (
-                              <div className="mt-1 flex items-start gap-1.5 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1 max-w-md">
-                                <AlertTriangle className="w-3 h-3 flex-shrink-0 mt-px" />
-                                <span className="font-medium leading-snug">{c.double_emploi.phrase}</span>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-4 py-2.5">
-                        <span className={`text-xs font-semibold rounded-full px-2.5 py-0.5 ${catInfo(c.category).color}`}>{catInfo(c.category).label}</span>
-                      </td>
-                      <td className="px-4 py-2.5 text-right">
-                        <span className="font-semibold text-sm text-gray-900">{fmtEuro(c.amount_ht)}</span>
-                        <span className="text-[10px] text-gray-400"> {periodicityShort(c.periodicity)}</span>
-                      </td>
-                      <td className="px-4 py-2.5 text-center text-xs text-gray-600">{periodicityLabel(c.periodicity)}</td>
-                      <td className="px-4 py-2.5 text-xs text-gray-500 whitespace-nowrap">
-                        {new Date(c.start_date).toLocaleDateString('fr-FR')} → {c.end_date ? new Date(c.end_date).toLocaleDateString('fr-FR') : '…'}
-                      </td>
-                      <td className="px-4 py-2.5 text-right">
-                        {wk > 0 ? (
-                          <>
-                            <span className="font-bold text-sm text-pilote tabular">≈ {fmtEuro(wk)}</span>
-                            {hasAct && <span className="ml-1 text-[9px] font-bold text-green-700 bg-green-100 px-1.5 py-0.5 rounded-full align-middle">réel</span>}
-                          </>
-                        ) : (
-                          <span className="text-xs text-gray-300">{notStarted ? 'à venir' : ended ? 'terminée' : '—'}</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-2.5 text-center">
-                        <div className="flex items-center justify-center gap-1 md:opacity-0 md:group-hover:opacity-100 transition-all">
-                          <button onClick={() => { setReconYear(year); setReconChargeId(c.id); setActualDraft({}); setShowReconcile(true) }} className="p-1.5 rounded hover:bg-pilote-50 text-gray-300 hover:text-pilote transition-colors" title="Réconcilier (saisir le réel par période)"><Scale className="w-3.5 h-3.5" /></button>
-                          <button onClick={() => openEditRecurring(c)} className="p-1.5 rounded hover:bg-gray-100 text-gray-300 hover:text-gray-600 transition-colors" title="Modifier"><Pencil className="w-3.5 h-3.5" /></button>
-                          <button onClick={() => deleteRecurring(c)} className="p-1.5 rounded hover:bg-red-50 text-gray-300 hover:text-red-400 transition-colors" title="Supprimer"><Trash2 className="w-3.5 h-3.5" /></button>
-                        </div>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-              <tfoot>
-                <tr className="bg-pilote text-white">
-                  <td colSpan={5} className="px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-white/60">Provision de la semaine {week}</td>
-                  <td className="px-4 py-2.5 text-right font-bold text-orange-300">≈ {fmtEuro(recurringWeekly)}/sem</td>
-                  <td></td>
-                </tr>
-              </tfoot>
-            </table>
-            </div>
-          )}
-        </div>
+        <BlocChargesRecurrentes
+          loading={loading} activeRecurring={activeRecurring} recurringActuals={recurringActuals}
+          recurringWeekly={recurringWeekly} chargeHasActualThisWeek={chargeHasActualThisWeek}
+          monISO={monISO} sunISO={sunISO} week={week} year={year}
+          openNewRecurring={openNewRecurring} openEditRecurring={openEditRecurring} deleteRecurring={deleteRecurring}
+          setReconYear={setReconYear} setReconChargeId={setReconChargeId}
+          setActualDraft={setActualDraft} setShowReconcile={setShowReconcile} />
+
+        <BlocChargesStructure
+          structureLines={structureLines} structureGroupes={structureGroupes} structureEcartees={structureEcartees}
+          structureTotal={structureTotal} structureSomme={structureSomme} structureEcart={structureEcart}
+          ecarteesPieces={ecarteesPieces} ecarteesOuvertes={ecarteesOuvertes} setEcarteesOuvertes={setEcarteesOuvertes}
+          week={week} />
       </div>
 
-      {/* Modal : Charge récurrente (création / édition) */}
-      {showRecurring && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 backdrop-blur-sm p-4" onClick={() => setShowRecurring(false)}>
-          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between p-5 border-b border-gray-100">
-              <h2 className="text-base font-bold text-gray-900">{recForm.id ? 'Modifier la charge' : 'Nouvelle charge récurrente'}</h2>
-              <button onClick={() => setShowRecurring(false)} className="p-1.5 rounded-xl hover:bg-gray-100"><X className="w-4 h-4 text-gray-500" /></button>
-            </div>
-            <div className="p-5 space-y-3">
-              <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1">Libellé</label>
-                <Input value={recForm.label} onChange={e => setRecForm(p => ({ ...p, label: e.target.value }))} placeholder="Loyer, EDF, assurance…" autoFocus />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-600 mb-1">Montant HT (€)</label>
-                  <Input type="number" step="0.01" min="0" value={recForm.amount_ht} onChange={e => setRecForm(p => ({ ...p, amount_ht: e.target.value }))} placeholder="0.00" />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-600 mb-1">Périodicité</label>
-                  <select value={recForm.periodicity} onChange={e => setRecForm(p => ({ ...p, periodicity: e.target.value as Periodicity }))} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200">
-                    {PERIODICITY_OPTIONS.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
-                  </select>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-600 mb-1">Catégorie</label>
-                  <select value={recForm.category} onChange={e => setRecForm(p => ({ ...p, category: e.target.value }))} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200">
-                    {CATEGORIES.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-600 mb-1">TVA (%)</label>
-                  <select value={recForm.tva_rate} onChange={e => setRecForm(p => ({ ...p, tva_rate: e.target.value }))} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200">
-                    {TVA_RATES.map(t => <option key={t} value={String(t)}>{t} %</option>)}
-                  </select>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-600 mb-1">Début</label>
-                  <Input type="date" value={recForm.start_date} onChange={e => setRecForm(p => ({ ...p, start_date: e.target.value }))} />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-600 mb-1">Fin <span className="text-gray-400 font-normal">(optionnel)</span></label>
-                  <Input type="date" value={recForm.end_date} onChange={e => setRecForm(p => ({ ...p, end_date: e.target.value }))} />
-                </div>
-              </div>
-              <label className="flex items-center gap-2 text-sm text-gray-700">
-                <input type="checkbox" checked={recForm.active} onChange={e => setRecForm(p => ({ ...p, active: e.target.checked }))} className="rounded border-gray-300 text-pilote focus:ring-pilote-200" />
-                Charge active (décochez pour la geler sans la supprimer)
-              </label>
-              <p className="text-[11px] text-gray-400">Le montant saisi est celui d&apos;UNE période ({periodicityLabel(recForm.periodicity).toLowerCase()}). Il est réparti au jour près sur les semaines couvertes.</p>
-            </div>
-            <div className="flex gap-2 p-5 border-t border-gray-100">
-              <Button variant="outline" className="flex-1" onClick={() => setShowRecurring(false)}>Annuler</Button>
-              <Button onClick={saveRecurring} disabled={recSaving} className="flex-1 bg-pilote hover:bg-pilote-hover text-white">
-                {recSaving ? <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" />Enregistrement...</> : <><Save className="w-4 h-4 mr-1.5" />Enregistrer</>}
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
+      <ModaleChargeRecurrente
+        showRecurring={showRecurring} setShowRecurring={setShowRecurring}
+        recForm={recForm} setRecForm={setRecForm} recSaving={recSaving} saveRecurring={saveRecurring} />
 
-      {/* Modal : Réconciliation provisionné vs réel */}
-      {showReconcile && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 backdrop-blur-sm p-4" onClick={() => setShowReconcile(false)}>
-          <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
-            <div className="flex items-start justify-between p-5 border-b border-gray-100">
-              <div>
-                <h2 className="text-base font-bold text-gray-900">Réconciliation — provisionné vs réel</h2>
-                <p className="text-xs text-gray-500 mt-0.5 max-w-md">Saisissez le montant réel facturé pour une période. Il remplace la provision sur sa fenêtre — le résultat net des semaines concernées est recalculé.</p>
-              </div>
-              <button onClick={() => setShowReconcile(false)} className="p-1.5 rounded-xl hover:bg-gray-100"><X className="w-4 h-4 text-gray-500" /></button>
-            </div>
-            <div className="flex items-center gap-2 px-5 pt-3">
-              <select value={reconChargeId} onChange={e => { setReconChargeId(e.target.value); setActualDraft({}) }} className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200">
-                {activeRecurring.map(c => <option key={c.id} value={c.id}>{c.label} · {periodicityLabel(c.periodicity)}</option>)}
-              </select>
-              <div className="flex items-center gap-1 flex-shrink-0">
-                <button onClick={() => setReconYear(y => y - 1)} className="p-1.5 rounded-xl hover:bg-gray-100"><ChevronLeft className="w-4 h-4 text-gray-500" /></button>
-                <span className="text-sm font-bold text-gray-900 tabular w-12 text-center">{reconYear}</span>
-                <button onClick={() => setReconYear(y => y + 1)} className="p-1.5 rounded-xl hover:bg-gray-100"><ChevronRight className="w-4 h-4 text-gray-500" /></button>
-              </div>
-            </div>
-            <div className="p-5 pt-3 overflow-y-auto">
-              {(() => {
-                const c = recurringCharges.find(x => x.id === reconChargeId)
-                if (!c) return <p className="text-sm text-gray-400 py-8 text-center">Sélectionnez une charge.</p>
-                const periods = enumeratePeriods(c, `${reconYear}-01-01`, `${reconYear}-12-31`)
-                if (periods.length === 0) return <p className="text-sm text-gray-400 py-8 text-center">Aucune période active en {reconYear}.</p>
-                return (
-                  <>
-                    <div className="hidden md:flex items-center gap-2 px-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-gray-400">
-                      <span className="w-28">Période</span>
-                      <span className="flex-1 text-right">Provisionné</span>
-                      <span className="flex-1 text-right">Réel</span>
-                      <span className="flex-1 text-right">Écart</span>
-                      <span className="w-24" />
-                    </div>
-                    <div className="space-y-1.5">
-                      {periods.map(occ => {
-                        const sISO = occ.start.toISOString().slice(0, 10)
-                        const eISO = occ.end.toISOString().slice(0, 10)
-                        const prov = provisionForWindow(c, sISO, eISO)
-                        const act = recurringActuals.find(a => a.recurring_charge_id === c.id && a.period_start <= eISO && a.period_end >= sISO)
-                        const draft = actualDraft[occ.key] ?? ''
-                        const ecart = act ? Number(act.amount_ht) - prov : 0
-                        return (
-                          <div key={occ.key} className="flex flex-col md:flex-row md:items-center gap-2 p-2 rounded-lg hover:bg-gray-50">
-                            <span className="w-28 text-sm font-semibold text-gray-800">{occ.label}</span>
-                            <span className="flex-1 text-right text-sm text-gray-600 tabular">{fmtEuro(prov)}</span>
-                            {act ? (
-                              <>
-                                <span className="flex-1 text-right text-sm font-semibold text-gray-900 tabular">{fmtEuro(Number(act.amount_ht))}</span>
-                                <span className={`flex-1 text-right text-sm font-bold tabular ${ecart > 0 ? 'text-red-500' : ecart < 0 ? 'text-green-600' : 'text-gray-400'}`}>{ecart > 0 ? '+' : ''}{fmtEuro(ecart)}</span>
-                                <span className="w-24 flex justify-end"><button onClick={() => deleteActual(act.id)} className="text-xs font-medium text-gray-400 hover:text-red-500">Retirer</button></span>
-                              </>
-                            ) : (
-                              <>
-                                <div className="flex-1 flex justify-end">
-                                  <input type="number" step="0.01" min="0" value={draft} onChange={e => setActualDraft(p => ({ ...p, [occ.key]: e.target.value }))} placeholder="réel €" className="w-24 border border-gray-300 rounded-lg px-2 py-1 text-sm text-right tabular focus:outline-none focus:ring-2 focus:ring-pilote-200" />
-                                </div>
-                                <span className="flex-1 text-right text-xs text-gray-300">—</span>
-                                <span className="w-24 flex justify-end">
-                                  <button disabled={!draft} onClick={() => { saveActual(c.id, sISO, eISO, parseFloat(draft) || 0); setActualDraft(p => { const n = { ...p }; delete n[occ.key]; return n }) }} className="text-xs font-semibold text-pilote hover:underline disabled:opacity-40">Enregistrer</button>
-                                </span>
-                              </>
-                            )}
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </>
-                )
-              })()}
-              <p className="text-[11px] text-gray-400 mt-3">Écart = réel − provisionné. Un écart positif (rouge) = la charge réelle a dépassé la provision ; les semaines de la période sont recalculées avec le réel.</p>
-            </div>
-            <div className="flex gap-2 p-5 border-t border-gray-100">
-              <Button variant="outline" className="flex-1" onClick={() => setShowReconcile(false)}>Fermer</Button>
-            </div>
-          </div>
-        </div>
-      )}
+      <ModaleReconciliation
+        showReconcile={showReconcile} setShowReconcile={setShowReconcile}
+        reconChargeId={reconChargeId} setReconChargeId={setReconChargeId}
+        reconYear={reconYear} setReconYear={setReconYear}
+        actualDraft={actualDraft} setActualDraft={setActualDraft}
+        recurringCharges={recurringCharges} recurringActuals={recurringActuals} activeRecurring={activeRecurring}
+        saveActual={saveActual} deleteActual={deleteActual} />
 
       {/* Modal : Connecter intégration */}
       {showConnect && connectProvider && (
@@ -2014,153 +1446,14 @@ export default function FacturationPage() {
       )}
 
       {/* Modal : CA */}
-      {/* Modal : Répartition des achats par rayon (par fournisseur) */}
-      {showSplits && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 backdrop-blur-sm p-4" onClick={() => setShowSplits(false)}>
-          <div className="bg-white rounded-2xl w-full max-w-4xl shadow-2xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
-            <div className="flex items-start justify-between p-5 pb-3 border-b border-gray-100">
-              <div>
-                <h2 className="text-base font-bold text-gray-900">Répartition des achats par rayon</h2>
-                <p className="text-xs text-gray-500 mt-0.5 max-w-xl">Pour chaque société, indiquez la part (%) de ses achats affectée à chaque famille de votre boutique — les mêmes familles que celles de votre chiffre d&apos;affaires. Appliqué automatiquement à toutes ses factures.</p>
-              </div>
-              <button onClick={() => setShowSplits(false)} className="p-1.5 rounded-xl hover:bg-gray-100"><X className="w-4 h-4 text-gray-500" /></button>
-            </div>
-            {/* Chercher une société + ne garder que celles qui restent à répartir */}
-            <div className="flex flex-col sm:flex-row sm:items-center gap-2 px-5 pt-3 pb-1">
-              <input value={splitSearch} onChange={e => setSplitSearch(e.target.value)} placeholder="Rechercher une société…"
-                className="flex-1 border border-gray-200 rounded-xl px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-pilote-200" />
-              <label className="flex items-center gap-2 text-xs font-semibold text-gray-600 cursor-pointer select-none flex-shrink-0">
-                <input type="checkbox" checked={splitsTab === 'todo'}
-                  onChange={e => { setSplitsTab(e.target.checked ? 'todo' : 'all'); setSplitOpen(null) }}
-                  className="w-4 h-4 rounded border-gray-300 accent-pilote" />
-                Seulement les sociétés non réparties
-                <span className="rounded-full bg-gray-100 text-gray-600 px-1.5 text-[10px] font-bold tabular">{splitsTodo.length}</span>
-              </label>
-            </div>
-            <div className="p-5 pt-2 overflow-y-auto">
-              {(() => {
-                const base = splitsTab === 'todo' ? splitsTodo : splitEntries
-                const q = normSupplier(splitSearch)
-                const list = q ? base.filter(([, v]) => normSupplier(v.label).includes(q)) : base
-                if (list.length === 0) {
-                  if (q) {
-                    return (
-                      <div className="text-center py-12">
-                        <div className="w-11 h-11 rounded-lg bg-gray-50 flex items-center justify-center mx-auto mb-3"><PieChart className="w-5 h-5 text-gray-300" /></div>
-                        <p className="text-sm font-semibold text-gray-700">Aucune société ne correspond à « {splitSearch.trim()} »</p>
-                        <p className="text-xs text-gray-400 mt-1">{splitsTab === 'todo' ? 'Décochez le filtre pour chercher parmi toutes vos sociétés.' : 'Vérifiez l’orthographe du nom.'}</p>
-                      </div>
-                    )
-                  }
-                  return splitsTab === 'todo' ? (
-                    <div className="text-center py-12">
-                      <div className="w-11 h-11 rounded-lg bg-pilote-50 flex items-center justify-center mx-auto mb-3"><Check className="w-5 h-5 text-pilote" /></div>
-                      <p className="text-sm font-semibold text-gray-700">Tout est réparti</p>
-                      <p className="text-xs text-gray-400 mt-1">{splitSuppliers.length === 0 ? "Ajoutez des factures d'achat pour commencer." : 'Chaque société connue a sa ventilation.'}</p>
-                    </div>
-                  ) : (
-                    <div className="text-center py-12">
-                      <div className="w-11 h-11 rounded-lg bg-gray-50 flex items-center justify-center mx-auto mb-3"><PieChart className="w-5 h-5 text-gray-300" /></div>
-                      <p className="text-sm font-semibold text-gray-700">Aucune société connue</p>
-                      <p className="text-xs text-gray-400 mt-1">Ajoutez des factures d&apos;achat : leurs sociétés apparaîtront ici.</p>
-                    </div>
-                  )
-                }
-                return (
-                  <>
-                    <div className="flex items-center justify-between px-1 pb-2 text-[10px] font-semibold uppercase tracking-wider text-gray-400">
-                      <span>{list.length} société{list.length > 1 ? 's' : ''}</span>
-                      <span className="tabular">{splitsDone.length} répartie{splitsDone.length > 1 ? 's' : ''} sur {splitEntries.length}</span>
-                    </div>
-                    <div className="space-y-2">
-                      {list.map(([key, v]) => {
-                        const tot = totalVent(v.parts)
-                        const ouverte = splitOpen === key
-                        // Les deux familles les plus lourdes — le résumé qui dit d'un coup d'œil
-                        // ce que fait cette société, sans déplier quinze cases.
-                        const lourdes = famillesOrdonnees
-                          .map(f => ({ nom: f.name, pct: pctSaisi(v.parts[f.id]) }))
-                          .filter(x => x.pct > 0)
-                          .sort((a, b) => b.pct - a.pct)
-                        const resume = lourdes.slice(0, 2).map(x => `${fmtPct(x.pct)} % ${x.nom}`).join(' · ')
-                        const autres = lourdes.length - 2
-                        const upd = (id: string, val: string) =>
-                          setSplitDraft(prev => ({ ...prev, [key]: { ...prev[key], parts: { ...prev[key].parts, [id]: val } } }))
-                        const vider = () =>
-                          setSplitDraft(prev => ({ ...prev, [key]: { ...prev[key], parts: emptyVent() } }))
-                        return (
-                          <div key={key} className={`rounded-2xl border bg-white transition-all ${ouverte ? 'border-pilote-200 shadow-card' : 'border-gray-100 hover:border-gray-200'}`}>
-                            <button onClick={() => setSplitOpen(o => (o === key ? null : key))}
-                              className="w-full flex items-center gap-3 px-4 py-3 text-left">
-                              <ChevronRight className={`w-4 h-4 flex-shrink-0 transition-transform ${ouverte ? 'rotate-90 text-pilote' : 'text-gray-300'}`} />
-                              <span className="flex-1 min-w-0 truncate text-sm font-semibold text-gray-900" title={v.label}>{v.label}</span>
-                              <span className={`hidden sm:block max-w-[16rem] truncate text-xs ${tot > 0 ? 'text-gray-500' : 'text-gray-400'}`}>
-                                {tot > 0 ? `${resume}${autres > 0 ? ` · +${autres}` : ''}` : 'non réparti'}
-                              </span>
-                              {tot > 0 && (
-                                <span className={`flex-shrink-0 rounded-full px-2.5 py-0.5 text-[11px] font-bold tabular ${
-                                  tot >= 99.5 && tot <= 100.5 ? 'bg-green-50 text-green-700'
-                                    : tot < 99.5 ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-600'
-                                }`}>
-                                  {tot >= 99.5 && tot <= 100.5
-                                    ? `${fmtPct(tot)} %`
-                                    : tot < 99.5
-                                      ? `${fmtPct(tot)} % · il reste ${fmtPct(100 - tot)} %`
-                                      : `${fmtPct(tot)} % · ${fmtPct(tot - 100)} % de trop`}
-                                </span>
-                              )}
-                            </button>
-                            {ouverte && (
-                              <div className="border-t border-gray-100 px-4 py-3">
-                                {famillesOrdonnees.length === 0 ? (
-                                  <p className="text-xs text-gray-400">Aucune famille de vente pour l&apos;instant — la répartition s&apos;ouvrira dès que vos familles seront créées.</p>
-                                ) : (
-                                  <>
-                                    <div className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-1.5">
-                                      {famillesOrdonnees.map(f => {
-                                        const sousFamille = f.parent_id !== null
-                                        return (
-                                          <div key={f.id} className={`flex items-center gap-1.5 ${sousFamille ? 'pl-3' : ''}`}>
-                                            <span className={`flex-1 min-w-0 truncate ${sousFamille ? 'text-[11px] text-gray-500' : 'text-xs font-semibold text-gray-700'}`} title={f.name}>
-                                              {sousFamille ? `› ${f.name}` : f.name}
-                                            </span>
-                                            <input type="number" min="0" max="100" value={v.parts[f.id] ?? ''} onChange={e => upd(f.id, e.target.value)}
-                                              placeholder="0"
-                                              className="w-14 flex-shrink-0 border border-gray-200 rounded-lg px-1.5 py-1 text-sm text-right tabular focus:outline-none focus:ring-2 focus:ring-pilote-200" />
-                                            <span className="text-[10px] text-gray-400 flex-shrink-0">%</span>
-                                          </div>
-                                        )
-                                      })}
-                                    </div>
-                                    <div className="flex items-center justify-between mt-3 pt-2 border-t border-gray-50">
-                                      <button onClick={vider}
-                                        className="text-[11px] font-semibold text-gray-400 hover:text-red-500 rounded-lg px-2 py-1 hover:bg-red-50 transition-colors">
-                                        Vider
-                                      </button>
-                                      <span className="text-[11px] text-gray-400">Une sous-famille compte dans sa famille.</span>
-                                    </div>
-                                  </>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        )
-                      })}
-                    </div>
-                  </>
-                )
-              })()}
-              <p className="text-[11px] text-gray-400 mt-3">Le total par société devrait faire 100 %. Une société laissée vide reste « non répartie » et n&apos;entre pas dans la marge par famille. Vider une répartition la renvoie dans les sociétés non réparties après enregistrement.</p>
-            </div>
-            <div className="flex gap-2 p-5 border-t border-gray-100">
-              <Button variant="outline" className="flex-1" onClick={() => setShowSplits(false)}>Fermer</Button>
-              <Button onClick={saveSplits} disabled={splitSaving} className="flex-1 bg-pilote hover:bg-pilote-hover text-white">
-                {splitSaving ? <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" />Enregistrement...</> : <><Save className="w-4 h-4 mr-1.5" />Enregistrer</>}
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
+      <ModaleRepartitionRayons
+        showSplits={showSplits} setShowSplits={setShowSplits}
+        splitSearch={splitSearch} setSplitSearch={setSplitSearch}
+        splitsTab={splitsTab} setSplitsTab={setSplitsTab}
+        splitOpen={splitOpen} setSplitOpen={setSplitOpen}
+        splitEntries={splitEntries} splitsTodo={splitsTodo} splitsDone={splitsDone}
+        splitSuppliers={splitSuppliers} famillesOrdonnees={famillesOrdonnees}
+        setSplitDraft={setSplitDraft} splitSaving={splitSaving} saveSplits={saveSplits} />
 
       {/* Modal : Choix des 3 familles de marge (liste = postes du planning) */}
       {showFamilles && (

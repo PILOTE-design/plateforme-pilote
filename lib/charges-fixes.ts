@@ -103,6 +103,32 @@ const euros = (n: number) =>
   n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'
 
 /**
+ * La période d'une facture de charge touche-t-elle la semaine ?
+ *
+ * `[date de facture, date de facture + period_days − 1]` croise `[lundi,
+ * dimanche]`. Sans période lisible, la facture ne vit que le jour de sa
+ * facturation : elle n'est rattachée qu'à sa seule semaine de facturation.
+ *
+ * Exportée pour l'ÉCRAN — le bloc « En charges fixes cette semaine » doit
+ * trancher exactement comme le calcul. Une règle, une définition : la recopier
+ * ailleurs, c'est se condamner à deux vérités qui divergent.
+ */
+export function periodeCouvreSemaine(
+  dateFacture: unknown,
+  periodDays: unknown,
+  lundi: string,
+  dimanche: string,
+): boolean {
+  const debut = jour(dateFacture)
+  const debutSemaine = jour(lundi)
+  const finSemaine = jour(dimanche)
+  if (debut === null || debutSemaine === null || finSemaine === null) return false
+  const jours = nombre(periodDays)
+  const fin = jours !== null && jours > 0 ? debut + (jours - 1) * 86400000 : debut
+  return fin >= debutSemaine && debut <= finSemaine
+}
+
+/**
  * La part hebdomadaire des factures de charge qui touchent la semaine.
  *
  * `lundi` et `dimanche` au format `YYYY-MM-DD`. Toutes les factures reçues
@@ -164,8 +190,7 @@ export function chargesFixesDeLaSemaine(
       continue
     }
     // La période court à partir de la date de facture, sur `jours` jours.
-    const fin = debut + (jours - 1) * 86400000
-    if (fin < debutSemaine || debut > finSemaine) {
+    if (!periodeCouvreSemaine(f.invoice_date, jours, lundi, dimanche)) {
       ecarter('hors_semaine',
         `Période du ${String(f.invoice_date).slice(0, 10)} sur ${jours} jours : elle ne touche pas cette semaine.`)
       continue
