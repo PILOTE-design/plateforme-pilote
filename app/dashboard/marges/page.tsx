@@ -3,7 +3,7 @@ import { resolveClientId } from '@/lib/resolve-client-id'
 import { computeWeekEconomics, htConverter, type WeekEconomics } from '@/lib/week-economics'
 import { familleMatchesText, margeFiabilite, effectiveCaStems, DEFAULT_TVA_RATE } from '@/lib/postes'
 import { ensureMarginFamilies, caByFamily, type MarginFamily } from '@/lib/margin-families'
-import { ventilationAchats, seauxDesFamilles, RAYONS_METIER, type FamilleRef } from '@/lib/ventilation-achats'
+import { ventilationAchats, seauxDesFamilles, achatsDeLaFamille, RAYONS_METIER, type FamilleRef } from '@/lib/ventilation-achats'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Percent, Info, Settings2, AlertTriangle } from 'lucide-react'
 import Link from 'next/link'
@@ -154,6 +154,38 @@ export default async function MargesPage() {
   const toHTMap = (m: Map<string, number>) => new Map<string, number>([...m].map(([id, v]): [string, number] => [id, toHT(v)]))
   const ca12ByRef = toHTMap(caByFamily(entries12, families).byId)
   const ca4ByRef  = toHTMap(caByFamily(entries4, families).byId)
+
+  // ── Achats par famille — ce que le lot 88 a rendu possible ──
+  //
+  // Le moteur ventile désormais vers les familles, pas seulement vers les quatre
+  // seaux. Les sous-familles et les familles d'achat-revente affichaient
+  // « ventilation à venir » depuis des mois : elles ont maintenant leurs achats,
+  // leur marge et leur taux, sur la période lissée comme sur les 12 mois.
+  //
+  // Une racine compte SES SOUS-FAMILLES — c'est déjà la règle du CA
+  // (`caByFamily`). Sans ça, on comparerait un CA qui inclut les enfants à des
+  // achats qui les excluent : un taux faux, dans le sens flatteur.
+  const achats4ParFamille: Record<string, number> = {}
+  for (const w of weeks) {
+    for (const [id, v] of Object.entries(w.eco.achats_par_famille ?? {})) {
+      achats4ParFamille[id] = (achats4ParFamille[id] ?? 0) + (Number(v) || 0)
+    }
+  }
+  const achats4De = (id: string) => achatsDeLaFamille(achats4ParFamille, families as unknown as FamilleRef[], id)
+  const achats12De = (id: string) => achatsDeLaFamille(vent12.parFamille, families as unknown as FamilleRef[], id)
+
+  /** Une ligne de détail : sa marge ne s'affiche que si ses achats existent. */
+  const detailFamille = (id: string) => {
+    const ca4 = ca4ByRef.get(id) || 0
+    const ca12 = ca12ByRef.get(id) || 0
+    const a4 = achats4De(id)
+    const a12 = achats12De(id)
+    return {
+      ca4, ca12, a4, a12,
+      taux: ca4 > 0 && a4 > 0 ? ((ca4 - a4) / ca4) * 100 : null,
+      taux12: ca12 > 0 && a12 > 0 ? ((ca12 - a12) / ca12) * 100 : null,
+    }
+  }
   const ca12Total = toHT(ca12Rows.reduce((s: number, r: any) => s + (parseFloat(String(r.ca_total || 0)) || 0), 0))
 
   const caStems = effectiveCaStems(caStemsRaw)
@@ -421,19 +453,33 @@ export default async function MargesPage() {
                         <td className={`px-4 py-3 text-right text-sm font-semibold tabular ${f.fiable12 ? margeColor(f.taux12, f.refFam) : 'text-amber-600'}`}>{pct(f.taux12)}{!f.fiable12 && f.taux12 !== null && <sup className="ml-0.5 text-[9px] font-bold text-amber-500">!</sup>}</td>
                       </tr>,
                       ...sous.map(s => {
-                        const ca4 = ca4ByRef.get(s.id) || 0
-                        const ca12 = ca12ByRef.get(s.id) || 0
-                        if (ca4 <= 0 && ca12 <= 0) return null
+                        const d = detailFamille(s.id)
+                        if (d.ca4 <= 0 && d.ca12 <= 0 && d.a4 <= 0 && d.a12 <= 0) return null
                         return (
                           <tr key={s.id} className="border-t border-gray-50 bg-gray-50/30 hover:bg-gray-50 transition-colors">
-                            <td className="px-4 py-2 text-xs text-gray-500 pl-8">└ {s.name}</td>
-                            <td className="px-4 py-2 text-right text-xs text-gray-500 tabular">{ca4 > 0 ? `${fmt(ca4)} €` : '—'}</td>
-                            <td className="px-4 py-2 text-right text-[11px] text-gray-300" colSpan={2}>ventilation à venir</td>
-                            <td className="px-4 py-2 text-right text-[11px] text-gray-400 tabular">{f.ca > 0 && ca4 > 0 ? `${((ca4 / f.ca) * 100).toFixed(0)} % du CA` : ''}</td>
+                            <td className="px-4 py-2 text-xs text-gray-500 pl-8">
+                              └ {s.name}
+                              {f.ca > 0 && d.ca4 > 0 && (
+                                <span className="ml-1.5 text-[10px] text-gray-400">{((d.ca4 / f.ca) * 100).toFixed(0)} % du CA de la famille</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-2 text-right text-xs text-gray-500 tabular">{d.ca4 > 0 ? `${fmt(d.ca4)} €` : '—'}</td>
+                            <td className="px-4 py-2 text-right text-xs text-gray-500 tabular">{d.a4 !== 0 ? `${fmt(d.a4)} €` : '—'}</td>
+                            {/* Même règle que partout : sans achats rattachés, la marge
+                                en euros vaudrait le CA. Elle se tait avec le taux. */}
+                            <td className="px-4 py-2 text-right text-xs tabular text-gray-500"
+                              title={d.taux === null ? 'Aucun achat ventilé sur cette sous-famille : ventilez les fournisseurs concernés pour obtenir sa marge.' : undefined}>
+                              {d.taux === null ? <span className="text-gray-300">—</span> : `${fmt(d.ca4 - d.a4)} €`}
+                            </td>
+                            <td className={`px-4 py-2 text-right text-xs font-semibold tabular ${margeColor(d.taux, s)}`}>{pct(d.taux)}</td>
+                            <td className="px-4 py-2 text-right whitespace-nowrap">
+                              <RepereEditor familyId={s.id} lo={s.benchmark_lo ?? null} hi={s.benchmark_hi ?? null} />
+                            </td>
                             <td className="px-4 py-2" />
                             <td className="px-4 py-2" />
-                            <td className="px-4 py-2" />
-                            <td className="px-4 py-2 text-right text-xs text-gray-500 tabular">{ca12 > 0 ? `${fmt(ca12)} € de CA` : '—'}</td>
+                            <td className={`px-4 py-2 text-right text-xs font-semibold tabular ${margeColor(d.taux12, s)}`}>
+                              {d.taux12 === null ? (d.ca12 > 0 ? <span className="text-gray-400 font-normal">{fmt(d.ca12)} € de CA</span> : '—') : pct(d.taux12)}
+                            </td>
                           </tr>
                         )
                       }).filter(Boolean),
@@ -459,21 +505,31 @@ export default async function MargesPage() {
                       <td className="px-4 py-3 text-right text-sm font-semibold tabular text-gray-600">{pct(diversTaux12)}</td>
                     </tr>,
                     ...diversDetail.map(s => {
-                      const ca4 = ca4ByRef.get(s.id) || 0
-                      const ca12 = ca12ByRef.get(s.id) || 0
-                      if (ca4 <= 0 && ca12 <= 0) return null
+                      const d = detailFamille(s.id)
+                      if (d.ca4 <= 0 && d.ca12 <= 0 && d.a4 <= 0 && d.a12 <= 0) return null
                       return (
                         <tr key={s.id} className="border-t border-gray-50 bg-gray-50/30 hover:bg-gray-50 transition-colors">
-                          <td className="px-4 py-2 text-xs text-gray-500 pl-8">└ {s.name}</td>
-                          <td className="px-4 py-2 text-right text-xs text-gray-500 tabular">{ca4 > 0 ? `${fmt(ca4)} €` : '—'}</td>
-                          <td className="px-4 py-2 text-right text-[11px] text-gray-300" colSpan={2}>ventilation à venir</td>
-                          <td className="px-4 py-2 text-right text-[11px] text-gray-400 tabular">{diversRow.ca > 0 && ca4 > 0 ? `${((ca4 / diversRow.ca) * 100).toFixed(0)} % du CA` : ''}</td>
+                          <td className="px-4 py-2 text-xs text-gray-500 pl-8">
+                            └ {s.name}
+                            {diversRow.ca > 0 && d.ca4 > 0 && (
+                              <span className="ml-1.5 text-[10px] text-gray-400">{((d.ca4 / diversRow.ca) * 100).toFixed(0)} % du CA du bloc</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-2 text-right text-xs text-gray-500 tabular">{d.ca4 > 0 ? `${fmt(d.ca4)} €` : '—'}</td>
+                          <td className="px-4 py-2 text-right text-xs text-gray-500 tabular">{d.a4 !== 0 ? `${fmt(d.a4)} €` : '—'}</td>
+                          <td className="px-4 py-2 text-right text-xs tabular text-gray-500"
+                            title={d.taux === null ? 'Aucun achat ventilé sur cette famille : ventilez les fournisseurs concernés pour obtenir sa marge.' : undefined}>
+                            {d.taux === null ? <span className="text-gray-300">—</span> : `${fmt(d.ca4 - d.a4)} €`}
+                          </td>
+                          <td className={`px-4 py-2 text-right text-xs font-semibold tabular ${margeColor(d.taux, s)}`}>{pct(d.taux)}</td>
                           <td className="px-4 py-2 text-right whitespace-nowrap">
                             <RepereEditor familyId={s.id} lo={s.benchmark_lo} hi={s.benchmark_hi} />
                           </td>
                           <td className="px-4 py-2" />
                           <td className="px-4 py-2" />
-                          <td className="px-4 py-2 text-right text-xs text-gray-500 tabular">{ca12 > 0 ? `${fmt(ca12)} € de CA` : '—'}</td>
+                          <td className={`px-4 py-2 text-right text-xs font-semibold tabular ${margeColor(d.taux12, s)}`}>
+                            {d.taux12 === null ? (d.ca12 > 0 ? <span className="text-gray-400 font-normal">{fmt(d.ca12)} € de CA</span> : '—') : pct(d.taux12)}
+                          </td>
                         </tr>
                       )
                     }).filter(Boolean),
