@@ -306,6 +306,16 @@ export function calculeTresorerie(entree: {
 }
 
 /**
+ * Un montant tel qu'on l'écrit partout ailleurs dans PILOTE : espace fine pour
+ * les milliers, virgule décimale. `toFixed(2)` donnait « 12689.93 € » à côté
+ * de tuiles affichant « 12 689,93 € » — deux écritures du même nombre dans le
+ * même écran, à trois centimètres l'une de l'autre. Vu en ouvrant la page.
+ */
+function montantFr(n: number): string {
+  return n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'
+}
+
+/**
  * La phrase à écrire À CÔTÉ du solde. Calculée ici, pas dans l'écran : le
  * webhook, le PDF et la page doivent dire exactement la même chose, et une
  * réserve recopiée est une réserve qui finit par diverger.
@@ -318,16 +328,16 @@ export function phraseReserves(b: BilanTresorerie): string | null {
   if (b.reserves.salairesAbsents) bouts.push('salaires non comptés')
   if (b.reserves.reglementsInconnus) bouts.push('aucune facture n’est marquée réglée')
   if (b.reserves.enRetard.nombre > 0) {
-    bouts.push(`${b.reserves.enRetard.nombre} échéance${b.reserves.enRetard.nombre > 1 ? 's' : ''} passée${b.reserves.enRetard.nombre > 1 ? 's' : ''} et due${b.reserves.enRetard.nombre > 1 ? 's' : ''} (${b.reserves.enRetard.montant.toFixed(2)} €)`)
+    bouts.push(`${b.reserves.enRetard.nombre} échéance${b.reserves.enRetard.nombre > 1 ? 's' : ''} passée${b.reserves.enRetard.nombre > 1 ? 's' : ''} et due${b.reserves.enRetard.nombre > 1 ? 's' : ''} (${montantFr(b.reserves.enRetard.montant)})`)
   }
   if (b.reserves.joursSansReleve.length > 0) {
     bouts.push(`${b.reserves.joursSansReleve.length} journée${b.reserves.joursSansReleve.length > 1 ? 's' : ''} sans relevé de caisse`)
   }
   if (b.reserves.montantNonDate > 0) {
-    bouts.push(`${b.reserves.montantNonDate.toFixed(2)} € sans échéance exploitable`)
+    bouts.push(`${montantFr(b.reserves.montantNonDate)} sans échéance exploitable`)
   }
   if (b.reserves.provisionRecurrentes > 0) {
-    bouts.push(`charges récurrentes provisionnées à part (${b.reserves.provisionRecurrentes.toFixed(2)} €)`)
+    bouts.push(`charges récurrentes provisionnées à part (${montantFr(b.reserves.provisionRecurrentes)})`)
   }
 
   if (bouts.length === 0) return null
