@@ -30,6 +30,7 @@
 import { normText } from '@/lib/postes'
 import { isNonProduct, unitKind } from '@/lib/mercuriale-auto'
 import type { createServiceClient } from '@/lib/supabase/server'
+import { fetchAllPages } from '@/lib/fetch-all'
 
 type ServiceClient = ReturnType<typeof createServiceClient>
 
@@ -104,11 +105,19 @@ export async function nourrirDictionnaire(
  *  associées. Jamais bloquant — au pire, la réf reste en file manuelle. */
 export async function appliquerDictionnaire(service: ServiceClient, clientId: string): Promise<number> {
   try {
-    const { data: freeRefs } = await service.from('articles')
-      .select('id, name, name_key, unit')
-      .eq('client_id', clientId)
-      .is('generic_id', null).eq('no_auto', false).eq('ignored', false)
-    if (!freeRefs || freeRefs.length === 0) return 0
+    // Paginée : sans ça, seules les mille premières réfs libres profitaient du
+    // dictionnaire, et les suivantes restaient en file manuelle sans raison
+    // apparente — le boucher voyait deux réfs identiques traitées différemment.
+    const refsPage = await fetchAllPages<any>(apres => {
+      let q = service.from('articles')
+        .select('id, name, name_key, unit')
+        .eq('client_id', clientId)
+        .is('generic_id', null).eq('no_auto', false).eq('ignored', false)
+      if (apres) q = q.gt('id', apres)
+      return q.order('id', { ascending: true })
+    })
+    const freeRefs = refsPage.rows
+    if (freeRefs.length === 0) return 0
 
     const cles = [...new Set(freeRefs.map(r => String(r.name_key ?? '')).filter(Boolean))]
     if (cles.length === 0) return 0
@@ -136,8 +145,16 @@ export async function appliquerDictionnaire(service: ServiceClient, clientId: st
     if (parCle.size === 0) return 0
 
     // Génériques déjà présents chez ce client, pour créer sans doublonner.
-    const { data: generics } = await service.from('generic_articles')
-      .select('id, name_key').eq('client_id', clientId).eq('active', true)
+    // Paginée aussi : un catalogue lu à moitié ferait recréer des génériques
+    // qui existent déjà, et l'index unique (client_id, name_key) refuserait.
+    const gPage = await fetchAllPages<any>(apres => {
+      let q = service.from('generic_articles')
+        .select('id, name_key').eq('client_id', clientId).eq('active', true)
+      if (apres) q = q.gt('id', apres)
+      return q.order('id', { ascending: true })
+    })
+    if (gPage.tronque) return 0
+    const generics = gPage.rows
     const gidParCle = new Map((generics || []).map(g => [String(g.name_key), String(g.id)]))
 
     let associees = 0
