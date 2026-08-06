@@ -165,6 +165,17 @@ export default function InvoiceLayoutsPage() {
       setLignes(prev => prev.map(x => {
         if (x.file.name !== l.file.name) return x
         if (res?.ok && data?.appris) {
+          const rep = data.reparation as { nature: string; detail: string } | null | undefined
+          if (rep) {
+            // Un exemple RECONSTRUIT n'est pas un exemple lu : on le dit, avec
+            // ce qui a été réparé. Ranger l'un en laissant croire à l'autre,
+            // c'est perdre la seule information qui permettrait de revenir
+            // dessus si la bibliothèque enseignait un jour une erreur.
+            return {
+              ...x, statut: 'appris', lues: null, correction: false,
+              detail: `réparé tout seul — ${rep.detail} · somme ${Number(data.somme).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} € = total`,
+            }
+          }
           return {
             ...x, statut: 'appris', lues: null, correction: false,
             detail: `${data.lignes} lignes · ${data.prix} prix · somme ${Number(data.somme).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} € = total${data.tentatives > 1 ? ` · ${data.tentatives} passes (${data.passe === 'vision' ? 'lecture image' : 'reprise'})` : ''}`,
@@ -191,7 +202,12 @@ export default function InvoiceLayoutsPage() {
         return {
           ...x, statut: 'resiste',
           detail: data?.motif || data?.error || 'Le serveur n’a pas répondu.',
-          lues, correction: lues !== null && lues.length > 0,
+          // LE PANNEAU NE S'OUVRE PLUS TOUT SEUL (lot 114). Depuis que le
+          // site répare de lui-même, un document qui arrive ici a déjà résisté
+          // à tout : la correction à la main est un dernier recours, pas la
+          // réponse courante. L'ouvrir d'office la présentait comme le geste
+          // normal, alors que le geste normal est de ne rien faire.
+          lues, correction: false,
         }
       }))
       setProgress({ done: ++done, total: aTraiter.length })
@@ -326,7 +342,7 @@ export default function InvoiceLayoutsPage() {
                     className="flex items-center gap-1.5 rounded-lg border border-pilote-200 px-2.5 py-1.5 text-[11px] font-bold text-pilote transition-colors hover:bg-pilote-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-pilote-200"
                   >
                     <Pencil className="h-3 w-3" aria-hidden />
-                    {l.correction ? 'Masquer la lecture' : 'Corriger la lecture'}
+                    {l.correction ? 'Masquer la lecture' : 'Corriger à la main'}
                   </button>
                 )}
                 {!running && (
