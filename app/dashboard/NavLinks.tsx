@@ -15,7 +15,7 @@ const NAV = [
   { href: '/dashboard/mercuriale',   icon: ShoppingBasket, label: 'Mercuriale',     short: 'Prix' },
   { href: '/dashboard/recettes',     icon: ChefHat,      label: 'Fiches recettes', short: 'Recettes' },
   { href: '/dashboard/production',   icon: Factory,      label: 'Production',      short: 'Prod' },
-  { href: '/dashboard/listing-prix', icon: Tags,         label: 'Listing des prix', short: 'Prix' },
+  { href: '/dashboard/listing-prix', icon: Tags,         label: 'Listing des prix', short: 'Listing' },
   { href: '/dashboard/valorisation', icon: Scale,        label: 'Valorisation',    short: 'Valo' },
   { href: '/dashboard/settings',     icon: Settings,     label: 'Paramètres',      short: 'Réglages' },
 ]
