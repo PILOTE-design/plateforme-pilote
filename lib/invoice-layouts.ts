@@ -166,6 +166,13 @@ export async function rangerExemple(
      *  Sur un exemple existant, l'absence NE retire PAS le partage : l'upsert
      *  n'écrit que les colonnes fournies. */
     shared?: boolean
+    /** Vrai quand la lecture rangée a été RECONSTRUITE par
+     *  `lib/reparation-lecture` plutôt que lue directement. Toujours arbitrée
+     *  par le total — mais une reconstruction reste une reconstruction, et le
+     *  jour où un exemple faux serait soupçonné, c'est le premier filtre qu'on
+     *  voudra. Il ne se reconstitue pas après coup. */
+    repare?: boolean
+    reparationNature?: string | null
   },
 ): Promise<void> {
   const { lignes, totalHT } = params
@@ -207,6 +214,9 @@ export async function rangerExemple(
       prompt_version: params.promptVersion,
       updated_at: new Date().toISOString(),
       ...(params.shared === true ? { shared: true } : {}),
+      ...(params.repare === true
+        ? { repare: true, reparation_nature: params.reparationNature ?? null }
+        : {}),
     }, { onConflict: 'client_id,supplier_key,header_signature' })
   } catch (e) {
     console.error('[invoice-layouts] rangement impossible:', e instanceof Error ? e.message : e)

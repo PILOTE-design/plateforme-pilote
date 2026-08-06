@@ -41,6 +41,7 @@ import {
   type ExtractedLine,
 } from '@/lib/invoice-extract'
 import { choisirExemples, consigneExemples, rangerExemple, signatureEntete } from '@/lib/invoice-layouts'
+import { reparer, type LigneLecture } from '@/lib/reparation-lecture'
 
 export const dynamic = 'force-dynamic'
 // Jusqu'à trois passes de lecture par document : la fenêtre suit celle de la
@@ -166,6 +167,27 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // ── LA RÉPARATION AUTOMATIQUE (lot 114) ─────────────────────────────────
+  //
+  // Dernier recours, et le seul qui ne demande rien à personne. À ce stade la
+  // chaîne a fait ce qu'elle savait faire : deux passes texte avec l'écart
+  // nommé, puis la lecture image. Il reste un écart PRÉCIS, et le document
+  // porte tous ses montants en clair.
+  //
+  // `lib/reparation-lecture` cherche alors ce qui l'explique — une ligne
+  // oubliée, un doublon, un montant mal découpé — et le TOTAL tranche. Aucune
+  // IA, aucune saisie humaine, aucun montant inventé : toute ligne récupérée
+  // porte un montant écrit sur le document.
+  let reparation: { nature: string; detail: string } | null = null
+  if (lines.length > 0 && Math.abs(sommeLignes(lines) - total) > 0.02) {
+    const verdict = reparer(lines as LigneLecture[], texte, total)
+    if (verdict.repare) {
+      lines = verdict.reparation.lignes as ExtractedLine[]
+      passe = 'reparation'
+      reparation = { nature: verdict.reparation.nature, detail: verdict.reparation.detail }
+    }
+  }
+
   const somme = Math.round(sommeLignes(lines) * 100) / 100
   const ecart = Math.round((somme - total) * 100) / 100
 
@@ -212,7 +234,7 @@ export async function POST(request: NextRequest) {
   if (Math.abs(ecart) > 0.02) {
     return NextResponse.json({
       appris: false, somme, total, ecart, passe, tentatives, lignes_lues: lignesLues,
-      motif: `La lecture ne boucle pas : ${eur(somme)} lus pour ${eur(total)} attendus (${ecart > 0 ? '+' : '−'}${eur(Math.abs(ecart))}) après ${tentatives} passe${tentatives > 1 ? 's' : ''}. Rien n’entre pour l’instant — corrigez la lecture ci-dessous, ou vérifiez le total saisi.`,
+      motif: `La lecture ne boucle pas : ${eur(somme)} lus pour ${eur(total)} attendus (${ecart > 0 ? '+' : '−'}${eur(Math.abs(ecart))}) après ${tentatives} passe${tentatives > 1 ? 's' : ''}, et la réparation automatique n’a rien trouvé qui explique l’écart. Rien n’entre — vérifiez le total saisi, ou corrigez la lecture ci-dessous.`,
     })
   }
 
@@ -233,10 +255,16 @@ export async function POST(request: NextRequest) {
     texte: texte.slice(0, TEXTE_MAX), lignes: lines, totalHT: total,
     promptVersion: PROMPT_LIGNES_VERSION,
     shared: true,
+    repare: reparation !== null,
+    reparationNature: reparation?.nature ?? null,
   })
 
   return NextResponse.json({
     appris: true, somme, total, ecart, passe, tentatives,
+    // La réparation est DITE : un exemple reconstruit n'est pas un exemple lu,
+    // et l'écran doit pouvoir l'annoncer plutôt que de laisser croire que le
+    // document a été compris du premier coup.
+    reparation,
     lignes: lines.length,
     prix: lines.filter(l => l.unit_price_ht !== null).length,
     fournisseur: supplierKey,
