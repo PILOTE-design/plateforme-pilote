@@ -75,6 +75,7 @@ type Bilan = {
   lecture_incomplete: boolean
   releves_multi_jours: { nombre: number; ca_ttc: number }
   journees_au_ca: number
+  bons_achat_exclus: number
 }
 
 // ── Formats ────────────────────────────────────────────────────────────────
@@ -598,6 +599,19 @@ export default function TresoreriePage() {
                     {bilan.releves_multi_jours.nombre === 0
                       ? '—'
                       : `${bilan.releves_multi_jours.nombre} · ${eur2(bilan.releves_multi_jours.ca_ttc)}`}
+                  </span>
+                </li>
+
+                <li className="flex items-start justify-between gap-3 border-b border-gray-100 pb-2">
+                  <span className="text-encre">
+                    Bons d’achat consommés
+                    <span className="block text-xs text-encre-faible">
+                      ils soldent un ticket, mais aucun euro n’arrive en banque : c’est un avoir
+                      émis autrefois qu’on reprend
+                    </span>
+                  </span>
+                  <span className="whitespace-nowrap font-bold tabular text-encre-fort">
+                    {bilan.bons_achat_exclus > 0 ? `− ${eur2(bilan.bons_achat_exclus)}` : '—'}
                   </span>
                 </li>
 
