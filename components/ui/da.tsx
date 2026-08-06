@@ -93,7 +93,10 @@ export function TuileAlerte({
     <>
       <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#9A4A00]">{label}</p>
       <p className="mt-0.5 whitespace-nowrap text-[clamp(1.25rem,2vw,1.5rem)] font-extrabold leading-tight tracking-tight text-[#9A4A00] tabular">{valeur}</p>
-      <p className="mt-1 text-[11px] font-semibold text-[#9A4A00]">{action} →</p>
+      {/* La flèche ne part JAMAIS seule à la ligne : « 14 facture(s) à pointer »
+          puis « → » sur la ligne suivante, vu à l'écran de trésorerie. Le mot
+          et la flèche qui le suit sont soudés par une espace insécable. */}
+      <p className="mt-1 text-[11px] font-semibold text-[#9A4A00]">{action}&nbsp;→</p>
     </>
   )
   const classes = `block rounded-2xl border-t-[3px] border-pilote-orange bg-pilote-orange/[0.07] p-5 text-left shadow-card ${className}`
@@ -145,7 +148,7 @@ export function Absent({
        pastille ronde devenait un ovale gris illisible. Un état nommé qu'on ne
        lit pas ne vaut pas mieux que le tiret qu'il remplace. */
     <span
-      className="inline-flex whitespace-nowrap items-center rounded-md bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-encre-doux"
+      className="inline-flex whitespace-nowrap items-center rounded-md bg-gray-100 px-1.5 py-0.5 text-[11px] font-semibold text-encre-doux"
       title={explication}
     >
       {raison}
