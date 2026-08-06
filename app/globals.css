@@ -98,3 +98,34 @@ input[type='number'] {
   from { opacity: 0; transform: translate(-50%, -50%) scale(0.96); }
   to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
 }
+
+/* ── LE CLAVIER DOIT VOIR OÙ IL EST ─────────────────────────────────────────
+ *
+ * Le tableau de bord comptait 83 `focus:outline-none`, dont 17 sans anneau de
+ * remplacement, et ZÉRO `focus-visible`. Autrement dit : en naviguant au
+ * clavier — ce que fait quiconque a les mains occupées, ou une souris qui ne
+ * répond plus sur un plan de travail humide — on ne savait pas où l'on était.
+ *
+ * Cette règle rétablit un anneau par défaut sur TOUT élément focalisable, et
+ * `:focus-visible` fait qu'il n'apparaît qu'au clavier, jamais au clic souris.
+ * Un composant qui pose son propre anneau le remplace simplement.
+ *
+ * Posé ici plutôt que dans dix-sept fichiers : une règle qu'on doit se rappeler
+ * d'écrire est une règle qu'on oubliera. */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid #1E3A5F;
+  outline-offset: 2px;
+  border-radius: 0.375rem;
+}
+
+/* ── LE MOUVEMENT SE COUPE QUAND ON LE DEMANDE ──────────────────────────────
+ * Réglage système, pas préférence esthétique : certaines personnes ont mal au
+ * cœur devant une interface qui bouge. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
