@@ -865,11 +865,19 @@ export function useFacturation() {
               })}
             </button>
           ) : ventil.length === 0 ? (
-            <div className="flex items-center gap-1.5">
-              <button onClick={openSplits} title="Définir la répartition par rayon de cette société"
-                className="text-xs text-gray-400 hover:text-pilote hover:underline">Non réparti</button>
-              <button onClick={() => setVentInvoice(inv)} title="Ventiler uniquement cette facture (familles et sous-familles)"
-                className="text-[10px] text-gray-300 hover:text-pilote hover:underline">· cette facture</button>
+            /* « Non réparti » et « · cette facture » se repliaient CHACUN sur
+               deux lignes — « Non / réparti », « · cette / facture » — dans une
+               colonne qui avait pourtant la place. Deux mots coupés en quatre :
+               l'état le plus fréquent de la colonne était le moins lisible.
+               `whitespace-nowrap` sur les deux, et l'état prend la forme d'un
+               état nommé plutôt que d'un lien gris parmi d'autres liens gris. */
+            <div className="flex flex-wrap items-center gap-1.5">
+              <button onClick={openSplits} title="Définir la répartition par rayon de cette société — elle vaudra pour toutes ses factures"
+                className="inline-flex whitespace-nowrap items-center rounded-md bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-encre-doux transition-colors hover:bg-pilote-50 hover:text-pilote">
+                à ventiler
+              </button>
+              <button onClick={() => setVentInvoice(inv)} title="Ventiler uniquement cette facture (familles et sous-familles), sans toucher les autres factures de ce fournisseur"
+                className="whitespace-nowrap text-[10px] text-encre-faible hover:text-pilote hover:underline">cette facture seule</button>
             </div>
           ) : (
             <div className="flex flex-wrap items-center gap-1">
