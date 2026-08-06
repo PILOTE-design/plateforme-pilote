@@ -24,6 +24,7 @@ import { getWeekDates, frenchHolidayNames } from '@/lib/payroll'
 import { couvertureParPoste, type EntreePlanning } from '@/lib/planning-postes'
 import { estFigee, bandeauFigee, type VerrouSemaine } from '@/lib/planning-lock'
 import { GrilleSemaine } from './grille'
+import OngletsPlanning from './onglets-planning'
 import { ModaleDetail, ModaleMensuel, ModaleAjout, ModalePostes } from './modales'
 import {
   JOURS_DB, CATEGORIES, CUSTOM_POSTE_COLORS, TYPE_CONFIG, CONTRACT_TYPES, EMP_PALETTES,
@@ -675,6 +676,8 @@ export default function PlanningPage() {
         input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
         input[type=number] { -moz-appearance: textfield; }
       `}</style>
+
+      <div className="mb-4"><OngletsPlanning /></div>
 
       {/* ── Header ── */}
       <div className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
