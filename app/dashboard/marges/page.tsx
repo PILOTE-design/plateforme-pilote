@@ -4,6 +4,7 @@ import { computeWeekEconomics, htConverter, type WeekEconomics } from '@/lib/wee
 import { familleMatchesText, margeFiabilite, effectiveCaStems, DEFAULT_TVA_RATE } from '@/lib/postes'
 import { ensureMarginFamilies, caByFamily, type MarginFamily } from '@/lib/margin-families'
 import { ventilationAchats, seauxDesFamilles, achatsDeLaFamille, RAYONS_METIER, type FamilleRef } from '@/lib/ventilation-achats'
+import { TuileRoi, Tuile, TuileAlerte, FiletRayon, Absent } from '@/components/ui/da'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Percent, Info, Settings2, AlertTriangle } from 'lucide-react'
 import Link from 'next/link'
@@ -373,32 +374,59 @@ export default async function MargesPage() {
             </div>
           )}
 
-          {/* KPIs globaux */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-            <Card className="hover:shadow-card-hover transition-shadow"><CardContent className="p-5">
-              <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">CA cumulé</p>
-              <p className="text-2xl font-bold tracking-tight text-gray-900 tabular">{fmt(caTotal)} €</p>
-              <p className="text-xs text-gray-400 mt-1 tabular">achats {fmt(achatsTotal)} €</p>
-            </CardContent></Card>
-            <Card className="hover:shadow-card-hover transition-shadow"><CardContent className="p-5">
-              <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Marge matière</p>
-              <p className={`text-2xl font-bold tracking-tight tabular ${margeColor(tauxMargeAffichable)}`}>{pct(tauxMargeAffichable)}</p>
-              <p className={`text-xs mt-1 tabular ${margeInfo.fiable ? 'text-gray-400' : 'text-amber-600 font-semibold'}`}>
+          {/* ── LES QUATRE CHIFFRES, HIÉRARCHISÉS ──────────────────────────
+              Quatre tuiles jumelles alignées comme un tableur : aucune ne disait
+              laquelle compte, et le regard n'avait nulle part où se poser. La
+              boussole de cet écran est la MARGE SUR COÛT DIRECT — elle passe en
+              navy plein. Les achats non ventilés, eux, sont la seule chose qui
+              attend un geste : ils prennent l'orange, et lui seul. */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            <TuileRoi
+              className="lg:col-span-2"
+              label="Marge sur coût direct"
+              valeur={`${fmt(margeCoutDirect)} €`}
+              detail={`${pct(tauxCoutDirect)} du CA · hors charges fixes`}
+            />
+            <Tuile
+              label="CA cumulé"
+              valeur={`${fmt(caTotal)} €`}
+              detail={`achats ${fmt(achatsTotal)} €`}
+            />
+            {nonVentiles > 0 ? (
+              <TuileAlerte
+                label="Achats sans ventilation"
+                valeur={`${fmt(nonVentiles)} €`}
+                action="Répartir ces fournisseurs"
+                href="/dashboard/facturation" 
+              />
+            ) : (
+              <Tuile
+                label="Masse salariale"
+                valeur={pct(ratioMs)}
+                detail={`${fmt(masseSalariale)} € chargés`}
+              />
+            )}
+          </div>
+
+          {/* Les deux chiffres que la hiérarchie a fait descendre restent
+              visibles : les reléguer serait les cacher, pas les hiérarchiser. */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+            <div className="rounded-xl border border-gray-100 bg-white px-4 py-3">
+              <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-encre-faible">Marge matière</p>
+              <p className={`text-lg font-extrabold tabular ${margeColor(tauxMargeAffichable)}`}>{pct(tauxMargeAffichable)}</p>
+              <p className={`text-[11px] tabular ${margeInfo.fiable ? 'text-encre-faible' : 'text-etat-attente font-semibold'}`}>
                 {margeInfo.fiable
                   ? `${fmt(margeBrute)} € · 12 mois : ${pct(taux12Total)}`
                   : margeInfo.raison === 'aucun_achat' ? 'aucune facture saisie' : 'achats incomplets'}
               </p>
-            </CardContent></Card>
-            <Card className="hover:shadow-card-hover transition-shadow"><CardContent className="p-5">
-              <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Masse salariale</p>
-              <p className={`text-2xl font-bold tracking-tight tabular ${msColor}`}>{pct(ratioMs)}</p>
-              <p className="text-xs text-gray-400 mt-1 tabular">{fmt(masseSalariale)} € chargés</p>
-            </CardContent></Card>
-            <Card className="hover:shadow-card-hover transition-shadow"><CardContent className="p-5">
-              <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Marge sur coût direct</p>
-              <p className={`text-2xl font-bold tracking-tight tabular ${margeCoutDirect >= 0 ? 'text-gray-900' : 'text-red-600'}`}>{fmt(margeCoutDirect)} €</p>
-              <p className="text-xs text-gray-400 mt-1 tabular">{pct(tauxCoutDirect)} du CA · hors charges fixes</p>
-            </CardContent></Card>
+            </div>
+            {nonVentiles > 0 && (
+              <div className="rounded-xl border border-gray-100 bg-white px-4 py-3">
+                <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-encre-faible">Masse salariale</p>
+                <p className={`text-lg font-extrabold tabular ${msColor}`}>{pct(ratioMs)}</p>
+                <p className="text-[11px] text-encre-faible tabular">{fmt(masseSalariale)} € chargés</p>
+              </div>
+            )}
           </div>
 
           {/* Tableau par famille */}
@@ -428,6 +456,10 @@ export default async function MargesPage() {
                     return [
                       <tr key={f.key} className="border-t border-gray-100 hover:bg-gray-50 transition-colors">
                         <td className="px-4 py-3 text-sm font-semibold text-gray-900">
+                          {/* La couleur du rayon, la même que dans le planning et
+                              la facturation depuis lib/rayons. Un boucher qui voit
+                              du bordeaux sait que c'est la boucherie avant de lire. */}
+                          <FiletRayon cle={f.key} />
                           {f.label}
                           {f.ca > 0 && !f.ventile && <span className="ml-1.5 text-[10px] font-medium text-amber-600">achats non ventilés</span>}
                           <span className="block mt-0.5">
@@ -442,7 +474,9 @@ export default async function MargesPage() {
                             chiffres contradictoires à trois centimètres l'un de l'autre. */}
                         <td className={`px-4 py-3 text-right text-sm font-semibold tabular ${f.taux === null ? 'text-gray-300' : f.ca - f.achats >= 0 ? 'text-gray-900' : 'text-red-600'}`}
                           title={f.taux === null ? 'Sans achats rattachés à cette famille, la marge en euros vaudrait le chiffre d’affaires. Ventilez les fournisseurs concernés pour l’obtenir.' : undefined}>
-                          {f.taux === null ? '—' : `${fmt(f.ca - f.achats)} €`}
+                          {f.taux === null
+                            ? <Absent raison="à ventiler" explication="Aucun achat rattaché à cette famille : sa marge en euros vaudrait le chiffre d’affaires. Ventilez les fournisseurs concernés pour l’obtenir." />
+                            : `${fmt(f.ca - f.achats)} €`}
                         </td>
                         <td className={`px-4 py-3 text-right text-sm font-bold tabular ${f.fiable ? margeColor(f.taux, f.refFam) : 'text-amber-600'}`}>{pct(f.taux)}{!f.fiable && f.taux !== null && <sup className="ml-0.5 text-[9px] font-bold text-amber-500">!</sup>}</td>
                         <td className="px-4 py-3 text-right whitespace-nowrap">
