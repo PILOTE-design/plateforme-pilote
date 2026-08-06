@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { BarChart3, FileText, Settings, CalendarDays, Receipt, Scale, LineChart, Percent, ShoppingBasket, ChefHat, Factory, Wallet } from 'lucide-react'
+import { BarChart3, FileText, Settings, CalendarDays, Receipt, Scale, LineChart, Percent, ShoppingBasket, ChefHat, Factory, Wallet, Tags } from 'lucide-react'
 
 const NAV = [
   { href: '/dashboard',              icon: BarChart3,    label: 'Tableau de bord', short: 'Accueil' },
@@ -15,6 +15,7 @@ const NAV = [
   { href: '/dashboard/mercuriale',   icon: ShoppingBasket, label: 'Mercuriale',     short: 'Prix' },
   { href: '/dashboard/recettes',     icon: ChefHat,      label: 'Fiches recettes', short: 'Recettes' },
   { href: '/dashboard/production',   icon: Factory,      label: 'Production',      short: 'Prod' },
+  { href: '/dashboard/listing-prix', icon: Tags,         label: 'Listing des prix', short: 'Prix' },
   { href: '/dashboard/valorisation', icon: Scale,        label: 'Valorisation',    short: 'Valo' },
   { href: '/dashboard/settings',     icon: Settings,     label: 'Paramètres',      short: 'Réglages' },
 ]
@@ -64,7 +65,7 @@ export function MobileTabBar() {
           tous les jours, une découpe de carcasse se saisit une fois de temps en
           temps, et la grille ne tient que six colonnes. La valorisation reste
           dans la barre latérale sur ordinateur. */}
-      {NAV.filter(i => !['/dashboard/reports', '/dashboard/settings', '/dashboard/mercuriale', '/dashboard/recettes', '/dashboard/production', '/dashboard/valorisation'].includes(i.href)).map(item => {
+      {NAV.filter(i => !['/dashboard/reports', '/dashboard/settings', '/dashboard/mercuriale', '/dashboard/recettes', '/dashboard/production', '/dashboard/valorisation', '/dashboard/listing-prix'].includes(i.href)).map(item => {
         const active = isActive(pathname, item.href)
         return (
           <Link
