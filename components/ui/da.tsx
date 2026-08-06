@@ -55,7 +55,12 @@ export function TuileRoi({
   return (
     <div className={`rounded-2xl bg-pilote p-5 shadow-card ${className}`}>
       <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-pilote-200">{label}</p>
-      <p className="mt-0.5 text-3xl font-extrabold tracking-tight text-white tabular">{valeur}</p>
+      {/* LE MONTANT NE SE COUPE JAMAIS DE SON UNITÉ. « −28 573,00 » sur une
+          ligne et « € » sur la suivante : c'est le défaut du lot 102, revu à
+          l'écran de trésorerie, où un solde négatif à cinq chiffres dépasse la
+          largeur de la tuile. `nowrap` interdit le repli, et la taille fluide
+          rétrécit le chiffre plutôt que de le laisser déborder. */}
+      <p className="mt-0.5 whitespace-nowrap text-[clamp(1.5rem,2.4vw,1.875rem)] font-extrabold leading-tight tracking-tight text-white tabular">{valeur}</p>
       {detail && <p className="mt-1 text-[11px] text-pilote-200">{detail}</p>}
     </div>
   )
@@ -68,7 +73,7 @@ export function Tuile({
   return (
     <div className={`rounded-2xl border border-gray-100 bg-white p-5 shadow-card ${filet ? `border-t-[3px] ${filet}` : ''} ${className}`}>
       <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-encre-faible">{label}</p>
-      <p className="mt-0.5 text-2xl font-extrabold tracking-tight text-encre-fort tabular">{valeur}</p>
+      <p className="mt-0.5 whitespace-nowrap text-[clamp(1.25rem,2vw,1.5rem)] font-extrabold leading-tight tracking-tight text-encre-fort tabular">{valeur}</p>
       {detail && <p className="mt-1 text-[11px] text-encre-faible">{detail}</p>}
     </div>
   )
@@ -87,7 +92,7 @@ export function TuileAlerte({
   const contenu = (
     <>
       <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#9A4A00]">{label}</p>
-      <p className="mt-0.5 text-2xl font-extrabold tracking-tight text-[#9A4A00] tabular">{valeur}</p>
+      <p className="mt-0.5 whitespace-nowrap text-[clamp(1.25rem,2vw,1.5rem)] font-extrabold leading-tight tracking-tight text-[#9A4A00] tabular">{valeur}</p>
       <p className="mt-1 text-[11px] font-semibold text-[#9A4A00]">{action} →</p>
     </>
   )
