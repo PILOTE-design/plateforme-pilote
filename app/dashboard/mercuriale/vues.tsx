@@ -314,10 +314,25 @@ export function VuesMercuriale({ f }: { f: Mercuriale }) {
                           {selSaving ? 'Association…' : `${grp.refs.length > 1 ? 'Tout associer' : 'Associer'} à « ${grp.suggested.name} »`}
                         </button>
                       ) : (
-                        <button onClick={() => groupToPanel(grp.refs, 'new', grp.label)}
-                          className="text-xs font-bold text-white bg-pilote hover:bg-pilote-hover rounded-lg px-3.5 py-2 shadow-card active:scale-[0.98] transition-all">
-                          {grp.refs.length > 1 ? `Regrouper les ${grp.refs.length} réfs` : 'Créer son générique'}
-                        </button>
+                        <>
+                          <button onClick={() => groupToPanel(grp.refs, 'new', grp.label)}
+                            className="text-xs font-bold text-white bg-pilote hover:bg-pilote-hover rounded-lg px-3.5 py-2 shadow-card active:scale-[0.98] transition-all">
+                            {grp.refs.length > 1 ? `Regrouper les ${grp.refs.length} réfs` : 'Créer son générique'}
+                          </button>
+                          {/* SANS SUGGESTION, il n'y avait qu'une issue : créer un
+                              générique de plus. Or l'absence de suggestion ne veut
+                              pas dire que le produit n'existe pas au catalogue —
+                              elle veut dire que les deux premiers mots du libellé
+                              ne tombent pas juste. « Épaule agneau 1er choix » ne
+                              suggère rien face à « Épaule d'agneau ». Ce second
+                              bouton ouvre le même panneau, mais sur le catalogue :
+                              à chercher, à choisir. */}
+                          <button onClick={() => groupToPanel(grp.refs, '', grp.label)}
+                            title="Chercher le produit dans tout le catalogue, même s'il n'est pas proposé"
+                            className="text-xs font-bold text-pilote bg-white ring-1 ring-pilote-200 hover:bg-pilote-50 rounded-lg px-3.5 py-2 active:scale-[0.98] transition-all">
+                            Associer à un produit existant…
+                          </button>
+                        </>
                       )}
                       <button onClick={() => ignoreGroup(grp.refs)} title="Ne pas rapprocher — écarter tout le groupe"
                         className="text-[11px] font-semibold text-gray-400 hover:text-red-600 rounded-lg px-2 py-1.5 transition-colors">
