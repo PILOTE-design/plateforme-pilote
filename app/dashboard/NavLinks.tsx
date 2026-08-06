@@ -60,7 +60,11 @@ export function MobileTabBar() {
     <nav className="md:hidden fixed bottom-0 inset-x-0 z-50 bg-white/95 backdrop-blur border-t border-gray-200 grid grid-cols-6 pb-[env(safe-area-inset-bottom)]">
       {/* Six onglets exactement (grid-cols-6 ci-dessus) : tout ajout au NAV
           doit être exclu ici, sinon la grille se casse en mobile. */}
-      {NAV.filter(i => !['/dashboard/reports', '/dashboard/settings', '/dashboard/mercuriale', '/dashboard/recettes', '/dashboard/production', '/dashboard/tresorerie'].includes(i.href)).map(item => {
+      {/* La trésorerie a pris la place de la valorisation : elle se consulte
+          tous les jours, une découpe de carcasse se saisit une fois de temps en
+          temps, et la grille ne tient que six colonnes. La valorisation reste
+          dans la barre latérale sur ordinateur. */}
+      {NAV.filter(i => !['/dashboard/reports', '/dashboard/settings', '/dashboard/mercuriale', '/dashboard/recettes', '/dashboard/production', '/dashboard/valorisation'].includes(i.href)).map(item => {
         const active = isActive(pathname, item.href)
         return (
           <Link
