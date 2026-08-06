@@ -48,6 +48,7 @@ import {
 } from './catalogue'
 import { VueOrganiser, VueFournisseurs } from './onglets'
 import type { MotifSortie } from '@/lib/lecture-file'
+import ChoixProduit from './choix-produit'
 
 /** Une facture SORTIE de la file de lecture (lot 80) : la facture telle que la
  *  file la connaît, plus la raison de sa sortie — motif technique, phrase en
@@ -894,6 +895,7 @@ export function useMercuriale() {
     for (const id of selIds) if (refsAffichees.has(id)) dernier = id
     return dernier
   }, [ancreSel, selIds, refsAffichees])
+
   // Décompte du KPI, sur la file ENTIÈRE (jamais sur le filtre de recherche) et
   // avec la même définition que la liste : un « produit à rapprocher » n'est ni
   // écarté ni non-produit. Le KPI affichait `queue.length`, tout compris.
@@ -1104,16 +1106,23 @@ export function useMercuriale() {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
         <div className={selTarget.choice === 'new' ? '' : 'md:col-span-2'}>
           <label className="block text-[11px] font-semibold text-gray-500 uppercase tracking-wider mb-1">Vers l&apos;article générique</label>
-          <select value={selTarget.choice}
-            onChange={e => {
-              const v = e.target.value
-              setSelTarget(t => ({ ...t, choice: v, newName: v === 'new' && !t.newName ? commonLabel(selRefs.map(x => x.name)) : t.newName }))
-            }}
-            className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pilote-200">
-            <option value="">— Choisir —</option>
-            <option value="new">Créer un nouvel article générique</option>
-            {generics.map(g => <option key={g.id} value={g.id}>{g.name} (/ {unitLabel(g.base_unit)})</option>)}
-          </select>
+          {/* CHERCHABLE. C'était un menu déroulant natif listant le catalogue
+              entier, que le champ de recherche de la page ne touchait pas : au
+              -delà de quelques dizaines de produits, viser celui qu'on veut
+              devenait un exercice de patience — et la seule issue commode
+              restait « créer un nouveau générique », ce qui fait enfler le
+              catalogue pour de mauvaises raisons. */}
+          <ChoixProduit
+            produits={generics}
+            value={selTarget.choice}
+            onChange={v => setSelTarget(t => ({
+              ...t, choice: v,
+              newName: v === 'new' && !t.newName ? commonLabel(selRefs.map(x => x.name)) : t.newName,
+            }))}
+            creation={{ libelle: 'Créer un nouvel article générique' }}
+            unite={unitLabel}
+            placeholder="Chercher dans tout le catalogue…"
+          />
         </div>
         {selTarget.choice === 'new' && (
           <>
