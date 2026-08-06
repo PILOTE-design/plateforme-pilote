@@ -45,9 +45,11 @@
 //    est enregistrée telle quelle, avec son nombre de jours, et l'appelant
 //    décide (le suivi quotidien n'accepte qu'une seule journée).
 
-/** Écart maximal toléré entre la somme des règlements et le CA net.
- *  Même tolérance que la lecture déterministe du rapport (TOL_COHERENCE_EUR). */
-export const TOL_REGLEMENTS_EUR = 0.5
+/** Écart maximal entre la somme des lignes lues et le total imprimé par le
+ *  relevé. Un centime, pas cinquante : on compare deux impressions du MÊME
+ *  document, pas deux sources différentes. Toute tolérance plus large
+ *  laisserait passer une ligne manquée. */
+export const TOL_TOTAL_EUR = 0.01
 
 /** Les modes de règlement d'un commerce de détail alimentaire.
  *  `motifs` est comparé au libellé de la ligne, accents retirés, en minuscules.
@@ -55,7 +57,7 @@ export const TOL_REGLEMENTS_EUR = 0.5
  *  libellés les plus spécifiques passent avant les plus généraux
  *  (« ticket restaurant » avant « ticket »). */
 export type ModeReglement = {
-  cle: 'cb' | 'especes' | 'tr' | 'cheque' | 'virement' | 'autre'
+  cle: 'cb' | 'especes' | 'tr' | 'cheque' | 'virement' | 'bon_achat' | 'autre'
   label: string
   motifs: RegExp[]
 }
@@ -64,19 +66,26 @@ export const MODES_REGLEMENT: ModeReglement[] = [
   {
     cle: 'tr',
     label: 'Titres restaurant',
-    // Volontairement AVANT la carte : « carte ticket restaurant » est un TR,
-    // pas une carte bancaire.
-    motifs: [/\btickets?\s*(-|\s)?\s*restaurants?\b/, /\btitres?\s*(-|\s)?\s*restaurants?\b/, /\bt\.?\s?r\.?\b/, /\bcheques?\s+dejeuner\b/, /\bswile\b/, /\bedenred\b/],
+    // Volontairement AVANT la carte. Deux raisons : « carte ticket restaurant »
+    // contient « carte », et la caisse écrit « CARTE_TR » — un titre restaurant
+    // encaissé sur le terminal carte, qui n'est pas un encaissement carte.
+    // (Le tiret bas est un caractère de mot : \bcarte\b ne matche pas
+    // « carte_tr ». La ceinture ET les bretelles.)
+    motifs: [
+      /\btrestau\b/, /\bcarte_tr\b/, /\bcb_tr\b/,
+      /\btickets?\s*(-|_|\s)?\s*restaurants?\b/, /\btitres?\s*(-|_|\s)?\s*restaurants?\b/,
+      /\bt\.?\s?r\.?\b/, /\bcheques?\s+dejeuner\b/, /\bswile\b/, /\bedenred\b/,
+    ],
   },
   {
     cle: 'cb',
     label: 'Carte bancaire',
-    motifs: [/\bcartes?\s+bancaires?\b/, /\bc\.?\s?b\.?\b/, /\bcarte\b/, /\bbleue\b/, /\bsans\s+contact\b/],
+    motifs: [/\bcartes?\s+bancaires?\b/, /\bc\.?\s?b\.?\b/, /\bcartes?\b/, /\bbleue\b/, /\bsans\s+contact\b/],
   },
   {
     cle: 'especes',
     label: 'Espèces',
-    motifs: [/\bespeces?\b/, /\bnumeraire\b/, /\bliquide\b/, /\besp\.?\b/],
+    motifs: [/\besp[eè]ces?\b/, /\bnumeraire\b/, /\bliquide\b/, /\besp\.?\b/],
   },
   {
     cle: 'cheque',
@@ -87,6 +96,15 @@ export const MODES_REGLEMENT: ModeReglement[] = [
     cle: 'virement',
     label: 'Virements',
     motifs: [/\bvirements?\b/, /\bprelevements?\b/],
+  },
+  {
+    cle: 'bon_achat',
+    label: 'Bons d’achat',
+    // Un bon d'achat encaissé est bien de l'argent qui solde un ticket : il
+    // entre dans le total des encaissements de la caisse. Il n'entre PAS dans
+    // la trésorerie bancaire — c'est un avoir consommé, pas un flux. La
+    // distinction appartient à l'écran, pas à la lecture.
+    motifs: [/\bbon\.?\s?achats?\b/, /\bbons?\s+d’?\s?achats?\b/, /\bavoirs?\b/],
   },
 ]
 
@@ -109,12 +127,21 @@ export type LectureFinancier = {
   fin: string | null
   /** Nombre de jours couverts, bornes comprises (1 = relevé d'une journée) */
   nbJours: number | null
-  /** Ventilation publiable — null si absente ou incohérente */
+  /** Ventilation publiable — null tant que le total du document ne la confirme pas */
   reglements: Reglements | null
   /** Ventilation LUE, même quand elle n'est pas publiable (pour l'expliquer) */
   reglementsLus: Reglements | null
-  /** Écart entre la somme des règlements lus et le CA net, quand les deux existent */
-  ecartReglements: number | null
+  /** CE QUI EST RENTRÉ EN CAISSE, publiable. C'est le chiffre de la TRÉSORERIE
+   *  — distinct du CA : la marchandise portée en compte client est vendue mais
+   *  pas encaissée. null tant que la ventilation n'est pas confirmée. */
+  encaisseTtc: number | null
+  /** Nombre d'encaissements, quand la caisse imprime ses compteurs */
+  nbEncaissements: number | null
+  /** CA net − encaissé : les comptes clients, en clair. Information, jamais
+   *  motif de refus. */
+  ecartCaEncaisse: number | null
+  /** Le bloc complet, pour l'écran (libellés de caisse, compteurs, doublons) */
+  bloc: BlocReglements | null
   /** Ce qui empêche de publier la ventilation, en clair. null = rien à signaler. */
   motifReglements: string | null
 }
@@ -261,12 +288,123 @@ export function parsePeriode(lignes: string[]): Periode {
 }
 
 // ─── Règlements ───────────────────────────────────────────────────────────
+//
+// RECALÉ SUR UN VRAI RELEVÉ (lot 105). La première version raisonnait sur un
+// format supposé et sortait 74 976 942,99 € de règlements sur le relevé S31 de
+// la Boucherie du Val des Bois. La quarantaine a tenu — rien n'a été publié —
+// mais rien n'était lu non plus. Trois défauts, tous visibles sur le document
+// et invisibles sans lui :
+//
+//  1. UN COMPTEUR PRÉCÈDE LE MONTANT. La ligne se lit « CARTE 372 13980.83 € » :
+//     372 est le nombre d'encaissements, pas un séparateur de milliers. Coller
+//     les deux donnait 37 213 980,83 €.
+//  2. LE BLOC EST IMPRIMÉ DEUX FOIS. La mise en page du relevé le répète en
+//     deux colonnes ; les lignes tombent donc deux fois dans la lecture par
+//     coordonnées. Additionner sans réfléchir DOUBLE tous les encaissements —
+//     et un doublement exact ne se voit pas à l'œil sur un total.
+//  3. LES LIBELLÉS SONT CEUX DE LA CAISSE : CARTE, CARTE_TR, TRESTAU,
+//     BON.ACHAT, ESPECES, CHEQUE, VIREMENT. Pas « Carte bancaire », pas
+//     « Titres restaurant ».
+//
+// ─── COMMENT ON SE PROTÈGE, ET POURQUOI PAS AVEC LE CA ────────────────────
+//
+// La première version exigeait que la somme des règlements retombe sur le CA
+// net. C'est FAUX par construction : le relevé S31 donne 17 456,55 €
+// d'encaissements pour 18 347,75 € de CA. Les 891,20 € d'écart sont les
+// COMPTES CLIENTS — la marchandise est vendue, l'argent n'est pas encore
+// rentré. Une boucherie qui livre des restaurants en aura toujours.
+//
+// Et c'est une bonne nouvelle : pour la trésorerie, ce qui compte est
+// justement ce qui RENTRE, pas ce qui est vendu. L'écart CA − encaissé est
+// donc conservé et rendu (`ecartCaEncaisse`), comme information, jamais comme
+// motif de refus.
+//
+// Le vrai garde-fou est DANS le document : le bloc porte son propre total, et
+// ce total porte un COMPTEUR — « Total 463 17456.55 € ». On ne cherche pas ce
+// total par sa position ni par un titre de section (les colonnes s'entremêlent) :
+// on le reconnaît à l'ARITHMÉTIQUE. Le bon total est celui dont le compteur ET
+// le montant retombent tous les deux sur la somme des lignes dédoublonnées.
+// Deux vérifications indépendantes ; deux coïncidences simultanées sur un
+// document réel, ça n'arrive pas.
+//
+// Sans total confirmé, on ne publie pas. Un encaissement faux fabrique un
+// solde de trésorerie faux, et un solde faux est pire que pas de solde.
 
-/** Une ligne de règlement : un libellé, puis un montant en euros.
- *  Le montant est le DERNIER nombre suivi d'un € sur la ligne — le relevé
- *  aligne parfois un compteur (« Carte bancaire 42 1 000,00 € ») : c'est le
- *  montant qui porte la devise, jamais le compteur. */
-const RE_LIGNE_REGLEMENT = /^([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.'’/-]{1,40}?)\s+([\d\s.,]+)\s*€\s*$/
+/** Une ligne d'encaissement telle qu'imprimée. */
+export type LigneReglement = {
+  /** Le libellé de la caisse, tel quel (« CARTE_TR ») */
+  libelle: string
+  mode: CleMode
+  /** Nombre d'encaissements de ce mode. null quand le relevé ne le donne pas. */
+  compteur: number | null
+  montant: number
+}
+
+export type BlocReglements = {
+  /** Montants par mode, dédoublonnés */
+  modes: Reglements
+  /** Compteurs par mode, quand le relevé les imprime */
+  compteurs: Partial<Record<CleMode, number>>
+  lignes: LigneReglement[]
+  total: number
+  /** Somme des compteurs, null si le relevé n'en imprime aucun */
+  nbEncaissements: number | null
+  /** true quand un « Total <n> <montant> € » du document retombe sur les deux */
+  totalConfirme: boolean
+  /** Nombre de lignes écartées parce qu'identiques à une déjà lue */
+  doublonsEcartes: number
+}
+
+/** Un libellé de caisse : lettres, chiffres, point, tiret bas, apostrophe.
+ *  Volontairement large — c'est le dictionnaire des modes qui tranche ensuite,
+ *  pas cette expression. */
+const RE_LIGNE_REGLEMENT = /^([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ0-9_.'’ -]{0,40}?)\s+([\d\s.,]+?)\s*€/
+
+const RE_TOTAL_COMPTE = /^total\s+(\d+)\s+([\d\s.,]+?)\s*€/i
+
+/**
+ * Sépare « 372 13980.83 » en compteur 372 et montant 13980.83.
+ *
+ * DEUX LECTURES POSSIBLES, ET ON NE DEVINE PAS LAQUELLE :
+ *   · `millesRecolles = false` — le dernier groupe est le montant, tout ce qui
+ *     précède est le compteur. C'est la lecture du relevé Crisalid observé :
+ *     « CHEQUE 1 984.70 € » = un chèque de 984,70 €.
+ *   · `millesRecolles = true` — les groupes de trois chiffres sont recollés au
+ *     précédent : « CARTE 372 13 980.83 € » = 372 encaissements pour
+ *     13 980,83 €. C'est la lecture d'un relevé qui sépare ses milliers.
+ *
+ * Les deux sont vraies, sur des documents différents, et AUCUN indice local ne
+ * les départage : « 1 984.70 » vaut 1 984,70 € ou bien 1 fois 984,70 €, et
+ * seule la ligne ne le dira jamais. C'est pourquoi `parseReglements` essaie les
+ * deux et laisse le TOTAL DU DOCUMENT arbitrer — l'arithmétique tranche, pas
+ * une préférence de l'auteur. Une première version recollait toujours les
+ * milliers et transformait « TRESTAU 20 181.00 € » en 20 181 € : vingt fois
+ * trop, sur un document réel.
+ */
+export function compteurEtMontant(
+  texte: string,
+  options?: { millesRecolles?: boolean },
+): { compteur: number | null; montant: number } {
+  const groupes = String(texte).trim().split(/\s+/).filter(Boolean)
+  if (groupes.length === 0) return { compteur: null, montant: NaN }
+  if (groupes.length === 1) return { compteur: null, montant: nombre(groupes[0]) }
+
+  let i = groupes.length - 1
+  let montantTexte = groupes[i]
+
+  if (options?.millesRecolles) {
+    while (i > 0 && /^\d{3}(?:[.,]\d+)?$/.test(montantTexte) && /^\d{1,3}$/.test(groupes[i - 1])) {
+      montantTexte = groupes[i - 1] + montantTexte
+      i--
+    }
+  }
+
+  const compteur = i > 0 ? premierEntier(groupes.slice(0, i).join(' ')) : null
+  return {
+    compteur: Number.isFinite(compteur as number) ? (compteur as number) : null,
+    montant: nombre(montantTexte),
+  }
+}
 
 export function modeDuLibelle(libelle: string): CleMode | null {
   const l = sansAccents(libelle).trim()
@@ -276,30 +414,99 @@ export function modeDuLibelle(libelle: string): CleMode | null {
   return null
 }
 
-/** Lit la ventilation par mode de règlement. Renvoie null si aucune ligne de
- *  règlement n'est reconnue — beaucoup de relevés n'impriment pas ce bloc, et
- *  ce n'est pas une anomalie. Les montants d'un même mode s'ADDITIONNENT :
- *  « Carte bancaire » et « CB sans contact » sont deux lignes du même mode. */
-export function parseReglements(lignes: string[]): Reglements | null {
-  const trouve: Reglements = {}
-  let uneAuMoins = false
+/**
+ * Lit le bloc des encaissements. Renvoie null quand aucune ligne n'est
+ * reconnue — tous les relevés n'impriment pas ce bloc, et ce n'est pas une
+ * anomalie.
+ *
+ * DÉDOUBLONNAGE : deux lignes de même libellé, même compteur et même montant
+ * sont la MÊME ligne imprimée deux fois par la mise en page. Deux
+ * encaissements réellement distincts du même mode seraient agrégés par la
+ * caisse dans une seule ligne avec son compteur — la caisse ne sort pas deux
+ * lignes « CARTE » pour la même période.
+ */
+export function parseReglements(lignes: string[]): BlocReglements | null {
+  // Les deux lectures possibles d'un « compteur montant », dans l'ordre où on
+  // les essaie. Celle qui retombe sur le total imprimé gagne ; si aucune ne
+  // retombe, on rend la première (avec totalConfirme à false) pour que l'écran
+  // puisse montrer ce qui a été lu et pourquoi ce n'est pas publié.
+  const essais = [false, true].map(millesRecolles => lireBloc(lignes, millesRecolles))
+  const confirme = essais.find(b => b && b.totalConfirme)
+  return confirme ?? essais[0]
+}
+
+function lireBloc(lignes: string[], millesRecolles: boolean): BlocReglements | null {
+  const vues = new Set<string>()
+  const retenues: LigneReglement[] = []
+  let doublons = 0
 
   for (const brute of lignes) {
     const ligne = brute.trim()
     const m = ligne.match(RE_LIGNE_REGLEMENT)
     if (!m) continue
 
-    const cle = modeDuLibelle(m[1])
-    if (!cle) continue
+    const libelle = m[1].trim()
+    const mode = modeDuLibelle(libelle)
+    if (!mode) continue
 
-    const montant = nombre(m[2])
+    const { compteur, montant } = compteurEtMontant(m[2], { millesRecolles })
     if (!Number.isFinite(montant)) continue
 
-    trouve[cle] = Math.round(((trouve[cle] ?? 0) + montant) * 100) / 100
-    uneAuMoins = true
+    const cle = `${sansAccents(libelle)}|${compteur ?? '-'}|${montant.toFixed(2)}`
+    if (vues.has(cle)) { doublons++; continue }
+    vues.add(cle)
+    retenues.push({ libelle, mode, compteur, montant })
   }
 
-  return uneAuMoins ? trouve : null
+  if (retenues.length === 0) return null
+
+  const modes: Reglements = {}
+  const compteurs: Partial<Record<CleMode, number>> = {}
+  let total = 0
+  let nb = 0
+  let auMoinsUnCompteur = false
+
+  for (const r of retenues) {
+    modes[r.mode] = Math.round(((modes[r.mode] ?? 0) + r.montant) * 100) / 100
+    total = Math.round((total + r.montant) * 100) / 100
+    if (r.compteur !== null) {
+      compteurs[r.mode] = (compteurs[r.mode] ?? 0) + r.compteur
+      nb += r.compteur
+      auMoinsUnCompteur = true
+    }
+  }
+
+  const nbEncaissements = auMoinsUnCompteur ? nb : null
+
+  // INVARIANT DE BON SENS : un mode encaissé N fois ne peut pas totaliser 0 €.
+  // C'est la signature exacte d'une mauvaise lecture du couple compteur/montant
+  // (« 12 000.00 » lu comme « 000.00 »), et elle se repère AVANT toute
+  // comparaison de totaux.
+  const lectureAbsurde = retenues.some(r => r.compteur !== null && r.compteur > 0 && !(r.montant > 0))
+
+  // Le total du document, reconnu par l'ARITHMÉTIQUE et non par sa position :
+  // les colonnes du relevé s'entremêlent, un total voisin n'est pas forcément
+  // celui du bloc. Le bon total est celui dont le compteur ET le montant
+  // retombent tous les deux sur les lignes lues.
+  let totalConfirme = false
+  for (const brute of lectureAbsurde ? [] : lignes) {
+    const m = brute.trim().match(RE_TOTAL_COMPTE)
+    if (!m) continue
+    const compteurAnnonce = parseInt(m[1], 10)
+    const { montant: montantAnnonce } = compteurEtMontant(m[2], { millesRecolles })
+    if (!Number.isFinite(montantAnnonce)) continue
+    // Le total doit être POSITIF des deux côtés. Sans cette borne, une lecture
+    // dégénérée se confirme elle-même : sur « CARTE 90 12 000.00 € », la lecture
+    // qui ne recolle pas les milliers lit « 000.00 » = 0 €, et le total lu de la
+    // même façon vaut 0 aussi. Zéro égale zéro, le compteur tombe juste, et une
+    // lecture entièrement fausse passait pour confirmée.
+    if (!(montantAnnonce > 0) || !(total > 0)) continue
+    const memeMontant = Math.abs(montantAnnonce - total) <= TOL_TOTAL_EUR
+    const memeCompteur = nbEncaissements === null || compteurAnnonce === nbEncaissements
+    if (memeMontant && memeCompteur) { totalConfirme = true; break }
+  }
+
+  return { modes, compteurs, lignes: retenues, total, nbEncaissements, totalConfirme, doublonsEcartes: doublons }
 }
 
 /** Somme d'une ventilation. */
@@ -326,7 +533,8 @@ export function lireFinancier(lignes: string[]): LectureFinancier {
     caTtc: null, nbTickets: null, panierMoyen: null,
     debut: null, fin: null, nbJours: null,
     reglements: null, reglementsLus: null,
-    ecartReglements: null, motifReglements: null,
+    encaisseTtc: null, nbEncaissements: null,
+    ecartCaEncaisse: null, bloc: null, motifReglements: null,
   }
 
   if (!estReleveFinancier(lignes)) return vide
@@ -349,28 +557,30 @@ export function lireFinancier(lignes: string[]): LectureFinancier {
   }
 
   const periode = parsePeriode(lignes)
-  const lus = parseReglements(lignes)
+  const bloc = parseReglements(lignes)
 
-  // Publication de la ventilation : elle doit retomber sur le CA net. Sinon
-  // c'est qu'une ligne a été manquée ou qu'un libellé a été pris pour un mode
-  // de règlement — dans les deux cas la répartition serait fausse, et une
-  // répartition fausse fabrique un solde de trésorerie faux.
+  // PUBLICATION DE LA VENTILATION — arbitrée par l'arithmétique du document,
+  // jamais par une comparaison au CA (cf. le long commentaire plus haut : les
+  // comptes clients font que l'encaissé est légitimement inférieur au CA).
   let reglements: Reglements | null = null
-  let ecart: number | null = null
+  let encaisse: number | null = null
   let motif: string | null = null
 
-  if (!lus) {
+  if (!bloc) {
     motif = 'ce relevé n’imprime pas le détail par mode de règlement'
-  } else if (!(ca > 0)) {
-    motif = 'CA net illisible : la ventilation ne peut pas être recoupée'
+  } else if (!bloc.totalConfirme) {
+    const attendu = bloc.nbEncaissements === null
+      ? `${bloc.total.toFixed(2)} €`
+      : `${bloc.nbEncaissements} encaissements pour ${bloc.total.toFixed(2)} €`
+    motif = `aucun total du relevé ne retombe sur les lignes lues (${attendu}) : la ventilation n’est pas publiée`
   } else {
-    ecart = Math.round((totalReglements(lus) - ca) * 100) / 100
-    if (Math.abs(ecart) <= TOL_REGLEMENTS_EUR) {
-      reglements = lus
-    } else {
-      motif = `la somme des règlements (${totalReglements(lus).toFixed(2)} €) ne retombe pas sur le CA net (${ca.toFixed(2)} €), écart ${ecart.toFixed(2)} €`
-    }
+    reglements = bloc.modes
+    encaisse = bloc.total
   }
+
+  const ecartCaEncaisse = (encaisse !== null && ca > 0)
+    ? Math.round((ca - encaisse) * 100) / 100
+    : null
 
   return {
     estFinancier: true,
@@ -381,8 +591,11 @@ export function lireFinancier(lignes: string[]): LectureFinancier {
     fin: periode.fin,
     nbJours: periode.nbJours,
     reglements,
-    reglementsLus: lus,
-    ecartReglements: ecart,
+    reglementsLus: bloc ? bloc.modes : null,
+    encaisseTtc: encaisse,
+    nbEncaissements: bloc ? bloc.nbEncaissements : null,
+    ecartCaEncaisse,
+    bloc,
     motifReglements: motif,
   }
 }

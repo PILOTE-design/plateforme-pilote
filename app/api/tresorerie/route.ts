@@ -107,9 +107,31 @@ export async function GET(req: Request) {
 
   // ── Les journées encaissées ─────────────────────────────────────────────
   const { lignes: releves, erreur: erreurReleves } = await lireFinanciers(service, clientId, debut, fin)
+  // L'ENCAISSÉ D'ABORD, LE CA SEULEMENT À DÉFAUT.
+  //
+  // Les deux diffèrent des comptes clients : sur le relevé S31 de la boucherie,
+  // 18 347,75 € de CA pour 17 456,55 € encaissés — 891,20 € vendus mais pas
+  // rentrés. Compter le CA dans une trésorerie ferait entrer un argent qui
+  // n'est pas là.
+  //
+  // Quand l'encaissé n'a pas pu être confirmé (ventilation non recoupée par le
+  // total du relevé), on retombe sur le CA plutôt que de perdre la journée —
+  // mais on COMPTE ces journées et on le dit : c'est une surestimation connue,
+  // pas une équivalence.
+  let journeesAuCa = 0
   const journees: JourneeEncaissee[] = releves
     .filter(r => r.nb_jours === 1)
-    .map(r => ({ jour: r.date_debut, caTtc: Number(r.ca_ttc) || 0, reglements: r.reglements }))
+    .map(r => {
+      const encaisse = r.encaisse_ttc === null || r.encaisse_ttc === undefined
+        ? null
+        : Number(r.encaisse_ttc)
+      if (encaisse === null || !Number.isFinite(encaisse)) journeesAuCa++
+      return {
+        jour: r.date_debut,
+        caTtc: encaisse !== null && Number.isFinite(encaisse) ? encaisse : (Number(r.ca_ttc) || 0),
+        reglements: r.reglements,
+      }
+    })
 
   // Un relevé multi-jours ne se répartit pas : on le compte à part, on le dit.
   const relevesMultiJours = releves.filter(r => r.nb_jours > 1)
@@ -154,5 +176,8 @@ export async function GET(req: Request) {
     // lecture tronquée n'est pas un total.
     lecture_incomplete: facturesPage.tronque || sansEcheancePage.tronque || Boolean(erreurReleves),
     releves_multi_jours: { nombre: relevesMultiJours.length, ca_ttc: caMultiJours },
+    // Journées comptées au CA faute d'encaissé confirmé : leur montant est
+    // SURESTIMÉ de ce qui est parti en compte client.
+    journees_au_ca: journeesAuCa,
   })
 }

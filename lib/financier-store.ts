@@ -50,7 +50,12 @@ export async function enregistrerFinancier(
     panier_moyen: lecture.panierMoyen,
     reglements: lecture.reglements,
     reglements_lus: lecture.reglementsLus,
-    ecart_reglements: lecture.ecartReglements,
+    // L'ENCAISSÉ, distinct du CA : c'est lui que lit la trésorerie. NULL tant
+    // que le total imprimé du relevé n'a pas confirmé la ventilation.
+    encaisse_ttc: lecture.encaisseTtc,
+    nb_encaissements: lecture.nbEncaissements,
+    ecart_ca_encaisse: lecture.ecartCaEncaisse,
+    ecart_reglements: lecture.ecartCaEncaisse,
     motif_reglements: lecture.motifReglements,
     source: options.source,
     file_path: options.filePath ?? null,
@@ -69,8 +74,9 @@ export async function enregistrerFinancier(
   const periode = lecture.nbJours === 1
     ? `journée du ${lecture.debut}`
     : `période du ${lecture.debut} au ${lecture.fin} (${lecture.nbJours} jours)`
-  const ventilation = lecture.reglements
-    ? `règlements ventilés (${Object.keys(lecture.reglements).length} modes)`
+  const ventilation = lecture.reglements && lecture.encaisseTtc !== null
+    ? `${lecture.encaisseTtc.toFixed(2)} € encaissés sur ${Object.keys(lecture.reglements).length} modes`
+      + (lecture.ecartCaEncaisse ? `, dont ${lecture.ecartCaEncaisse.toFixed(2)} € portés en compte client` : '')
     : `sans ventilation publiable — ${lecture.motifReglements ?? 'motif inconnu'}`
 
   return {
@@ -91,6 +97,9 @@ export type LigneFinancier = {
   panier_moyen: number | null
   reglements: Record<string, number> | null
   reglements_lus: Record<string, number> | null
+  encaisse_ttc: number | null
+  nb_encaissements: number | null
+  ecart_ca_encaisse: number | null
   ecart_reglements: number | null
   motif_reglements: string | null
   source: string
