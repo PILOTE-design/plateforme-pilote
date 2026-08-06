@@ -12,6 +12,7 @@
 
 import { getWeekDates, entryHours, entryBrutCost, chargeMultiplier, type PayrollEmployee, type PayrollEntry } from '@/lib/payroll'
 import { TYPES_CONTRAT } from '@/lib/contrat'
+import { RAYONS, TEINTES_PERSONNALISEES } from '@/lib/rayons'
 
 /** Le récapitulatif d'une ligne de la grille — calculé une fois, lu partout. */
 export type StatLigne = {
@@ -43,25 +44,23 @@ export type ScheduleDetails = Partial<Record<JourDB, ScheduleDetail>>
 
 export type PosteDef = { key: string; short: string; abbr: string; color: string }
 
-export const CATEGORIES: PosteDef[] = [
-  { key: 'boucherie',     short: 'Boucherie',     abbr: 'Bouch.', color: 'bg-red-100 text-red-700'        },
-  { key: 'charcuterie',   short: 'Charcuterie',   abbr: 'Charc.', color: 'bg-orange-100 text-orange-700'  },
-  { key: 'traiteur',      short: 'Traiteur',      abbr: 'Trait.', color: 'bg-emerald-100 text-emerald-700' },
-  { key: 'vente',         short: 'Vente',         abbr: 'Vente',  color: 'bg-sky-100 text-sky-700'        },
-  { key: 'administratif', short: 'Administratif', abbr: 'Admin.', color: 'bg-slate-100 text-slate-700'    },
-  { key: 'livraison',     short: 'Livraison',     abbr: 'Livr.',  color: 'bg-indigo-100 text-indigo-700'  },
-]
+// Les couleurs viennent de lib/rayons. Elles étaient définies ICI **et** dans
+// la facturation, avec deux valeurs différentes : la boucherie était
+// `bg-red-100` d'un côté, `bg-red-50` de l'autre, et le point du camembert
+// `#b91c1c`. Le même métier changeait d'apparence selon l'écran.
+//
+// Les teintes de Tailwind employées jusqu'ici tombaient par ailleurs sous le
+// seuil lisible dès qu'elles portaient un libellé : `text-red-700` sur
+// `bg-red-100` passe, mais rien ne le garantissait — personne ne l'avait
+// mesuré. Celles de lib/rayons sont toutes vérifiées au-dessus de 4,5:1.
+export const CATEGORIES: PosteDef[] = RAYONS
+  .filter(r => r.cle !== 'divers')
+  .map(r => ({ key: r.cle, short: r.label, abbr: r.abrege, color: r.pastille }))
 
-// Couleurs des postes PERSONNALISÉS du client (classes littérales : Tailwind ne
-// compile que ce qu'il voit dans le source). Attribution cyclique par index.
-export const CUSTOM_POSTE_COLORS = [
-  'bg-teal-100 text-teal-700',
-  'bg-pink-100 text-pink-700',
-  'bg-violet-100 text-violet-700',
-  'bg-cyan-100 text-cyan-700',
-  'bg-lime-100 text-lime-700',
-  'bg-fuchsia-100 text-fuchsia-700',
-]
+// Couleurs des postes PERSONNALISÉS du client — même source, même garantie de
+// lisibilité. Attribution cyclique par index, donc stable dans le temps : la
+// couleur d'un poste ne change jamais une fois qu'il est créé.
+export const CUSTOM_POSTE_COLORS = TEINTES_PERSONNALISEES.map(t => t.pastille)
 
 /** Abréviation d'un libellé de poste personnalisé pour les badges compacts */
 export function abbrOf(label: string): string {

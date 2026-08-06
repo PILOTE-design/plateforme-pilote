@@ -438,16 +438,18 @@ export default async function DashboardPage() {
               </CardContent>
             </Card>
 
-            <Card className="hover:shadow-card-hover transition-shadow">
-              <CardContent className="p-4">
-                <div className="flex items-center gap-2 mb-2">
-                  <TrendingUp className="w-3.5 h-3.5 text-pilote flex-shrink-0" />
-                  <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Marge sur coût direct</p>
-                </div>
-                <p className={`text-xl font-extrabold tracking-tight tabular ${caHT > 0 && margeCoutDirect < 0 ? 'text-red-600' : 'text-gray-900'}`}>{caHT > 0 ? `${fmt(margeCoutDirect)} €` : '—'}</p>
-                <p className="text-xs text-gray-400 mt-1 tabular">MB − masse salariale{tauxCoutDirect !== null ? ` · ${tauxCoutDirect.toFixed(1)} %` : ''}</p>
-              </CardContent>
-            </Card>
+            {/* LA BOUSSOLE de la semaine, en navy plein. Six tuiles jumelles
+                ne disaient pas laquelle regarder : celle-ci est le chiffre qui
+                décide — ce qui reste une fois la matière et les salaires payés.
+                Un fond plein, et le regard la trouve sans chercher. */}
+            <div className="rounded-2xl bg-pilote p-4 shadow-card">
+              <div className="mb-2 flex items-center gap-2">
+                <TrendingUp className="w-3.5 h-3.5 flex-shrink-0 text-pilote-200" />
+                <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-pilote-200">Marge sur coût direct</p>
+              </div>
+              <p className={`text-2xl font-extrabold tracking-tight tabular ${caHT > 0 && margeCoutDirect < 0 ? 'text-orange-300' : 'text-white'}`}>{caHT > 0 ? `${fmt(margeCoutDirect)} €` : '—'}</p>
+              <p className="mt-1 text-[11px] text-pilote-200 tabular">MB − masse salariale{tauxCoutDirect !== null ? ` · ${tauxCoutDirect.toFixed(1)} %` : ''}</p>
+            </div>
 
             <Card className="hover:shadow-card-hover transition-shadow">
               <CardContent className="p-4">

@@ -74,6 +74,7 @@ type LectureAbandonnee = PendingInvoice & {
 
 import { useMercuriale } from './etat'
 import { VuesMercuriale } from './vues'
+import { TuileRoi, Tuile, TuileAlerte } from '@/components/ui/da'
 
 export default function MercurialePage() {
   const f = useMercuriale()
@@ -127,34 +128,38 @@ export default function MercurialePage() {
         </div>
       )}
 
-      {/* KPIs — trois chiffres, trois réponses : qu'est-ce que je suis, ai-je
-          du travail, mes coûts bougent-ils. La tuile « À traiter » CONDUIT à
-          l'onglet du même nom : le chiffre et le geste ne font qu'un. */}
-      <div className="grid grid-cols-3 gap-4 mb-6">
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-card p-5">
-          <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Produits suivis</p>
-          <p className="text-2xl font-extrabold tracking-tight text-gray-900 tabular">{generics.length}</p>
-          <p className="text-[11px] text-gray-400 mt-0.5">{refsAssociees} réf{refsAssociees > 1 ? 's' : ''} fournisseur rattachée{refsAssociees > 1 ? 's' : ''}</p>
-        </div>
-        <button onClick={() => setView('traiter')}
-          className={`text-left bg-white rounded-2xl border shadow-card p-5 transition-all hover:shadow-card-hover ${view === 'traiter' ? 'border-pilote-200 ring-2 ring-pilote-200' : 'border-gray-100'}`}>
-          <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">À traiter</p>
-          <p className={`text-2xl font-extrabold tracking-tight tabular ${aTraiterTotal > 0 ? 'text-amber-600' : 'text-gray-900'}`}>{aTraiterTotal}</p>
-          <p className="text-[11px] text-gray-400 mt-0.5">{aTraiterTotal > 0 ? 'cliquer pour tout régler au même endroit' : 'rien en attente — tout est à jour'}</p>
-        </button>
-        {hausses > 0 ? (
-          <button onClick={() => { setHausseFilter(v => !v); setView('prix') }}
-            className={`text-left bg-white rounded-2xl border shadow-card p-5 transition-all hover:shadow-card-hover ${hausseFilter ? 'border-pilote-200 ring-2 ring-pilote-200' : 'border-gray-100'}`}>
-            <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Prix en hausse</p>
-            <p className="text-2xl font-extrabold tracking-tight tabular text-red-600">{hausses}</p>
-            <p className="text-[11px] text-gray-400 mt-0.5">{hausseFilter ? 'filtre actif — cliquer pour tout revoir' : 'cliquer pour ne voir que les hausses'}</p>
+      {/* ── TROIS CHIFFRES, TROIS RÉPONSES ──────────────────────────────
+          Qu'est-ce que je suis, ai-je du travail, mes coûts bougent-ils.
+          Trois tuiles jumelles ne disaient pas laquelle regarder en premier.
+          Le catalogue est ce que cet écran EST : il passe en navy. « À traiter »
+          prend l'orange quand il y a du travail — et seulement là : quand tout
+          est à jour, l'orange disparaît, et cette absence est une information. */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+        <TuileRoi
+          label="Produits suivis"
+          valeur={generics.length}
+          detail={`${refsAssociees} réf${refsAssociees > 1 ? 's' : ''} fournisseur rattachée${refsAssociees > 1 ? 's' : ''}`}
+        />
+        {aTraiterTotal > 0 ? (
+          <button type="button" onClick={() => setView('traiter')} className="text-left">
+            <TuileAlerte
+              label="À traiter"
+              valeur={aTraiterTotal}
+              action="Tout régler au même endroit"
+            />
           </button>
         ) : (
-          <div className="bg-white rounded-2xl border border-gray-100 shadow-card p-5">
-            <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Prix en hausse</p>
-            <p className="text-2xl font-extrabold tracking-tight tabular text-gray-900">0</p>
-            <p className="text-[11px] text-gray-400 mt-0.5">aucune hausse en cours</p>
-          </div>
+          <Tuile label="À traiter" valeur={0} detail="rien en attente — tout est à jour" />
+        )}
+        {hausses > 0 ? (
+          <button onClick={() => { setHausseFilter(v => !v); setView('prix') }}
+            className={`text-left rounded-2xl border bg-white p-5 shadow-card transition-all hover:shadow-card-hover ${hausseFilter ? 'border-pilote-200 ring-2 ring-pilote-200' : 'border-gray-100'}`}>
+            <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-encre-faible">Prix en hausse</p>
+            <p className="mt-0.5 text-2xl font-extrabold tracking-tight tabular text-etat-perte">▲ {hausses}</p>
+            <p className="mt-1 text-[11px] text-encre-faible">{hausseFilter ? 'filtre actif — cliquer pour tout revoir' : 'cliquer pour ne voir que les hausses'}</p>
+          </button>
+        ) : (
+          <Tuile label="Prix en hausse" valeur={0} detail="aucune hausse en cours" />
         )}
       </div>
 

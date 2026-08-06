@@ -752,10 +752,19 @@ export default function PlanningPage() {
             ))}
           </div>
         )}
-        <div className="ml-auto flex items-center gap-4 text-xs text-gray-400">
-          <span><span className="font-semibold text-gray-700">{fmtH(grandH)}</span> total</span>
-          <span><span className="font-semibold text-green-700">{grandCost.toFixed(0)} €</span> brut</span>
-          <span title="Brut + charges patronales"><span className="font-semibold text-gray-800">{grandCharged.toFixed(0)} €</span> chargé</span>
+        {/* Trois totaux de même poids ne disaient pas lequel décide. Le brut
+            était même en VERT : un coût peint de la couleur d'un gain. Le
+            chiffre qui compte est le coût CHARGÉ — ce que la semaine sort
+            réellement de la caisse —, il passe donc en navy plein ; les deux
+            autres restent ce qu'ils sont, des détails de composition. */}
+        <div className="ml-auto flex items-center gap-3 text-xs text-encre-faible">
+          <span><span className="font-semibold text-encre tabular">{fmtH(grandH)}</span> total</span>
+          <span><span className="font-semibold text-encre tabular">{grandCost.toFixed(0)} €</span> brut</span>
+          <span title="Brut + charges patronales — le coût réel de la semaine"
+            className="inline-flex items-baseline gap-1.5 rounded-full bg-pilote px-3 py-1 text-white">
+            <span className="font-extrabold tabular">{grandCharged.toFixed(0)} €</span>
+            <span className="text-[10px] font-semibold uppercase tracking-[0.1em] text-pilote-200">chargé</span>
+          </span>
         </div>
       </div>
 
