@@ -51,9 +51,15 @@ export async function GET(req: Request) {
   if (!generic) return NextResponse.json({ error: 'Article introuvable' }, { status: 404 })
   const base: 'kg' | 'piece' = generic.base_unit === 'piece' ? 'piece' : 'kg'
 
-  const { data: refs } = await service.from('articles')
-    .select('id, name, unit, conversion_factor')
-    .eq('client_id', clientId).eq('generic_id', genericId)
+  // Paginée : un générique très fréquenté peut porter des centaines de réfs.
+  const refsPage = await fetchAllPages<any>(apres => {
+    let q = service.from('articles')
+      .select('id, name, unit, conversion_factor')
+      .eq('client_id', clientId).eq('generic_id', genericId)
+    if (apres) q = q.gt('id', apres)
+    return q.order('id', { ascending: true })
+  })
+  const refs = refsPage.rows
 
   // Par réf : le facteur de conversion vers l'unité de base, et le marqueur
   // « écartée » (unité incompatible sans facteur) — même règle que le prix du
