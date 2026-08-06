@@ -121,8 +121,6 @@ export default function PaiePage() {
 
   return (
     <div className="space-y-6">
-      <OngletsPlanning />
-
       {/* ─── En-tête ─────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
@@ -176,6 +174,11 @@ export default function PaiePage() {
         )}
 
       </div>
+
+      {/* La rangée d'onglets, à la même hauteur que celle de la grille du
+          planning : « Employés · Postes · Préparation des payes » là-bas,
+          « Planning · Préparation des payes » ici. */}
+      <OngletsPlanning />
 
       {/* ─── Les réserves ────────────────────────────────────────────── */}
       {rapport && rapport.avertissements.length > 0 && (
