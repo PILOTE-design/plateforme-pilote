@@ -90,6 +90,14 @@ export const REPARATION_MAX_EUR = 100000
 
 const r2 = (n: number) => Math.round(n * 100) / 100
 
+/** Un montant tel qu'on l'écrit PARTOUT dans PILOTE : virgule décimale, espace
+ *  de milliers. C'est la troisième fois de la session qu'un `toFixed(2)` sort
+ *  « 961.40 € » au milieu d'une phrase française — après le solde de trésorerie
+ *  et le motif d'échec de l'import. Le réflexe à prendre : dès qu'un montant
+ *  entre dans une phrase destinée à l'écran, il passe par ici. */
+const eur = (n: number) =>
+  n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'
+
 export function somme(lignes: LigneLecture[]): number {
   return r2(lignes.reduce((s, l) => s + (Number(l.amount_ht) || 0), 0))
 }
@@ -196,7 +204,7 @@ export function reparer(lignes: LigneLecture[], texte: string, total: number): V
     return { repare: false, motif: 'la lecture bouclait déjà', candidates: 0 }
   }
   if (Math.abs(ecart) > REPARATION_MAX_EUR) {
-    return { repare: false, motif: `écart de ${Math.abs(ecart).toFixed(2)} € : trop large pour une ligne oubliée`, candidates: 0 }
+    return { repare: false, motif: `écart de ${eur(Math.abs(ecart))} : trop large pour une ligne oubliée`, candidates: 0 }
   }
 
   const montants = montantsDuTexte(texte)
@@ -229,7 +237,7 @@ export function reparer(lignes: LigneLecture[], texte: string, total: number): V
         nature: 'ligne_oubliee',
         cout: 1,
         lignes: [...lignes, ajout],
-        detail: `ligne oubliée récupérée dans le document : « ${ajout.designation} » pour ${ajout.amount_ht.toFixed(2)} €`,
+        detail: `ligne oubliée récupérée dans le document : « ${ajout.designation} » pour ${eur(ajout.amount_ht)}`,
       })
     }
   }
@@ -248,7 +256,7 @@ export function reparer(lignes: LigneLecture[], texte: string, total: number): V
         nature: 'doublon_retire',
         cout: 1,
         lignes: lignes.filter((_, j) => j !== i),
-        detail: `ligne comptée deux fois retirée : « ${lignes[i].designation} » pour ${v.toFixed(2)} €`,
+        detail: `ligne comptée deux fois retirée : « ${lignes[i].designation} » pour ${eur(v)}`,
       })
     }
   }
@@ -270,7 +278,7 @@ export function reparer(lignes: LigneLecture[], texte: string, total: number): V
         nature: 'montant_corrige',
         cout: 1,
         lignes: lignes.map((l, j) => j === i ? { ...l, amount_ht: r2(trouve.valeur) } : l),
-        detail: `montant repris sur le document : « ${lignes[i].designation} » passe de ${v.toFixed(2)} € à ${trouve.valeur.toFixed(2)} €`,
+        detail: `montant repris sur le document : « ${lignes[i].designation} » passe de ${eur(v)} à ${eur(trouve.valeur)}`,
       })
     }
   }
@@ -294,7 +302,7 @@ export function reparer(lignes: LigneLecture[], texte: string, total: number): V
           nature: 'lignes_oubliees',
           cout: 2,
           lignes: [...lignes, a, b],
-          detail: `deux lignes oubliées récupérées : « ${a.designation} » (${a.amount_ht.toFixed(2)} €) et « ${b.designation} » (${b.amount_ht.toFixed(2)} €)`,
+          detail: `deux lignes oubliées récupérées : « ${a.designation} » (${eur(a.amount_ht)}) et « ${b.designation} » (${eur(b.amount_ht)})`,
         })
       }
     }
@@ -308,8 +316,8 @@ export function reparer(lignes: LigneLecture[], texte: string, total: number): V
     return {
       repare: false,
       motif: manque
-        ? `il manque ${cible.toFixed(2)} € et aucun montant du document n’explique cet écart`
-        : `il y a ${cible.toFixed(2)} € en trop et aucune ligne en double n’explique cet écart`,
+        ? `il manque ${eur(cible)} et aucun montant du document n’explique cet écart`
+        : `il y a ${eur(cible)} en trop et aucune ligne en double n’explique cet écart`,
       candidates: 0,
     }
   }
