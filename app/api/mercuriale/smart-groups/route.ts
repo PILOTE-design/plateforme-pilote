@@ -11,6 +11,7 @@ import { NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { resolveClientId } from '@/lib/resolve-client-id'
 import Anthropic from '@anthropic-ai/sdk'
+import { fetchAllPages } from '@/lib/fetch-all'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -25,11 +26,23 @@ export async function POST() {
   const clientId = await resolveClientId(service, user.id, user.email)
   if (!clientId) return NextResponse.json({ error: 'Client introuvable' }, { status: 404 })
 
-  const { data: generics, error } = await service.from('generic_articles')
-    .select('id, name, base_unit')
-    .eq('client_id', clientId).eq('active', true)
-    .order('name')
-    .limit(300)
+  // Le rapprochement passe par un modèle de langage : la liste doit tenir dans
+  // une invite, il y a donc bel et bien un plafond. Ce qui n'allait pas, c'est
+  // qu'il soit MUET — au-delà de 300 génériques, le boucher lançait le
+  // rapprochement, obtenait peu de suggestions, et n'avait aucun moyen de savoir
+  // que les trois quarts de son catalogue n'avaient pas été regardés.
+  const PLAFOND_ANALYSE = 800
+  const page = await fetchAllPages<any>(apres => {
+    let q = service.from('generic_articles')
+      .select('id, name, base_unit')
+      .eq('client_id', clientId).eq('active', true)
+    if (apres) q = q.gt('id', apres)
+    return q.order('id', { ascending: true })
+  })
+  const error = page.erreur ? { message: page.erreur } : null
+  const tous = [...page.rows].sort((a, b) => String(a?.name ?? '').localeCompare(String(b?.name ?? ''), 'fr'))
+  const generics = tous.slice(0, PLAFOND_ANALYSE)
+  const nonAnalyses = Math.max(0, tous.length - generics.length)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   const list = generics || []
   if (list.length < 2) return NextResponse.json({ suggestions: [] })
@@ -85,5 +98,12 @@ Un groupe = 2 numeros minimum. Aucun regroupement pertinent : réponds exactemen
     if (suggestions.length >= 20) break
   }
 
-  return NextResponse.json({ suggestions })
+  return NextResponse.json({
+    suggestions,
+    // Ce que l'analyse n'a PAS regardé. Zéro dans l'immense majorité des cas ;
+    // au-delà, l'écran doit le dire plutôt que laisser croire à un catalogue
+    // propre.
+    non_analyses: nonAnalyses || undefined,
+    analyses: generics.length,
+  })
 }

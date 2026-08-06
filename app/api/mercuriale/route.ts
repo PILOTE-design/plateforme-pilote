@@ -76,11 +76,20 @@ export async function GET() {
   // qui n'apparaissaient nulle part dans la réponse. Le tri se termine par une
   // colonne unique (`id`) pour que deux pages ne se recouvrent ni ne s'omettent
   // quand deux lignes partagent la même date.
-  const [{ data: generics }, refsPage, pointsPage, pendingPage] = await Promise.all([
-    service.from('generic_articles')
-      .select('id, name, base_unit, category, default_loss_pct, auto_created, valorisation_cut_id')
-      .eq('client_id', clientId).eq('active', true)
-      .order('name'),
+  const [genericsPage, refsPage, pointsPage, pendingPage] = await Promise.all([
+    // LE CATALOGUE. C'est la lecture que le commentaire ci-dessus disait paginée
+    // et qui ne l'était pas : au-delà de 1000 génériques actifs, PostgREST
+    // coupait sans le dire. Le catalogue perdait des lignes, les suggestions
+    // d'association disparaissaient pour les clés absentes, et rien à l'écran ne
+    // signalait quoi que ce soit. Le tri par nom se fait après lecture — la
+    // pagination par curseur exige un tri par `id`.
+    fetchAllPages<any>(apres => {
+      let q = service.from('generic_articles')
+        .select('id, name, base_unit, category, default_loss_pct, auto_created, valorisation_cut_id')
+        .eq('client_id', clientId).eq('active', true)
+      if (apres) q = q.gt('id', apres)
+      return q.order('id', { ascending: true })
+    }),
     fetchAllPages<any>(apres => {
       let q = service.from('articles')
         .select('id, name, unit, supplier_name, article_code, last_price_ht, last_price_date, price_count, generic_id, conversion_factor, ignored, updated_at, blocked_price_ht, blocked_at')
@@ -172,19 +181,37 @@ export async function GET() {
 
   // Fiches recettes utilisatrices — pour « utilisé dans N fiches » et l'impact
   // d'un mouvement de prix (Δprix × quantité brute). Lignes génériques seulement.
-  const [{ data: recipesRows }, { data: recipeIngs }] = await Promise.all([
-    service.from('recipes')
-      .select('id, name, yield_qty, yield_unit')
-      .eq('client_id', clientId).eq('active', true),
-    service.from('recipe_ingredients')
-      .select('recipe_id, generic_id, quantity, qty_unit, loss_pct')
-      .eq('client_id', clientId)
-      .not('generic_id', 'is', null),
+  // Paginées elles aussi : une boutique qui tient beaucoup de fiches dépasse
+  // mille ingrédients sans s'en rendre compte, et « utilisé dans N fiches »
+  // devenait alors faux dans le sens rassurant — on croit qu'un produit ne sert
+  // nulle part alors qu'il est au cœur de dix fiches.
+  const [recipesPage, ingsPage] = await Promise.all([
+    fetchAllPages<any>(apres => {
+      let q = service.from('recipes')
+        .select('id, name, yield_qty, yield_unit')
+        .eq('client_id', clientId).eq('active', true)
+      if (apres) q = q.gt('id', apres)
+      return q.order('id', { ascending: true })
+    }),
+    fetchAllPages<any>(apres => {
+      let q = service.from('recipe_ingredients')
+        .select('id, recipe_id, generic_id, quantity, qty_unit, loss_pct')
+        .eq('client_id', clientId)
+        .not('generic_id', 'is', null)
+      if (apres) q = q.gt('id', apres)
+      return q.order('id', { ascending: true })
+    }),
   ])
+  const recipesRows = recipesPage.rows
+  const recipeIngs = ingsPage.rows
 
   // Lignes en QUARANTAINE par réf : un prix a été lu sur la facture mais refusé
   // par les garde-fous. C'est une cause d'absence de prix radicalement différente
   // de « jamais facturé », et le boucher doit pouvoir les distinguer.
+  // Le tri alphabétique, rendu après la lecture complète.
+  const generics = [...genericsPage.rows].sort(
+    (a: any, b: any) => String(a?.name ?? '').localeCompare(String(b?.name ?? ''), 'fr'))
+
   const quarantainePage = await fetchAllPages<any>(apres => {
     let q = service.from('invoice_lines')
       .select('id, article_id')
@@ -580,10 +607,13 @@ export async function GET() {
   // erreur Supabase, l'écran doit le dire — un catalogue amputé en silence se
   // lit exactement comme un catalogue complet.
   const incomplet = [
+    genericsPage.tronque ? 'le catalogue' : null,
     refsPage.tronque ? 'les réfs fournisseurs' : null,
     pointsPage.tronque ? 'l’historique des prix' : null,
     quarantainePage.tronque ? 'les prix en quarantaine' : null,
     pendingPage.tronque ? 'la file de lecture' : null,
+    recipesPage.tronque ? 'les fiches recettes' : null,
+    ingsPage.tronque ? 'les ingrédients des fiches' : null,
   ].filter((x): x is string => x !== null)
   const erreurLecture = refsPage.erreur ?? pointsPage.erreur ?? quarantainePage.erreur ?? pendingPage.erreur
 

@@ -19,6 +19,7 @@
 
 import { normText } from '@/lib/postes'
 import type { createServiceClient } from '@/lib/supabase/server'
+import { fetchAllPages } from '@/lib/fetch-all'
 
 type ServiceClient = ReturnType<typeof createServiceClient>
 
@@ -113,12 +114,38 @@ export function titleize(name: string): string {
  * bloquantes : la réf reste alors simplement dans la file.
  */
 export async function ensureAutoGenerics(service: ServiceClient, clientId: string): Promise<void> {
-  const [{ data: generics, error: gErr }, { data: freeRefs, error: aErr }] = await Promise.all([
-    service.from('generic_articles').select('id, name').eq('client_id', clientId).eq('active', true),
-    service.from('articles').select('id, name, unit').eq('client_id', clientId).is('generic_id', null).eq('no_auto', false).eq('ignored', false),
+  // ── PAGINÉES. C'était le défaut le plus grave du module ──────────────────
+  //
+  // Ces deux lectures n'avaient ni `.limit()` ni pagination : PostgREST rendait
+  // 1000 lignes et se taisait. Au-delà de mille génériques, `genericKeys` était
+  // donc INCOMPLET — le test « cette clé est déjà prise » (plus bas) laissait
+  // passer des clés existantes, l'insertion groupée heurtait l'index unique
+  // (client_id, name_key), et la fonction sortait sur son `return` d'erreur.
+  //
+  // Autrement dit : passé un certain nombre de produits référencés,
+  // l'association automatique s'arrêtait ENTIÈREMENT, d'un coup, sans que rien
+  // ne l'annonce. Les réfs restaient toutes en file manuelle.
+  const [gPage, aPage] = await Promise.all([
+    fetchAllPages<any>(apres => {
+      let q = service.from('generic_articles').select('id, name')
+        .eq('client_id', clientId).eq('active', true)
+      if (apres) q = q.gt('id', apres)
+      return q.order('id', { ascending: true })
+    }),
+    fetchAllPages<any>(apres => {
+      let q = service.from('articles').select('id, name, unit')
+        .eq('client_id', clientId).is('generic_id', null).eq('no_auto', false).eq('ignored', false)
+      if (apres) q = q.gt('id', apres)
+      return q.order('id', { ascending: true })
+    }),
   ])
-  if (gErr || aErr) { console.error('[mercuriale auto] lecture', gErr?.message || aErr?.message); return }
-  if (!freeRefs || freeRefs.length === 0) return
+  if (gPage.erreur || aPage.erreur) { console.error('[mercuriale auto] lecture', gPage.erreur || aPage.erreur); return }
+  // Un catalogue lu à moitié ferait créer des génériques qui existent déjà :
+  // mieux vaut ne rien créer ce tour-ci que doublonner le référentiel.
+  if (gPage.tronque) { console.error('[mercuriale auto] catalogue tronqué — création suspendue'); return }
+  const generics = gPage.rows
+  const freeRefs = aPage.rows
+  if (freeRefs.length === 0) return
 
   const genericKeys = new Set((generics || []).map(g => stemKey(String(g.name))))
   const genericIdByNameKey = new Map((generics || []).map(g => [normText(String(g.name)), String(g.id)]))

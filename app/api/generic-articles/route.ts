@@ -8,6 +8,7 @@ import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { resolveClientId } from '@/lib/resolve-client-id'
 import { isAdminEmail } from '@/lib/admins'
 import { normText } from '@/lib/postes'
+import { fetchAllPages } from '@/lib/fetch-all'
 
 export const dynamic = 'force-dynamic'
 
@@ -37,12 +38,19 @@ export async function GET(request: NextRequest) {
   if ('error' in auth) return auth.error
   const { service, clientId } = auth
 
-  const { data, error } = await service.from('generic_articles')
-    .select('id, name, base_unit, category, default_loss_pct')
-    .eq('client_id', clientId).eq('active', true)
-    .order('name')
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ generics: data || [] })
+  // Paginée : ce référentiel alimente les listes de choix des fiches recettes.
+  // Tronqué à mille sans le dire, il faisait « disparaître » des produits d'un
+  // menu déroulant — le boucher les cherchait, ils n'y étaient plus.
+  const page = await fetchAllPages<any>(apres => {
+    let q = service.from('generic_articles')
+      .select('id, name, base_unit, category, default_loss_pct')
+      .eq('client_id', clientId).eq('active', true)
+    if (apres) q = q.gt('id', apres)
+    return q.order('id', { ascending: true })
+  })
+  if (page.erreur) return NextResponse.json({ error: page.erreur }, { status: 500 })
+  const data = [...page.rows].sort((a, b) => String(a?.name ?? '').localeCompare(String(b?.name ?? ''), 'fr'))
+  return NextResponse.json({ generics: data, lecture_incomplete: page.tronque || undefined })
 }
 
 export async function POST(request: NextRequest) {

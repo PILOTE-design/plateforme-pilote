@@ -39,6 +39,7 @@ import { PERIODE_LUE } from '@/lib/charges-fixes'
 import { compteurApres } from '@/lib/lecture-file'
 import { dernierPrix, memePrix } from '@/lib/article-price'
 import { cleCodeArticle } from '@/lib/article-code'
+import { fetchAllPages } from '@/lib/fetch-all'
 
 // Jusqu'à trois passes de lecture pour une facture qui résiste (texte, reprise,
 // image) : 60 s n'y suffisent plus. 300 s est le plafond réel de la plateforme,
@@ -88,16 +89,34 @@ async function recalerArticles(service: Service, clientId: string, ids: (string 
     // change selon la façon dont PostgREST la résout (objet ou tableau), et une
     // erreur de jointure serait avalée par le `catch` — c'est-à-dire qu'un prix
     // resterait silencieusement en arrière, exactement le défaut qu'on corrige.
-    const { data: lignes, error: errLignes } = await service.from('invoice_lines')
-      .select('article_id, unit_price_ht, invoice_id, created_at')
-      .eq('client_id', clientId).in('article_id', uniques)
-    if (errLignes) throw new Error(`lecture des points de prix : ${errLignes.message}`)
+    // Par PAQUETS d'identifiants et PAGINÉE. Deux plafonds muets se cumulaient
+    // ici : PostgREST met les valeurs d'un `in` dans l'URL (au-delà de quelques
+    // centaines de réfs, la requête devient trop longue) et rend au plus mille
+    // lignes. Or c'est le SEUL endroit du projet qui écrit `last_price_ht` :
+    // au-delà de mille points de prix, le « dernier prix » du catalogue était
+    // calculé sur un sous-ensemble arbitraire, et donc faux sans le dire.
+    const LOT_IDS = 150
+    const lignes: Array<{ article_id: string | null; unit_price_ht: number | string | null; invoice_id: string | null; created_at: string | null }> = []
+    for (let i = 0; i < uniques.length; i += LOT_IDS) {
+      const lot = uniques.slice(i, i + LOT_IDS)
+      const page = await fetchAllPages<any>(apres => {
+        let q = service.from('invoice_lines')
+          .select('id, article_id, unit_price_ht, invoice_id, created_at')
+          .eq('client_id', clientId).in('article_id', lot)
+        if (apres) q = q.gt('id', apres)
+        return q.order('id', { ascending: true })
+      })
+      if (page.erreur) throw new Error(`lecture des points de prix : ${page.erreur}`)
+      if (page.tronque) throw new Error(`lecture des points de prix : lot tronqué, recalage abandonné`)
+      lignes.push(...page.rows)
+    }
 
     const factureIds = [...new Set((lignes || []).map(l => l.invoice_id).filter(Boolean) as string[])]
     const dateDe = new Map<string, string | null>()
-    if (factureIds.length) {
+    for (let i = 0; i < factureIds.length; i += LOT_IDS) {
+      const lot = factureIds.slice(i, i + LOT_IDS)
       const { data: facs, error: errFacs } = await service.from('invoices')
-        .select('id, invoice_date').eq('client_id', clientId).in('id', factureIds)
+        .select('id, invoice_date').eq('client_id', clientId).in('id', lot)
       if (errFacs) throw new Error(`lecture des dates de facture : ${errFacs.message}`)
       for (const f of facs || []) dateDe.set(String(f.id), f.invoice_date ?? null)
     }
@@ -298,9 +317,26 @@ export async function POST(request: NextRequest) {
 
       // 4. Rattachement aux articles — par code fournisseur, sinon libellé normalisé.
       const supplierKey = normalizeSupplierName(supplierSociete(invoice.supplier_name || '')) || ''
-      const { data: existing } = await service.from('articles')
-        .select('id, article_code, name_key, last_price_date, price_count')
-        .eq('client_id', clientId).eq('supplier_key', supplierKey)
+      // PAGINÉE. Sans ça, au-delà de mille réfs chez un même fournisseur, les
+      // index `byCode`/`byName` construits juste après étaient incomplets : un
+      // article existant n'était pas retrouvé, et la suite en CRÉAIT UN SECOND —
+      // un doublon qui repartait sans prix ni historique. Le catalogue se
+      // dédoublait tout seul, en silence, précisément chez les fournisseurs les
+      // plus fournis.
+      const existingPage = await fetchAllPages<any>(apres => {
+        let q = service.from('articles')
+          .select('id, article_code, name_key, last_price_date, price_count')
+          .eq('client_id', clientId).eq('supplier_key', supplierKey)
+        if (apres) q = q.gt('id', apres)
+        return q.order('id', { ascending: true })
+      })
+      const existing = existingPage.rows
+      if (existingPage.tronque) {
+        // Mieux vaut ne rien créer que doublonner : on le dit et on s'arrête là
+        // pour cette facture.
+        console.error('[extract-lines] réfs fournisseur tronquées — création suspendue', supplierKey)
+        return NextResponse.json({ error: 'Catalogue fournisseur trop volumineux pour être lu d’un coup : lecture suspendue pour éviter de créer des doublons.' }, { status: 503 })
+      }
       // Le code fournisseur est rangé sous sa CLÉ, pas sous son écriture :
       // « 003180 » et « 3180 » sont le même produit, et les distinguer créait
       // un second article qui repartait sans prix ni historique (lot 70,

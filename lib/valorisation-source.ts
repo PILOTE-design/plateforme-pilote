@@ -23,6 +23,7 @@
 import type { createServiceClient } from '@/lib/supabase/server'
 import { CUTS_BY_ANIMAL, ANIMAL_TYPES, repartitionCarcasse, type AnimalType, type Cut } from '@/lib/valorisation'
 import type { GenericInfo } from '@/lib/recipes'
+import { fetchAllPages } from '@/lib/fetch-all'
 
 /** Prix d'un morceau, avec sa provenance — même forme que ce que la mercuriale
  *  rend pour un prix de facture, pour que les écrans n'aient rien à distinguer. */
@@ -276,11 +277,19 @@ export async function ensureGeneriquesDecoupe(
   // TOUS les génériques actifs, pas seulement ceux de découpe : la base porte un
   // index unique sur (client_id, name_key), et un morceau qui porterait le nom
   // d'un article déjà au catalogue le heurterait.
-  const { data: existants, error } = await service
-    .from('generic_articles')
-    .select('id, valorisation_cut_id, name_key')
-    .eq('client_id', clientId)
-    .eq('active', true)
+  // Paginée : un catalogue lu à moitié ferait recréer des morceaux de découpe
+  // qui existent déjà, et l'index unique cité ci-dessus refuserait l'insertion.
+  const page = await fetchAllPages<any>(apres => {
+    let q = service
+      .from('generic_articles')
+      .select('id, valorisation_cut_id, name_key')
+      .eq('client_id', clientId)
+      .eq('active', true)
+    if (apres) q = q.gt('id', apres)
+    return q.order('id', { ascending: true })
+  })
+  const existants = page.rows
+  const error = page.erreur ? { message: page.erreur } : (page.tronque ? { message: 'catalogue tronqué' } : null)
   if (error) {
     console.error('[valorisation-source] génériques illisibles:', error.message)
     return 0
