@@ -121,10 +121,16 @@ export type LectureFinancier = {
 
 // ─── Nombres et texte ─────────────────────────────────────────────────────
 
-/** « 1 234,56 » / « 1234.56 » / « 1 234.56 € » → 1234.56. NaN si illisible. */
+/** « 1 234,56 » / « 1234.56 » / « 1 234.56 € » → 1234.56. NaN si illisible.
+ *
+ *  `\s` suffit : en JavaScript il couvre DÉJÀ l'espace insécable (U+00A0) et
+ *  l'espace fine insécable (U+202F), les deux séparateurs de milliers qu'un PDF
+ *  français imprime. Les écrire en clair dans la classe serait redondant — et
+ *  surtout fragile : un caractère invisible ne survit pas à toutes les chaînes
+ *  d'outils, et sa disparition passerait inaperçue à la relecture. */
 export function nombre(s: string): number {
   const nettoye = String(s)
-    .replace(/[\s  ]/g, '')
+    .replace(/\s/g, '')
     .replace(/€/g, '')
     .replace(',', '.')
   const n = parseFloat(nettoye)
@@ -143,7 +149,7 @@ export function nombre(s: string): number {
  * « 82 0 » = quatre-vingt-deux puis la colonne d'à côté).
  */
 export function premierEntier(s: string): number {
-  const groupes = String(s).trim().split(/[\s ]+/).filter(Boolean)
+  const groupes = String(s).trim().split(/\s+/).filter(Boolean)
   if (groupes.length === 0 || !/^\d+$/.test(groupes[0])) return NaN
   let texte = groupes[0]
   for (let i = 1; i < groupes.length; i++) {
@@ -161,15 +167,15 @@ export function sansAccents(s: string): string {
     .replace(/œ/gi, 'oe')
     .replace(/æ/gi, 'ae')
     .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
+    .replace(/\p{Diacritic}/gu, '')
     .toLowerCase()
 }
 
 // ─── Reconnaissance du document ───────────────────────────────────────────
 
-const RE_NET = /^net\s+([\d\s., ]+?)\s*€/i
-const RE_TICKETS = /^nb\s+tickets\s+(\d[\d\s ]*)/i
-const RE_MOYENNE = /^moyenne\s+tickets\s+([\d\s., ]+?)\s*€/i
+const RE_NET = /^net\s+([\d\s.,]+?)\s*€/i
+const RE_TICKETS = /^nb\s+tickets\s+(\d[\d\s]*)/i
+const RE_MOYENNE = /^moyenne\s+tickets\s+([\d\s.,]+?)\s*€/i
 
 /** Trois marqueurs de l'en-tête d'un relevé financier Crisalid. On en exige
  *  DEUX : un seul (« Net … € ») se rencontre sur une facture, les trois
@@ -260,7 +266,7 @@ export function parsePeriode(lignes: string[]): Periode {
  *  Le montant est le DERNIER nombre suivi d'un € sur la ligne — le relevé
  *  aligne parfois un compteur (« Carte bancaire 42 1 000,00 € ») : c'est le
  *  montant qui porte la devise, jamais le compteur. */
-const RE_LIGNE_REGLEMENT = /^([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.'’/-]{1,40}?)\s+([\d\s., ]+)\s*€\s*$/
+const RE_LIGNE_REGLEMENT = /^([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s.'’/-]{1,40}?)\s+([\d\s.,]+)\s*€\s*$/
 
 export function modeDuLibelle(libelle: string): CleMode | null {
   const l = sansAccents(libelle).trim()
