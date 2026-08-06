@@ -1,49 +1,41 @@
 'use client'
 
-// ─── LES DEUX FACES DU MÊME MODULE ──────────────────────────────────────────
+// ─── LE RETOUR AU PLANNING, DEPUIS LA PAIE ──────────────────────────────────
 //
-// Le planning et la préparation des payes travaillent sur la même matière : les
-// heures de la semaine. Les séparer dans la navigation générale laissait croire
-// à deux sujets distincts, alors que l'un est la mise au propre de l'autre —
-// et c'est bien depuis le planning qu'on corrige ce que la paie révèle.
+// La bascule vit dans la rangée d'onglets de la grille (« Employés · Postes ·
+// Préparation des payes ») : c'est là que le boucher regarde déjà, et non dans
+// un sélecteur discret posé au-dessus du titre — celui-là, il ne l'a pas vu.
 //
-// D'où ce sélecteur, posé en tête des deux écrans, et une seule entrée de menu.
+// Ce composant est le pendant, côté paie : la même rangée, au même endroit, à
+// la même hauteur, avec les mêmes libellés. Un chemin qu'on ne peut pas faire
+// dans les deux sens n'est pas un chemin.
+//
+// Les deux premiers boutons ramènent au planning ; la vue « Postes » s'y
+// rouvrira sur les employés, faute de mémoire de la lecture choisie — c'est
+// assumé, et c'est pour ça qu'ils partagent un seul libellé de destination.
 
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
 import { CalendarDays, FileSpreadsheet } from 'lucide-react'
 
-const ONGLETS = [
-  { href: '/dashboard/planning',      icon: CalendarDays,    label: 'Planning' },
-  { href: '/dashboard/planning/paie', icon: FileSpreadsheet, label: 'Préparation des payes' },
-]
-
 export default function OngletsPlanning() {
-  const pathname = usePathname()
-  // La paie est un sous-chemin du planning : c'est le libellé LE PLUS LONG qui
-  // gagne, sinon « Planning » serait actif sur les deux écrans.
-  const actif = ONGLETS
-    .filter(o => pathname === o.href || pathname.startsWith(o.href + '/'))
-    .sort((a, b) => b.href.length - a.href.length)[0]?.href
-
   return (
-    <div className="inline-flex items-center gap-1 bg-gray-100 rounded-xl p-1">
-      {ONGLETS.map(o => {
-        const on = o.href === actif
-        return (
-          <Link
-            key={o.href}
-            href={o.href}
-            aria-current={on ? 'page' : undefined}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors ${
-              on ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-900'
-            }`}
-          >
-            <o.icon className="w-3.5 h-3.5" />
-            {o.label}
-          </Link>
-        )
-      })}
+    <div className="mb-3 inline-flex items-center gap-1 bg-gray-100 rounded-xl p-1">
+      <Link
+        href="/dashboard/planning"
+        title="Revenir à la grille de la semaine"
+        className="inline-flex items-center gap-1.5 text-xs font-semibold rounded-lg px-3 py-1.5 text-gray-500 hover:text-gray-700 transition-colors"
+      >
+        <CalendarDays className="w-3.5 h-3.5" />
+        Planning
+      </Link>
+      <span className="w-px h-4 bg-gray-300 mx-1" aria-hidden />
+      <span
+        aria-current="page"
+        className="inline-flex items-center gap-1.5 text-xs font-semibold rounded-lg px-3 py-1.5 bg-white text-pilote shadow-card"
+      >
+        <FileSpreadsheet className="w-3.5 h-3.5" />
+        Préparation des payes
+      </span>
     </div>
   )
 }

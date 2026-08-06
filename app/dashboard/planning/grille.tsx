@@ -13,7 +13,8 @@
 
 'use client'
 
-import { Plus, Trash2, Clipboard, AlertTriangle, CalendarDays, Copy } from 'lucide-react'
+import Link from 'next/link'
+import { Plus, Trash2, Clipboard, AlertTriangle, CalendarDays, Copy, FileSpreadsheet } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { EmployeeProfile } from '@/components/EmployeeProfileModal'
 import VuePostes from './vue-postes'
@@ -69,7 +70,11 @@ export function GrilleSemaine(props: GrilleProps) {
 
   return (
     <>
-      {/* ── Deux lectures de la même semaine ── */}
+      {/* ── Deux lectures de la même semaine, et sa mise au propre ──
+          Les deux premiers boutons changent la LECTURE de la semaine affichée ;
+          le troisième mène à un autre écran. D'où le trait qui les sépare : ce
+          n'est pas la même nature de geste, et un onglet qui vous déplace sans
+          le dire est un onglet qui surprend. */}
       <div className="mb-3 inline-flex items-center gap-1 bg-gray-100 rounded-xl p-1">
         {([['employes', 'Employés'], ['postes', 'Postes']] as const).map(([k, label]) => (
           <button key={k} type="button" onClick={() => setVue(k)}
@@ -80,6 +85,13 @@ export function GrilleSemaine(props: GrilleProps) {
             {label}
           </button>
         ))}
+        <span className="w-px h-4 bg-gray-300 mx-1" aria-hidden />
+        <Link href="/dashboard/planning/paie"
+          title="Les heures du mois, prêtes à transmettre au comptable"
+          className="inline-flex items-center gap-1.5 text-xs font-semibold rounded-lg px-3 py-1.5 text-gray-500 hover:text-gray-700 transition-colors">
+          <FileSpreadsheet className="w-3.5 h-3.5" />
+          Préparation des payes
+        </Link>
       </div>
 
       {vue === 'postes' ? (
