@@ -169,6 +169,13 @@ export async function POST(request: NextRequest) {
   const somme = Math.round(sommeLignes(lines) * 100) / 100
   const ecart = Math.round((somme - total) * 100) / 100
 
+  // Les montants du motif s'écrivent comme PARTOUT ailleurs dans PILOTE :
+  // virgule décimale, espace de milliers. `toFixed(2)` affichait « 17398.14 € »
+  // en plein milieu d'une phrase française, juste à côté d'un tableau qui
+  // écrivait « 17 398,14 € ». Vu en ouvrant l'écran, pas en relisant le code.
+  const eur = (n: number) =>
+    n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €'
+
   // ── CE QUI A ÉTÉ LU EST TOUJOURS RENDU (lot 112) ────────────────────────
   //
   // Un document qui résiste a quand même coûté jusqu'à trois passes de lecture,
@@ -205,7 +212,7 @@ export async function POST(request: NextRequest) {
   if (Math.abs(ecart) > 0.02) {
     return NextResponse.json({
       appris: false, somme, total, ecart, passe, tentatives, lignes_lues: lignesLues,
-      motif: `La lecture ne boucle pas : ${somme.toFixed(2)} € lus pour ${total.toFixed(2)} € attendus (${ecart > 0 ? '+' : ''}${ecart.toFixed(2)} €) après ${tentatives} passe${tentatives > 1 ? 's' : ''}. Rien n’entre pour l’instant — corrigez la lecture ci-dessous, ou vérifiez le total saisi.`,
+      motif: `La lecture ne boucle pas : ${eur(somme)} lus pour ${eur(total)} attendus (${ecart > 0 ? '+' : '−'}${eur(Math.abs(ecart))}) après ${tentatives} passe${tentatives > 1 ? 's' : ''}. Rien n’entre pour l’instant — corrigez la lecture ci-dessous, ou vérifiez le total saisi.`,
     })
   }
 
