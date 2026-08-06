@@ -895,7 +895,6 @@ export function useMercuriale() {
     for (const id of selIds) if (refsAffichees.has(id)) dernier = id
     return dernier
   }, [ancreSel, selIds, refsAffichees])
-
   // Décompte du KPI, sur la file ENTIÈRE (jamais sur le filtre de recherche) et
   // avec la même définition que la liste : un « produit à rapprocher » n'est ni
   // écarté ni non-produit. Le KPI affichait `queue.length`, tout compris.
