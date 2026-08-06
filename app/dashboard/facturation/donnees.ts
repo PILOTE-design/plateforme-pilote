@@ -6,6 +6,7 @@
 import type { RecurringCharge, Periodicity } from '@/lib/recurring-charges'
 import type { DoubleEmploiVu } from '@/lib/charges-doublon'
 import { labelsMatch, MATIERE_BENCH } from '@/lib/postes'
+import { RAYONS, RAYON_DIVERS } from '@/lib/rayons'
 
 
 /** Une charge récurrente TELLE QUE L'API LA REND : la définition, plus le
@@ -253,11 +254,19 @@ export type ProviderMeta = {
 // Palette catégories : teintes sourdes (fond -50, texte -700), ALIGNÉE sur le code
 // couleur des rayons et de la page Marges — boucherie rouge, charcuterie orange,
 // traiteur émeraude ; « frais divers » en gris neutre.
+// Même source que le planning : lib/rayons. Cette liste portait ses propres
+// teintes — `bg-red-50` là où le planning disait `bg-red-100`, et un point
+// `#b91c1c` là où il n'y en avait pas —, si bien que la boucherie n'avait pas
+// la même couleur d'un écran à l'autre. Le `dot` sert au camembert, qui ne lit
+// pas une classe Tailwind : c'est le `hex` du rayon.
+//
+// L'ordre compte : `catInfo` replie sur le DERNIER élément, qui doit donc
+// rester « frais divers ». La clé garde son nom historique — c'est celle qui
+// est écrite en base.
 export const CATEGORIES = [
-  { key: 'boucherie',    label: 'Boucherie',    color: 'bg-red-50 text-red-700',         dot: '#b91c1c' },
-  { key: 'charcuterie',  label: 'Charcuterie',  color: 'bg-orange-50 text-orange-700',   dot: '#c2410c' },
-  { key: 'traiteur',     label: 'Traiteur',     color: 'bg-emerald-50 text-emerald-700', dot: '#047857' },
-  { key: 'frais_divers', label: 'Frais divers', color: 'bg-gray-100 text-gray-600',      dot: '#64748b' },
+  ...RAYONS.filter(r => ['boucherie', 'charcuterie', 'traiteur'].includes(r.cle))
+    .map(r => ({ key: r.cle, label: r.label, color: r.pastille, dot: r.hex })),
+  { key: 'frais_divers', label: 'Frais divers', color: RAYON_DIVERS.pastille, dot: RAYON_DIVERS.hex },
 ]
 
 export const TVA_RATES = [0, 5.5, 10, 20]
