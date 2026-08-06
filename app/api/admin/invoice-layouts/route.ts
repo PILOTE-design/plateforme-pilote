@@ -169,16 +169,43 @@ export async function POST(request: NextRequest) {
   const somme = Math.round(sommeLignes(lines) * 100) / 100
   const ecart = Math.round((somme - total) * 100) / 100
 
+  // ── CE QUI A ÉTÉ LU EST TOUJOURS RENDU (lot 112) ────────────────────────
+  //
+  // Un document qui résiste a quand même coûté jusqu'à trois passes de lecture,
+  // parfois une lecture image. Jeter ce travail obligeait à relancer le même
+  // document en espérant un autre résultat — et surtout, la mise en page qui
+  // résiste le plus est précisément celle dont la bibliothèque a le plus besoin.
+  //
+  // Les lignes partent donc à l'écran, où l'administrateur les corrige et les
+  // renvoie à /api/admin/invoice-layouts/corriger. Le total y reste l'arbitre :
+  // rendre la lecture ne donne le droit de RIEN contourner.
+  const lignesLues = lines.map(l => ({
+    designation: l.designation,
+    article_code: l.article_code,
+    quantity: l.quantity,
+    unit: l.unit,
+    unit_price_ht: l.unit_price_ht,
+    amount_ht: l.amount_ht,
+    tva_rate: l.tva_rate,
+    weight_kg: l.weight_kg,
+  }))
+
   if (lines.length === 0) {
-    return NextResponse.json({ appris: false, somme, total, ecart, passe, tentatives, motif: 'Aucune ligne d’article reconnue sur ce document.' })
+    return NextResponse.json({
+      appris: false, somme, total, ecart, passe, tentatives, lignes_lues: lignesLues,
+      motif: 'Aucune ligne d’article reconnue sur ce document. Vous pouvez les saisir à la main : c’est ce document-là que la bibliothèque ne sait pas lire.',
+    })
   }
   if (lines.length < 2) {
-    return NextResponse.json({ appris: false, somme, total, ecart, passe, tentatives, motif: 'Une seule ligne : ce document n’apprend rien d’une mise en page.' })
+    return NextResponse.json({
+      appris: false, somme, total, ecart, passe, tentatives, lignes_lues: lignesLues,
+      motif: 'Une seule ligne reconnue : une mise en page s’apprend d’au moins deux. Complétez la lecture pour que ce document serve.',
+    })
   }
   if (Math.abs(ecart) > 0.02) {
     return NextResponse.json({
-      appris: false, somme, total, ecart, passe, tentatives,
-      motif: `La lecture ne boucle pas : ${somme.toFixed(2)} € lus pour ${total.toFixed(2)} € attendus (${ecart > 0 ? '+' : ''}${ecart.toFixed(2)} €) après ${tentatives} passe${tentatives > 1 ? 's' : ''}. Rien n’entre dans la bibliothèque — vérifiez le total saisi, ou le document résiste encore.`,
+      appris: false, somme, total, ecart, passe, tentatives, lignes_lues: lignesLues,
+      motif: `La lecture ne boucle pas : ${somme.toFixed(2)} € lus pour ${total.toFixed(2)} € attendus (${ecart > 0 ? '+' : ''}${ecart.toFixed(2)} €) après ${tentatives} passe${tentatives > 1 ? 's' : ''}. Rien n’entre pour l’instant — corrigez la lecture ci-dessous, ou vérifiez le total saisi.`,
     })
   }
 
