@@ -11,6 +11,7 @@ import { type Dispatch, type SetStateAction } from 'react'
 import { ChevronRight, Unlink, AlertTriangle, Sparkles, Store } from 'lucide-react'
 import { fmtEuro, fmtDate, nomFournisseur, unitLabel, priceAge, MOTIF_PRIX, Variation } from './ui'
 import type { Generic, Ref, Vue } from './catalogue'
+import ChoixProduit from './choix-produit'
 
 export function VueOrganiser({
   filteredGenerics, assocGenerics, generics, refsAssociees, conversionsManquantes,
@@ -156,11 +157,18 @@ export function VueOrganiser({
                     ? `${fmtEuro(Number(g.price_ht))} / ${unitLabel(g.base_unit)}`
                     : <span className="text-amber-600">pas de prix — {MOTIF_PRIX[g.price_missing_reason ?? 'jamais_facture']?.court}</span>}
                 </span>
-                <select value={mergeSel[g.id] ?? ''} onChange={e => setMergeSel(p => ({ ...p, [g.id]: e.target.value }))}
-                  className="text-[11px] border border-gray-200 rounded-lg px-1.5 py-1 bg-white max-w-[150px] text-gray-500 focus:outline-none focus:ring-2 focus:ring-pilote-200">
-                  <option value="">Fusionner dans…</option>
-                  {generics.filter(x => x.id !== g.id).map(x => <option key={x.id} value={x.id}>{x.name}</option>)}
-                </select>
+                {/* Cherchable, et surtout DESSINÉ À L'OUVERTURE. Ce menu listait
+                    le catalogue entier, une fois par article : avec G articles,
+                    G² éléments dans la page — la page se figeait bien avant tout
+                    plafond serveur. */}
+                <ChoixProduit
+                  produits={generics.filter(x => x.id !== g.id)}
+                  value={mergeSel[g.id] ?? ''}
+                  onChange={v => setMergeSel(p => ({ ...p, [g.id]: v }))}
+                  placeholder="Fusionner dans…"
+                  unite={unitLabel}
+                  className="w-[190px]"
+                />
                 {mergeSel[g.id] && (
                   <button onClick={async () => { const ok = await doMerge(mergeSel[g.id], [g.id]); if (ok) setMergeSel(p => ({ ...p, [g.id]: '' })) }} disabled={merging}
                     className="text-[11px] font-bold text-white bg-pilote hover:bg-pilote-hover rounded-lg px-2.5 py-1 shadow-card transition-colors disabled:opacity-50">
@@ -193,11 +201,18 @@ export function VueOrganiser({
                       ) : (
                         <span className="font-bold text-gray-900 tabular">{r.price_base !== null ? `${fmtEuro(r.price_base)} / ${unitLabel(g.base_unit)}` : '—'}</span>
                       )}
-                      <select value="" onChange={e => { if (e.target.value) moveRef(r, e.target.value) }}
-                        className="text-[11px] border border-gray-200 rounded-lg px-1.5 py-1 bg-white max-w-[150px] text-gray-500 focus:outline-none focus:ring-2 focus:ring-pilote-200">
-                        <option value="">Déplacer vers…</option>
-                        {generics.filter(x => x.id !== g.id).map(x => <option key={x.id} value={x.id}>{x.name}</option>)}
-                      </select>
+                      {/* Idem, et pire encore : celui-ci était dessiné par RÉF,
+                          soit R×G éléments de plus. Une réf peut désormais aller
+                          vers n'importe quel produit du catalogue, en le
+                          cherchant. */}
+                      <ChoixProduit
+                        produits={generics.filter(x => x.id !== g.id)}
+                        value=""
+                        onChange={v => { if (v) moveRef(r, v) }}
+                        placeholder="Déplacer vers…"
+                        unite={unitLabel}
+                        className="w-[190px]"
+                      />
                       <button onClick={() => dissociate(r.id, r.name)} title="Renvoyer dans la file « À rapprocher »"
                         className="flex items-center gap-1 font-semibold text-gray-400 hover:text-red-600 transition-colors"><Unlink className="w-3 h-3" />Dissocier</button>
                     </div>
