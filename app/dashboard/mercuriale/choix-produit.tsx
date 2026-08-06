@@ -82,6 +82,11 @@ type Props = {
   onChange: (v: string) => void
   /** Propose « Créer un nouvel article générique » en tête de liste. */
   creation?: { libelle: string } | null
+  /** Ce qu'affiche le bouton fermé quand rien n'est choisi. Sans lui, tous les
+   *  sélecteurs de l'écran disaient « — Choisir — » : le boucher ne savait plus
+   *  lequel fusionne un produit et lequel déplace une réf. Un contrôle doit dire
+   *  ce qu'il fait AVANT qu'on l'ouvre. */
+  libelle?: string
   placeholder?: string
   /** Libellé de l'unité, pour situer le produit (kg / pièce). Typé LARGE côté
    *  appelant (`unitLabel` ne connaît que 'kg' et 'piece') : ce composant ne
@@ -92,6 +97,7 @@ type Props = {
 
 export default function ChoixProduit({
   produits, value, onChange, creation = null,
+  libelle = '— Choisir —',
   placeholder = 'Chercher un produit…', unite, className = '',
 }: Props) {
   const [ouvert, setOuvert] = useState(false)
@@ -127,14 +133,17 @@ export default function ChoixProduit({
         onClick={() => setOuvert(o => !o)}
         className="w-full flex items-center justify-between gap-2 border border-gray-200 rounded-xl px-3 py-2 text-sm bg-white text-left hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-pilote-200"
       >
-        <span className={choisi ? 'text-gray-900 truncate' : 'text-gray-400'}>
-          {choisi || '— Choisir —'}
+        <span className={choisi ? 'text-gray-900 truncate' : 'text-gray-400 truncate'}>
+          {choisi || libelle}
         </span>
         <ChevronDown className={`w-4 h-4 text-gray-400 flex-shrink-0 transition-transform ${ouvert ? 'rotate-180' : ''}`} />
       </button>
 
+      {/* La liste est plus large que son bouton : « Cote de boeuf brute
+          limousin » ne tient pas dans 190 pixels, et un nom coupé ne se choisit
+          pas de confiance. Alignée à droite pour ne pas déborder de l'écran. */}
       {ouvert && (
-        <div className="absolute z-50 mt-1 w-full bg-white rounded-xl shadow-2xl border border-gray-100 overflow-hidden">
+        <div className="absolute z-50 mt-1 right-0 w-[320px] max-w-[85vw] min-w-full bg-white rounded-xl shadow-2xl border border-gray-100 overflow-hidden">
           <div className="flex items-center gap-2 px-3 py-2 border-b border-gray-100">
             <Search className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
             <input
