@@ -54,6 +54,8 @@ import { loadSupplierCategories, rememberedCategory } from '@/lib/supplier-memor
 import { weekForInvoice, plausibleDelivery } from '@/lib/invoice-week'
 import { pdfToLines } from '@/lib/pdf-lines'
 import { verdictReleve, phraseReleve } from '@/lib/document-releve'
+import { lireFinancier } from '@/lib/financier-jour'
+import { enregistrerFinancier } from '@/lib/financier-store'
 import { randomUUID, createHmac, timingSafeEqual } from 'crypto'
 import Anthropic from '@anthropic-ai/sdk'
 
@@ -394,6 +396,41 @@ export async function POST(request: NextRequest) {
       pdfText = await readPdfText(piece.buffer)
     } catch (e) {
       console.error('[inbound] lecture du PDF impossible:', e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  // ── UN RELEVÉ FINANCIER N'EST PAS UNE FACTURE (lot 103) ─────────────────
+  //
+  // Le boucher transfère désormais son relevé de caisse à la MÊME adresse que
+  // ses factures — lui demander de retenir deux adresses serait perdre la
+  // partie. C'est donc ici que les deux chemins se séparent, et il faut que ce
+  // soit AVANT l'extraction : un relevé financier lu comme une facture
+  // créerait un achat du montant du CA de la journée, et gonflerait les achats,
+  // la marge et le résultat de toute la semaine. Le danger existe déjà
+  // aujourd'hui, avant même que le relevé quotidien soit demandé au client.
+  //
+  // La reconnaissance est DÉTERMINISTE (trois marqueurs d'en-tête, deux exigés)
+  // et ne coûte pas un appel au modèle : le document sort du chemin des
+  // factures sans jamais l'atteindre.
+  //
+  // Un relevé RECONNU mais non enregistrable (aucune date lisible, CA absent)
+  // ne repart PAS vers les factures : ce serait revenir au dégât qu'on vient
+  // d'éviter. Il est refusé, et le motif est dit.
+  if (pdfText.trim().length > 40) {
+    const lecture = lireFinancier(pdfText.split('\n'))
+    if (lecture.estFinancier) {
+      const ecriture = await enregistrerFinancier(serviceSupabase, clientId, lecture, {
+        source: 'email',
+        filePath,
+        emailId: resendEmailId,
+      })
+      console.log(`[inbound] ${ecriture.ok ? 'financier' : 'financier refusé'} : ${ecriture.motif}`)
+      return NextResponse.json(
+        { ok: ecriture.ok, type: 'financier', motif: ecriture.motif, id: ecriture.id ?? null },
+        // 200 dans les deux cas : Resend n'a rien à réessayer, le document a
+        // bien été reçu et jugé. Le motif est journalisé.
+        { status: 200 },
+      )
     }
   }
 
