@@ -5,6 +5,13 @@ const config: Config = {
     "./pages/**/*.{js,ts,jsx,tsx,mdx}",
     "./components/**/*.{js,ts,jsx,tsx,mdx}",
     "./app/**/*.{js,ts,jsx,tsx,mdx}",
+    /* `lib/` MANQUAIT. Tailwind ne compile que les classes qu'il VOIT dans les
+     * chemins listés ici : `lib/rayons.ts` porte les classes de couleur des
+     * métiers, elles n'ont donc jamais été générées, et les filets de rayon
+     * livrés au lot 99 étaient invisibles en production. Le build passait,
+     * le typecheck passait, la classe était bien écrite — et rien ne
+     * s'affichait. */
+    "./lib/**/*.{js,ts,jsx,tsx}",
   ],
   theme: {
     extend: {
