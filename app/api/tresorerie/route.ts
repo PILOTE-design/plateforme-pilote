@@ -124,17 +124,34 @@ export async function GET(req: Request) {
   // total du relevé), on retombe sur le CA plutôt que de perdre la journée —
   // mais on COMPTE ces journées et on le dit : c'est une surestimation connue,
   // pas une équivalence.
+  // LES BONS D'ACHAT SORTENT DU SOLDE. Un bon d'achat consommé solde bien un
+  // ticket — il figure donc dans le total encaissé que la caisse imprime — mais
+  // aucun euro n'arrive sur le compte : c'est un avoir émis autrefois qu'on
+  // reprend aujourd'hui. Le compter en trésorerie ferait entrer deux fois le
+  // même argent, à l'émission du bon puis à son utilisation.
+  //
+  // Ils ne sont pas effacés pour autant : leur total est rendu et écrit à
+  // l'écran. Une exclusion muette se lit comme une erreur de caisse.
   let journeesAuCa = 0
+  let bonsAchatExclus = 0
   const journees: JourneeEncaissee[] = releves
     .filter(r => r.nb_jours === 1)
     .map(r => {
       const encaisse = r.encaisse_ttc === null || r.encaisse_ttc === undefined
         ? null
         : Number(r.encaisse_ttc)
-      if (encaisse === null || !Number.isFinite(encaisse)) journeesAuCa++
+      const confirme = encaisse !== null && Number.isFinite(encaisse)
+      if (!confirme) journeesAuCa++
+
+      // Le retrait ne vaut que sur un encaissé CONFIRMÉ : sur un repli au CA,
+      // la ventilation n'est pas publiable, donc on ne sait pas ce qu'elle
+      // contient et on ne retire rien à l'aveugle.
+      const bons = confirme ? Number(r.reglements?.bon_achat ?? 0) || 0 : 0
+      bonsAchatExclus += bons
+
       return {
         jour: r.date_debut,
-        caTtc: encaisse !== null && Number.isFinite(encaisse) ? encaisse : (Number(r.ca_ttc) || 0),
+        caTtc: confirme ? round2((encaisse as number) - bons) : (Number(r.ca_ttc) || 0),
         reglements: r.reglements,
       }
     })
@@ -185,5 +202,8 @@ export async function GET(req: Request) {
     // Journées comptées au CA faute d'encaissé confirmé : leur montant est
     // SURESTIMÉ de ce qui est parti en compte client.
     journees_au_ca: journeesAuCa,
+    // Retirés du solde parce qu'aucun euro n'arrive en banque — et annoncés,
+    // parce qu'une exclusion muette se lit comme une erreur de caisse.
+    bons_achat_exclus: round2(bonsAchatExclus),
   })
 }
