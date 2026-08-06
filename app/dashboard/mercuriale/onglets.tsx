@@ -165,7 +165,8 @@ export function VueOrganiser({
                   produits={generics.filter(x => x.id !== g.id)}
                   value={mergeSel[g.id] ?? ''}
                   onChange={v => setMergeSel(p => ({ ...p, [g.id]: v }))}
-                  placeholder="Fusionner dans…"
+                  libelle="Fusionner dans…"
+                  placeholder="Chercher un produit…"
                   unite={unitLabel}
                   className="w-[190px]"
                 />
@@ -209,7 +210,8 @@ export function VueOrganiser({
                         produits={generics.filter(x => x.id !== g.id)}
                         value=""
                         onChange={v => { if (v) moveRef(r, v) }}
-                        placeholder="Déplacer vers…"
+                        libelle="Déplacer vers…"
+                        placeholder="Chercher un produit…"
                         unite={unitLabel}
                         className="w-[190px]"
                       />
