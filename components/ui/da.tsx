@@ -42,18 +42,21 @@ export const euros = (n: number, decimales = 0) =>
  * LE CHIFFRE-ROI. Un seul par écran.
  *
  * Fond navy plein : c'est le contraste de FOND, pas une police plus grosse, qui
- * fait qu'on le trouve sans chercher. Le halo orange en coin rappelle la marque
- * sans rien coûter en lisibilité — il vit derrière le texte, à 14 % d'opacité.
+ * fait qu'on le trouve sans chercher.
+ *
+ * Il y avait un halo orange en coin. À 15 % d'opacité sur du navy, il ne rendait
+ * pas orange mais gris-mauve, avec un bord franc : ça se lisait comme un défaut
+ * d'affichage, pas comme un motif. Retiré. Le navy plein suffit à faire la
+ * hiérarchie — une décoration qu'on doit expliquer n'en est pas une.
  */
 export function TuileRoi({
   label, valeur, detail, className = '',
 }: { label: string; valeur: ReactNode; detail?: ReactNode; className?: string }) {
   return (
-    <div className={`relative overflow-hidden rounded-2xl bg-pilote p-5 shadow-card ${className}`}>
-      <div aria-hidden className="pointer-events-none absolute -right-8 -top-8 h-32 w-32 rounded-full bg-pilote-orange/15" />
-      <p className="relative text-[10px] font-bold uppercase tracking-[0.12em] text-pilote-200">{label}</p>
-      <p className="relative mt-0.5 text-3xl font-extrabold tracking-tight text-white tabular">{valeur}</p>
-      {detail && <p className="relative mt-1 text-[11px] text-pilote-200">{detail}</p>}
+    <div className={`rounded-2xl bg-pilote p-5 shadow-card ${className}`}>
+      <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-pilote-200">{label}</p>
+      <p className="mt-0.5 text-3xl font-extrabold tracking-tight text-white tabular">{valeur}</p>
+      {detail && <p className="mt-1 text-[11px] text-pilote-200">{detail}</p>}
     </div>
   )
 }
@@ -132,8 +135,12 @@ export function Absent({
   raison, explication,
 }: { raison: string; explication?: string }) {
   return (
+    /* `rounded-md` et non `rounded-full`, et surtout `whitespace-nowrap` : dans
+       une colonne étroite, « à ventiler » se repliait sur deux lignes et la
+       pastille ronde devenait un ovale gris illisible. Un état nommé qu'on ne
+       lit pas ne vaut pas mieux que le tiret qu'il remplace. */
     <span
-      className="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-semibold text-encre-doux"
+      className="inline-flex whitespace-nowrap items-center rounded-md bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold text-encre-doux"
       title={explication}
     >
       {raison}
