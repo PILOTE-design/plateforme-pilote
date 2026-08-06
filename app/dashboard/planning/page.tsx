@@ -703,8 +703,13 @@ export default function PlanningPage() {
         </div>
       </div>
 
-      {/* ── Week nav ── */}
-      <div className="bg-white border-b border-gray-100 px-6 py-2.5 flex items-center gap-3">
+      {/* ── Week nav ──
+          `flex-wrap` : la barre ne tenait pas sur un écran de 1358 px et, faute
+          de pouvoir passer à la ligne, chaque élément se coupait EN PLEIN MOT —
+          « 2495 » d'un côté, « € » de l'autre. Un montant scindé de son unité
+          n'est plus un montant. Mieux vaut une seconde ligne qu'un chiffre
+          illisible. */}
+      <div className="bg-white border-b border-gray-100 px-6 py-2.5 flex flex-wrap items-center gap-x-3 gap-y-2">
         <button onClick={prevWeek} className="p-1.5 rounded hover:bg-gray-100 transition-colors"><ChevronLeft className="w-4 h-4 text-gray-500" /></button>
         <div className="flex items-center gap-2">
           <span className="font-semibold text-gray-900 text-sm">Semaine {week}</span>
@@ -757,11 +762,13 @@ export default function PlanningPage() {
             chiffre qui compte est le coût CHARGÉ — ce que la semaine sort
             réellement de la caisse —, il passe donc en navy plein ; les deux
             autres restent ce qu'ils sont, des détails de composition. */}
+        {/* `whitespace-nowrap` sur CHAQUE total : sans lui, le « € » se
+            détachait de son nombre dès que la barre était serrée. */}
         <div className="ml-auto flex items-center gap-3 text-xs text-encre-faible">
-          <span><span className="font-semibold text-encre tabular">{fmtH(grandH)}</span> total</span>
-          <span><span className="font-semibold text-encre tabular">{grandCost.toFixed(0)} €</span> brut</span>
+          <span className="whitespace-nowrap"><span className="font-semibold text-encre tabular">{fmtH(grandH)}</span> total</span>
+          <span className="whitespace-nowrap"><span className="font-semibold text-encre tabular">{grandCost.toFixed(0)} €</span> brut</span>
           <span title="Brut + charges patronales — le coût réel de la semaine"
-            className="inline-flex items-baseline gap-1.5 rounded-full bg-pilote px-3 py-1 text-white">
+            className="inline-flex shrink-0 items-baseline gap-1.5 whitespace-nowrap rounded-full bg-pilote px-3 py-1 text-white">
             <span className="font-extrabold tabular">{grandCharged.toFixed(0)} €</span>
             <span className="text-[10px] font-semibold uppercase tracking-[0.1em] text-pilote-200">chargé</span>
           </span>
