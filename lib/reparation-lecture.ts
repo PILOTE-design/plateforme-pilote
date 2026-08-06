@@ -26,8 +26,10 @@
 //     (plusieurs factures dans un même PDF) et celui d'un bloc réimprimé.
 //  3. UN MONTANT MAL DÉCOUPÉ (coût 1) — remplacer le montant d'UNE ligne lue
 //     par un montant du document fait boucler. La colonne a été lue de travers.
-//  4. PLUSIEURS LIGNES OUBLIÉES (coût 2 ou 3) — la somme de deux ou trois
-//     montants du document, tous absents des lignes lues, vaut l'écart.
+//  4. DEUX LIGNES OUBLIÉES (coût 2) — la somme de deux montants du document,
+//     tous deux absents des lignes lues, vaut l'écart. On s'arrête à DEUX :
+//     au-delà, la combinatoire trouve à peu près n'importe quelle somme, et
+//     une réparation qui trouve toujours une solution n'en est plus une.
 //
 // ─── CE QU'ON NE FAIT PAS ─────────────────────────────────────────────────
 //
@@ -273,9 +275,10 @@ export function reparer(lignes: LigneLecture[], texte: string, total: number): V
     }
   }
 
-  // ── 4. PLUSIEURS LIGNES OUBLIÉES (2 puis 3) ─────────────────────────────
+  // ── 4. DEUX LIGNES OUBLIÉES ─────────────────────────────────────────────
   // Cherché seulement si rien de moins cher n'a marché : c'est le plus lent et
-  // le plus permissif, donc le dernier servi.
+  // le plus permissif, donc le dernier servi. Et on s'arrête à deux — avec
+  // trois montants libres, une combinaison finit toujours par tomber juste.
   if (manque && candidates.length === 0) {
     const libres = montants.filter(m => compteLu(m.valeur) === 0 && ligneDepuisMontant(m) !== null)
     // Borne dure : au-delà, la combinatoire explose et le résultat n'a plus de
