@@ -64,6 +64,44 @@ const config: Config = {
         /* Ce qui n'est PAS un mot. 2,54:1 — inutilisable pour du texte, et
          * c'est exactement pour ça qu'il porte un autre nom. */
         trait: "#9ca3af",
+
+        /* ── LES RAYONS — la couleur reçoit un métier ────────────────────
+         *
+         * Un boucher qui voit du bordeaux sait que c'est la boucherie, avant
+         * même de lire. Encore faut-il que ce soit le MÊME bordeaux partout :
+         * la teinte était définie deux fois, dans le planning et dans la
+         * facturation, avec deux valeurs différentes — le même mot changeait
+         * d'apparence selon l'écran.
+         *
+         * Toutes vérifiées au-dessus de 4,5:1 sur blanc : ce sont des couleurs
+         * qui portent du texte, pas seulement des pastilles.
+         *
+         *   boucherie     6,85:1     vente          5,93:1
+         *   charcuterie   5,18:1     administratif  7,58:1
+         *   traiteur      5,47:1     livraison      7,90:1
+         *   divers        7,10:1
+         *
+         * Les fonds se font par opacité (`bg-rayon-boucherie/10`) : une seule
+         * valeur à tenir, et le fond suit automatiquement le texte.
+         */
+        rayon: {
+          boucherie: "#B3123B",
+          charcuterie: "#C2410C",
+          traiteur: "#0F766E",
+          vente: "#0369A1",
+          administratif: "#475569",
+          livraison: "#4338CA",
+          divers: "#6D28D9",
+        },
+
+        /* ── LES ÉTATS — vert et rouge, mais lisibles ────────────────────
+         * `text-green-600` et `text-red-500` de Tailwind tombent à 3,4:1 et
+         * 3,8:1 : sous le seuil, précisément sur les chiffres qui décident. */
+        etat: {
+          gain: "#15803D",   // baisse de prix, marge tenue     5,02:1
+          perte: "#B91C1C",  // hausse de prix, marge perdue    6,47:1
+          attente: "#B45309",// à traiter, à vérifier           5,02:1
+        },
       },
       fontFamily: {
         sans: ["var(--font-sans)", "system-ui", "sans-serif"],
