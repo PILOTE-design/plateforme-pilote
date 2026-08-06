@@ -438,18 +438,23 @@ export default async function DashboardPage() {
               </CardContent>
             </Card>
 
-            {/* LA BOUSSOLE de la semaine, en navy plein. Six tuiles jumelles
-                ne disaient pas laquelle regarder : celle-ci est le chiffre qui
-                décide — ce qui reste une fois la matière et les salaires payés.
-                Un fond plein, et le regard la trouve sans chercher. */}
-            <div className="rounded-2xl bg-pilote p-4 shadow-card">
-              <div className="mb-2 flex items-center gap-2">
-                <TrendingUp className="w-3.5 h-3.5 flex-shrink-0 text-pilote-200" />
-                <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-pilote-200">Marge sur coût direct</p>
-              </div>
-              <p className={`text-2xl font-extrabold tracking-tight tabular ${caHT > 0 && margeCoutDirect < 0 ? 'text-orange-300' : 'text-white'}`}>{caHT > 0 ? `${fmt(margeCoutDirect)} €` : '—'}</p>
-              <p className="mt-1 text-[11px] text-pilote-200 tabular">MB − masse salariale{tauxCoutDirect !== null ? ` · ${tauxCoutDirect.toFixed(1)} %` : ''}</p>
-            </div>
+            {/* Cette tuile était passée en navy plein — jusqu'à ce que l'écran
+                le montre : le RÉSULTAT EBE, quatre cases plus loin, l'était
+                déjà. Deux fonds pleins côte à côte, et il n'y a plus de roi du
+                tout — le regard hésite entre deux, ce qui est pire que six
+                tuiles jumelles. La marge sur coût direct est une ÉTAPE (il
+                reste les charges de structure à payer) ; l'EBE est le résultat.
+                C'est donc l'EBE qui garde le navy, seul. */}
+            <Card className="hover:shadow-card-hover transition-shadow">
+              <CardContent className="p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <TrendingUp className="w-3.5 h-3.5 text-pilote flex-shrink-0" />
+                  <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Marge sur coût direct</p>
+                </div>
+                <p className={`text-xl font-extrabold tracking-tight tabular ${caHT > 0 && margeCoutDirect < 0 ? 'text-etat-perte' : 'text-gray-900'}`}>{caHT > 0 ? `${fmt(margeCoutDirect)} €` : '—'}</p>
+                <p className="text-xs text-gray-400 mt-1 tabular">MB − masse salariale{tauxCoutDirect !== null ? ` · ${tauxCoutDirect.toFixed(1)} %` : ''}</p>
+              </CardContent>
+            </Card>
 
             <Card className="hover:shadow-card-hover transition-shadow">
               <CardContent className="p-4">
@@ -464,10 +469,12 @@ export default async function DashboardPage() {
 
             <div className="rounded-2xl bg-pilote text-white shadow-card-hover p-4 col-span-2 lg:col-span-1">
               <div className="flex items-center gap-2 mb-2">
-                {ebe !== null && ebe < 0 ? <TrendingDown className="w-3.5 h-3.5 text-red-300 flex-shrink-0" /> : <TrendingUp className="w-3.5 h-3.5 text-green-300 flex-shrink-0" />}
+                {ebe !== null && ebe < 0 ? <TrendingDown className="w-3.5 h-3.5 text-orange-300 flex-shrink-0" /> : <TrendingUp className="w-3.5 h-3.5 text-green-300 flex-shrink-0" />}
                 <p className="text-[11px] font-bold uppercase tracking-wider text-pilote-200">Résultat EBE · {weekLabel}</p>
               </div>
-              <p className={`text-xl font-extrabold tracking-tight tabular ${ebe === null ? 'text-white' : ebe >= 0 ? 'text-green-300' : 'text-red-300'}`}>{ebe !== null ? `${ebe >= 0 ? '+' : ''}${fmt(ebe)} €` : '—'}</p>
+              {/* Un cran plus gros que ses voisines : c'est la TAILLE, autant
+                  que le fond, qui dit lequel des huit chiffres décide. */}
+              <p className={`text-2xl font-extrabold tracking-tight tabular ${ebe === null ? 'text-white' : ebe >= 0 ? 'text-green-300' : 'text-orange-300'}`}>{ebe !== null ? `${ebe >= 0 ? '+' : ''}${fmt(ebe)} €` : '—'}</p>
               <p className="text-xs text-pilote-200 mt-1">marge coût direct − charges de structure</p>
             </div>
           </div>
