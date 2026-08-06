@@ -12,8 +12,9 @@
  *   · les SALAIRES n'y sont pas — le planning reste hors trésorerie, c'est un
  *     choix du client, et c'est une des plus grosses sorties de la semaine :
  *     le solde est structurellement optimiste ;
- *   · aucune facture n'est jamais marquée réglée, donc une échéance passée est
- *     une échéance DUE, pas une sortie constatée ;
+ *   · une échéance passée qui n'a pas été POINTÉE réglée reste une échéance
+ *     DUE : personne ne sait si l'argent est sorti. Le pointage (lot 108) est
+ *     le geste qui éteint cette réserve, ligne par ligne ;
  *   · sans relevé bancaire il n'y a pas de solde d'ouverture : ce qu'on lit est
  *     une VARIATION cumulée.
  *
@@ -270,8 +271,8 @@ export default function TresoreriePage() {
               </p>
               <p className="mt-1 text-xs text-encre-doux">
                 Les salaires seront comptés le jour où le planning entrera dans la trésorerie.
-                Une facture ne peut pas encore être marquée réglée : les échéances passées
-                restent donc affichées comme dues.
+                Pointez une échéance réglée avec la coche : elle sort des sorties à venir sans
+                changer un centime à vos achats, à votre marge ni à votre résultat.
               </p>
             </div>
           )}
