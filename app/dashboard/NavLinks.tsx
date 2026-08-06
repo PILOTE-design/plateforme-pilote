@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { BarChart3, FileText, Settings, CalendarDays, Receipt, Scale, LineChart, Percent, ShoppingBasket, ChefHat, Factory } from 'lucide-react'
+import { BarChart3, FileText, Settings, CalendarDays, Receipt, Scale, LineChart, Percent, ShoppingBasket, ChefHat, Factory, Wallet } from 'lucide-react'
 
 const NAV = [
   { href: '/dashboard',              icon: BarChart3,    label: 'Tableau de bord', short: 'Accueil' },
@@ -11,6 +11,7 @@ const NAV = [
   { href: '/dashboard/marges',       icon: Percent,      label: 'Marges',          short: 'Marges' },
   { href: '/dashboard/planning',     icon: CalendarDays, label: 'Planning',        short: 'Planning' },
   { href: '/dashboard/facturation',  icon: Receipt,      label: 'Facturation',     short: 'Factures' },
+  { href: '/dashboard/tresorerie',   icon: Wallet,       label: 'Trésorerie',      short: 'Tréso' },
   { href: '/dashboard/mercuriale',   icon: ShoppingBasket, label: 'Mercuriale',     short: 'Prix' },
   { href: '/dashboard/recettes',     icon: ChefHat,      label: 'Fiches recettes', short: 'Recettes' },
   { href: '/dashboard/production',   icon: Factory,      label: 'Production',      short: 'Prod' },
@@ -59,7 +60,7 @@ export function MobileTabBar() {
     <nav className="md:hidden fixed bottom-0 inset-x-0 z-50 bg-white/95 backdrop-blur border-t border-gray-200 grid grid-cols-6 pb-[env(safe-area-inset-bottom)]">
       {/* Six onglets exactement (grid-cols-6 ci-dessus) : tout ajout au NAV
           doit être exclu ici, sinon la grille se casse en mobile. */}
-      {NAV.filter(i => !['/dashboard/reports', '/dashboard/settings', '/dashboard/mercuriale', '/dashboard/recettes', '/dashboard/production'].includes(i.href)).map(item => {
+      {NAV.filter(i => !['/dashboard/reports', '/dashboard/settings', '/dashboard/mercuriale', '/dashboard/recettes', '/dashboard/production', '/dashboard/tresorerie'].includes(i.href)).map(item => {
         const active = isActive(pathname, item.href)
         return (
           <Link
