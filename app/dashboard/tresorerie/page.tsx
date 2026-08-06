@@ -98,6 +98,11 @@ const FENETRES = [
   { cle: '30-90', label: '4 mois', avant: 30, apres: 90 },
 ] as const
 
+/** Échéances montrées d'emblée. Au-delà, le nombre restant est écrit et un
+ *  bouton déplie le reste : une troncature muette se lit comme une liste
+ *  complète. */
+const PLAFOND_ECHEANCES = 12
+
 const MOTIFS: Record<string, string> = {
   sans_echeance: 'aucune échéance sur le document',
   hors_fenetre: 'échéance hors de la fenêtre',
@@ -138,10 +143,26 @@ export default function TresoreriePage() {
     return bilan.jours.reduce((m, j) => Math.max(m, j.encaissements, j.decaissements), 0)
   }, [bilan])
 
+  // AUCUN relevé du tout : distinct de « zéro encaissé ». Tant que la boutique
+  // n'a transféré aucun relevé, la trésorerie n'a pas d'entrées à montrer, et
+  // le dire est plus utile que d'afficher un zéro.
+  const aucunReleve = useMemo(
+    () => !!bilan && bilan.totalEncaissements === 0 && bilan.jours.every(j => j.encaissements === 0),
+    [bilan],
+  )
+
   const prochainesSorties = useMemo(() => {
     if (!bilan) return []
     return [...bilan.sorties].sort((a, b) => a.jour.localeCompare(b.jour) || b.montant - a.montant)
   }, [bilan])
+
+  // PLAFOND D'AFFICHAGE. Quarante-neuf échéances déroulaient une colonne cinq
+  // fois plus haute que sa voisine : la carte « Hors de la courbe » se
+  // retrouvait perdue dans le vide, et personne ne lit la trente-huitième
+  // ligne. On en montre douze — et, règle de la maison, on écrit combien on
+  // n'affiche pas. Le total, lui, porte toujours sur la totalité.
+  const [toutesEcheances, setToutesEcheances] = useState(false)
+  const echeancesVisibles = toutesEcheances ? prochainesSorties : prochainesSorties.slice(0, PLAFOND_ECHEANCES)
 
   return (
     <div className="space-y-6 pb-24">
@@ -225,13 +246,26 @@ export default function TresoreriePage() {
               valeur={eur2(bilan.soldeCloture)}
               detail={`variation du ${libelleJour(bilan.fenetre.debut)} au ${libelleJour(bilan.fenetre.fin)}`}
             />
+            {/* « 0,00 € » et « aucun relevé reçu » ne sont pas la même chose.
+                Vu à l'écran le premier jour : la tuile affichait un zéro massif
+                là où la table est simplement vide — un chiffre là où il n'y a
+                pas de donnée, exactement ce que la maison s'interdit. */}
             <Tuile
               label="Encaissé"
-              valeur={eur2(bilan.totalEncaissements)}
+              valeur={
+                aucunReleve
+                  ? <Absent
+                      raison="aucun relevé"
+                      explication="Aucun relevé de caisse n’est encore arrivé : ce n’est pas zéro euro encaissé."
+                    />
+                  : eur2(bilan.totalEncaissements)
+              }
               detail={
-                bilan.reserves.joursSansReleve.length > 0
-                  ? `${bilan.reserves.joursSansReleve.length} journée(s) sans relevé de caisse`
-                  : 'relevés de caisse reçus'
+                aucunReleve
+                  ? 'transférez le relevé financier à l’adresse de la boutique'
+                  : bilan.reserves.joursSansReleve.length > 0
+                    ? `${bilan.reserves.joursSansReleve.length} journée(s) sans relevé de caisse`
+                    : 'relevés de caisse reçus'
               }
             />
             <Tuile
@@ -369,7 +403,7 @@ export default function TresoreriePage() {
                 </p>
               ) : (
                 <ul className="divide-y divide-gray-100">
-                  {prochainesSorties.map(s => (
+                  {echeancesVisibles.map(s => (
                     <li key={s.factureId} className="flex items-center justify-between gap-3 py-2">
                       <div className="min-w-0">
                         <p className="truncate text-sm font-medium text-encre">{s.libelle}</p>
@@ -379,18 +413,37 @@ export default function TresoreriePage() {
                         </p>
                       </div>
                       <div className="flex shrink-0 items-center gap-2">
-                        {s.enRetard && (
+                        {/* UN AVOIR N'EST PAS UNE SORTIE. Il porte un montant
+                            négatif : l'afficher « échue » en rouge comme une
+                            facture à payer inverse son sens. Vu à l'écran sur
+                            un avoir PLUXEE de −268,34 €. */}
+                        {s.montant < 0 ? (
+                          <span className="whitespace-nowrap rounded-md bg-etat-gain/10 px-1.5 py-0.5 text-[11px] font-bold text-etat-gain">
+                            avoir
+                          </span>
+                        ) : s.enRetard ? (
                           <span className="whitespace-nowrap rounded-md bg-pilote-orange/[0.12] px-1.5 py-0.5 text-[11px] font-bold text-[#9A4A00]">
                             échue
                           </span>
-                        )}
-                        <span className="whitespace-nowrap text-sm font-bold tabular text-encre-fort">
+                        ) : null}
+                        <span className={`whitespace-nowrap text-sm font-bold tabular ${s.montant < 0 ? 'text-etat-gain' : 'text-encre-fort'}`}>
                           {eur2(s.montant)}
                         </span>
                       </div>
                     </li>
                   ))}
                 </ul>
+              )}
+
+              {prochainesSorties.length > PLAFOND_ECHEANCES && (
+                <button
+                  onClick={() => setToutesEcheances(v => !v)}
+                  className="mt-3 min-h-[44px] w-full rounded-xl border border-pilote-200 bg-white px-4 text-sm font-semibold text-pilote transition-colors hover:bg-pilote-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-pilote-200"
+                >
+                  {toutesEcheances
+                    ? `Réduire — ${prochainesSorties.length} échéances au total`
+                    : `Afficher les ${prochainesSorties.length - PLAFOND_ECHEANCES} autres échéances`}
+                </button>
               )}
             </div>
 
