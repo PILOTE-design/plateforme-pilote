@@ -22,12 +22,38 @@ type Statut = 'attente' | 'encours' | 'appris' | 'resiste'
 type LigneLue = {
   designation: string
   article_code: string | null
-  quantity: number | null
+  /** LES TROIS CHAMPS NUMÉRIQUES SONT DES CHAÎNES, et c'est délibéré.
+   *
+   *  Un champ contrôlé qui reparse sa valeur à chaque frappe réécrit ce qu'on
+   *  est en train de taper : on efface « 7306,29 » pour saisir « 12,50 », le
+   *  champ vide vaut 0, il réaffiche « 0 », et la virgule suivante tombe sur
+   *  « 0, » qui n'est pas un nombre. Vu à l'écran d'administration.
+   *
+   *  La chaîne est donc conservée telle que l'administrateur la tape — virgule
+   *  française comprise — et n'est convertie qu'au moment de la somme et de
+   *  l'envoi. Le serveur, lui, accepte déjà les deux écritures. */
+  quantity: string
   unit: string | null
-  unit_price_ht: number | null
-  amount_ht: number
+  unit_price_ht: string
+  amount_ht: string
   tva_rate: number | null
   weight_kg: number | null
+}
+
+/** Une saisie française ou anglaise → un nombre. Chaîne vide, tiret seul ou
+ *  virgule seule (états intermédiaires de frappe) rendent null, jamais 0 :
+ *  un zéro fantôme fausserait la somme sans se voir. */
+function nombreSaisi(v: string): number | null {
+  const t = String(v ?? '').trim().replace(/\s/g, '').replace(',', '.')
+  if (t === '' || t === '-' || t === '.' || t === '-.') return null
+  const n = Number(t)
+  return Number.isFinite(n) ? n : null
+}
+
+/** Un nombre venu du serveur → la chaîne qu'on affiche, en écriture française. */
+function versSaisie(v: number | null | undefined): string {
+  if (v === null || v === undefined || !Number.isFinite(Number(v))) return ''
+  return String(v).replace('.', ',')
 }
 
 type Ligne = {
@@ -148,7 +174,20 @@ export default function InvoiceLayoutsPage() {
         // qu'on corrige. Le panneau s'ouvre tout seul — un bouton de plus à
         // trouver, sur un écran d'administration, c'est un geste qu'on ne fait
         // jamais.
-        const lues: LigneLue[] | null = Array.isArray(data?.lignes_lues) ? data.lignes_lues : null
+        // Les nombres du serveur deviennent des chaînes de saisie, en écriture
+        // française : c'est ce que l'administrateur va lire et corriger.
+        const lues: LigneLue[] | null = Array.isArray(data?.lignes_lues)
+          ? (data.lignes_lues as Record<string, unknown>[]).map(u => ({
+              designation: String(u.designation ?? ''),
+              article_code: (u.article_code as string | null) ?? null,
+              quantity: versSaisie(u.quantity as number | null),
+              unit: (u.unit as string | null) ?? null,
+              unit_price_ht: versSaisie(u.unit_price_ht as number | null),
+              amount_ht: versSaisie(u.amount_ht as number | null),
+              tva_rate: (u.tva_rate as number | null) ?? null,
+              weight_kg: (u.weight_kg as number | null) ?? null,
+            }))
+          : null
         return {
           ...x, statut: 'resiste',
           detail: data?.motif || data?.error || 'Le serveur n’a pas répondu.',
@@ -174,7 +213,7 @@ export default function InvoiceLayoutsPage() {
 
   /** Somme des lignes corrigées, arrondie au centime comme le serveur. */
   const sommeLues = (lues: LigneLue[]) =>
-    Math.round(lues.reduce((s, l) => s + (Number(l.amount_ht) || 0), 0) * 100) / 100
+    Math.round(lues.reduce((s, l) => s + (nombreSaisi(l.amount_ht) ?? 0), 0) * 100) / 100
 
   const totalDe = (l: Ligne) => {
     const n = parseFloat(l.total.replace(/\s/g, '').replace(',', '.'))
@@ -355,16 +394,16 @@ export default function InvoiceLayoutsPage() {
                               </td>
                               <td className="px-1 py-1">
                                 <input
-                                  value={u.quantity ?? ''} inputMode="decimal"
-                                  onChange={e => majLues(l.file.name, arr => arr.map((y, j) => j === i ? { ...y, quantity: e.target.value === '' ? null : Number(e.target.value.replace(',', '.')) } : y))}
+                                  value={u.quantity} inputMode="decimal"
+                                  onChange={e => majLues(l.file.name, arr => arr.map((y, j) => j === i ? { ...y, quantity: e.target.value } : y))}
                                   aria-label={`Quantité de la ligne ${i + 1}`}
                                   className="w-full rounded-lg border border-gray-200 px-2 py-1.5 text-right text-xs tabular focus:outline-none focus-visible:ring-2 focus-visible:ring-pilote-200"
                                 />
                               </td>
                               <td className="px-1 py-1">
                                 <input
-                                  value={u.unit_price_ht ?? ''} inputMode="decimal"
-                                  onChange={e => majLues(l.file.name, arr => arr.map((y, j) => j === i ? { ...y, unit_price_ht: e.target.value === '' ? null : Number(e.target.value.replace(',', '.')) } : y))}
+                                  value={u.unit_price_ht} inputMode="decimal"
+                                  onChange={e => majLues(l.file.name, arr => arr.map((y, j) => j === i ? { ...y, unit_price_ht: e.target.value } : y))}
                                   aria-label={`Prix unitaire de la ligne ${i + 1}`}
                                   className="w-full rounded-lg border border-gray-200 px-2 py-1.5 text-right text-xs tabular focus:outline-none focus-visible:ring-2 focus-visible:ring-pilote-200"
                                 />
@@ -372,7 +411,7 @@ export default function InvoiceLayoutsPage() {
                               <td className="px-1 py-1">
                                 <input
                                   value={u.amount_ht} inputMode="decimal"
-                                  onChange={e => majLues(l.file.name, arr => arr.map((y, j) => j === i ? { ...y, amount_ht: Number(e.target.value.replace(',', '.')) || 0 } : y))}
+                                  onChange={e => majLues(l.file.name, arr => arr.map((y, j) => j === i ? { ...y, amount_ht: e.target.value } : y))}
                                   aria-label={`Montant de la ligne ${i + 1}`}
                                   className="w-full rounded-lg border border-gray-200 px-2 py-1.5 text-right text-xs font-semibold tabular focus:outline-none focus-visible:ring-2 focus-visible:ring-pilote-200"
                                 />
@@ -394,7 +433,7 @@ export default function InvoiceLayoutsPage() {
 
                     <div className="mt-2 flex flex-wrap items-center gap-2">
                       <button
-                        onClick={() => majLues(l.file.name, arr => [...arr, { designation: '', article_code: null, quantity: null, unit: null, unit_price_ht: null, amount_ht: 0, tva_rate: null, weight_kg: null }])}
+                        onClick={() => majLues(l.file.name, arr => [...arr, { designation: '', article_code: null, quantity: '', unit: null, unit_price_ht: '', amount_ht: '', tva_rate: null, weight_kg: null }])}
                         className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-[11px] font-bold text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-pilote-200"
                       >
                         <Plus className="h-3 w-3" aria-hidden /> Ajouter une ligne
@@ -408,7 +447,7 @@ export default function InvoiceLayoutsPage() {
                           <>
                             <button
                               onClick={() => apprendreCorrige(l)}
-                              disabled={!boucle || l.envoi || l.lues!.length < 2}
+                              disabled={!boucle || l.envoi || l.lues!.length < 2 || l.lues!.some(u => nombreSaisi(u.amount_ht) === null || u.designation.trim() === '')}
                               className="flex items-center gap-1.5 rounded-lg bg-pilote px-3 py-1.5 text-[11px] font-bold text-white shadow-card transition-all hover:bg-pilote-hover active:scale-[0.98] disabled:opacity-40 focus:outline-none focus-visible:ring-2 focus-visible:ring-pilote-200"
                             >
                               {l.envoi ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> : <GraduationCap className="h-3 w-3" aria-hidden />}
@@ -425,6 +464,11 @@ export default function InvoiceLayoutsPage() {
                             )}
                             {boucle && l.lues!.length < 2 && (
                               <p className="text-[11px] text-gray-500">au moins deux lignes : une seule n’apprend pas une mise en page</p>
+                            )}
+                            {boucle && l.lues!.length >= 2 && l.lues!.some(u => nombreSaisi(u.amount_ht) === null || u.designation.trim() === '') && (
+                              <p className="text-[11px] text-gray-500">
+                                une ligne est incomplète : chaque ligne veut une désignation et un montant
+                              </p>
                             )}
                           </>
                         )
