@@ -44,8 +44,12 @@ export type EcheanceFacture = {
   montantTtc: number
   /** AAAA-MM-JJ, ou null quand le document ne portait pas d'échéance. */
   echeance: string | null
-  /** Tel quel en base. Aucune valeur ne signifie « payé » aujourd'hui. */
+  /** Tel quel en base. */
   statutPaiement: string | null
+  /** Date de pointage du règlement, AAAA-MM-JJ. null = non pointée.
+   *  Distincte de l'échéance : payer en retard est le cas courant, et confondre
+   *  les deux daterait le décaissement du mauvais jour. */
+  regleLe?: string | null
   /** Une charge de structure sort du compte comme une autre facture. */
   chargeFixe?: boolean
 }
@@ -105,9 +109,14 @@ export type ReservesTresorerie = {
   /** Toujours vrai tant que le planning est hors trésorerie : le solde est
    *  optimiste du montant de la masse salariale de la période. */
   salairesAbsents: true
-  /** Aucune facture n'est marquée réglée : les échéances passées sont des dues,
-   *  pas des sorties constatées. */
+  /** Des échéances sont passées SANS avoir été pointées réglées : on ne sait
+   *  pas si elles sont payées. Devient faux dès que tout le passé est pointé —
+   *  c'est le geste qui transforme le prévisionnel en constat. */
   reglementsInconnus: boolean
+  /** Ce qui a été pointé réglé sur la fenêtre, et donc sorti de la courbe des
+   *  échéances à venir. Compté et rendu : un montant qui disparaît sans être
+   *  nommé est un montant perdu. */
+  reglees: { nombre: number; montant: number; lignes: SortieTresorerie[] }
   /** Factures dont l'échéance est passée et qui restent dues. */
   enRetard: { nombre: number; montant: number }
   /** Factures qu'on ne peut pas placer sur un jour, avec leur motif. */
@@ -213,9 +222,28 @@ export function calculeTresorerie(entree: {
   let enRetardNb = 0
   let enRetardMontant = 0
 
+  const reglees: SortieTresorerie[] = []
+  let regleesMontant = 0
+
   for (const f of entree.factures) {
     const montant = Number(f.montantTtc) || 0
-    if (estReglee(f.statutPaiement)) continue
+
+    // UNE FACTURE POINTÉE RÉGLÉE SORT DE LA COURBE, PAS DES COMPTES.
+    // Elle n'est plus une sortie à venir — mais elle est comptée et rendue,
+    // pour que l'écran puisse la montrer et la dépointer. Un montant qui
+    // disparaît sans être nommé est un montant perdu.
+    if (estReglee(f.statutPaiement)) {
+      regleesMontant += montant
+      reglees.push({
+        jour: jourValide(f.regleLe) ? f.regleLe : (jourValide(f.echeance) ? f.echeance : aujourdHui),
+        montant: round2(montant),
+        libelle: f.fournisseur,
+        factureId: f.id,
+        chargeFixe: Boolean(f.chargeFixe),
+        enRetard: false,
+      })
+      continue
+    }
 
     if (!jourValide(f.echeance)) {
       nonDatees.push({
@@ -293,9 +321,11 @@ export function calculeTresorerie(entree: {
     sorties,
     reserves: {
       salairesAbsents: true,
-      // Tant qu'aucune facture ne peut être marquée réglée, la question se pose
-      // dès qu'il y a une facture dans la fenêtre.
-      reglementsInconnus: sorties.length > 0 || nonDatees.length > 0,
+      // La question ne se pose que pour le PASSÉ : une échéance à venir n'a pas
+      // à être pointée. Dès que tout le passé l'est, la réserve tombe — et le
+      // solde cesse d'être un prévisionnel sur cette partie-là.
+      reglementsInconnus: enRetardNb > 0,
+      reglees: { nombre: reglees.length, montant: round2(regleesMontant), lignes: reglees },
       enRetard: { nombre: enRetardNb, montant: round2(enRetardMontant) },
       nonDatees,
       montantNonDate: round2(nonDatees.reduce((s, x) => s + x.montant, 0)),
@@ -326,9 +356,12 @@ export function phraseReserves(b: BilanTresorerie): string | null {
   const bouts: string[] = []
 
   if (b.reserves.salairesAbsents) bouts.push('salaires non comptés')
-  if (b.reserves.reglementsInconnus) bouts.push('aucune facture n’est marquée réglée')
+  // Une seule phrase pour les échéances passées : elles sont dues PARCE QUE
+  // personne ne les a pointées. Deux puces séparées disaient deux fois la même
+  // chose avec deux formulations, ce qui se lit comme deux problèmes.
   if (b.reserves.enRetard.nombre > 0) {
-    bouts.push(`${b.reserves.enRetard.nombre} échéance${b.reserves.enRetard.nombre > 1 ? 's' : ''} passée${b.reserves.enRetard.nombre > 1 ? 's' : ''} et due${b.reserves.enRetard.nombre > 1 ? 's' : ''} (${montantFr(b.reserves.enRetard.montant)})`)
+    const n = b.reserves.enRetard.nombre
+    bouts.push(`${n} échéance${n > 1 ? 's' : ''} passée${n > 1 ? 's' : ''} et non pointée${n > 1 ? 's' : ''} réglée${n > 1 ? 's' : ''} (${montantFr(b.reserves.enRetard.montant)})`)
   }
   if (b.reserves.joursSansReleve.length > 0) {
     bouts.push(`${b.reserves.joursSansReleve.length} journée${b.reserves.joursSansReleve.length > 1 ? 's' : ''} sans relevé de caisse`)

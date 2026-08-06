@@ -65,11 +65,15 @@ export async function GET(req: Request) {
   }
 
   // ── Les échéances de factures ───────────────────────────────────────────
+  // Les factures POINTÉES RÉGLÉES sont lues comme les autres : c'est le moteur
+  // qui les met à part (`reserves.reglees`), pas la requête. Les écarter ici
+  // les ferait disparaître de l'écran sans que personne ne puisse les
+  // dépointer.
   // Paginée : une boutique accumule des centaines de factures par an, et
   // PostgREST s'arrête silencieusement à 1000 lignes.
   const facturesPage = await fetchAllPages<any>(apres => {
     let q = service.from('invoices')
-      .select('id, supplier_name, amount_ttc, amount_ht, due_date, payment_status, is_fixed_charge')
+      .select('id, supplier_name, amount_ttc, amount_ht, due_date, payment_status, is_fixed_charge, paid_at')
       .eq('client_id', clientId)
       .not('due_date', 'is', null)
       .gte('due_date', debut)
@@ -83,7 +87,7 @@ export async function GET(req: Request) {
   // que personne ne s'en aperçoive.
   const sansEcheancePage = await fetchAllPages<any>(apres => {
     let q = service.from('invoices')
-      .select('id, supplier_name, amount_ttc, amount_ht, due_date, payment_status, is_fixed_charge')
+      .select('id, supplier_name, amount_ttc, amount_ht, due_date, payment_status, is_fixed_charge, paid_at')
       .eq('client_id', clientId)
       .is('due_date', null)
       .gte('invoice_date', debut)
@@ -100,6 +104,8 @@ export async function GET(req: Request) {
     montantTtc: Number(r.amount_ttc ?? r.amount_ht ?? 0) || 0,
     echeance: typeof r.due_date === 'string' ? r.due_date : null,
     statutPaiement: (r.payment_status as string | null) ?? null,
+    // La date de pointage, ramenée au jour : le moteur raisonne en journées.
+    regleLe: typeof r.paid_at === 'string' ? r.paid_at.slice(0, 10) : null,
     chargeFixe: Boolean(r.is_fixed_charge),
   })
 

@@ -30,8 +30,9 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { Wallet, ArrowDownRight, ArrowUpRight, RefreshCw, ExternalLink } from 'lucide-react'
+import { Wallet, ArrowDownRight, ArrowUpRight, RefreshCw, ExternalLink, Check, Undo2 } from 'lucide-react'
 import { TuileRoi, Tuile, TuileAlerte, TitreCarte, Absent } from '@/components/ui/da'
+import { useToast } from '@/components/ui/toast'
 
 // ── Types de la réponse d'API ──────────────────────────────────────────────
 type Jour = {
@@ -68,6 +69,7 @@ type Bilan = {
     montantNonDate: number
     joursSansReleve: string[]
     provisionRecurrentes: number
+    reglees: { nombre: number; montant: number; lignes: Sortie[] }
   }
   phrase_reserves: string | null
   lecture_incomplete: boolean
@@ -113,6 +115,11 @@ export default function TresoreriePage() {
   const [bilan, setBilan] = useState<Bilan | null>(null)
   const [chargement, setChargement] = useState(true)
   const [erreur, setErreur] = useState<string | null>(null)
+  // La facture en cours de pointage : son bouton se désactive le temps de
+  // l'aller-retour, pour qu'un double clic ne pointe pas deux fois.
+  const [enCours, setEnCours] = useState<string | null>(null)
+  const [voirReglees, setVoirReglees] = useState(false)
+  const { toast } = useToast()
 
   const charger = useCallback(async () => {
     const f = FENETRES.find(x => x.cle === fenetre)!
@@ -132,6 +139,43 @@ export default function TresoreriePage() {
   }, [fenetre])
 
   useEffect(() => { void charger() }, [charger])
+
+  /**
+   * POINTER (ou DÉPOINTER) UNE FACTURE.
+   *
+   * C'est le geste qui fait passer la trésorerie du prévisionnel au constat :
+   * tant qu'une échéance passée n'est pas pointée, on ne sait pas si l'argent
+   * est sorti, et la réserve le dit en haut de l'écran.
+   *
+   * Réversible, volontairement — on se trompe de ligne, et un pointage
+   * définitif ferait mentir le solde pour toujours.
+   */
+  const pointer = useCallback(async (factureId: string, regle: boolean) => {
+    setEnCours(factureId)
+    try {
+      const r = await fetch(`/api/invoices/${factureId}/reglement`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ regle }),
+      })
+      const j = await r.json()
+      if (!r.ok) throw new Error(j?.error || 'Pointage impossible')
+      toast({
+        variant: 'success',
+        title: regle ? 'Facture pointée réglée' : 'Facture remise à régler',
+        description: j.motif,
+      })
+      await charger()
+    } catch (e) {
+      toast({
+        variant: 'error',
+        title: 'Pointage impossible',
+        description: e instanceof Error ? e.message : undefined,
+      })
+    } finally {
+      setEnCours(null)
+    }
+  }, [charger, toast])
 
   const aujourdHui = useMemo(() => isoDuJour(0), [])
 
@@ -277,8 +321,7 @@ export default function TresoreriePage() {
               <TuileAlerte
                 label="Échéances passées et dues"
                 valeur={eur2(bilan.reserves.enRetard.montant)}
-                action={`${bilan.reserves.enRetard.nombre} facture(s) à régler ou à pointer`}
-                href="/dashboard/facturation"
+                action={`${bilan.reserves.enRetard.nombre} facture(s) à pointer réglées`}
               />
             ) : (
               <Tuile
@@ -429,10 +472,67 @@ export default function TresoreriePage() {
                         <span className={`whitespace-nowrap text-sm font-bold tabular ${s.montant < 0 ? 'text-etat-gain' : 'text-encre-fort'}`}>
                           {eur2(s.montant)}
                         </span>
+                        <button
+                          onClick={() => void pointer(s.factureId, true)}
+                          disabled={enCours === s.factureId}
+                          aria-label={`Pointer réglée : ${s.libelle}`}
+                          title="Pointer cette facture comme réglée"
+                          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-pilote-200 text-pilote transition-colors hover:bg-pilote-50 disabled:opacity-40 focus:outline-none focus-visible:ring-2 focus-visible:ring-pilote-200"
+                        >
+                          <Check className="h-4 w-4" strokeWidth={2.4} aria-hidden />
+                        </button>
                       </div>
                     </li>
                   ))}
                 </ul>
+              )}
+
+              {/* CE QUI A ÉTÉ POINTÉ. Une facture réglée sort de la courbe des
+                  échéances — mais elle ne doit pas disparaître de l'écran,
+                  sinon on ne peut plus la dépointer quand on s'est trompé de
+                  ligne, et le montant s'évapore sans être nommé. */}
+              {bilan.reserves.reglees.nombre > 0 && (
+                <div className="mt-4 border-t border-gray-100 pt-3">
+                  <button
+                    onClick={() => setVoirReglees(v => !v)}
+                    aria-expanded={voirReglees}
+                    className="flex min-h-[44px] w-full items-center justify-between gap-3 rounded-xl px-1 text-left transition-colors hover:bg-gray-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-pilote-200"
+                  >
+                    <span className="text-sm font-semibold text-encre">
+                      {bilan.reserves.reglees.nombre} facture(s) pointée(s) réglée(s)
+                    </span>
+                    <span className="whitespace-nowrap text-sm font-bold tabular text-etat-gain">
+                      {eur2(bilan.reserves.reglees.montant)}
+                    </span>
+                  </button>
+
+                  {voirReglees && (
+                    <ul className="divide-y divide-gray-100">
+                      {bilan.reserves.reglees.lignes.map(s => (
+                        <li key={s.factureId} className="flex items-center justify-between gap-3 py-2">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium text-encre">{s.libelle}</p>
+                            <p className="text-xs text-encre-faible">réglée le {libelleJour(s.jour)}</p>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-2">
+                            <span className="whitespace-nowrap text-sm font-bold tabular text-etat-gain">
+                              {eur2(s.montant)}
+                            </span>
+                            <button
+                              onClick={() => void pointer(s.factureId, false)}
+                              disabled={enCours === s.factureId}
+                              aria-label={`Remettre à régler : ${s.libelle}`}
+                              title="Annuler le pointage"
+                              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-gray-100 text-encre-doux transition-colors hover:bg-gray-50 disabled:opacity-40 focus:outline-none focus-visible:ring-2 focus-visible:ring-pilote-200"
+                            >
+                              <Undo2 className="h-4 w-4" strokeWidth={2} aria-hidden />
+                            </button>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
               )}
 
               {prochainesSorties.length > PLAFOND_ECHEANCES && (
