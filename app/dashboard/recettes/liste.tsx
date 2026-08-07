@@ -388,7 +388,7 @@ export default function ListeFiches({
   return (
     <div className="bg-white rounded-2xl border border-gray-100 shadow-card overflow-hidden">
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[880px]">
+        <table className="w-full min-w-[820px]">
           <thead>
             <tr className="bg-gray-50">
               <ThTri label="Format de vente" sortKey="nom" sort={sort} onSort={onSort} align="left" />
@@ -418,12 +418,19 @@ export default function ListeFiches({
                   onClick={() => onOpen(l)}
                   onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(l) } }}
                   className={`group border-t border-gray-100 cursor-pointer transition-colors focus:outline-none focus:bg-pilote-50/60 ${ouverte ? 'bg-pilote-50/60' : 'hover:bg-gray-50'}`}>
-                  <td className="px-3.5 py-3 max-w-[22rem]">
-                    {/* `title` : le nom est tronqué faute de place, et sans lui
+                  <td className="px-3.5 py-3">
+                    {/* `max-w` est porté par les DEUX paragraphes, jamais par la
+                        cellule : sur un tableau en disposition automatique, une
+                        largeur maximale posée sur un `<td>` reste indicative et le
+                        contenu l'ignore — c'est ce qui, mesuré en production le
+                        07/08, poussait la table à 924 px pour 878 disponibles et
+                        coupait la colonne « Temps » hors du cadre.
+
+                        `title` : le nom est tronqué faute de place, et sans lui
                         il n'existe aucun moyen de lire un nom long — c'est le
                         défaut relevé chez Otami (« SAUCISSE MONTAGNA… », rien au
                         survol), qu'on ne va pas reproduire. */}
-                    <p className="text-sm font-bold text-gray-900 leading-snug truncate" title={l.nom}>
+                    <p className="text-sm font-bold text-gray-900 leading-snug truncate max-w-[15rem]" title={l.nom}>
                       {/* La coche verte des formats relus, comme chez Otami —
                           discrète, devant le nom, sans mot en plus. */}
                       {l.validated && (
@@ -431,7 +438,7 @@ export default function ListeFiches({
                       )}
                       {l.nom}
                     </p>
-                    <p className="text-[11px] italic text-gray-500 truncate" title={sousTitre(l)}>{sousTitre(l)}</p>
+                    <p className="text-[11px] italic text-gray-500 truncate max-w-[15rem]" title={sousTitre(l)}>{sousTitre(l)}</p>
                   </td>
 
                   <td className="px-3.5 py-3">
