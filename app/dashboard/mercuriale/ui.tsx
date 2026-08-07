@@ -79,6 +79,16 @@ export type FicheDetail = {
   lignes_ecartees: number
   quarantaine_12m: number
   lecture_incomplete: string | null
+  /** Un prix qui vaut un multiple ENTIER de la lecture précédente (lot 119).
+   *  `null` dans l'immense majorité des cas. */
+  saut_de_prix: {
+    facteur: number
+    jours: number
+    corrobore: boolean
+    phrase: string
+    recente: { date: string; prix: number; quantite: number | null; facture?: string | null }
+    precedente: { date: string; prix: number; quantite: number | null; facture?: string | null }
+  } | null
 }
 
 // ── Petits composants ─────────────────────────────────────
@@ -236,10 +246,23 @@ export function BlocHistoriqueAchats({ fiche, baseUnit }: { fiche: FicheDetail |
     fiche.quarantaine_12m > 0 ? `${fiche.quarantaine_12m} prix refusé${fiche.quarantaine_12m > 1 ? 's' : ''} à la lecture non compté${fiche.quarantaine_12m > 1 ? 's' : ''}` : null,
     fiche.lecture_incomplete,
   ].filter((x): x is string => x !== null)
+  const saut = fiche.saut_de_prix
   return (
     <div className="mb-2.5 bg-white border border-gray-100 rounded-xl overflow-hidden">
+      {/* UN PRIX QUI EST LE MULTIPLE ENTIER DU PRÉCÉDENT N'EST PAS UNE HAUSSE.
+          Placé ICI, en tête de l'historique facture par facture : c'est le seul
+          endroit de l'écran où le boucher a les deux lectures sous les yeux et
+          peut trancher. Une alerte loin de sa preuve ne se traite pas. */}
+      {saut !== null && (
+        <div className="px-3.5 py-2.5 bg-amber-50 border-b border-amber-200">
+          <p className="text-[11px] font-bold text-amber-900 whitespace-nowrap">
+            Prix multiplié par {saut.facteur.toLocaleString('fr-FR')} — à vérifier
+          </p>
+          <p className="text-[11px] text-amber-800 mt-0.5 leading-relaxed">{saut.phrase}</p>
+        </div>
+      )}
       <div className="px-3.5 py-2 bg-gray-50/80 flex items-center justify-between gap-2 flex-wrap">
-        <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Historique des achats — facture par facture</p>
+        <p className="text-[11px] font-semibold text-gray-500 uppercase tracking-wider">Historique des achats — facture par facture</p>
         <p className="text-[11px] text-gray-500 tabular">{fiche.lignes_total} achat{fiche.lignes_total > 1 ? 's' : ''} · {fmtEuro(fiche.total_12m)} sur 12 mois</p>
       </div>
       <div className="max-h-60 overflow-y-auto">
