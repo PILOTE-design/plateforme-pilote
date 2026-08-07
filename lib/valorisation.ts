@@ -328,6 +328,65 @@ export type RepartitionCarcasse = {
  * les prix de référence et le coût total de la carcasse. Un prix de référence
  * corrigé, et toutes les fiches qui utilisent ce morceau suivent.
  */
+/**
+ * LES PIÈCES PESÉES QUI N'ENTRENT DANS AUCUN MORCEAU. Lot 122.
+ *
+ * `repartitionCarcasse` n'itère que sur la nomenclature de l'espèce : une clé
+ * de `cut_weights` qui n'y figure pas est ignorée, sans un mot. Son poids, lui,
+ * compte dans la couverture de la carcasse — donc il gonfle le « % pesé » —
+ * mais il ne reçoit aucun coût, et la part qui lui revenait se reporte sur les
+ * autres morceaux, qui deviennent trop chers.
+ *
+ * Mesuré en production le 07/08/2026 chez la Boucherie du val des bois :
+ *
+ *   bœuf  · `cote_boeuf`   16,79 kg sur 196,7 kg pesés  →  8,5 %
+ *   veau  · `veau_epaule`   5,15 kg sur  35,2 kg pesés  → 14,6 %
+ *
+ * Le veau était donc surévalué d'environ un septième, et ce prix partait dans
+ * le coût de revient de toutes les fiches qui s'en servent. Rien à l'écran ne
+ * le disait — c'est exactement le chiffre faux en silence que la maison refuse.
+ *
+ * Ces identifiants ne sont pas des fautes de saisie : ce sont d'anciennes clés,
+ * restées dans des carcasses enregistrées avant un renommage de la nomenclature.
+ * On ne les devine donc PAS (rattacher `cote_boeuf` à la mauvaise pièce ferait
+ * un chiffre faux de plus) : on les NOMME, avec leur poids, et le boucher
+ * tranche.
+ */
+export function piecesHorsNomenclature(
+  poids: Record<string, unknown> | null | undefined,
+  cuts: Cut[],
+): { id: string; kg: number }[] {
+  const connus = new Set(cuts.map(c => c.id))
+  const out: { id: string; kg: number }[] = []
+  for (const [id, brut] of Object.entries(poids ?? {})) {
+    if (connus.has(id)) continue
+    const kg = typeof brut === 'string' ? parseFloat(brut.replace(',', '.')) : Number(brut)
+    if (!Number.isFinite(kg) || kg <= 0) continue
+    out.push({ id, kg: round4(kg) })
+  }
+  return out.sort((a, b) => b.kg - a.kg)
+}
+
+/** La phrase montrée sur l'écran Valorisation. Elle dit le POIDS et la PART,
+ *  parce que « une pièce non reconnue » ne se traite pas et que « 16,79 kg,
+ *  8,5 % de ce que vous avez pesé » se traite tout de suite. */
+export function phrasePiecesHorsNomenclature(
+  hors: { id: string; kg: number }[],
+  poidsPeseTotal: number,
+): string {
+  if (hors.length === 0) return ''
+  const kg = round4(hors.reduce((s, h) => s + h.kg, 0))
+  const part = poidsPeseTotal > 0 ? Math.round((kg / poidsPeseTotal) * 1000) / 10 : null
+  const n = hors.length
+  const noms = hors.slice(0, 4).map(h => `${h.id} (${h.kg.toLocaleString('fr-FR')} kg)`).join(', ')
+  const reste = n > 4 ? `, +${(n - 4).toLocaleString('fr-FR')}` : ''
+  return `${n.toLocaleString('fr-FR')} pièce${n > 1 ? 's' : ''} pesée${n > 1 ? 's' : ''} `
+    + `n’${n > 1 ? 'appartiennent' : 'appartient'} à aucun morceau de la nomenclature : ${noms}${reste}. `
+    + `Leur poids — ${kg.toLocaleString('fr-FR')} kg${part !== null ? `, soit ${part.toLocaleString('fr-FR')} % de ce qui a été pesé` : ''} — `
+    + `compte dans la couverture de la carcasse mais ne reçoit aucun coût : `
+    + `la part qui leur revenait se reporte sur les autres morceaux, qui sont donc trop chers d’autant.`
+}
+
 export function repartitionCarcasse(args: {
   cuts: Cut[]
   poids: Record<string, number> | null | undefined

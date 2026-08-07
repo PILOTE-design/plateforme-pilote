@@ -38,13 +38,14 @@ export const priceAge = (d: string | null) => (d ? Math.floor((Date.now() - new 
  *  n'a PAS de fournisseur, et lui demander d'en rattacher un envoyait le
  *  boucher chercher quelque chose qui n'existe pas. Son prix vient d'une
  *  carcasse enregistrée — c'est le seul geste qui le lui donnera. */
-export type MotifPrix = 'aucune_ref' | 'conversion' | 'quarantaine' | 'jamais_facture' | 'decoupe_sans_carcasse'
+export type MotifPrix = 'aucune_ref' | 'conversion' | 'quarantaine' | 'jamais_facture' | 'decoupe_sans_carcasse' | 'decoupe_non_pesee'
 
 export const MOTIF_PRIX: Record<string, { court: string; quoi_faire: string }> = {
   aucune_ref:      { court: 'aucune réf rattachée',   quoi_faire: 'Rattachez une réf fournisseur à cet article depuis l’onglet « À traiter ».' },
   conversion:      { court: 'conversion manquante',   quoi_faire: 'Une réf est facturée dans une autre unité : indiquez sa conversion dans l’onglet « À traiter ».' },
   quarantaine:     { court: 'prix refusés à la lecture', quoi_faire: 'Des prix ont été lus mais écartés faute de vérification. Relancez la lecture de la facture concernée.' },
   jamais_facture:  { court: 'jamais facturé',         quoi_faire: 'Aucune facture lue ne porte encore cet article — le prix arrivera à la prochaine lecture.' },
+  decoupe_non_pesee: { court: 'pièce non pesée', quoi_faire: 'Vous avez bien valorisé cette espèce, mais cette pièce-là n’a pas été pesée sur la dernière carcasse : son prix arrivera dès que vous lui donnerez un poids dans l’écran Valorisation. Elle reste au catalogue en attendant, utilisable dans vos fiches.' },
   decoupe_sans_carcasse: { court: 'aucune carcasse chiffrée', quoi_faire: 'Ce morceau vient de la découpe, pas d’un fournisseur : son prix arrivera dès que vous aurez enregistré une carcasse de cette espèce avec son poids et son coût, dans l’écran Valorisation.' },
 }
 

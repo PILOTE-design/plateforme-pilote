@@ -30,7 +30,7 @@ import { ensureAutoGenerics, stemKey, isNonProduct, unitKind } from '@/lib/mercu
 import { appliquerDictionnaire } from '@/lib/association-dictionary'
 import { fetchAllPages } from '@/lib/fetch-all'
 import { coutsMorceauxDuClient, ensureGeneriquesDecoupe, especesAvecCarcasse } from '@/lib/valorisation-source'
-import { morceauxOrphelins, phraseOrphelins, compteOrphelins } from '@/lib/morceaux-orphelins'
+import { morceauxOrphelins, phraseOrphelins, compteOrphelins, especeDuCut } from '@/lib/morceaux-orphelins'
 import { nomFournisseur } from '@/lib/supplier-name'
 import { sortieDeFile, libelleSortie, STATUT_ABANDONNE } from '@/lib/lecture-file'
 
@@ -65,7 +65,7 @@ export async function GET() {
   // l'enregistrement d'une carcasse (lot 63) et la liste des fiches (lot 53).
   const coutsDecoupe = await coutsMorceauxDuClient(service, clientId, user.id)
   const especesVues = await especesAvecCarcasse(service, clientId, user.id)
-  await ensureGeneriquesDecoupe(service, clientId, coutsDecoupe)
+  await ensureGeneriquesDecoupe(service, clientId, coutsDecoupe, especesVues)
 
   // Fenêtres de surveillance : l'historique se lit sur 12 mois glissants, les
   // mouvements sur 30 jours. Dates au format facture (YYYY-MM-DD).
@@ -475,10 +475,17 @@ export async function GET() {
     // Paleron, il y a une carcasse à enregistrer. C'est le seul geste qui
     // donne un prix à ce morceau, et c'est celui qu'il faut écrire.
     const prixEnQuarantaine = refs.reduce((n, r) => n + (quarantaineParArticle.get(String(r.id)) || 0), 0)
+    // Un morceau de découpe sans prix, ce n'est plus une seule situation depuis
+    // le lot 122 : sa nomenclature entre au catalogue en ENTIER dès qu'une
+    // carcasse de l'espèce existe. Il faut donc distinguer « je n'ai jamais
+    // valorisé cette bête » de « je l'ai valorisée mais je n'ai pas pesé CETTE
+    // pièce » — deux gestes différents, et écrire le premier quand c'est le
+    // second est exactement le reproche injuste que le lot 71 avait corrigé.
+    const especeDuMorceau = cutId !== null ? especeDuCut(cutId) : null
     const price_missing_reason: string | null = best && best.price_base !== null
       ? null
       : cutId !== null
-        ? 'decoupe_sans_carcasse'
+        ? (especeDuMorceau !== null && especesVues.has(especeDuMorceau) ? 'decoupe_non_pesee' : 'decoupe_sans_carcasse')
         : refs.length === 0
           ? 'aucune_ref'
           : refs.some(r => r.needs_conversion)

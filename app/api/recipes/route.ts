@@ -22,7 +22,7 @@ import {
   type IngredientRow, type RecipeCost, type RecipeFormat, type RecipeRow,
 } from '@/lib/recipes'
 import { fetchAllPages } from '@/lib/fetch-all'
-import { appliquerCoutsDecoupe, coutsMorceauxDuClient, ensureGeneriquesDecoupe } from '@/lib/valorisation-source'
+import { appliquerCoutsDecoupe, coutsMorceauxDuClient, ensureGeneriquesDecoupe, especesAvecCarcasse } from '@/lib/valorisation-source'
 
 export const dynamic = 'force-dynamic'
 
@@ -46,7 +46,7 @@ export async function GET() {
   // AVANT la lecture du catalogue pour que les nouvelles pièces soient dans la
   // liste du même appel.
   const coutsDecoupe = await coutsMorceauxDuClient(service, clientId, user.id)
-  await ensureGeneriquesDecoupe(service, clientId, coutsDecoupe)
+  await ensureGeneriquesDecoupe(service, clientId, coutsDecoupe, await especesAvecCarcasse(service, clientId, user.id))
 
   const [{ data: recipes }, { data: ingredients }, { data: employees }, articlesPage, { data: generics }, { data: targets }, { data: formatRows }] = await Promise.all([
     service.from('recipes').select('*').eq('client_id', clientId).eq('active', true).order('name'),

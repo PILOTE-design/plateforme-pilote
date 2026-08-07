@@ -355,7 +355,7 @@ export default function ValorisationPage() {
       // « enregistré ». Rien n'indiquait que quelque chose venait d'entrer dans
       // la mercuriale, donc rien n'invitait à aller s'en servir — le lien entre
       // les deux écrans n'existait que dans le code.
-      const cree = await res.json().catch(() => null) as { morceaux_crees?: number } | null
+      const cree = await res.json().catch(() => null) as { morceaux_crees?: number; pieces_hors_nomenclature_phrase?: string | null } | null
       setSaved(true)
       setTimeout(() => setSaved(false), 2500)
       const n = Number(cree?.morceaux_crees) || 0
@@ -366,6 +366,25 @@ export default function ValorisationPage() {
           ? `${n} morceau${n > 1 ? 'x' : ''} ${n > 1 ? 'entrent' : 'entre'} dans votre mercuriale : posez-${n > 1 ? 'les' : 'le'} comme ingrédient${n > 1 ? 's' : ''} dans une fiche recette, ${n > 1 ? 'ils portent' : 'il porte'} le coût au kilo de cette carcasse.`
           : `Les morceaux pesés portent maintenant le coût au kilo de cette carcasse : retrouvez-les comme ingrédients dans vos fiches recettes.`,
       })
+      // UNE PIÈCE PESÉE QUI N'ENTRE DANS AUCUN MORCEAU (lot 122).
+      //
+      // Son poids compte dans la couverture de la carcasse mais ne reçoit aucun
+      // coût : la part qui lui revenait se reporte sur les autres morceaux, qui
+      // deviennent trop chers. Mesuré ici le 07/08/2026 — la côte de bœuf
+      // (16,79 kg) et l'épaule de veau (5,15 kg) faussaient les prix de 8,5 % et
+      // 14,6 %, en silence.
+      //
+      // Deuxième toast, et non une phrase ajoutée au premier : « enregistré »
+      // est une bonne nouvelle, « vos coûts sont faussés » en est une autre.
+      // Les fondre ferait lire la seconde comme un détail de la première.
+      const horsNomenclature = cree?.pieces_hors_nomenclature_phrase
+      if (typeof horsNomenclature === 'string' && horsNomenclature.trim() !== '') {
+        toast({
+          variant: 'error',
+          title: 'Des poids ne sont rattachés à aucun morceau',
+          description: horsNomenclature,
+        })
+      }
       loadHistory()
     } catch {
       toast({ variant: 'error', title: 'Erreur réseau', description: "La valorisation n'a pas été enregistrée." })
