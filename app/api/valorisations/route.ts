@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { resolveClientId } from '@/lib/resolve-client-id'
-import { coutsMorceauxDuClient, ensureGeneriquesDecoupe } from '@/lib/valorisation-source'
+import { CUTS_BY_ANIMAL, ANIMAL_TYPES, piecesHorsNomenclature, phrasePiecesHorsNomenclature, type AnimalType } from '@/lib/valorisation'
+import { coutsMorceauxDuClient, ensureGeneriquesDecoupe, especesAvecCarcasse } from '@/lib/valorisation-source'
 
 // Les valorisations étaient la SEULE table métier rattachée à `profile_id`,
 // alors que clients, articles, articles génériques et recettes le sont à
@@ -90,11 +91,34 @@ export async function POST(req: NextRequest) {
   if (clientId) {
     try {
       const couts = await coutsMorceauxDuClient(service, clientId, user.id)
-      morceaux_crees = await ensureGeneriquesDecoupe(service, clientId, couts)
+      morceaux_crees = await ensureGeneriquesDecoupe(service, clientId, couts, await especesAvecCarcasse(service, clientId, user.id))
     } catch (e) {
       console.error('[valorisations] création des morceaux de découpe', e)
     }
   }
 
-  return NextResponse.json({ ...(data as Record<string, unknown>), morceaux_crees }, { status: 201 })
+  // LES PIÈCES PESÉES QUI N'ENTRENT DANS AUCUN MORCEAU (lot 122).
+  //
+  // Leur poids compte dans la couverture de la carcasse mais ne reçoit aucun
+  // coût : la part qui leur revenait se reporte sur les autres morceaux, qui
+  // deviennent trop chers. Mesuré chez la Boucherie du val des bois, la côte de
+  // bœuf (16,79 kg) et l'épaule de veau (5,15 kg) faussaient ainsi les prix de
+  // 8,5 % et 14,6 %. C'est le bon moment pour le dire : le boucher vient
+  // d'enregistrer sa saisie, il l'a encore sous les yeux.
+  const enregistree = data as Record<string, unknown>
+  const espece = String(enregistree?.animal_type ?? '').trim().toLowerCase()
+  // `includes` sur un tableau typé ne restreint pas le type de `espece` : le
+  // filtrage explicite le fait, et rend le code lisible sans assertion.
+  const especeConnue = (ANIMAL_TYPES as readonly string[]).includes(espece) ? (espece as AnimalType) : null
+  const cutsEspece = especeConnue !== null ? CUTS_BY_ANIMAL[especeConnue] : []
+  const hors = piecesHorsNomenclature(enregistree?.cut_weights as Record<string, unknown> | null, cutsEspece)
+  const pesesTotal = Object.values((enregistree?.cut_weights as Record<string, unknown> | null) ?? {})
+    .reduce<number>((acc, x) => { const n = Number(x); return acc + (Number.isFinite(n) && n > 0 ? n : 0) }, 0)
+
+  return NextResponse.json({
+    ...enregistree,
+    morceaux_crees,
+    pieces_hors_nomenclature: hors,
+    pieces_hors_nomenclature_phrase: phrasePiecesHorsNomenclature(hors, pesesTotal) || null,
+  }, { status: 201 })
 }
