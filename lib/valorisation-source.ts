@@ -102,25 +102,41 @@ export async function coutsMorceauxDuClient(
 ): Promise<Map<string, PrixMorceau>> {
   const out = new Map<string, PrixMorceau>()
 
-  const { data, error } = await service
-    .from('valorisations')
-    .select('id, client_id, profile_id, animal_type, purchase_date, total_cost, carcass_weight, cut_weights')
-    .eq('client_id', clientId)
-    .order('purchase_date', { ascending: false })
-  let lignes = (data as Row[] | null) ?? []
-  if (error) {
-    console.error('[valorisation-source] lecture impossible:', error.message)
+  // `purchase_date` NE SUFFIT PAS À TRIER : chez la Boucherie du val des bois,
+  // les cinq carcasses portent la MÊME date (20/07/2026), et PostgREST rend
+  // alors l'ordre qu'il veut. Sans départage, « la plus récente de chaque
+  // espèce » désigne une carcasse différente d'un appel à l'autre — donc des
+  // coûts de découpe qui changent tout seuls entre deux ouvertures de l'écran.
+  // `created_at` décroissant tranche : à date d'achat égale, la dernière SAISIE
+  // gagne, ce qui est la seule lecture qui ait un sens pour le boucher.
+  const colonnes = 'id, client_id, profile_id, animal_type, purchase_date, created_at, total_cost, carcass_weight, cut_weights'
+  const page = await fetchAllPages<Row>(apres => {
+    let q = service.from('valorisations').select(colonnes).eq('client_id', clientId)
+    if (apres) q = q.gt('id', apres)
+    return q.order('id', { ascending: true })
+  })
+  let lignes = page.rows
+  if (page.erreur) {
+    console.error('[valorisation-source] lecture impossible:', page.erreur)
     return out
   }
   if (lignes.length === 0 && profileIdFallback) {
-    const { data: repli } = await service
-      .from('valorisations')
-      .select('id, client_id, profile_id, animal_type, purchase_date, total_cost, carcass_weight, cut_weights')
-      .eq('profile_id', profileIdFallback)
-      .order('purchase_date', { ascending: false })
-    lignes = (repli as Row[] | null) ?? []
+    const repli = await fetchAllPages<Row>(apres => {
+      let q = service.from('valorisations').select(colonnes).eq('profile_id', profileIdFallback)
+      if (apres) q = q.gt('id', apres)
+      return q.order('id', { ascending: true })
+    })
+    lignes = repli.rows
   }
   if (lignes.length === 0) return out
+  // Le tri se fait ici : la pagination impose un ordre par `id`, il faut donc
+  // reclasser en mémoire. Sur cinq carcasses comme sur cinq cents, c'est
+  // gratuit — et ça garantit que la règle « la plus récente » est appliquée sur
+  // la TOTALITÉ des carcasses, pas sur les mille premières.
+  lignes = lignes.slice().sort((a, b) =>
+    String(b.purchase_date ?? '').localeCompare(String(a.purchase_date ?? ''))
+    || String(b.created_at ?? '').localeCompare(String(a.created_at ?? ''))
+    || String(b.id ?? '').localeCompare(String(a.id ?? '')))
 
   // Les prix de référence et les coûts forcés du boucher — une ligne par
   // PROFIL, structurée { espèce: { pièce: valeur } }.
@@ -132,9 +148,13 @@ export async function coutsMorceauxDuClient(
   // la main : le chiffre affiché n'était plus celui que le boucher avait posé.
   // `profileIdFallback` redevient ce que son nom dit : un repli.
   type Prefs = Record<string, Record<string, number | string>>
-  const cachePrefs = new Map<string, { prix: Prefs; forces: Prefs }>()
-  const prefsDuProfil = async (profil: string): Promise<{ prix: Prefs; forces: Prefs }> => {
-    const vide = { prix: {} as Prefs, forces: {} as Prefs }
+  const cachePrefs = new Map<string, { prix: Prefs; forces: Prefs; existe: boolean }>()
+  const prefsDuProfil = async (profil: string): Promise<{ prix: Prefs; forces: Prefs; existe: boolean }> => {
+    // `existe` dit si le profil a une LIGNE de préférences, indépendamment de
+    // son contenu. C'est ce qui permet de distinguer « ce boucher n'a jamais
+    // rien posé » (on peut aller chercher ailleurs) de « il a posé ses prix et
+    // n'a rien mis pour cette espèce » (c'est un choix, on le respecte).
+    const vide = { prix: {} as Prefs, forces: {} as Prefs, existe: false }
     if (!profil) return vide
     const enCache = cachePrefs.get(profil)
     if (enCache) return enCache
@@ -142,7 +162,7 @@ export async function coutsMorceauxDuClient(
       .from('valorisation_prices').select('prices, cost_overrides').eq('profile_id', profil).maybeSingle()
     const p = pref as Row | null
     const lu = p
-      ? { prix: ((p.prices as Prefs) || {}), forces: ((p.cost_overrides as Prefs) || {}) }
+      ? { prix: ((p.prices as Prefs) || {}), forces: ((p.cost_overrides as Prefs) || {}), existe: true }
       : vide
     cachePrefs.set(profil, lu)
     return lu
@@ -151,10 +171,13 @@ export async function coutsMorceauxDuClient(
   // Une seule découpe par espèce : la plus récente. Les lignes arrivent triées
   // par date décroissante, la première rencontrée est donc la bonne.
   const vue = new Set<string>()
+  // Les carcasses ÉCARTÉES faute d'être assez pesées, par espèce : elles ne
+  // consomment pas le tour de leur espèce, mais on garde la trace de ce qui a
+  // été sauté pour pouvoir le dire.
+  const sautees = new Map<string, number>()
   for (const v of lignes) {
     const espece = String(v.animal_type || '') as AnimalType
     if (!ANIMAL_TYPES.includes(espece) || vue.has(espece)) continue
-    vue.add(espece)
 
     // ── LA CARCASSE EST-ELLE ASSEZ PESÉE POUR QU'ON RÉPARTISSE SON COÛT ? ──
     //
@@ -177,13 +200,51 @@ export async function coutsMorceauxDuClient(
     const poidsCarcasse = Number(v.carcass_weight) || 0
     const poidsPeses = Object.values((v.cut_weights as Record<string, unknown> | null) ?? {})
       .reduce<number>((s, x) => { const n = Number(x); return s + (Number.isFinite(n) && n > 0 ? n : 0) }, 0)
+    //
+    // ⚠ CE `continue` NE MARQUE PAS L'ESPÈCE COMME VUE — et c'est tout le
+    // correctif du lot 120. Avant lui, `vue.add(espece)` avait lieu AVANT ce
+    // contrôle : une espèce dont la DERNIÈRE carcasse était trop peu pesée
+    // disparaissait entièrement de la mercuriale, alors qu'une carcasse
+    // antérieure, elle, était parfaitement pesée et n'a jamais été regardée.
+    // Le boucher voyait ses morceaux de bœuf et pas ceux de son veau, sans que
+    // rien à l'écran ne dise pourquoi. On descend maintenant la liste jusqu'à
+    // trouver, pour chaque espèce, la carcasse la plus récente QUI TIENT.
     if (poidsCarcasse > 0 && poidsPeses < poidsCarcasse * SEUIL_COUVERTURE) {
+      sautees.set(espece, (sautees.get(espece) ?? 0) + 1)
       console.warn(`[valorisation-source] découpe ${String(v.id)} trop peu pesée `
-        + `(${poidsPeses.toFixed(1)} kg sur ${poidsCarcasse.toFixed(1)} kg) : coûts non publiés`)
+        + `(${poidsPeses.toFixed(1)} kg sur ${poidsCarcasse.toFixed(1)} kg) : `
+        + `coûts non publiés, on remonte à la carcasse ${espece} précédente`)
       continue
     }
+    vue.add(espece)
 
-    const prefs = await prefsDuProfil(String(v.profile_id || '') || profileIdFallback || '')
+    // LE PROFIL QUI A SAISI LA CARCASSE FAIT FOI (lot 63) — mais s'il n'a
+    // AUCUNE ligne de préférences, il n'a rien posé du tout, et le repli
+    // reprend alors son sens. L'écriture précédente,
+    // `String(v.profile_id || '') || profileIdFallback`, ne repliait QUE
+    // lorsque la carcasse n'avait pas de profil : dès qu'elle en avait un, le
+    // repli était mort, même si ce profil était vide.
+    //
+    // Mesuré en production le 07/08/2026 : les cinq carcasses de la Boucherie
+    // du val des bois portent le profil `57e0451b`, qui n'a AUCUNE ligne dans
+    // `valorisation_prices` — tandis que les prix de référence ET LES COÛTS
+    // FORCÉS des cinq espèces vivent sur `c77d3b63`. Tout ce que le boucher
+    // avait chiffré à la main était donc ignoré, en silence, sur toutes les
+    // espèces à la fois.
+    //
+    // La distinction est fine et volontaire : « aucune ligne » n'est pas
+    // « une ligne sans cette espèce ». Un profil qui a posé ses prix et n'a
+    // rien mis pour l'agneau l'a décidé — on ne va pas chercher ailleurs.
+    const profilSaisie = String(v.profile_id || '')
+    let prefs = await prefsDuProfil(profilSaisie || profileIdFallback || '')
+    if (!prefs.existe && profileIdFallback && profileIdFallback !== profilSaisie) {
+      const secours = await prefsDuProfil(profileIdFallback)
+      if (secours.existe) {
+        console.warn(`[valorisation-source] le profil ${profilSaisie} n’a aucune préférence : `
+          + `prix de référence et coûts forcés repris de ${profileIdFallback}`)
+        prefs = secours
+      }
+    }
     const repartition = repartitionCarcasse({
       cuts: CUTS_BY_ANIMAL[espece],
       poids: (v.cut_weights as Record<string, number> | null) ?? null,
