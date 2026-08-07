@@ -48,6 +48,7 @@ import {
 } from './catalogue'
 import { VueOrganiser, VueFournisseurs } from './onglets'
 import type { MotifSortie } from '@/lib/lecture-file'
+import type { Orphelin } from '@/lib/morceaux-orphelins'
 import ChoixProduit from './choix-produit'
 
 /** Une facture SORTIE de la file de lecture (lot 80) : la facture telle que la
@@ -103,6 +104,9 @@ export function useMercuriale() {
   const [rayonSel, setRayonSel] = useState<string | null>(null)
   const [depenseHorsCatalogue, setDepenseHorsCatalogue] = useState(0)
   // Prix bloqués (lot 43) : écarts signalés par l'API + verrous en cours de pose
+  const [orphelins, setOrphelins] = useState<Orphelin[]>([])
+  const [orphelinsPhrase, setOrphelinsPhrase] = useState<string | null>(null)
+  const [retirantOrphelins, setRetirantOrphelins] = useState(false)
   const [ecartsBloques, setEcartsBloques] = useState<EcartBloque[]>([])
   const [ecartsBloquesTotal, setEcartsBloquesTotal] = useState(0)
   const [verrouDrafts, setVerrouDrafts] = useState<Record<string, string>>({})
@@ -190,6 +194,8 @@ export function useMercuriale() {
       setMovesTotal(Number(data.moves_total) || 0)
       setFournisseurs(Array.isArray(data.fournisseurs) ? data.fournisseurs : [])
       setDepenseHorsCatalogue(Number(data.depense_hors_catalogue_12m) || 0)
+      setOrphelins(Array.isArray(data.morceaux_orphelins) ? data.morceaux_orphelins : [])
+      setOrphelinsPhrase(typeof data.morceaux_orphelins_phrase === 'string' ? data.morceaux_orphelins_phrase : null)
       setEcartsBloques(Array.isArray(data.ecarts_bloques) ? data.ecarts_bloques : [])
       setEcartsBloquesTotal(Number(data.ecarts_bloques_total) || 0)
       setSansPdf(Number(data.sans_pdf) || 0)
@@ -782,6 +788,29 @@ export function useMercuriale() {
     rafraichirBientot()
   }
 
+  /** Retirer du catalogue les morceaux de découpe devenus orphelins.
+   *
+   *  Le serveur RECALCULE la liste et n'en retire aucun qu'il ne confirme pas :
+   *  ce qu'on envoie ici est une demande, pas un ordre. Rien n'est supprimé —
+   *  `active = false` — et une carcasse ressaisie les fait revenir. */
+  async function retirerOrphelins() {
+    const ids = orphelins.filter(o => !o.retenu).map(o => o.id)
+    if (ids.length === 0 || retirantOrphelins) return
+    setRetirantOrphelins(true)
+    const res = await fetch('/api/generic-articles/orphelins', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    }).catch(() => null)
+    const data = res ? await res.json().catch(() => null) : null
+    setRetirantOrphelins(false)
+    if (res?.ok && Number(data?.retires) > 0) {
+      toast({ variant: 'success', title: `${data.retires} morceau${data.retires > 1 ? 'x' : ''} retiré${data.retires > 1 ? 's' : ''}`, description: data.motif })
+      load()
+    } else {
+      toast({ variant: 'error', title: data?.error || 'Retrait impossible', description: data?.motif || undefined })
+    }
+  }
+
   /** « Vu, c'est bon » sur un générique créé automatiquement : le badge tombe.
    *  Sans ce geste, `auto_created` restait vrai à vie et la revue n'avançait
    *  jamais — 125 génériques marqués « à vérifier » indéfiniment. */
@@ -962,7 +991,11 @@ export function useMercuriale() {
   const refsEnEcart = useMemo(() => new Set(ecartsBloques.map(e => e.article_id)).size, [ecartsBloques])
   /** Total de l'onglet « À traiter » : tout ce qui attend un geste. C'est LE
    *  chiffre qui dit si la mercuriale a besoin de vous aujourd'hui. */
-  const aTraiterTotal = pending.length + doutes.length + queueCounts.produits + refsSansConversion.length + sansPdf + refsEnEcart
+  /** Morceaux de découpe qu'on peut réellement retirer — un morceau RETENU
+   *  (utilisé par une fiche, porteur d'une réf) n'attend aucun geste et ne
+   *  doit pas gonfler le chiffre qui dit si la mercuriale a besoin de vous. */
+  const orphelinsRetirablesN = useMemo(() => orphelins.filter(o => !o.retenu).length, [orphelins])
+  const aTraiterTotal = pending.length + doutes.length + queueCounts.produits + refsSansConversion.length + sansPdf + refsEnEcart + orphelinsRetirablesN
 
   // ── VUE PAR FOURNISSEUR (lot 40, modèle Otami) : la mercuriale de chaque
   // maison — ses réfs, leurs derniers prix et tendances, classées par familles
@@ -1184,6 +1217,7 @@ export function useMercuriale() {
     validant, setValidant, loading, setLoading, search, setSearch,
     view, setView, fournisseurs, setFournisseurs, familles, setFamilles,
     fournisseurSel, setFournisseurSel, rayonSel, setRayonSel, depenseHorsCatalogue, setDepenseHorsCatalogue,
+    orphelins, orphelinsPhrase, orphelinsRetirablesN, retirerOrphelins, retirantOrphelins,
     ecartsBloques, setEcartsBloques, ecartsBloquesTotal, setEcartsBloquesTotal, verrouDrafts, setVerrouDrafts,
     verrouillant, setVerrouillant, processing, setProcessing, progress, setProgress,
     stopRef, showMotifs, setShowMotifs, relisant, setRelisant, abandonnees,

@@ -39,7 +39,11 @@ async function authClient() {
   const service = createServiceClient()
   const clientId = await resolveClientId(service, user.id, user.email)
   if (!clientId) return { error: NextResponse.json({ error: 'Client introuvable' }, { status: 404 }) }
-  return { service, clientId }
+  // `profileId` remonte pour le REPLI des prix de référence et des coûts forcés
+  // de la valorisation. Sans lui, cette route ne pouvait pas les passer au
+  // moteur — même en le voulant — et la fiche ouverte seule affichait d'autres
+  // coûts de découpe que la liste des fiches.
+  return { service, clientId, profileId: user.id }
 }
 
 /** L'employé et chaque article générique visés doivent appartenir au client.
@@ -78,7 +82,7 @@ async function checkOwnership(
 export async function GET(_request: NextRequest, { params }: { params: { id: string } }) {
   const auth = await authClient()
   if (auth.error) return auth.error
-  const { service, clientId } = auth as { service: ReturnType<typeof createServiceClient>; clientId: string }
+  const { service, clientId, profileId } = auth as { service: ReturnType<typeof createServiceClient>; clientId: string; profileId: string }
 
   const cutoff12m = new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10)
 
@@ -127,7 +131,12 @@ export async function GET(_request: NextRequest, { params }: { params: { id: str
   const averageRate = averageLoadedRate(emps)
   // Même troisième provenance que la liste : le coût d'un morceau de découpe,
   // relu de la dernière carcasse, jamais stocké sur l'article.
-  const coutsDecoupe = await coutsMorceauxDuClient(service, clientId)
+  // `user.id` en repli, comme les trois autres lecteurs du moteur : sans lui,
+  // cette route n'a pas les prix de référence ni les COÛTS FORCÉS du boucher
+  // quand les carcasses portent un profil vide (mesuré le 07/08). La liste des
+  // fiches les avait, la fiche ouverte seule ne les avait pas — deux chiffres
+  // pour la même recette selon l'écran par lequel on arrive.
+  const coutsDecoupe = await coutsMorceauxDuClient(service, clientId, profileId)
   const genericById = buildGenericMap((generics || []) as Record<string, unknown>[], articles as Record<string, unknown>[])
   appliquerCoutsDecoupe(genericById, (generics || []) as Record<string, unknown>[], coutsDecoupe)
   const priceByArticle = new Map<string, number>()
