@@ -100,6 +100,7 @@ const MOTIFS_PRIX: Record<string, string> = {
   quarantaine: 'prix en quarantaine',
   conversion: 'conversion d’unité à renseigner',
   jamais_facture: 'jamais facturé',
+  decoupe_non_pesee: 'pièce non pesée sur la dernière carcasse',
   decoupe_sans_carcasse: 'aucune carcasse chiffrée',
 }
 
