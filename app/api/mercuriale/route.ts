@@ -29,7 +29,8 @@ import { resolveClientId } from '@/lib/resolve-client-id'
 import { ensureAutoGenerics, stemKey, isNonProduct, unitKind } from '@/lib/mercuriale-auto'
 import { appliquerDictionnaire } from '@/lib/association-dictionary'
 import { fetchAllPages } from '@/lib/fetch-all'
-import { coutsMorceauxDuClient, ensureGeneriquesDecoupe } from '@/lib/valorisation-source'
+import { coutsMorceauxDuClient, ensureGeneriquesDecoupe, especesAvecCarcasse } from '@/lib/valorisation-source'
+import { morceauxOrphelins, phraseOrphelins, compteOrphelins } from '@/lib/morceaux-orphelins'
 import { nomFournisseur } from '@/lib/supplier-name'
 import { sortieDeFile, libelleSortie, STATUT_ABANDONNE } from '@/lib/lecture-file'
 
@@ -63,6 +64,7 @@ export async function GET() {
   // connaître un chiffre sans montrer le produit. Troisième déclencheur, après
   // l'enregistrement d'une carcasse (lot 63) et la liste des fiches (lot 53).
   const coutsDecoupe = await coutsMorceauxDuClient(service, clientId, user.id)
+  const especesVues = await especesAvecCarcasse(service, clientId, user.id)
   await ensureGeneriquesDecoupe(service, clientId, coutsDecoupe)
 
   // Fenêtres de surveillance : l'historique se lit sur 12 mois glissants, les
@@ -656,8 +658,32 @@ export async function GET() {
   // disparaître (un total par rayon qui tait ce reste se lirait comme complet).
   const depenseHorsCatalogue = round2(queue.reduce((s: number, a: any) => s + (depenseParArticle.get(String(a.id))?.montant || 0), 0))
 
+  // LES MORCEAUX QUI ONT SURVÉCU À LEUR CARCASSE (lot 121).
+  //
+  // Calculé ICI, sur `genericsOut`, c'est-à-dire sur les mêmes objets que
+  // l'écran affiche : le prix retenu, le nombre de fiches et de réfs y sont
+  // déjà, et un second calcul à partir d'autres données finirait par diverger.
+  //
+  // `especesVues` sépare les deux moitiés de `decoupe_sans_carcasse` : un
+  // morceau dont l'espèce a une carcasse ATTEND une saisie (rien à nettoyer) ;
+  // un morceau dont l'espèce n'en a aucune est un résidu.
+  const orphelins = morceauxOrphelins(
+    genericsOut.map((g: any) => ({
+      id: String(g.id),
+      name: String(g.name ?? ''),
+      valorisation_cut_id: g.valorisation_cut_id ?? null,
+      price_ht: g.price_ht ?? null,
+      recipes_count: Number(g.recipes_count) || 0,
+      refs_count: Number(g.refs_count) || 0,
+    })),
+    especesVues,
+  )
+
   return NextResponse.json({
     generics: genericsOut,
+    morceaux_orphelins: orphelins,
+    morceaux_orphelins_total: compteOrphelins(orphelins),
+    morceaux_orphelins_phrase: phraseOrphelins(orphelins) || null,
     queue: queueOut,
     pending: pendingOut,
     lectures_abandonnees: abandonneesOut,
