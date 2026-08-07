@@ -26,6 +26,8 @@
 
 import { ArrowDown, ArrowUp, ArrowUpDown, Check, ChevronRight } from 'lucide-react'
 import { venteQty, margeEtCoef } from '@/lib/recipes'
+import { moyenneCatalogue, phraseMoyenne } from '@/lib/recettes-catalogue'
+import { Absent } from '@/components/ui/da'
 import { uniteAuPluriel } from './fiche-ui'
 
 export type ListeCost = {
@@ -191,6 +193,35 @@ export function margeTon(marge: number, target: number | null): string {
   return marge >= 50 ? 'bg-green-50 text-green-700' : marge >= 30 ? 'bg-orange-50 text-orange-600' : 'bg-red-50 text-red-600'
 }
 
+/**
+ * POURQUOI CETTE LIGNE N'A PAS DE MARGE — et donc quoi faire.
+ *
+ * Les conditions sont celles de `margeEtCoef` (lib/recipes), reprises dans le
+ * MÊME ordre : c'est ce qui garantit que la raison affichée est bien celle qui a
+ * fait renoncer le moteur, et pas une seconde explication qui divergerait de la
+ * première. L'ordre compte aussi pour le boucher : un prix de vente posé sur une
+ * fiche dont un ingrédient n'a pas de prix ne produirait toujours rien.
+ */
+function raisonSansMarge(l: ListeLigne): { raison: string; explication: string } {
+  if (l.cost.prix_manquants > 0) {
+    return {
+      raison: 'prix à compléter',
+      explication: `${l.cost.prix_manquants} ingrédient${l.cost.prix_manquants > 1 ? 's' : ''} sans prix connu : `
+        + 'aucune marge n’est publiée tant qu’il en manque un, car elle serait trop belle.',
+    }
+  }
+  if (l.cost.pv_unitaire_ht === null || l.cost.pv_unitaire_ht <= 0) {
+    return {
+      raison: 'pas de prix de vente',
+      explication: 'Posez le prix de vente de ce format : la marge et le coefficient suivront tout seuls.',
+    }
+  }
+  return {
+    raison: 'pas encore de coût',
+    explication: 'Cette fiche n’a pas d’ingrédient chiffré : ajoutez-en pour qu’un coût de revient existe.',
+  }
+}
+
 /** Le coefficient qu'il faut atteindre pour tenir une marge donnée —
  *  PV/coût = 1/(1 − marge). Otami rappelle les deux dans son en-tête ; un
  *  boucher raisonne en coefficient, un tableur en pourcentage. */
@@ -224,15 +255,91 @@ function ThTri({ label, sortKey, sort, onSort, align = 'right', children }: {
   const actif = sort.key === sortKey
   const Icone = !actif ? ArrowUpDown : sort.dir === 'asc' ? ArrowUp : ArrowDown
   return (
-    <th className={`px-3.5 py-2.5 ${align === 'left' ? 'text-left' : 'text-right'} align-bottom`}>
+    // `whitespace-nowrap` : trois défauts de la session du 06/08 étaient des mots
+    // repliés, et l'écran ouvert le 07/08 en montrait encore quatre — « COÛT
+    // (HT) » coupé après « COÛT », « / unité de vente » sur trois lignes, « PRIX
+    // (TTC) » sur deux. Un en-tête de colonne est un libellé court : il ne se
+    // replie jamais, c'est la table qui défile (elle a déjà son overflow-x).
+    <th className={`px-3.5 py-2.5 ${align === 'left' ? 'text-left' : 'text-right'} align-bottom whitespace-nowrap`}>
       <button type="button" onClick={() => onSort(sortKey)}
-        className={`inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider transition-colors ${actif ? 'text-pilote' : 'text-gray-400 hover:text-gray-600'}`}>
-        {align === 'right' && <Icone className={`w-3 h-3 ${actif ? 'text-pilote' : 'text-gray-300'}`} />}
+        className={`inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-pilote-200 rounded ${actif ? 'text-pilote' : 'text-gray-500 hover:text-gray-700'}`}>
+        {align === 'right' && <Icone className={`w-3 h-3 ${actif ? 'text-pilote' : 'text-gray-400'}`} />}
         {label}
-        {align === 'left' && <Icone className={`w-3 h-3 ${actif ? 'text-pilote' : 'text-gray-300'}`} />}
+        {align === 'left' && <Icone className={`w-3 h-3 ${actif ? 'text-pilote' : 'text-gray-400'}`} />}
       </button>
       {children}
     </th>
+  )
+}
+
+/**
+ * LE RÉCAPITULATIF DE L'EN-TÊTE — « où en est ce que je regarde ? »
+ *
+ * L'idée vient d'Otami, relevée en lecture seule : leur en-tête de colonne
+ * « Marge » porte le coefficient et le taux MOYENS, si bien que chaque ligne se
+ * juge par rapport à la moyenne sans que l'œil ait à la faire.
+ *
+ * PILOTE y écrivait déjà la CIBLE. En ouvrant l'écran le 07/08, le manque était
+ * flagrant : sur les quatre sections, deux affichaient « pas de cible posée » —
+ * donc un ×4,98 / 80 % en vert et un ×1,78 / 44 % en rouge sans que rien à
+ * l'écran ne dise par rapport à quoi. Une cible dit où l'on veut aller ; elle ne
+ * dit pas où l'on est, et quand elle manque il ne reste rien.
+ *
+ * Les deux repères ne se ressemblent pas, et c'est voulu : la CIBLE est en
+ * pastilles pleines (un objectif, posé par le boucher), la MOYENNE en chiffres
+ * nus (une mesure, constatée). Deux lignes grises identiques se seraient
+ * confondues.
+ */
+function RecapMarge({ cible, cibleCoef, cibleTexte, moyenne }: {
+  cible: number | null
+  cibleCoef: number | null
+  cibleTexte: string | null
+  moyenne: ReturnType<typeof moyenneCatalogue> | null
+}) {
+  const nb = (n: number) => n.toLocaleString('fr-FR')
+  return (
+    <div className="mt-1 flex flex-col items-end gap-0.5">
+      <p className="flex items-center gap-1 whitespace-nowrap">
+        {cibleTexte ? (
+          <span className="text-[11px] font-normal normal-case tracking-normal text-gray-500">{cibleTexte}</span>
+        ) : cible !== null ? (
+          <>
+            <span className="text-[11px] font-normal normal-case tracking-normal text-gray-500">cible</span>
+            {cibleCoef !== null && (
+              <span className="text-[11px] font-bold tabular text-gray-600 bg-gray-100 rounded-full px-1.5 py-0.5">×{nb(cibleCoef)}</span>
+            )}
+            <span className="text-[11px] font-bold tabular text-gray-600 bg-gray-100 rounded-full px-1.5 py-0.5">{nb(cible)} %</span>
+          </>
+        ) : (
+          <span className="text-[11px] font-normal normal-case tracking-normal text-gray-500">pas de cible posée</span>
+        )}
+      </p>
+
+      {/* La MESURE. Absente sur un extrait biaisé (« À retravailler » ne montre
+          que les lignes sous leur cible : en moyenner la marge dirait une
+          contre-vérité sur la boutique). */}
+      {moyenne !== null && (
+        moyenne.coefficient !== null && moyenne.marge_pct !== null ? (
+          <p className="flex items-center gap-1 whitespace-nowrap" title={phraseMoyenne(moyenne)}>
+            <span className="text-[11px] font-normal normal-case tracking-normal text-gray-500">moyenne</span>
+            <span className="text-[11px] font-bold tabular text-gray-700">×{nb(moyenne.coefficient)}</span>
+            <span className="text-[11px] font-bold tabular text-gray-700">{nb(Math.round(moyenne.marge_pct))} %</span>
+            {/* Toute exclusion s'annonce : une moyenne muette sur son assiette
+                est un chiffre faux qui s'ignore. */}
+            {moyenne.ignores > 0 && (
+              <span className="text-[11px] font-normal normal-case tracking-normal text-gray-500">
+                sur {nb(moyenne.comptes)}
+              </span>
+            )}
+          </p>
+        ) : (
+          <p className="text-[11px] font-normal normal-case tracking-normal text-gray-500 whitespace-nowrap"
+            title={phraseMoyenne(moyenne)}>
+            moyenne non calculable
+          </p>
+        )
+      )}
+    </div>
   )
 }
 
@@ -262,37 +369,37 @@ export default function ListeFiches({
 }) {
   const cibleCoef = target !== null ? coefCible(target) : null
 
+  // La moyenne de ce que le tableau AFFICHE, calculée sur les mêmes entrées que
+  // les pastilles des lignes (`pv_unitaire_ht`, `coutUniteAffiche`,
+  // `prix_manquants`) : aucune ligne rendue « — » ne peut donc se retrouver
+  // fondue dans la moyenne du haut. Elle suit l'interrupteur main-d'œuvre comme
+  // tout le reste de l'écran — une moyenne MO comprise au-dessus de coûts hors
+  // MO donnerait deux verdicts contradictoires sur la même page.
+  //
+  // `cibleTexte` n'est passé que par la section « À retravailler », qui ne
+  // contient QUE les lignes sous leur cible : un extrait choisi pour être
+  // mauvais n'a pas de moyenne à publier.
+  const moyenne = cibleTexte ? null : moyenneCatalogue(lignes.map(l => ({
+    pv_ht: l.cost.pv_unitaire_ht,
+    cout_unite: coutUniteAffiche(l, avecMainOeuvre),
+    prix_manquants: l.cost.prix_manquants,
+  })))
+
   return (
     <div className="bg-white rounded-2xl border border-gray-100 shadow-card overflow-hidden">
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[820px]">
+        <table className="w-full min-w-[880px]">
           <thead>
             <tr className="bg-gray-50">
               <ThTri label="Format de vente" sortKey="nom" sort={sort} onSort={onSort} align="left" />
-              <th className="px-3.5 py-2.5 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider align-bottom">Catégories</th>
+              <th className="px-3.5 py-2.5 text-left text-[11px] font-semibold text-gray-500 uppercase tracking-wider align-bottom whitespace-nowrap">Catégories</th>
               <ThTri label={avecMainOeuvre ? 'Coût (HT)' : 'Coût matière (HT)'} sortKey="cout" sort={sort} onSort={onSort}>
-                <p className="text-[10px] font-normal normal-case tracking-normal text-gray-300 mt-0.5">
+                <p className="text-[11px] font-normal normal-case tracking-normal text-gray-500 mt-0.5 whitespace-nowrap">
                   / {'unité de vente'}{avecMainOeuvre ? '' : ' — hors MO'}
                 </p>
               </ThTri>
               <ThTri label="Marge" sortKey="marge" sort={sort} onSort={onSort}>
-                {/* La CIBLE de la boutique, rappelée là où se lisent les valeurs.
-                    Volontairement en gris : c'est un repère, pas une valeur. */}
-                <p className="mt-1 flex items-center justify-end gap-1">
-                  {cibleTexte ? (
-                    <span className="text-[10px] font-normal normal-case tracking-normal text-gray-400">{cibleTexte}</span>
-                  ) : target !== null ? (
-                    <>
-                      <span className="text-[10px] font-normal normal-case tracking-normal text-gray-400">cible</span>
-                      {cibleCoef !== null && (
-                        <span className="text-[10px] font-bold tabular text-gray-500 bg-gray-100 rounded-full px-1.5 py-0.5">×{cibleCoef.toLocaleString('fr-FR')}</span>
-                      )}
-                      <span className="text-[10px] font-bold tabular text-gray-500 bg-gray-100 rounded-full px-1.5 py-0.5">{target.toLocaleString('fr-FR')} %</span>
-                    </>
-                  ) : (
-                    <span className="text-[10px] font-normal normal-case tracking-normal text-gray-300">pas de cible posée</span>
-                  )}
-                </p>
+                <RecapMarge cible={target} cibleCoef={cibleCoef} cibleTexte={cibleTexte} moyenne={moyenne} />
               </ThTri>
               <ThTri label="Prix (TTC)" sortKey="pv" sort={sort} onSort={onSort} />
               <ThTri label="Temps" sortKey="temps" sort={sort} onSort={onSort} />
@@ -312,7 +419,11 @@ export default function ListeFiches({
                   onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(l) } }}
                   className={`group border-t border-gray-100 cursor-pointer transition-colors focus:outline-none focus:bg-pilote-50/60 ${ouverte ? 'bg-pilote-50/60' : 'hover:bg-gray-50'}`}>
                   <td className="px-3.5 py-3 max-w-[22rem]">
-                    <p className="text-sm font-bold text-gray-900 leading-snug truncate">
+                    {/* `title` : le nom est tronqué faute de place, et sans lui
+                        il n'existe aucun moyen de lire un nom long — c'est le
+                        défaut relevé chez Otami (« SAUCISSE MONTAGNA… », rien au
+                        survol), qu'on ne va pas reproduire. */}
+                    <p className="text-sm font-bold text-gray-900 leading-snug truncate" title={l.nom}>
                       {/* La coche verte des formats relus, comme chez Otami —
                           discrète, devant le nom, sans mot en plus. */}
                       {l.validated && (
@@ -320,7 +431,7 @@ export default function ListeFiches({
                       )}
                       {l.nom}
                     </p>
-                    <p className="text-[11px] italic text-gray-400 truncate">{sousTitre(l)}</p>
+                    <p className="text-[11px] italic text-gray-500 truncate" title={sousTitre(l)}>{sousTitre(l)}</p>
                   </td>
 
                   <td className="px-3.5 py-3">
@@ -336,7 +447,7 @@ export default function ListeFiches({
                     </div>
                   </td>
 
-                  <td className="px-3.5 py-3 text-right">
+                  <td className="px-3.5 py-3 text-right whitespace-nowrap">
                     <span className="inline-flex items-center justify-end gap-1.5">
                       <span className="text-sm font-extrabold text-gray-900 tabular">{cout !== null ? fmtEuro(cout) : '—'}</span>
                       {/* Le sens du mouvement avant la valeur — pastille ronde,
@@ -374,20 +485,31 @@ export default function ListeFiches({
                         </span>
                       </span>
                     ) : (
-                      <span className="text-xs text-gray-300">—</span>
+                      /* Le tiret gris était le trou le plus coûteux de l'écran :
+                         il ne disait pas laquelle des trois causes s'appliquait,
+                         alors que chacune appelle un geste différent — compléter
+                         un prix d'ingrédient, poser un prix de vente, ou saisir
+                         des ingrédients. Trois causes, un seul tiret : le
+                         créateur restait devant sans savoir quoi faire. */
+                      <Absent {...raisonSansMarge(l)} />
                     )}
                   </td>
 
-                  <td className="px-3.5 py-3 text-right">
+                  {/* `whitespace-nowrap` : sur l'écran ouvert le 07/08, « 5,28 €
+                      HT / kg » se repliait sur TROIS lignes dans une section
+                      étroite, et « 19,00 € » se retrouvait séparé de son unité.
+                      Un montant coupé de son unité est un montant qu'on lit de
+                      travers. */}
+                  <td className="px-3.5 py-3 text-right whitespace-nowrap">
                     <p className="text-sm font-semibold text-gray-900 tabular">
                       {l.selling_price_ttc != null ? fmtEuro(l.selling_price_ttc) : '—'}
                     </p>
-                    <p className="text-[11px] text-gray-400 tabular">
+                    <p className="text-[11px] text-gray-500 tabular">
                       {l.cost.pv_unitaire_ht !== null ? `${fmtEuro(l.cost.pv_unitaire_ht)} HT / ${uniteVente(l)}` : `/ ${uniteVente(l)}`}
                     </p>
                   </td>
 
-                  <td className="px-3.5 py-3 text-right text-sm text-gray-600 tabular">
+                  <td className="px-3.5 py-3 text-right text-sm text-gray-600 tabular whitespace-nowrap">
                     {fmtMin(l.cost.total_minutes ?? l.labor_minutes)}
                   </td>
 
