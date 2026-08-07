@@ -273,6 +273,47 @@ export function VuesMercuriale({ f }: { f: Mercuriale }) {
 
               {/* 3 bis. Prix bloqués dépassés (lot 43) : le fournisseur a facturé
                   au-dessus du prix convenu — les gestes vivent dans ui.tsx. */}
+              {/* LES MORCEAUX QUI ONT SURVÉCU À LEUR CARCASSE (lot 121).
+                  Placé dans « À traiter » comme tout ce qui attend un geste, et
+                  au-dessus des écarts de prix : c'est du rangement de catalogue,
+                  moins urgent qu'un fournisseur qui dépasse un prix bloqué. */}
+              {f.orphelins.length > 0 && (
+                <div className="bg-white rounded-2xl border border-gray-100 shadow-card overflow-hidden">
+                  <div className="px-4 py-3 bg-amber-50 border-b border-amber-200">
+                    <p className="text-sm font-bold text-amber-900">
+                      Morceaux de découpe sans carcasse
+                    </p>
+                    {f.orphelinsPhrase && (
+                      <p className="text-xs text-amber-800 mt-1 leading-relaxed">{f.orphelinsPhrase}</p>
+                    )}
+                  </div>
+                  <ul className="divide-y divide-gray-50 max-h-56 overflow-y-auto">
+                    {f.orphelins.map(o => (
+                      <li key={o.id} className="px-4 py-2 flex items-center justify-between gap-3">
+                        <span className="text-sm text-gray-800 truncate" title={o.name}>{o.name}</span>
+                        {o.retenu ? (
+                          <span className="text-[11px] font-semibold text-gray-600 bg-gray-100 rounded-md px-1.5 py-0.5 whitespace-nowrap"
+                            title={o.motifRetenu ?? undefined}>conservé</span>
+                        ) : (
+                          <span className="text-[11px] text-gray-500 whitespace-nowrap">à retirer</span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                  {f.orphelinsRetirablesN > 0 && (
+                    <div className="px-4 py-3 border-t border-gray-100 flex items-center justify-between gap-3 flex-wrap">
+                      <p className="text-[11px] text-gray-600">
+                        Rien n’est supprimé : enregistrez une carcasse de cette espèce et ils reviendront avec leur prix.
+                      </p>
+                      <button type="button" onClick={f.retirerOrphelins} disabled={f.retirantOrphelins}
+                        className="text-xs font-semibold text-white bg-pilote hover:bg-pilote-hover disabled:opacity-50 rounded-xl px-3 py-2 whitespace-nowrap focus:outline-none focus-visible:ring-2 focus-visible:ring-pilote-200">
+                        {f.retirantOrphelins ? 'Retrait…' : `Retirer ${f.orphelinsRetirablesN} du catalogue`}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <BlocEcartsBloques ecarts={ecartsBloques} total={ecartsBloquesTotal} enCours={verrouillant}
                 onOuvrirProduit={id => { setView('prix'); setSearch(''); setOpenId(id); setEditId(null) }}
                 onVerrou={poserVerrou} />
