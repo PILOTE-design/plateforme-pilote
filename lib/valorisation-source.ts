@@ -371,8 +371,31 @@ export async function ensureGeneriquesDecoupe(
   service: ReturnType<typeof createServiceClient>,
   clientId: string,
   couts: Map<string, PrixMorceau>,
+  especes?: Iterable<string>,
 ): Promise<number> {
-  if (couts.size === 0) return 0
+  // LES PIÈCES SANS PRIX ENTRENT AUSSI (lot 122).
+  //
+  // Avant, seule une pièce CHIFFRÉE devenait un produit. Conséquence : une
+  // pièce que le boucher n'a pas pesée sur sa dernière carcasse n'existait
+  // nulle part — ni à la mercuriale, ni dans le sélecteur d'ingrédients d'une
+  // fiche recette. Il ne pouvait donc pas s'en servir, et rien ne lui disait
+  // pourquoi : la pièce était simplement absente.
+  //
+  // Désormais, dès qu'une espèce a une carcasse enregistrée, TOUTE sa
+  // nomenclature entre au catalogue. Les pièces non pesées y sont sans prix,
+  // et l'écran le dit (`decoupe_non_pesee`) — un produit qu'on voit et qui
+  // s'explique vaut mieux qu'un produit qui n'existe pas.
+  //
+  // Ce n'est pas la pollution que le lot 121 nettoie : là-bas ce sont des
+  // morceaux dont l'espèce n'a PLUS aucune carcasse. Ici l'espèce en a une,
+  // la pièce attend un poids. `morceauxOrphelins` les distingue déjà, et ne
+  // proposera jamais de retirer celles-ci.
+  const especesVues = new Set<string>()
+  for (const e of especes ?? []) {
+    const n = String(e ?? '').trim().toLowerCase()
+    if (n) especesVues.add(n)
+  }
+  if (couts.size === 0 && especesVues.size === 0) return 0
 
   // TOUS les génériques actifs, pas seulement ceux de découpe : la base porte un
   // index unique sur (client_id, name_key), et un morceau qui porterait le nom
@@ -400,8 +423,13 @@ export async function ensureGeneriquesDecoupe(
 
   const aCreer: Row[] = []
   for (const t of ANIMAL_TYPES) {
+    // Une espèce entre en entier dès qu'elle a une carcasse ; sinon, seules
+    // ses pièces chiffrées entrent (le comportement d'avant, conservé pour les
+    // appelants qui ne passent pas la liste des espèces).
+    const especeValorisee = especesVues.has(String(t).toLowerCase())
     for (const cut of CUTS_BY_ANIMAL[t]) {
-      if (!couts.has(cut.id) || deja.has(cut.id)) continue
+      if (deja.has(cut.id)) continue
+      if (!especeValorisee && !couts.has(cut.id)) continue
       deja.add(cut.id)
       const nom = nomLibre(cut, t, clesPrises)
       clesPrises.add(nom.toLowerCase())
