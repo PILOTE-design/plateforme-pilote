@@ -22,6 +22,7 @@ import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { resolveClientId } from '@/lib/resolve-client-id'
 import { unitKind } from '@/lib/mercuriale-auto'
 import { fetchAllPages } from '@/lib/fetch-all'
+import { sautDePrix, type LecturePrix } from '@/lib/prix-saut'
 
 export const dynamic = 'force-dynamic'
 
@@ -64,12 +65,15 @@ export async function GET(req: Request) {
   // Par réf : le facteur de conversion vers l'unité de base, et le marqueur
   // « écartée » (unité incompatible sans facteur) — même règle que le prix du
   // jour et l'historique du catalogue, rien d'inventé.
-  const parRef = new Map<string, { name: string; conv: number; ecartee: boolean }>()
+  const parRef = new Map<string, { name: string; conv: number; ecartee: boolean; unit: string | null }>()
   for (const r of (refs || []) as any[]) {
     const hasConv = r.conversion_factor !== null && Number(r.conversion_factor) > 0
     const kind = unitKind(r.unit)
     const ecartee = kind !== null && kind !== base && !hasConv
-    parRef.set(String(r.id), { name: String(r.name), conv: hasConv ? Number(r.conversion_factor) : 1, ecartee })
+    // L'unité de la réf voyage avec elle : `sautDePrix` en a besoin pour lire
+    // le conditionnement du libellé dans la bonne famille (un « 5L » sur une
+    // ligne au kilo ne dit pas la même chose qu'un « 5KG »).
+    parRef.set(String(r.id), { name: String(r.name), conv: hasConv ? Number(r.conversion_factor) : 1, ecartee, unit: r.unit ?? null })
   }
   const ids = [...parRef.keys()]
 
@@ -118,6 +122,11 @@ export async function GET(req: Request) {
   type LigneBrute = {
     id: string; d: string; fournisseur: string | null; numero: string | null
     invoice_id: string | null; ref: string; qte: number | null; pu: number; montant: number | null
+    /** Unité de la RÉF facturée. Elle ne sort pas vers l'écran (l'historique
+     *  affiche tout dans l'unité de base) : elle sert au seul `sautDePrix`, qui
+     *  en a besoin pour lire le conditionnement du libellé dans la bonne
+     *  famille — un « 5L » sur une ligne au kilo ne dit pas la même chose. */
+    unit: string | null
   }
   const brutes: LigneBrute[] = []
   let ecartees = 0
@@ -141,6 +150,7 @@ export async function GET(req: Request) {
       invoice_id: l.invoice_id ? String(l.invoice_id) : null,
       ref: r.name,
       qte,
+      unit: r.unit,
       pu: round4(pu / r.conv),
       montant: montantBrut !== null && Number.isFinite(montantBrut) ? round2(montantBrut) : null,
     })
@@ -180,6 +190,28 @@ export async function GET(req: Request) {
   const moyenne = (a: number[]) => (a.length > 0 ? round4(a.reduce((s, x) => s + x, 0) / a.length) : null)
   const lignes = lignesAsc.slice().reverse()
 
+  // UN PRIX QUI EST LE MULTIPLE ENTIER DU PRÉCÉDENT N'EST PAS UNE HAUSSE.
+  //
+  // Mesuré en production le 07/08/2026 : trois articles portent un prix valant
+  // exactement un multiple entier d'une autre lecture du même article — une
+  // lecture comptait les colis, l'autre les kilos. Les deux lignes sont
+  // pourtant cohérentes avec elles-mêmes (`qté × PU = montant` tombe juste des
+  // deux côtés), donc aucun garde-fou existant ne les voit. Seule la SÉRIE le
+  // dit, et c'est ici qu'on l'a sous la main.
+  //
+  // On n'affiche RIEN de corrigé : on nomme les deux lectures et on laisse le
+  // boucher trancher. Le lot 57 a fabriqué 38 quantités fausses sur 52 en
+  // voulant réparer ce genre de chose.
+  const saut = sautDePrix(lignesAsc.map<LecturePrix>(l => ({
+    date: l.d,
+    prix: l.pu,
+    quantite: l.qte,
+    montant: l.montant,
+    designation: l.ref,
+    unite: l.unit ?? null,
+    facture: l.numero,
+  })))
+
   return NextResponse.json({
     generic: { id: generic.id, name: generic.name, base_unit: base },
     moy_3m: moyenne(lignesAsc.filter(l => l.d >= cutoff3m).map(l => l.pu)),
@@ -191,6 +223,7 @@ export async function GET(req: Request) {
     lignes_total: lignes.length,
     lignes_ecartees: ecartees,
     quarantaine_12m: quarantaine12m,
+    saut_de_prix: saut,
     lecture_incomplete: lignesPage.tronque
       ? `Historique incomplet${lignesPage.erreur ? ` (${lignesPage.erreur})` : ''} — les chiffres affichés sont partiels.`
       : null,
