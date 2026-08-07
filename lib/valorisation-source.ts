@@ -95,6 +95,45 @@ export const SEUIL_ANNONCE = 0.65
  * `profileIdFallback` couvre les valorisations enregistrées avant que la
  * colonne `client_id` existe et dont le rattachement n'aurait pas été repris.
  */
+/**
+ * Les espèces dont la boutique a AU MOINS UNE carcasse enregistrée.
+ *
+ * Volontairement indifférente à la qualité de la saisie : une carcasse trop peu
+ * pesée pour publier un prix (plancher du lot 65) reste une carcasse. Le morceau
+ * qui en dépend ATTEND une saisie — il n'est pas un résidu, et il ne faut
+ * surtout pas proposer de l'effacer.
+ *
+ * Sert à `lib/morceaux-orphelins` : sans elle, `decoupe_sans_carcasse` mélange
+ * « je n'ai jamais valorisé cette bête » et « ma carcasse a été supprimée »,
+ * qui appellent deux gestes opposés.
+ */
+export async function especesAvecCarcasse(
+  service: ReturnType<typeof createServiceClient>,
+  clientId: string,
+  profileIdFallback?: string | null,
+): Promise<Set<string>> {
+  const out = new Set<string>()
+  const page = await fetchAllPages<Row>(apres => {
+    let q = service.from('valorisations').select('id, animal_type').eq('client_id', clientId)
+    if (apres) q = q.gt('id', apres)
+    return q.order('id', { ascending: true })
+  })
+  let lignes = page.rows
+  if (lignes.length === 0 && profileIdFallback) {
+    const repli = await fetchAllPages<Row>(apres => {
+      let q = service.from('valorisations').select('id, animal_type').eq('profile_id', profileIdFallback)
+      if (apres) q = q.gt('id', apres)
+      return q.order('id', { ascending: true })
+    })
+    lignes = repli.rows
+  }
+  for (const v of lignes) {
+    const e = String(v.animal_type || '').trim().toLowerCase()
+    if (e) out.add(e)
+  }
+  return out
+}
+
 export async function coutsMorceauxDuClient(
   service: ReturnType<typeof createServiceClient>,
   clientId: string,
