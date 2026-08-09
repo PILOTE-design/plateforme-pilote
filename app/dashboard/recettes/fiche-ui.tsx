@@ -93,6 +93,12 @@ export type FicheRecipe = {
   /** Perte de FABRICATION de la fiche, en % (l'atelier — pas le parage d'une ligne) */
   loss_pct?: number | null
   employee_id: string | null
+  /** Conservation (lot 125) — les deux seuls champs Infos réellement remplis
+   *  chez Otami. null : non renseigné, et l'écran le dit. */
+  storage_temp_c?: number | null
+  storage_days?: number | null
+  /** Identifiants d'allergènes (annexe II INCO) — jamais des libellés */
+  allergens?: unknown
   fabrication_steps?: unknown
   time_tiers?: unknown
   /** Formats de vente — au moins un depuis la reprise du lot 46 */

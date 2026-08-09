@@ -19,6 +19,7 @@ import { renderToBuffer, Document, Page, View, Text, StyleSheet } from '@react-p
 import { createClient, createServiceClient } from '@/lib/supabase/server'
 import { resolveClientId } from '@/lib/resolve-client-id'
 import { ensureFonts, FONT_FAMILY } from '@/app/api/reports/generate/report-fonts'
+import { parseAllergenes, ligneEtiquette } from '@/lib/allergenes'
 import {
   costIngredients, parseStoredSteps, parseStoredTiers, recipeTotalMinutes,
   type GenericInfo, type IngredientRow,
@@ -231,6 +232,37 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
               </View>
             </View>
           ) : null}
+
+          {/* ── CONSERVATION ET ALLERGÈNES (lot 125) ─────────────────────
+              La fiche atelier est LE document du laboratoire : c'est ici que
+              la température, la durée et la ligne d'allergènes servent — pas
+              sur un écran. La ligne d'allergènes est celle de l'étiquette
+              (annexe II INCO) ; « aucun déclaré » s'écrit en toutes lettres,
+              parce que sur un document imprimé, le silence ne se distingue
+              pas d'un oubli. */}
+          {(() => {
+            const temp = recipe.storage_temp_c !== null && recipe.storage_temp_c !== undefined ? Number(recipe.storage_temp_c) : null
+            const jours = recipe.storage_days !== null && recipe.storage_days !== undefined ? Number(recipe.storage_days) : null
+            const allergenes = parseAllergenes(recipe.allergens)
+            const ligne = ligneEtiquette(allergenes)
+            if (temp === null && jours === null && allergenes.length === 0) return null
+            return (
+              <View style={{ marginTop: 14, borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 6, padding: 8 }}>
+                <Text style={[s.h2, { marginBottom: 3 }]}>Conservation et allergènes</Text>
+                {(temp !== null || jours !== null) ? (
+                  <Text style={{ fontSize: 9, color: '#111827', marginBottom: ligne || allergenes.length === 0 ? 3 : 0 }}>
+                    {[
+                      temp !== null ? `À conserver à ${temp.toLocaleString('fr-FR')} °C` : null,
+                      jours !== null ? `${jours.toLocaleString('fr-FR')} jour${jours > 1 ? 's' : ''} au plus` : null,
+                    ].filter(Boolean).join(' — ')}
+                  </Text>
+                ) : null}
+                <Text style={{ fontSize: 9, color: '#111827' }}>
+                  {ligne !== '' ? ligne : 'Aucun allergène déclaré pour cette recette.'}
+                </Text>
+              </View>
+            )
+          })()}
 
           {/* Notes */}
           {recipe.notes ? (
