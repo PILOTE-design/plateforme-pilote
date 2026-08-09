@@ -9,14 +9,14 @@
 // ou une embauche, et toutes les fiches se recalculent.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChefHat, Plus, X, Search, AlertTriangle, Check, Euro, Factory, ChevronRight } from 'lucide-react'
+import { ChefHat, Plus, X, Search, AlertTriangle, Check, Euro, Factory, ChevronRight, Download } from 'lucide-react'
 import Link from 'next/link'
 import { useToast } from '@/components/ui/toast'
 import { useConfirm } from '@/components/ui/confirm-dialog'
 import FichePanel, { type FicheRecipe } from './fiche-panel'
 import { manquesDeLaFiche, prochainGeste } from '@/lib/recettes-catalogue'
 import ListeFiches, {
-  coutUniteAffiche, verdictAffiche,
+  coutUniteAffiche, verdictAffiche, uniteVente, fmtMin,
   type ListeLigne, type SortKey, type SortState,
 } from './liste'
 import { parseStoredSteps, recipeTotalMinutes } from '@/lib/recipes'
@@ -628,6 +628,56 @@ export default function RecettesPage() {
     }
   }
 
+  /** EXPORT DE LA LISTE — le « Télécharger en XLSX » d'Otami, en CSV que le
+   *  tableur français ouvre sans rien demander (point-virgule, virgule
+   *  décimale, BOM — mêmes conventions que l'export du listing des prix).
+   *
+   *  Une ligne par FORMAT, comme la liste, et LES DEUX bases de coût en
+   *  colonnes — matière seule ET main-d'œuvre comprise — plutôt que l'état de
+   *  l'interrupteur au moment du clic : un fichier qu'on rouvre dans quinze
+   *  jours ne doit pas dépendre d'un réglage d'écran qu'on a oublié.
+   *
+   *  Toujours TOUTES les fiches vivantes, jamais le filtre en cours : un
+   *  export est un instantané du catalogue, pas une copie d'écran. Les
+   *  archivées n'y sont pas — elles sont archivées. Et le fichier porte les
+   *  mêmes honnêtetés que l'écran : la colonne « Prix manquants » marque les
+   *  coûts sous-estimés, une marge non calculable reste vide, jamais zéro. */
+  const exporter = useCallback(() => {
+    const nombre = (n: number | null) => (n === null ? '' : String(n).replace('.', ','))
+    const champ = (v: string | null) => `"${(v ?? '').replace(/"/g, '""')}"`
+    const entetes = [
+      'Format de vente', 'Recette mère', 'Nature', 'Catégorie', 'Unité de vente',
+      'Coût matière HT / unité', 'Coût complet HT / unité (MO comprise)',
+      'Marge % (MO comprise)', 'Coefficient (MO comprise)',
+      'Prix vente TTC', 'Prix vente HT / unité', 'Temps de fabrication',
+      'Validé', 'Prix manquants',
+    ]
+    const corps = lignes.map(l => {
+      const verdict = verdictAffiche(l, true)
+      return [
+        champ(l.nom), champ(l.recetteNom !== l.nom ? l.recetteNom : ''),
+        champ(sousRecetteIds.has(l.recipeId) ? 'Sous-recette' : 'Produit fini'),
+        champ(l.category), champ(uniteVente(l)),
+        nombre(coutUniteAffiche(l, false)), nombre(coutUniteAffiche(l, true)),
+        nombre(verdict.marge_pct), nombre(verdict.coefficient),
+        nombre(l.selling_price_ttc), nombre(l.cost.pv_unitaire_ht),
+        champ(fmtMin(l.cost.total_minutes ?? l.labor_minutes)),
+        champ(l.validated ? 'Oui' : ''),
+        l.cost.prix_manquants > 0 ? String(l.cost.prix_manquants) : '',
+      ].join(';')
+    })
+    // Le BOM : sans lui, un tableur français lit « Coût » comme « CoÃ»t ».
+    // Le caractère BOM est écrit TEL QUEL (comme dans listing-prix) : un
+    // échappement ﻿ ne survivrait pas au canal de publication.
+    const blob = new Blob(['﻿' + [entetes.join(';'), ...corps].join('\r\n')], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `fiches-recettes-${new Date().toISOString().slice(0, 10)}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }, [lignes, sousRecetteIds])
+
   function openNew() {
     setEditId(null)
     setForm({ name: '', category: '', yield_qty: '', yield_unit: 'pièces', sell_unit: '', sell_qty: '', labor_minutes: '', selling_price_ttc: '', tva_rate: '5.5', employee_id: '' })
@@ -955,6 +1005,21 @@ export default function RecettesPage() {
             <span className="text-left">
               <span className={`block text-xs font-bold ${avecMainOeuvre ? 'text-pilote' : 'text-gray-600'}`}>Main-d&apos;œuvre</span>
               <span className="block text-[10px] text-gray-400">{avecMainOeuvre ? 'comprise dans les coûts' : 'exclue — matière seule'}</span>
+            </span>
+          </button>
+
+          {/* L'export d'Otami (« Télécharger en XLSX »), là où on lit la liste.
+              Il embarque LES DEUX bases de coût : il n'a pas à connaître
+              l'état de l'interrupteur. */}
+          <button type="button" onClick={exporter} disabled={lignes.length === 0}
+            title={lignes.length === 0
+              ? 'Rien à exporter : aucune fiche vivante.'
+              : `Télécharge les ${lignes.length.toLocaleString('fr-FR')} formats de vente en fichier Excel (CSV) — coût matière ET coût complet, marge, coefficient, prix. Les fiches archivées n’y figurent pas.`}
+            className="flex items-center gap-2 rounded-xl px-3.5 py-2.5 border bg-white border-gray-200 hover:bg-gray-50 disabled:opacity-50 transition-all flex-shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-pilote-200">
+            <Download className="w-4 h-4 text-gray-600" />
+            <span className="text-left">
+              <span className="block text-xs font-bold text-gray-700">Exporter</span>
+              <span className="block text-[10px] text-gray-400 whitespace-nowrap">Excel (CSV)</span>
             </span>
           </button>
           </div>
