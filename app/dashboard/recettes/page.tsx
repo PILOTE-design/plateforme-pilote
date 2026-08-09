@@ -668,7 +668,8 @@ export default function RecettesPage() {
     })
     // Le BOM : sans lui, un tableur français lit « Coût » comme « CoÃ»t ».
     // Le caractère BOM est écrit TEL QUEL (comme dans listing-prix) : un
-    // échappement ﻿ ne survivrait pas au canal de publication.
+    // échappement unicode (antislash-u-FEFF) serait décodé par le canal de
+    // publication et le fichier ne serait plus reproductible à l'octet.
     const blob = new Blob(['﻿' + [entetes.join(';'), ...corps].join('\r\n')], { type: 'text/csv;charset=utf-8' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
