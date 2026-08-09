@@ -55,6 +55,10 @@ export type EtatModale = {
   optionsFamilles: { value: string; label: string }[]
   pickGeneric: (row: number, g: Generic) => void
   pickSub: (row: number, r: Recipe) => void
+  /** Archiver la fiche en cours d'édition (lot 123) — réversible depuis la
+   *  section « Fiches archivées » en bas de la liste. */
+  archiver: () => void
+  archivant: boolean
   pickerRow: number | null
   preview: ApercuCout
   previewRate: number | null
@@ -269,7 +273,7 @@ export default function ModaleFiche({ m }: { m: EtatModale }) {
                       : []
                     // Fiches proposées en sous-recette — jamais la fiche en cours d'édition
                     const suggR = m.pickerRow === i && q.length >= 2 && !ing.generic_id && !ing.sub_recipe_id
-                      ? m.recipes.filter(x => x.id !== m.editId && x.name.toLowerCase().includes(q)).slice(0, 4)
+                      ? m.recipes.filter(x => x.id !== m.editId && !x.archived_at && x.name.toLowerCase().includes(q)).slice(0, 4)
                       : []
                     const isLegacy = !ing.generic_id && !ing.sub_recipe_id && !!ing.article_id
                     // Création proposée en dernier recours : seulement si rien ne
@@ -467,7 +471,17 @@ export default function ModaleFiche({ m }: { m: EtatModale }) {
               <div>
                 <div className="flex gap-3 pt-1">
                   {m.editId && (
-                    <Button variant="outline" onClick={m.remove} className="text-red-600 border-red-200 hover:bg-red-50">Retirer</Button>
+                    <>
+                      {/* Archiver AVANT Retirer, et dans une couleur neutre : c'est
+                          le geste réversible, celui qu'on veut voir en premier.
+                          Retirer reste pour les fiches créées par erreur. */}
+                      <Button variant="outline" onClick={m.archiver} disabled={m.archivant}
+                        title="La fiche sort de la liste et des choix d’ingrédients, mais garde tout — ingrédients, temps, formats. Restaurable en un clic depuis « Fiches archivées », en bas de la liste.">
+                        {m.archivant ? 'Archivage…' : 'Archiver'}
+                      </Button>
+                      <Button variant="outline" onClick={m.remove} className="text-red-600 border-red-200 hover:bg-red-50"
+                        title="Retire la fiche pour de bon — pour une fiche créée par erreur. Pour une recette qu’on ne fait plus, préférez Archiver.">Retirer</Button>
+                    </>
                   )}
                   <Button variant="outline" className="flex-1" onClick={() => m.setShow(false)}>Annuler</Button>
                   {/* Un bouton grisé qui ne dit pas ce qu'il attend arrête net celui

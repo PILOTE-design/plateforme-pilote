@@ -9,7 +9,7 @@
 // ou une embauche, et toutes les fiches se recalculent.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChefHat, Plus, X, Search, AlertTriangle, Check, Euro, Factory } from 'lucide-react'
+import { ChefHat, Plus, X, Search, AlertTriangle, Check, Euro, Factory, ChevronRight } from 'lucide-react'
 import Link from 'next/link'
 import { useToast } from '@/components/ui/toast'
 import { useConfirm } from '@/components/ui/confirm-dialog'
@@ -82,6 +82,10 @@ export type Recipe = {
   sell_unit?: string | null; sell_qty?: number | null
   labor_minutes: number; selling_price_ttc: number | null; tva_rate: number; notes: string | null
   employee_id: string | null
+  /** Archivée le … (lot 123) — null : vivante. Une fiche archivée sort de la
+   *  liste et des choix d'ingrédients mais reste calculée : l'archivage ne
+   *  fausse jamais le coût d'une fiche qui l'utilise en sous-recette. */
+  archived_at?: string | null
   /** jsonb des étapes : dès qu'une est chronométrée, c'est LEUR somme qui fait le
    *  temps de la fiche côté serveur — le champ labor_minutes n'est plus qu'un repli. */
   fabrication_steps?: unknown
@@ -100,6 +104,13 @@ export type Famille = { id: string; parent_id: string | null; name: string; posi
 // 50/30) vit désormais dans ./liste — c'est le tableau qui la peint.
 
 const catLabel = (c: string | null) => (c && c.trim() ? c.trim().toLowerCase() : 'sans catégorie')
+
+/** « 2026-08-07T… » → « 7 août 2026 ». Rendu tel quel si ce n'est pas une date. */
+const fmtDateArchive = (iso: string | null | undefined) => {
+  const t = String(iso ?? '').slice(0, 10)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(t)) return String(iso ?? '')
+  return new Date(t + 'T00:00:00Z').toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' })
+}
 
 export default function RecettesPage() {
   const { toast } = useToast()
@@ -333,6 +344,9 @@ export default function RecettesPage() {
   const lignes = useMemo<ListeLigne[]>(() => {
     const out: ListeLigne[] = []
     for (const r of recipes) {
+      // Les archivées ont leur section à elles, en bas — les mêler ici
+      // reviendrait à ne pas les avoir archivées.
+      if (r.archived_at) continue
       const communs = {
         recipeId: r.id,
         recetteNom: r.name,
@@ -419,6 +433,14 @@ export default function RecettesPage() {
       .slice(0, 8)
   }, [lignes, search, correspond])
 
+  /** Les fiches archivées, les plus récentes d'abord. Elles vivent dans leur
+   *  section repliée en bas de page : visibles quand on les cherche, absentes
+   *  quand on travaille. */
+  const archivees = useMemo(() =>
+    recipes.filter(r => r.archived_at)
+      .sort((a, b) => String(b.archived_at).localeCompare(String(a.archived_at))),
+  [recipes])
+
   /** Les fiches qui entrent dans une AUTRE fiche — la chip « Sous-recette » de
    *  la liste. Lu des lignes d'ingrédients : rien n'est stocké pour ça. */
   const sousRecetteIds = useMemo(() => {
@@ -484,7 +506,7 @@ export default function RecettesPage() {
 
   const allCats = useMemo(() => {
     const set = new Set<string>()
-    for (const r of recipes) set.add(catLabel(r.category))
+    for (const r of recipes) { if (!r.archived_at) set.add(catLabel(r.category)) }
     return [...set].sort((a, b) => a.localeCompare(b, 'fr'))
   }, [recipes])
 
@@ -539,10 +561,10 @@ export default function RecettesPage() {
     })
     // Un prix manquant est un défaut de la FICHE (un ingrédient sans prix), pas
     // d'un format : on compte des fiches, et le libellé le dit.
-    const prixManquants = recipes.filter(r => r.cost.prix_manquants > 0).length
+    const prixManquants = recipes.filter(r => !r.archived_at && r.cost.prix_manquants > 0).length
     return {
       total: lignes.length,
-      fiches: recipes.length,
+      fiches: recipes.filter(r => !r.archived_at).length,
       chiffrees: chiffrees.length,
       margeMoyenne,
       sousCible,
@@ -579,6 +601,31 @@ export default function RecettesPage() {
       if (next) setTimeout(() => panelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60)
       return next
     })
+  }
+
+  /** Archiver ou restaurer une fiche. Route dédiée (pas le PUT d'édition) ;
+   *  le toast dit à chaque fois OÙ la fiche est partie et comment revenir —
+   *  une fiche qui disparaît de la liste sans explication se lit « perdue ». */
+  const [archivant, setArchivant] = useState<string | null>(null)
+  const [voirArchivees, setVoirArchivees] = useState(false)
+  async function archiverFiche(id: string, archive: boolean) {
+    if (archivant) return
+    setArchivant(id)
+    const res = await fetch(`/api/recipes/${id}/archive`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ archive }),
+    }).catch(() => null)
+    const data = res ? await res.json().catch(() => null) : null
+    setArchivant(null)
+    if (res?.ok) {
+      setShow(false)
+      toast(archive
+        ? { variant: 'info', title: 'Fiche archivée', description: 'Elle attend en bas de la liste, dans « Fiches archivées » — un clic sur Restaurer la fait revenir, avec ses ingrédients, ses temps et ses formats.' }
+        : { variant: 'success', title: 'Fiche restaurée', description: 'Elle a repris sa place dans la liste, telle qu’elle était.' })
+      load()
+    } else {
+      toast({ variant: 'error', title: data?.error || 'Action impossible', description: 'Réessayez.' })
+    }
   }
 
   function openNew() {
@@ -1046,6 +1093,47 @@ export default function RecettesPage() {
               />
             </section>
           ))}
+
+          {/* LES FICHES ARCHIVÉES — en bas, repliées (lot 123, modèle Otami).
+              Visibles quand on les cherche, absentes quand on travaille. Le
+              compte est écrit sur le pli : une section fantôme qui n'annonce
+              pas ce qu'elle cache ne serait jamais ouverte. */}
+          {archivees.length > 0 && (
+            <section className="pt-2">
+              <button type="button" onClick={() => setVoirArchivees(v => !v)}
+                className="inline-flex items-center gap-1.5 text-xs font-semibold text-gray-600 hover:text-gray-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-pilote-200 rounded">
+                <ChevronRight className={`w-3.5 h-3.5 transition-transform ${voirArchivees ? 'rotate-90' : ''}`} />
+                Fiches archivées ({archivees.length.toLocaleString('fr-FR')})
+              </button>
+              {voirArchivees && (
+                <div className="mt-3 bg-white rounded-2xl border border-gray-100 shadow-card overflow-hidden">
+                  <ul className="divide-y divide-gray-50">
+                    {archivees.map(r => (
+                      <li key={r.id} className="px-4 py-2.5 flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <Link href={`/dashboard/recettes/${r.id}`}
+                            className="text-sm font-semibold text-gray-800 hover:text-pilote hover:underline truncate block" title={r.name}>
+                            {r.name}
+                          </Link>
+                          <p className="text-[11px] text-gray-500 whitespace-nowrap">
+                            archivée le {fmtDateArchive(r.archived_at)}
+                          </p>
+                        </div>
+                        <button type="button" onClick={() => archiverFiche(r.id, false)} disabled={archivant !== null}
+                          className="text-xs font-semibold text-pilote border border-pilote-200 hover:bg-pilote-50 disabled:opacity-50 rounded-xl px-3 py-1.5 whitespace-nowrap focus:outline-none focus-visible:ring-2 focus-visible:ring-pilote-200">
+                          {archivant === r.id ? 'Restauration…' : 'Restaurer'}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="px-4 py-2.5 border-t border-gray-100 text-[11px] text-gray-600">
+                    Une fiche archivée garde tout — ingrédients, temps, formats — et ses coûts continuent
+                    de servir aux fiches qui l’utilisent en sous-recette.
+                  </p>
+                </div>
+              )}
+            </section>
+          )}
         </div>
       )}
 
@@ -1056,6 +1144,8 @@ export default function RecettesPage() {
         pickSub, pickerRow, preview, previewRate, recipeById, recipes, remove, rienAChiffrer,
         save, saving, setCatLibre, setForm, setIngs, setPickerRow, setShow, setUniteLibre,
         show, suggestions, uniteLibre,
+        archiver: () => { if (editId) archiverFiche(editId, true) },
+        archivant: archivant !== null,
       }} />
     </div>
   )
