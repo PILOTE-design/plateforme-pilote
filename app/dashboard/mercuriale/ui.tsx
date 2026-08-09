@@ -604,6 +604,17 @@ export function BlocEcartsBloques({ ecarts, total, enCours, onOuvrirProduit, onV
                   <button onClick={() => window.open(`/api/invoices/${g.ref.invoice_id}/file`, '_blank')}
                     className="text-[11px] font-semibold text-gray-500 hover:text-pilote underline">voir la facture</button>
                 )}
+                {/* LE COURRIER (lot 126) — la chaîne Otami « Négociations →
+                    Litiges » ramenée au geste du métier : depuis les écarts,
+                    la lettre de demande d'avoir, prête à envoyer. Le PDF
+                    reprend EXACTEMENT les règles de ce bloc (factures
+                    postérieures au verrou, dixième de centime, non-chiffrés
+                    écrits en toutes lettres). */}
+                <button onClick={() => window.open(`/api/articles/${g.ref.article_id}/reclamation`, '_blank')}
+                  title="Prépare la lettre de demande d'avoir : le prix convenu, les factures qui le dépassent, le total réclamé. Il ne reste qu'à l'envoyer."
+                  className="text-[11px] font-bold text-pilote border border-pilote-200 hover:bg-pilote-50 rounded-lg px-2.5 py-1 whitespace-nowrap">
+                  Courrier d&apos;avoir (PDF)
+                </button>
                 <button onClick={() => onVerrou(g.ref.article_id, g.ref.paye)} disabled={enCours === g.ref.article_id}
                   title="Accepter le nouveau prix : le verrou repart de là"
                   className="text-[11px] font-bold text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg px-2.5 py-1 disabled:opacity-50">
