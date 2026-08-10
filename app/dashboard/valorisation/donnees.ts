@@ -5,7 +5,7 @@
 // publication : aucun état React ici, rien que des constantes et des calculs.
 
 import {
-  BOEUF_ALL_CUTS, VEAU_CUTS, AGNEAU_CUTS, PORC_CUTS, VOLAILLE_CUTS,
+  BOEUF_ALL_CUTS, VEAU_CUTS, AGNEAU_CUTS, PORC_CUTS,
   type AnimalType, type Cut, type CutCategory,
 } from '@/lib/valorisation'
 
@@ -104,15 +104,8 @@ const PORC_BREEDS: Breed[] = [
   { id: 'cochon_bayeux',     name: 'Cochon de Bayeux',     carcassYield: 0.71, avgWeight: '100-130 kg', origin: 'Normandie',        description: 'Ancienne race normande. Lard abondant, viande goûteuse. Parfait pour rillettes et jambon braisé.' },
 ]
 
-// ─── Données Volaille ────────────────────
-const VOLAILLE_BREEDS: Breed[] = [
-  { id: 'poulet_fermier',  name: 'Poulet fermier Label Rouge', carcassYield: 0.75, avgWeight: '2-3 kg',   origin: 'France',    description: 'Label Rouge. Élevage 81 jours min. Chair ferme et goûteuse. Le standard de qualité en volaille artisanale.' },
-  { id: 'poulet_bresse',   name: 'Poulet de Bresse AOC',       carcassYield: 0.72, avgWeight: '1.8-2.5 kg', origin: 'Ain/Bresse', description: 'Seule volaille AOC de France. Chair exceptionnellement tendre et persillée. Produit ultra premium.' },
-  { id: 'pintade_fermiere', name: 'Pintade fermière',          carcassYield: 0.73, avgWeight: '1.5-2.2 kg', origin: 'France',    description: 'Chair ferme, saveur gibier légèrement marquée. Très appréciée pour les fêtes et la restauration.' },
-  { id: 'canard_barbarie',  name: 'Canard de Barbarie',        carcassYield: 0.68, avgWeight: '2.5-4 kg',  origin: 'Sud-Ouest', description: 'Viande maigre et goûteuse. Magret charnu, cuisses moelleuses. Fort potentiel en valorisation.' },
-  { id: 'chapon_fermier',   name: 'Chapon fermier',            carcassYield: 0.77, avgWeight: '3-4.5 kg',  origin: 'France',    description: 'Poulet castré, élevé 150 jours min. Chair fondante et persillée. Produit de fête, prix premium.' },
-  { id: 'dinde_fermiere',   name: 'Dinde fermière',            carcassYield: 0.74, avgWeight: '4-8 kg',    origin: 'France',    description: 'Chair blanche abondante. Excellent découpe à la pièce. Fort volume fin d\'année.' },
-]
+// (La volaille a quitté la valorisation le 10/08/2026 — un boucher ne découpe
+//  pas de carcasse de volaille ; elle se vend prête, via mercuriale et rayons.)
 
 // ─── Config espèces ─── poids et prix par défaut exprimés en CARCASSE ───────────
 
@@ -121,10 +114,9 @@ export const ANIMALS: Record<AnimalType, AnimalConfig> = {
   veau:     { label: 'Veau',    emoji: '🐮', accent: 'pink',   breedLabel: 'Type de veau',  breeds: VEAU_BREEDS,     cuts: VEAU_CUTS,     defaultWeight: '125', defaultPurchaseKg: '9.00',  defaultLabor: '80'  },
   agneau:   { label: 'Agneau',  emoji: '🐑', accent: 'green',  breedLabel: 'Race ovine',    breeds: AGNEAU_BREEDS,   cuts: AGNEAU_CUTS,   defaultWeight: '20',  defaultPurchaseKg: '10.00', defaultLabor: '30'  },
   porc:     { label: 'Porc',    emoji: '🐖', accent: 'orange', breedLabel: 'Race porcine',  breeds: PORC_BREEDS,     cuts: PORC_CUTS,     defaultWeight: '85',  defaultPurchaseKg: '2.90',  defaultLabor: '60'  },
-  volaille: { label: 'Volaille',emoji: '🐔', accent: 'yellow', breedLabel: 'Variété',       breeds: VOLAILLE_BREEDS, cuts: VOLAILLE_CUTS, defaultWeight: '1.9', defaultPurchaseKg: '3.70',  defaultLabor: '5'   },
 }
 
-export const ANIMAL_TYPES: AnimalType[] = ['boeuf', 'veau', 'agneau', 'porc', 'volaille']
+export const ANIMAL_TYPES: AnimalType[] = ['boeuf', 'veau', 'agneau', 'porc']
 
 // ─── Catégories ────────────────────────
 
@@ -228,15 +220,17 @@ export type CatsByAnimal = Record<AnimalType, CutCategory[]>
 export type CutsByAnimal = Record<AnimalType, string[]>
 
 export const DEFAULT_CATS = (): CatsByAnimal => ({
-  boeuf: [...CATEGORIES], veau: [...CATEGORIES], agneau: [...CATEGORIES], porc: [...CATEGORIES], volaille: [...CATEGORIES],
+  boeuf: [...CATEGORIES], veau: [...CATEGORIES], agneau: [...CATEGORIES], porc: [...CATEGORIES],
 })
 export const DEFAULT_EXCLUDED = (): CutsByAnimal => ({
-  boeuf: [], veau: [], agneau: [], porc: [], volaille: [],
+  boeuf: [], veau: [], agneau: [], porc: [],
 })
 // Prix de référence personnalisés par pièce (surcharge le prix indicatif), mémorisés par famille
+// (Un localStorage d'avant le 10/08/2026 peut porter une clé `volaille` en trop :
+//  le spread de `loadPref` la laisse passer, elle est morte et sans effet.)
 export type PricesByAnimal = Record<AnimalType, Record<string, string>>
 export const DEFAULT_PRICES = (): PricesByAnimal => ({
-  boeuf: {}, veau: {}, agneau: {}, porc: {}, volaille: {},
+  boeuf: {}, veau: {}, agneau: {}, porc: {},
 })
 
 export function loadPref<T>(key: string, fallback: T): T {
