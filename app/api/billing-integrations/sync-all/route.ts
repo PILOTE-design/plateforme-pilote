@@ -4,7 +4,8 @@
 // ATTENTION : Vercel Cron invoque en GET — les deux méthodes sont exportées.
 // Sécurisée par CRON_SECRET pour éviter les appels non autorisés
 import { NextRequest, NextResponse } from 'next/server'
-import { createServiceClient } from '@/lib/supabase/server'
+import { createClient, createServiceClient } from '@/lib/supabase/server'
+import { isAdminEmail } from '@/lib/admins'
 import { PROVIDERS } from '@/lib/billing-providers'
 import { classifyFixedCharges } from '@/lib/billing-providers/classify'
 import { loadSupplierCategories, rememberedCategory } from '@/lib/supplier-memory'
@@ -41,13 +42,19 @@ function getISOWeek(date: Date) {
 }
 
 async function runSyncAll(req: NextRequest) {
-  // Vercel Cron envoie automatiquement ce header avec la valeur de CRON_SECRET
-  const authHeader = req.headers.get('authorization')
+  // ── Qui appelle ? Le cron (secret de plateforme) ou un administrateur.
+  // JAMAIS fail-open : si CRON_SECRET manque, la route n'est pas publique pour
+  // autant — une session admin est alors EXIGÉE (même patron que
+  // cron/lecture-quotidienne). L'ancienne garde `if (cronSecret && ...)`
+  // rendait la tournée service-role appelable par n'importe qui dès que la
+  // variable disparaissait de Vercel.
   const cronSecret = process.env.CRON_SECRET
-
-  // Si CRON_SECRET est défini, on vérifie que l'appel vient bien de Vercel
-  if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
-    return NextResponse.json({ error: 'Non autorisé' }, { status: 401 })
+  const estMachine = !!cronSecret && req.headers.get('authorization') === `Bearer ${cronSecret}`
+  if (!estMachine) {
+    const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return NextResponse.json({ error: 'Non autorisé' }, { status: 401 })
+    if (!isAdminEmail(user.email)) return NextResponse.json({ error: 'Réservé aux administrateurs' }, { status: 403 })
   }
 
   const service = createServiceClient()

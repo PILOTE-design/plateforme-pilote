@@ -8,6 +8,10 @@ export async function GET() {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Non autorisé' }, { status: 401 })
+  // La liste complète des fiches (email, téléphone, SIRET) est un écran
+  // d'ADMINISTRATION — même règle que le POST juste en dessous. Jusqu'ici seul
+  // le RLS (« tout refusé ») retenait la fuite : garde à deux étages désormais.
+  if (!isAdminEmail(user.email)) return NextResponse.json({ error: 'Réservé aux administrateurs' }, { status: 403 })
 
   const { data, error } = await supabase
     .from('clients')

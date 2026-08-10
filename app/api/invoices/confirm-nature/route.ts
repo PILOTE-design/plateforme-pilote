@@ -70,7 +70,7 @@ export async function POST(request: NextRequest) {
       lines_error: `Confirmée charge (hors matière) d'un clic le ${jour}.`,
       lines_checked_at: new Date().toISOString(),
       nature_doute: false,
-    }).eq('id', invoice.id)
+    }).eq('id', invoice.id).eq('client_id', clientId)
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ success: true, status: 'hors_matiere' })
   }
@@ -81,7 +81,7 @@ export async function POST(request: NextRequest) {
     const { error } = await service.from('invoices').update({
       lines_error: [`Nature (matière) confirmée d'un clic le ${jour}.`, invoice.lines_error].filter(Boolean).join(' '),
       nature_doute: false,
-    }).eq('id', invoice.id)
+    }).eq('id', invoice.id).eq('client_id', clientId)
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ success: true, status: invoice.lines_status })
   }

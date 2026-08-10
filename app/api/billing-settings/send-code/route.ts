@@ -27,7 +27,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Email invalide' }, { status: 400 })
   }
 
-  const code = Math.floor(100000 + Math.random() * 900000).toString()
+  // Générateur CRYPTOGRAPHIQUE (jamais Math.random) : le code protège l'adresse
+  // de transfert, et l'identifiant devient une adresse e-mail publique — aucun
+  // des deux ne doit être prévisible depuis l'horloge du serveur.
+  const code = crypto.randomInt(100000, 1000000).toString()
   const codeHash = crypto.createHash('sha256').update(code).digest('hex')
   const expires = new Date(Date.now() + 15 * 60 * 1000).toISOString()
 
@@ -40,7 +43,7 @@ export async function POST(request: NextRequest) {
     .maybeSingle()
 
   const forwardId = existingProfile?.billing_forward_id
-    || Math.random().toString(36).slice(2, 12)
+    || crypto.randomBytes(5).toString('hex')
 
   await serviceSupabase
     .from('profiles')
@@ -49,6 +52,8 @@ export async function POST(request: NextRequest) {
       billing_email_verified: false,
       billing_email_code: codeHash,
       billing_email_code_expires: expires,
+      // Un nouveau code repart avec un compteur d'essais vierge (cf. verify-code).
+      billing_email_code_attempts: 0,
       billing_forward_id: forwardId,
     })
     .eq('user_id', user.id)
