@@ -211,7 +211,7 @@ export async function POST(request: NextRequest) {
       // lecture qui aboutit efface son passé (cf. lib/lecture-file).
       lectures_echouees: compteurApres(echecsAvant, status),
       ...extra,
-    }).eq('id', invoiceId)
+    }).eq('id', invoiceId).eq('client_id', clientId)
   }
 
   const invoice_id = corpsRecu?.invoice_id
@@ -701,7 +701,7 @@ export async function POST(request: NextRequest) {
       lines_source_text: pdfText.slice(0, TEXTE_MAX),
       lines_mode: sansTexte ? 'vision' : 'texte',
       lines_prompt_version: PROMPT_LIGNES_VERSION,
-    }).eq('id', invoice.id)
+    }).eq('id', invoice.id).eq('client_id', clientId)
 
     let luEnVision = false
     let ttcConverti = false
