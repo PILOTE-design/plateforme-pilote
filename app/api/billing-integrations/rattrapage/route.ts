@@ -23,7 +23,7 @@ import { resolveClientId } from '@/lib/resolve-client-id'
 import { PROVIDERS } from '@/lib/billing-providers'
 import { classifyFixedCharges } from '@/lib/billing-providers/classify'
 import { loadSupplierCategories, rememberedCategory } from '@/lib/supplier-memory'
-import { enrichInvoicesAfterSync } from '@/lib/billing-providers/enrich'
+import { enrichInvoicesAfterSync, sansDejaImportees } from '@/lib/billing-providers/enrich'
 import { weekForInvoice } from '@/lib/invoice-week'
 
 export const maxDuration = 60
@@ -109,7 +109,11 @@ export async function POST(_req: NextRequest) {
 
   if (brutes.length > 0) {
     const supplierMemory = await loadSupplierCategories(service, clientId)
-    const enriched = await classifyFixedCharges(brutes)
+    // Un document Pennylane déjà importé ne repasse pas, même si son numéro a
+    // changé chez eux : l'external_id décide (lot 130). Sur un rattrapage de
+    // deux mois, c'est le cas NORMAL — la plupart des factures sont déjà là.
+    const filtre = await sansDejaImportees(service, clientId, brutes)
+    const enriched = await classifyFixedCharges(filtre.aImporter)
 
     const rows = enriched.map(inv => {
       // Semaine d'imputation PAR FACTURE, dérivée de sa propre date — jamais de
@@ -156,7 +160,9 @@ export async function POST(_req: NextRequest) {
     // base. Sur deux mois, c'est aussi l'étape la plus susceptible de frôler la
     // fenêtre de 60 s ; son échec ne doit rien remettre en cause.
     try {
-      const bilan = await enrichInvoicesAfterSync(service, clientId, enriched)
+      // Toutes les factures du connecteur, déjà-importées incluses : leur
+      // statut de paiement et leurs PDF manquants se rattrapent aussi.
+      const bilan = await enrichInvoicesAfterSync(service, clientId, brutes)
       if (bilan) {
         const manquants = (bilan.echecs ?? 0) + (bilan.sansUrl ?? 0)
         pdfInfo = `${bilan.pdfs} PDF archivé${bilan.pdfs > 1 ? 's' : ''}`
