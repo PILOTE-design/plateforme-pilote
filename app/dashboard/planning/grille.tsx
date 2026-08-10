@@ -169,9 +169,13 @@ export function GrilleSemaine(props: GrilleProps) {
                 const pal    = EMP_PALETTES[empIdx % EMP_PALETTES.length]
                 const entry  = getEntryState(emp.id)
                 const ch     = emp.contract_hours || 35
-                const stat   = rowStats.find(r => r.empId === emp.id) || { totalH: 0, workedH: 0, cost: 0, charged: 0, alerts: [] as string[] }
-                const { totalH, workedH, cost, charged, alerts } = stat
-                const hasOT  = workedH > ch
+                const stat   = rowStats.find(r => r.empId === emp.id) || { totalH: 0, workedH: 0, cost: 0, charged: 0, dimancheH: 0, ferieH: 0, alerts: [] as string[] }
+                const { totalH, workedH, cost, charged, dimancheH, ferieH, alerts } = stat
+                // Le GÉRANT n'a pas d'heures supplémentaires : non salarié, tout
+                // est au taux normal (lib/payroll). Le badge « +8h48 sup » sur sa
+                // ligne contredisait la préparation des payes, qui affiche « — »
+                // pour lui — vu à l'écran le 10/08, signalé par Théo.
+                const hasOT  = !emp.is_gerant && workedH > ch
                 const showContractPop = contractPopover === emp.id
                 const cpInitial   = emp.cp_initial ?? 25
                 const cpUsedCount = cpUsed[emp.id] || 0
@@ -424,12 +428,28 @@ export function GrilleSemaine(props: GrilleProps) {
                       </div>
                     </td>
 
-                    {/* Cost */}
+                    {/* Cost — un COÛT, donc jamais en vert (couleur d'un gain,
+                        anti-pattern de la charte ; la barre du haut avait déjà
+                        quitté le vert pour la même raison).
+                        Les MAJORATIONS s'écrivent sous le montant : « 8h à
+                        +100 % » explique pourquoi une semaine à férié coûte
+                        plus cher que taux × heures — sans cette ligne, l'écart
+                        se lisait comme un chiffre faux (10/08, Théo). */}
                     <td className="px-2 py-3 text-center border-b border-gray-200">
                       {cost > 0 ? (
                         <div className="flex flex-col items-center">
-                          <span className="font-bold text-sm text-green-700">{cost.toFixed(0)} €</span>
+                          <span className="font-bold text-sm text-gray-800">{cost.toFixed(0)} €</span>
                           <span className="text-[9px] text-gray-400" title="Brut + charges patronales">{charged.toFixed(0)} € chargé</span>
+                          {ferieH > 0 && (
+                            <span className="text-[9px] font-semibold text-amber-600" title="Heures travaillées un jour férié, majorées +100 % (CCN 992)">
+                              {fmtH(ferieH)} férié +100 %
+                            </span>
+                          )}
+                          {dimancheH > 0 && (
+                            <span className="text-[9px] font-semibold text-amber-600" title="Heures travaillées le dimanche, majorées +20 % (CCN 992)">
+                              {fmtH(dimancheH)} dim. +20 %
+                            </span>
+                          )}
                         </div>
                       ) : (
                         <span className="font-bold text-sm text-gray-300">—</span>

@@ -438,7 +438,12 @@ export default async function DashboardPage() {
               <CardContent className="p-4">
                 <div className="flex items-center gap-2 mb-2">
                   <Users className="w-3.5 h-3.5 text-pilote flex-shrink-0" />
-                  <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Masse salariale</p>
+                  {/* La SEMAINE dans le titre, comme les tuiles du 1er étage :
+                      sans elle, ce chiffre (semaine écoulée) semblait contredire
+                      le « chargé » du planning, ouvert sur la semaine COURANTE —
+                      3 618 € contre 3 757 €, deux vrais chiffres de deux
+                      semaines, lus comme un bug. Signalé par Théo le 10/08. */}
+                  <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Masse salariale · {weekLabel}</p>
                 </div>
                 <p className="text-xl font-extrabold tracking-tight text-gray-900 tabular">{payrollRef > 0 ? `${fmt(payrollRef)} €` : '—'}</p>
                 <p className="text-xs text-gray-400 mt-1 tabular">{payrollRef > 0 ? (ratioMS !== null ? `${ratioMS.toFixed(1)} % du CA HT · CCN 992` : 'chargée (CCN 992)') : 'Remplir le planning'}</p>
@@ -456,7 +461,7 @@ export default async function DashboardPage() {
               <CardContent className="p-4">
                 <div className="flex items-center gap-2 mb-2">
                   <TrendingUp className="w-3.5 h-3.5 text-pilote flex-shrink-0" />
-                  <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Marge sur coût direct</p>
+                  <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Marge sur coût direct · {weekLabel}</p>
                 </div>
                 <p className={`text-xl font-extrabold tracking-tight tabular ${caHT > 0 && margeCoutDirect < 0 ? 'text-etat-perte' : 'text-gray-900'}`}>{caHT > 0 ? `${fmt(margeCoutDirect)} €` : '—'}</p>
                 <p className="text-xs text-gray-400 mt-1 tabular">MB − masse salariale{tauxCoutDirect !== null ? ` · ${tauxCoutDirect.toFixed(1)} %` : ''}</p>
@@ -467,7 +472,7 @@ export default async function DashboardPage() {
               <CardContent className="p-4">
                 <div className="flex items-center gap-2 mb-2">
                   <Repeat className="w-3.5 h-3.5 text-pilote flex-shrink-0" />
-                  <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Charges de structure</p>
+                  <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Charges de structure · {weekLabel}</p>
                 </div>
                 <p className="text-xl font-extrabold tracking-tight text-gray-900 tabular">{fmt(chargesStruct)} €</p>
                 <p className="text-xs text-gray-400 mt-1">récurrentes, étalées / semaine</p>
