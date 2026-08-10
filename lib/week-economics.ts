@@ -172,7 +172,9 @@ export async function computeWeekEconomics(
     return -1
   }
 
-  // 1. Achats HT de la semaine
+  // 1. Achats HT de la semaine — VARIABLES : imputés à la semaine de la facture
+  // (week_number). C'est la bonne règle pour la matière première ; les charges
+  // fixes, elles, s'étalent sur leur PÉRIODE et sont lues plus bas (section 3).
   const { data: invoicesData } = await supabase
     .from('invoices')
     .select('id, invoice_date, amount_ht, category, supplier_name, is_fixed_charge, status, period_days, period_source, prorata_ht')
@@ -306,10 +308,34 @@ export async function computeWeekEconomics(
   // d'autant. La règle — seule une période LUE sur le document autorise la
   // réinjection, et jamais deux fois le même fournisseur — vit dans
   // lib/charges-fixes, pas ici.
+  //
+  // LE CRITÈRE EST LA PÉRIODE, PAS LA SEMAINE DE FACTURATION. Un loyer facturé
+  // le 28/01 sur 31 jours court sur les semaines 5 à 8 : le lisant seulement sur
+  // sa semaine de facturation (week_number), le moteur ne le comptait qu'une
+  // fois sur quatre, et le résultat net des trois autres semaines était trop
+  // beau — alors même que l'écran, lui, l'affichait « compté » sur les quatre
+  // (facturation/etat.tsx filtre fixedInvoices par periodeCouvreSemaine). Deux
+  // vérités à trois centimètres. On lit désormais les factures de charge par
+  // CHEVAUCHEMENT de période, comme l'écran — un seul moteur.
+  //
+  // Fenêtre de lecture SÛRE : period_days est plafonné à 400 (extract-lines, la
+  // seule période « lue ») et à 365 (détection du connecteur). Une facture
+  // antérieure de plus de 400 jours ne peut donc pas atteindre cette semaine :
+  // la borne basse ne peut écarter aucune charge qui compterait. lib/charges-fixes
+  // refiltre ensuite au jour près.
+  const borneBasseISO = new Date(
+    new Date(monISO + 'T00:00:00Z').getTime() - 400 * 86400000).toISOString().slice(0, 10)
+  const { data: fixedInvoicesData } = await supabase
+    .from('invoices')
+    .select('id, invoice_date, amount_ht, category, supplier_name, is_fixed_charge, period_days, period_source, prorata_ht')
+    .eq('client_id', clientId)
+    .eq('is_fixed_charge', true)
+    .gte('invoice_date', borneBasseISO)
+    .lte('invoice_date', sunISO)
   const bilanFactures = chargesFixesDeLaSemaine(
-    (invoicesData || []) as any, (recCharges || []) as any, monISO, sunISO)
+    (fixedInvoicesData || []) as any, (recCharges || []) as any, monISO, sunISO)
   const categorieDeFacture = new Map<string, string>(
-    (invoicesData || []).map((inv: any) => [String(inv.id), String(inv.category || 'autre')]))
+    (fixedInvoicesData || []).map((inv: any) => [String(inv.id), String(inv.category || 'autre')]))
   const charges_fixes_lines: ChargeFixeLine[] = [
     ...recur.lines.map(l => ({
       ...l, origine: 'recurrent' as const, retenue: true, motif: null, phrase: null,

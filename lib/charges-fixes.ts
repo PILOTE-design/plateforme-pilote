@@ -131,9 +131,14 @@ export function periodeCouvreSemaine(
 /**
  * La part hebdomadaire des factures de charge qui touchent la semaine.
  *
- * `lundi` et `dimanche` au format `YYYY-MM-DD`. Toutes les factures reçues
- * sont rendues dans `lignes`, retenues ou non : une charge écartée est une
- * information, pas un silence. Seules les retenues comptent dans `total`.
+ * `lundi` et `dimanche` au format `YYYY-MM-DD`. L'appelant passe toutes les
+ * factures de charge dont la période PEUT couvrir la semaine (fenêtre élargie —
+ * le critère est le chevauchement de période, pas la semaine de facturation) ;
+ * ce module tranche au jour près. Les factures qui touchent la semaine sont
+ * rendues dans `lignes`, RETENUES ou écartées avec leur motif : une charge qui
+ * ne compte pas est une information, pas un silence. Celles qui ne la touchent
+ * pas sont ignorées (elles comptent dans leur propre semaine). Seules les
+ * retenues comptent dans `total`.
  */
 export function chargesFixesDeLaSemaine(
   factures: FactureCharge[] | null | undefined,
@@ -171,6 +176,22 @@ export function chargesFixesDeLaSemaine(
       })
     }
 
+    // ── LE PORTILLON : cette facture touche-t-elle la semaine ? ────────────
+    // L'appelant nous envoie désormais TOUTES les factures de charge dont la
+    // période PEUT couvrir la semaine (fenêtre élargie côté requête), et non
+    // plus les seules factures de la semaine de facturation — c'était le trou :
+    // un loyer facturé le 28/01 sur 31 jours n'entrait dans le résultat qu'en
+    // semaine de facturation, alors qu'il court sur les suivantes. On tranche
+    // ici, au jour près, avec la MÊME fonction que l'écran. Une facture qui, au
+    // jour près, ne touche pas la semaine appartient à une AUTRE semaine : ni
+    // comptée, ni affichée ici (elle le sera dans la sienne). Sans période
+    // lisible, une facture ne vit que sa semaine de facturation.
+    const debut = jour(f.invoice_date)
+    if (debut === null || debutSemaine === null || finSemaine === null) continue
+    if (!periodeCouvreSemaine(f.invoice_date, jours, lundi, dimanche)) continue
+
+    // Elle touche la semaine — reste à savoir si sa part est calculable et si
+    // elle n'est pas déjà comptée ailleurs.
     if (jours === null || jours <= 0 || part === null) {
       ecarter('periode_absente',
         `Aucune période lisible sur cette facture : impossible de dire quelle part revient à cette semaine. Elle n'entre pas dans le résultat.`)
@@ -181,18 +202,6 @@ export function chargesFixesDeLaSemaine(
     if (String(f.period_source ?? '') !== PERIODE_LUE) {
       ecarter('periode_devinee',
         `La période de cette facture (${jours} jours) a été devinée, pas lue sur le document : sa part hebdomadaire serait un chiffre inventé. Elle n'entre pas dans le résultat — indiquez la période pour l'y faire entrer.`)
-      continue
-    }
-
-    const debut = jour(f.invoice_date)
-    if (debut === null || debutSemaine === null || finSemaine === null) {
-      ecarter('hors_semaine', `Date de facture illisible : période impossible à situer.`)
-      continue
-    }
-    // La période court à partir de la date de facture, sur `jours` jours.
-    if (!periodeCouvreSemaine(f.invoice_date, jours, lundi, dimanche)) {
-      ecarter('hors_semaine',
-        `Période du ${String(f.invoice_date).slice(0, 10)} sur ${jours} jours : elle ne touche pas cette semaine.`)
       continue
     }
 
