@@ -425,6 +425,72 @@ function avertissements(
 // ─── L'export ─────────────────────────────────────────────────────────────
 
 /**
+ * Le rapport en lignes de tableau, prêt pour un CSV.
+ *
+ * Construit ici, dans le module pur, pour que le contenu de l'export soit
+ * testé — et pas seulement l'écran. Un export qui diverge de l'écran est un
+ * troisième chiffre.
+ */
+export function lignesTableau(r: RapportComptable): string[][] {
+  const n = (x: number) => String(r2(x)).replace('.', ',')
+  const rows: string[][] = []
+
+  rows.push([`Rapport comptable — ${r.libelle}`])
+  rows.push([`Période du ${r.debut} au ${r.fin}`])
+  rows.push([`Heures uniquement — ce document n'est pas un bulletin de paie.`])
+  rows.push([])
+
+  rows.push([
+    'Salarié', 'Contrat', 'Contractuel hebdo (h)',
+    'Heures travaillées', 'Jours travaillés',
+    'Jours CP', 'Heures CP', 'Jours maladie',
+    'Heures payées',
+    'HS +25 %', 'HS +50 %', 'Heures manquantes',
+    'Dimanches travaillés (j)', 'Heures dimanche',
+    'Fériés travaillés (j)', 'Heures férié',
+  ])
+
+  for (const l of r.employes) {
+    rows.push([
+      l.nom, l.contrat, n(l.contractuel_hebdo),
+      n(l.heures_travaillees), String(l.jours_travailles),
+      String(l.jours_cp), n(l.heures_cp), String(l.jours_maladie),
+      n(l.heures_payees),
+      n(l.hs25), n(l.hs50), n(l.heures_manquantes),
+      String(l.jours_dimanche), n(l.heures_dimanche),
+      String(l.jours_ferie), n(l.heures_ferie),
+    ])
+  }
+
+  rows.push([])
+  rows.push(['Détail par semaine (semaine entière — unité de calcul des heures supplémentaires)'])
+  rows.push([
+    'Salarié', 'Semaine', 'À cheval', 'Rattachée à ce mois', 'Figée',
+    'Heures travaillées', 'Heures CP', 'Contractuel', 'Écart', 'HS +25 %', 'HS +50 %',
+  ])
+  for (const l of r.employes) {
+    for (const s of l.semaines) {
+      rows.push([
+        l.nom, `S${s.week} ${s.year}`,
+        s.aCheval ? 'oui' : 'non',
+        s.rattachee ? 'oui' : 'non',
+        s.figee ? 'oui' : 'non',
+        n(s.heures_travaillees), n(s.heures_cp), n(s.contractuel),
+        n(s.ecart), n(s.hs25), n(s.hs50),
+      ])
+    }
+  }
+
+  if (r.avertissements.length > 0) {
+    rows.push([])
+    rows.push(['Réserves'])
+    for (const a of r.avertissements) rows.push([a])
+  }
+
+  return rows
+}
+
+/**
  * Le CSV, tel qu'Excel français l'ouvre sans rien demander.
  *
  * Séparateur point-virgule (la virgule est le séparateur décimal en français)
