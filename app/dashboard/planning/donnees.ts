@@ -196,7 +196,14 @@ export function getWeeksInMonth(year: number, month: number): { week: number; ye
   const lastDay  = new Date(Date.UTC(year, month, 0))
   const weeks: { week: number; year: number }[] = []
   const seen = new Set<string>()
+  // On part du LUNDI de la semaine du 1er, puis on avance de 7 jours jusqu'à
+  // dépasser le dernier jour du mois. Partir du 1er lui-même et sauter de 7
+  // (les 1, 8, 15, 22, 29) manquait la dernière semaine quand son lundi tombait
+  // le 30 ou le 31 : en août 2026, le lundi 31/08 (semaine 36) disparaissait du
+  // récap, et ses heures avec (idem novembre 2026, mai 2027). Même parcours que
+  // `semainesDuMois` du rapport comptable — un seul raisonnement.
   const d = new Date(firstDay)
+  d.setUTCDate(firstDay.getUTCDate() - ((firstDay.getUTCDay() || 7) - 1))
   while (d <= lastDay) {
     const { week: w, year: y } = getISOWeek(d)
     const key = `${y}-${w}`
@@ -204,6 +211,75 @@ export function getWeeksInMonth(year: number, month: number): { week: number; ye
     d.setUTCDate(d.getUTCDate() + 7)
   }
   return weeks
+}
+
+/** Une semaine du récap : ses 7 dates (lundi→dimanche, UTC), les drapeaux fériés
+ *  correspondants, et les lignes de planning de la semaine. */
+export type SemaineRecap = {
+  dates: Date[]
+  feries: boolean[]
+  entries: PlanningEntry[]
+}
+
+/**
+ * LE RÉCAP MENSUEL, ventilé JOUR PAR JOUR.
+ *
+ * Deux grandeurs, deux règles — les mêmes que le rapport comptable, pour que les
+ * deux vues ne puissent pas diverger :
+ *
+ *  · Les HEURES payées et le décompte des jours (travaillés, CP, maladie) se
+ *    ventilent au jour le jour : seuls les jours qui tombent dans le mois civil
+ *    comptent. Une semaine à cheval ne verse au mois que SES jours — fini les
+ *    5 jours de juillet comptés dans août.
+ *  · Les HEURES SUPPLÉMENTAIRES et le COÛT CCN se lisent sur la SEMAINE ENTIÈRE
+ *    (le seuil des HS et les majorations ne se découpent pas). On les rattache
+ *    au mois qui contient la MAJORITÉ des sept jours — jamais deux fois, jamais
+ *    coupés au milieu. Sept jours : la majorité existe toujours.
+ *
+ * Fonction PURE : elle reçoit les semaines déjà chargées, ne parle à aucune base.
+ */
+export function recapMensuel(
+  year: number,
+  month: number,
+  employees: Employee[],
+  semaines: SemaineRecap[],
+): MonthlyStat[] {
+  const vide = (emp: Employee): MonthlyStat => ({ emp, hours: 0, cost: 0, charged: 0, ot: 0, worked: 0, cp: 0, sick: 0 })
+  const stats = new Map<string, MonthlyStat>(employees.map(e => [e.id, vide(e)]))
+  const empById = new Map(employees.map(e => [e.id, e]))
+
+  for (const s of semaines) {
+    const dansLeMois = s.dates.map(d => d.getUTCFullYear() === year && d.getUTCMonth() === month - 1)
+    const rattachee = dansLeMois.filter(Boolean).length >= 4
+    for (const entry of s.entries) {
+      const emp = empById.get(entry.employee_id)
+      const st = emp ? stats.get(emp.id) : undefined
+      if (!emp || !st) continue
+      const ch = emp.contract_hours || 35
+
+      // Jour par jour — seuls les jours DU MOIS civil.
+      JOURS_DB.forEach((jour, idx) => {
+        if (!dansLeMois[idx]) return
+        const t = (entry[`${jour}_type` as keyof PlanningEntry] as DayType) || 'travail'
+        const h = (entry[jour as keyof PlanningEntry] as number) || 0
+        if (t === 'travail' && h > 0) { st.worked++; st.hours += h }
+        else if (t === 'conges') { st.cp++; st.hours += ch / 5 }
+        else if (t === 'maladie') { st.sick++ }
+      })
+
+      // Semaine entière — rattachée au mois majoritaire. Le gérant n'a jamais
+      // d'heure supplémentaire (non salarié), même règle que le coût et la paie.
+      if (rattachee) {
+        const weekWorkedH = calcWorkedH(entry)
+        const weekCost = calcCostCCN(entry, emp, s.feries)
+        st.ot      += emp.is_gerant ? 0 : Math.max(0, weekWorkedH - ch)
+        st.cost    += weekCost
+        st.charged += weekCost * chargeMult(emp)
+      }
+    }
+  }
+
+  return employees.map(e => stats.get(e.id) ?? vide(e))
 }
 
 export function contractLabel(ct: string | undefined) {
