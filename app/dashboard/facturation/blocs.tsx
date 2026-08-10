@@ -66,8 +66,8 @@ export function BlocChargesFixesSemaine({
         <div className="bg-white rounded-2xl border border-gray-100 shadow-card overflow-hidden">
           <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between gap-2">
             <div>
-              <h2 className="font-bold text-gray-900 text-sm">En charges fixes cette semaine</h2>
-              <p className="text-[11px] text-gray-400">Sorties des achats matière — elles ne pèsent sur aucune marge. Celles dont la période couvre la semaine {week}, même facturées avant. Seule une période <span className="font-semibold text-gray-500">lue sur le document</span> les fait entrer dans le résultat.</p>
+              <h2 className="font-bold text-gray-900 text-sm">Factures reçues cette semaine</h2>
+              <p className="text-[11px] text-gray-400">Factures de charge (loyer, énergie, abonnements…) sorties des achats matière — elles ne pèsent sur aucune marge. Celles dont la période couvre la semaine {week}, même facturées avant. Seule une période <span className="font-semibold text-gray-500">lue sur le document</span> les fait entrer dans le résultat.</p>
             </div>
           </div>
           <div className="divide-y divide-gray-50">
