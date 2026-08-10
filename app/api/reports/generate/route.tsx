@@ -8,6 +8,7 @@ if (typeof globalThis.DOMMatrix === 'undefined') {
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, createServiceClient } from '@/lib/supabase/server'
+import { isAdminEmail } from '@/lib/admins'
 import React from 'react'
 import { renderToBuffer } from '@react-pdf/renderer'
 import { Resend } from 'resend'
@@ -210,6 +211,15 @@ export async function POST(req: NextRequest) {
     const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'Non authentifie' }, { status: 401 })
+    // RÉSERVÉ À L'ADMINISTRATION. Cette route reçoit un clientId (formulaire) ou
+    // un extraction_id (validation) et travaille ensuite en service role : sans ce
+    // verrou, n'importe quel compte connecté pouvait générer — et ÉCRIRE — le
+    // rapport d'une autre boucherie (historisation, storage, email). Le client
+    // n'uploade rien : la génération est un geste d'admin, comme l'écran qui
+    // l'appelle (/admin).
+    if (!isAdminEmail(user.email)) {
+      return NextResponse.json({ error: 'Réservé aux administrateurs' }, { status: 403 })
+    }
     const { data: profile } = await supabase.from('profiles').select('*').eq('user_id', user.id).single()
     if (!profile) return NextResponse.json({ error: 'Profil introuvable' }, { status: 404 })
 
