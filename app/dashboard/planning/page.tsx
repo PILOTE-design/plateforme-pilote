@@ -28,7 +28,7 @@ import { ModaleDetail, ModaleMensuel, ModaleAjout, ModalePostes } from './modale
 import {
   JOURS_DB, CATEGORIES, CUSTOM_POSTE_COLORS, TYPE_CONFIG, CONTRACT_TYPES, EMP_PALETTES,
   abbrOf, isoWeeksInYear, getISOWeek, getWeekLabel, getWeekVacances, getWeeksInMonth,
-  contractLabel, calcTotalH, calcWorkedH, calcCostCCN, chargeMult,
+  contractLabel, calcTotalH, calcWorkedH, calcCostCCN, calcMajoH, chargeMult,
   getEmployeeAlerts, emptyEntry, initials, fmtH, calcHoursFromSd,
   type DayType, type JourDB, type ScheduleDetail, type ScheduleDetails, type PosteDef,
   type ContractKey, type Employee, type PlanningEntry, type EntriesMap, type MonthlyStat,
@@ -563,7 +563,12 @@ export default function PlanningPage() {
           stats[entry.employee_id].hours   += weekH
           stats[entry.employee_id].cost    += weekCost
           stats[entry.employee_id].charged += weekCost * chargeMult(emp)
-          stats[entry.employee_id].ot      += Math.max(0, weekWorkedH - ch)
+          // Le gérant n'est pas salarié : AUCUNE heure supplémentaire, jamais —
+          // même règle que le moteur de coût et que la préparation des payes.
+          // Le récap lui comptait 18h36 de HS (à 0 € l'heure sup, donc sans
+          // effet sur le coût, mais en pleine contradiction avec le rapport
+          // transmis au comptable). Vu à l'écran le 10/08, signalé par Théo.
+          stats[entry.employee_id].ot      += emp.is_gerant ? 0 : Math.max(0, weekWorkedH - ch)
           for (const jour of JOURS_DB) {
             const t = (entry[`${jour}_type`] as DayType) || 'travail'
             const h = (entry[jour] as number) || 0
@@ -583,12 +588,16 @@ export default function PlanningPage() {
     const e  = getEntryState(emp.id)
     const ch = emp.contract_hours || 35
     const cost = calcCostCCN(e, emp, holidayFlags)
+    // Les heures majorées expliquent le coût — le gérant n'en a jamais
+    // (non salarié, tout au taux normal) : zéro affiché = zéro calculé.
+    const majo = emp.is_gerant ? { dimancheH: 0, ferieH: 0 } : calcMajoH(e, ch, holidayFlags)
     return {
       empId: emp.id, name: emp.name,
       totalH: calcTotalH(e, ch),
       workedH: calcWorkedH(e),
       cost,
       charged: cost * chargeMult(emp),
+      ...majo,
       alerts: getEmployeeAlerts(emp, e),
     }
   })
