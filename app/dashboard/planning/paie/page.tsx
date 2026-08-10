@@ -22,6 +22,10 @@ import type { RapportComptable, LigneEmploye } from '@/lib/rapport-comptable'
 const h = (n: number) =>
   n.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
+/** Un jour ISO (YYYY-MM-DD) en clair : « 27 juillet 2026 ». UTC, jamais l'heure locale. */
+const jourFr = (iso: string) =>
+  iso ? new Date(iso + 'T00:00:00Z').toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }) : '…'
+
 /** Le mois précédent : la paie se prépare une fois le mois terminé. */
 function moisPrecedent(): { mois: number; annee: number } {
   const d = new Date()
@@ -152,6 +156,15 @@ export default function PaiePage() {
         </div>
       </div>
 
+      {/* ─── Bornes de la période — calée sur le dernier dimanche du mois ─── */}
+      {rapport && (
+        <div className="-mt-3 inline-flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg bg-pilote-50 border border-pilote-100 px-3 py-2 text-xs text-pilote-800">
+          <span className="font-semibold uppercase tracking-wide text-pilote">Période</span>
+          <span>du <strong className="font-semibold tabular">{jourFr(rapport.debut)}</strong> au <strong className="font-semibold tabular">{jourFr(rapport.fin)}</strong></span>
+          <span className="text-pilote-500">— semaines entières finissant le dimanche, seuil des heures sup. jamais coupé.</span>
+        </div>
+      )}
+
       {/* ─── Actions ─────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-center gap-3">
         <a href={lien} download>
@@ -241,9 +254,9 @@ export default function PaiePage() {
           </div>
           <div className="px-4 py-3 border-t border-gray-100 bg-gray-50/60 text-xs text-gray-500 leading-relaxed">
             « Payées » = heures travaillées + congés payés valorisés à un cinquième du contrat hebdomadaire.
-            Les heures supplémentaires se lisent sur la <strong className="font-semibold">semaine entière</strong> — c’est là que
-            se situe le seuil légal —, alors que les heures du tableau sont ventilées <strong className="font-semibold">jour par
-            jour</strong> dans le mois civil. Ouvrez une ligne pour voir le détail par semaine.
+            La période est faite de <strong className="font-semibold">semaines entières</strong> finissant le dimanche
+            (dernier dimanche du mois) : aucune semaine n’est coupée, et le seuil légal des heures
+            supplémentaires — hebdomadaire — n’est jamais scindé. Ouvrez une ligne pour voir le détail par semaine.
           </div>
         </div>
       )}
