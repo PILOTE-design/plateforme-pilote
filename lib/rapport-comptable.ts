@@ -164,7 +164,10 @@ export type LigneSemaine = {
   heures_cp: number
   heures_payees: number
   contractuel: number
-  /** Signé : positif = heures supplémentaires, négatif = heures manquantes. */
+  /** Écart des heures PAYÉES (travail + CP) au contrat. Signé : positif = payé
+   *  au-dessus du contrat, négatif = heures manquantes (payé sous le contrat).
+   *  Une semaine de congés vaut le contrat : écart 0. Les heures majorées ne s'en
+   *  déduisent pas — elles sont dans hs25/hs50, sur le seul travail. */
   ecart: number
   hs25: number
   hs50: number
@@ -299,7 +302,14 @@ export function rapportDuMois(
 
       // ── 2. La semaine ENTIÈRE : c'est là que se lisent les heures sup ──
       const w = entryHours(entry, ch, feries)
-      const ecart = r2(w.workedH - ch)
+      // L'écart au contrat se mesure sur les heures PAYÉES (travail + CP
+      // valorisés), pas sur le seul travail. Un jour de congé est payé : une
+      // semaine entière de congés vaut le contrat, écart 0 — et non « 35 h
+      // manquantes ». Compter sur workedH faisait apparaître chaque semaine de
+      // vacances comme un trou d'heures dans le rapport du comptable, en plein
+      // mois d'août. Les heures SUPPLÉMENTAIRES, elles, restent sur le seul
+      // travail (un congé ne crée pas d'heure majorée) — c'est `sup` ci-dessous.
+      const ecart = r2(w.totalH - ch)
       // Le gérant n'est pas salarié : ni heures supplémentaires, ni majorations.
       const sup = gerant ? 0 : Math.max(0, w.workedH - ch)
       const hs25 = r2(Math.min(sup, 8))
