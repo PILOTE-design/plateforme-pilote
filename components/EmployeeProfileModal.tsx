@@ -14,8 +14,8 @@ export interface EmployeeProfile {
   hourly_rate: number
   contract_type: string
   contract_hours: number
-  cp_initial: number
-  charges_patronales: number
+  cp_initial: number | null
+  charges_patronales: number | null
   /** Semaines payées non travaillées / an (CP, fériés chômés, RCR) — taux productif des fiches */
   weeks_off_per_year: number
   hs_cumules: number
@@ -68,28 +68,62 @@ export default function EmployeeProfileModal({ employee, onClose, onSaved }: Pro
     setSaving(true)
     setError(null)
     try {
+      // On ne PATCHe QUE les champs réellement modifiés. Envoyer tout le
+      // formulaire à chaque enregistrement rejouait des valeurs jamais touchées :
+      // ouvrir la fiche d'un gérant (charges patronales à vide = 0 %) pour
+      // corriger un téléphone rebasculait ses charges à 45 %, gonflant sa masse
+      // salariale sans geste conscient. La liste blanche de la route reste le
+      // second filet, pas le premier.
+      const nul = (v: string | null) => (v && v.trim() ? v : null)
+      const propose: Record<string, unknown> = {
+        name:               form.name,
+        hourly_rate:        form.hourly_rate,
+        contract_type:      form.contract_type,
+        contract_hours:     form.contract_hours,
+        cp_initial:         form.cp_initial,
+        charges_patronales: form.charges_patronales,
+        weeks_off_per_year: form.weeks_off_per_year,
+        hs_cumules:         form.hs_cumules,
+        position:           nul(form.position),
+        hire_date:          nul(form.hire_date),
+        contract_end_date:  nul(form.contract_end_date),
+        phone:              nul(form.phone),
+        email:              nul(form.email),
+        notes:              nul(form.notes),
+        is_minor:           form.is_minor,
+        is_gerant:          form.is_gerant,
+        receive_planning_email: form.receive_planning_email,
+      }
+      const origine: Record<string, unknown> = {
+        name:               employee.name,
+        hourly_rate:        employee.hourly_rate,
+        contract_type:      employee.contract_type,
+        contract_hours:     employee.contract_hours,
+        cp_initial:         employee.cp_initial,
+        charges_patronales: employee.charges_patronales,
+        weeks_off_per_year: employee.weeks_off_per_year,
+        hs_cumules:         employee.hs_cumules,
+        position:           nul(employee.position),
+        hire_date:          nul(employee.hire_date),
+        contract_end_date:  nul(employee.contract_end_date),
+        phone:              nul(employee.phone),
+        email:              nul(employee.email),
+        notes:              nul(employee.notes),
+        is_minor:           employee.is_minor,
+        is_gerant:          employee.is_gerant,
+        receive_planning_email: employee.receive_planning_email,
+      }
+      const body: Record<string, unknown> = {}
+      for (const cle of Object.keys(propose)) {
+        if (propose[cle] !== origine[cle]) body[cle] = propose[cle]
+      }
+      // Rien n'a changé : on referme sans écrire (la route refuse un corps vide).
+      if (Object.keys(body).length === 0) { onClose(); return }
+
       const res = await fetch(`/api/employees/${form.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name:               form.name,
-          hourly_rate:        form.hourly_rate,
-          contract_type:      form.contract_type,
-          contract_hours:     form.contract_hours,
-          cp_initial:         form.cp_initial,
-          charges_patronales: form.charges_patronales,
-          weeks_off_per_year: form.weeks_off_per_year,
-          hs_cumules:         form.hs_cumules,
-          position:           form.position || null,
-          hire_date:          form.hire_date || null,
-          contract_end_date:  form.contract_end_date || null,
-          phone:              form.phone || null,
-          email:              form.email || null,
-          notes:              form.notes || null,
-          is_minor:           form.is_minor,
-          is_gerant:          form.is_gerant,
-          receive_planning_email: form.receive_planning_email,
-        }),
+        body: JSON.stringify(body),
       })
       if (!res.ok) {
         const d = await res.json() as { error?: string }
@@ -272,8 +306,8 @@ export default function EmployeeProfileModal({ employee, onClose, onSaved }: Pro
                 <Input
                   type="number"
                   min={0} max={100} step={0.5}
-                  value={form.charges_patronales}
-                  onChange={e => set('charges_patronales', parseFloat(e.target.value) || 45)}
+                  value={form.charges_patronales ?? ''}
+                  onChange={e => { const v = parseFloat(e.target.value); set('charges_patronales', Number.isFinite(v) ? v : null) }}
                   className="h-9 text-sm"
                 />
               </div>
@@ -305,8 +339,8 @@ export default function EmployeeProfileModal({ employee, onClose, onSaved }: Pro
                 <Input
                   type="number"
                   min={0}
-                  value={form.cp_initial}
-                  onChange={e => set('cp_initial', parseFloat(e.target.value) || 0)}
+                  value={form.cp_initial ?? ''}
+                  onChange={e => { const v = parseFloat(e.target.value); set('cp_initial', Number.isFinite(v) ? v : null) }}
                   className="h-9 text-sm"
                 />
               </div>

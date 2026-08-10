@@ -103,10 +103,10 @@ export const EMP_PALETTES = [
 export type Employee = {
   id: string; name: string; hourly_rate: number
   contract_hours: number; contract_type: string
-  cp_initial?: number; created_at: string
+  cp_initial?: number | null; created_at: string
   position?: string | null; hire_date?: string | null; contract_end_date?: string | null
   phone?: string | null; email?: string | null; notes?: string | null
-  is_minor?: boolean; charges_patronales?: number; hs_cumules?: number
+  is_minor?: boolean; charges_patronales?: number | null; hs_cumules?: number
   weeks_off_per_year?: number
   is_gerant?: boolean; receive_planning_email?: boolean
 }
