@@ -118,9 +118,16 @@ export default async function DashboardPage() {
     // ── Fiabilité des marges : factures importées « à vérifier » + fournisseurs non ventilés ──
     // Un fournisseur sans règle de ventilation pèse sur la marge globale mais sur aucune
     // famille : c'est LE réglage qui manque, et le seul (plus de « catégorisation » à part).
+    //
+    // MATIÈRE SEULEMENT (lot 131). Ce compteur nourrit une alerte « fiabilité
+    // des marges » — or une CHARGE FIXE ne pèse sur aucune marge, et l'écran
+    // Facturation n'offrait aucun geste pour la valider : 21 charges de
+    // structure arrivées par le rattrapage restaient « à vérifier » pour
+    // toujours, et le boucher qui avait validé tous ses achats lisait quand
+    // même « 21 factures à vérifier ». Mesuré le 10/08, signalé par Théo.
     const [{ count: avCount }, { data: splitRows }, { data: supRows }] = await Promise.all([
       serviceSupabase.from('invoices').select('id', { count: 'exact', head: true })
-        .eq('client_id', clientId).eq('status', 'a_verifier'),
+        .eq('client_id', clientId).eq('status', 'a_verifier').eq('is_fixed_charge', false),
       serviceSupabase.from('supplier_rayon_splits').select('supplier_key').eq('client_id', clientId),
       serviceSupabase.from('invoices').select('supplier_name')
         .eq('client_id', clientId).eq('year', currentYear).eq('is_fixed_charge', false),

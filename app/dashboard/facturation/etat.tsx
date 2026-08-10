@@ -481,11 +481,25 @@ export function useFacturation() {
     else toast({ variant: 'error', title: 'Enregistrement impossible' })
   }
 
-  /** Valide d'un coup toutes les factures « à vérifier » */
+  /** Valide d'un coup toutes les factures « à vérifier » — les achats de la
+   *  semaine ET les charges de structure en attente, TOUTES semaines
+   *  confondues pour ces dernières.
+   *
+   *  Les charges fixes n'avaient AUCUN geste de validation : ni ici (la liste
+   *  de la semaine les exclut par construction), ni dans leur bloc (qui ne
+   *  montre que celles dont la période couvre la semaine). Un rattrapage de
+   *  deux mois en avait laissé 21 « à vérifier » pour toujours — et le tableau
+   *  de bord les comptait dans l'alerte de fiabilité des marges alors qu'une
+   *  charge ne pèse sur aucune marge. Mesuré le 10/08, signalé par Théo. */
   async function validateAllPending() {
-    const pending = [...new Map(invoices.filter(i => i.status === 'a_verifier').map(i => [i.id, i])).values()]
+    const pending = [...new Map(
+      [...invoices, ...fixedInvoices]
+        .filter(i => i.status === 'a_verifier')
+        .map(i => [i.id, i]),
+    ).values()]
     if (pending.length === 0) return
     setInvoices(prev => prev.map(i => i.status === 'a_verifier' ? { ...i, status: 'validee' } : i))
+    setFixedInvoices(prev => prev.map(i => i.status === 'a_verifier' ? { ...i, status: 'validee' } : i))
     await Promise.all(pending.map(i => fetch(`/api/invoices/${i.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'validee' }) })))
     toast({ variant: 'success', title: `${pending.length} facture${pending.length > 1 ? 's' : ''} validée${pending.length > 1 ? 's' : ''}` })
     load()
@@ -777,7 +791,13 @@ export function useFacturation() {
   const invoiceGroups = CATEGORIES
     .map(cat => ({ cat, rows: sortedVariable.filter(i => catInfo(i.category).key === cat.key) }))
     .filter(g => g.rows.length > 0)
-  const pendingCount = new Set(invoices.filter(i => i.status === 'a_verifier').map(i => i.id)).size
+  // Le compte du bandeau couvre EXACTEMENT ce que son bouton valide : les
+  // achats de la semaine ET les charges de structure en attente (lot 131).
+  // `pendingHt`, lui, reste matière seule — il s'affiche dans le total des
+  // achats, où une charge de structure n'a rien à faire.
+  const pendingVarCount = new Set(invoices.filter(i => i.status === 'a_verifier').map(i => i.id)).size
+  const pendingFixCount = new Set(fixedInvoices.filter(i => i.status === 'a_verifier').map(i => i.id)).size
+  const pendingCount = pendingVarCount + pendingFixCount
   const pendingHt = variableInvoices.filter(i => i.status === 'a_verifier').reduce((s, i) => s + i.amount_ht, 0)
 
   // Répartition — partition des sociétés selon l'état ENREGISTRÉ (splits), pas le brouillon en cours,
@@ -948,7 +968,7 @@ export function useFacturation() {
     saveRecurring, deleteRecurring, saveActual, deleteActual, saveCA, saveSettings,
     connectIntegration, disconnectIntegration, syncNow, lancerRattrapage, openFamilles, saveFamilles,
     openValorisation, ttcAmount, supplierMatch, matchHasTva, variableInvoices, sortedVariable,
-    invoiceGroups, pendingCount, pendingHt, repartiKeys, splitEntries, splitsTodo,
+    invoiceGroups, pendingCount, pendingVarCount, pendingFixCount, pendingHt, repartiKeys, splitEntries, splitsTodo,
     splitsDone, famillesOrdonnees, variableTotalHt, variableTotalTtc, recurWeek, recurringWeekly,
     chargeHasActualThisWeek, activeRecurring, fixedThisWeek, structureLines, structureRetenues, structureEcartees,
     structureGroupes, structureTotal, structureSomme, structureEcart, ecarteesPieces, renderInvoiceRow,

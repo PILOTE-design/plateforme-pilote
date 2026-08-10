@@ -61,7 +61,7 @@ export function PanneauxFacturation({ f }: { f: Facturation }) {
     envoyerCodeMail, validerCodeMail, verifierCodeTransfert, openAdd, moveBackToVariable, televersant,
     televerserDocument, setChargeFam, validateAllPending, openNewRecurring, openEditRecurring, saveRecurring,
     deleteRecurring, saveActual, deleteActual, lancerRattrapage, variableInvoices, sortedVariable,
-    invoiceGroups, pendingCount, pendingHt, variableTotalHt, variableTotalTtc, recurringWeekly,
+    invoiceGroups, pendingCount, pendingVarCount, pendingFixCount, pendingHt, variableTotalHt, variableTotalTtc, recurringWeekly,
     chargeHasActualThisWeek, activeRecurring, fixedThisWeek, structureLines, structureEcartees, structureGroupes,
     structureTotal, structureSomme, structureEcart, ecarteesPieces, renderInvoiceRow,
   } = f
@@ -274,7 +274,11 @@ export function PanneauxFacturation({ f }: { f: Facturation }) {
         {pendingCount > 0 && (
           <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 flex items-center gap-2.5">
             <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0" />
-            <p className="text-sm text-amber-800"><strong>{pendingCount} facture{pendingCount > 1 ? 's' : ''} à vérifier</strong> — importée{pendingCount > 1 ? 's' : ''} automatiquement, exclue{pendingCount > 1 ? 's' : ''} du calcul des marges tant que non validée{pendingCount > 1 ? 's' : ''}.</p>
+            <p className="text-sm text-amber-800">
+              <strong>{pendingCount} facture{pendingCount > 1 ? 's' : ''} à vérifier</strong>
+              {pendingVarCount > 0 && <> — {pendingVarCount} d&apos;achats (exclue{pendingVarCount > 1 ? 's' : ''} des marges tant que non validée{pendingVarCount > 1 ? 's' : ''})</>}
+              {pendingFixCount > 0 && <>{pendingVarCount > 0 ? ' et' : ' —'} {pendingFixCount} charge{pendingFixCount > 1 ? 's' : ''} de structure (toutes semaines — jamais comptée{pendingFixCount > 1 ? 's' : ''} dans les marges)</>}.
+            </p>
             <button onClick={validateAllPending} className="ml-auto text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-xl px-3 py-1.5 transition-colors flex-shrink-0">Tout valider</button>
           </div>
         )}
