@@ -98,7 +98,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     lines_status: null,
     lines_error: `Document téléversé le ${jour} — en attente de lecture.`,
     nature_doute: false,
-  }).eq('id', invoice.id)
+  }).eq('id', invoice.id).eq('client_id', clientId)
   if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 })
 
   return NextResponse.json({ success: true, file_path: path })
