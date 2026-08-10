@@ -8,7 +8,7 @@ import { createServiceClient } from '@/lib/supabase/server'
 import { PROVIDERS } from '@/lib/billing-providers'
 import { classifyFixedCharges } from '@/lib/billing-providers/classify'
 import { loadSupplierCategories, rememberedCategory } from '@/lib/supplier-memory'
-import { enrichInvoicesAfterSync } from '@/lib/billing-providers/enrich'
+import { enrichInvoicesAfterSync, sansDejaImportees } from '@/lib/billing-providers/enrich'
 import { weekForInvoice } from '@/lib/invoice-week'
 
 // Le cron itère sur TOUTES les intégrations : appel du connecteur, classification
@@ -89,8 +89,11 @@ async function runSyncAll(req: NextRequest) {
     let imported = 0
 
     if (syncResult.success && syncResult.invoices.length > 0) {
+      // Un document Pennylane déjà importé ne repasse pas, même si son numéro
+      // a changé chez eux : l'external_id décide (lot 130).
+      const filtre = await sansDejaImportees(service, integ.client_id, syncResult.invoices)
       // Classification IA des charges fixes (fallback : détection mots-clés déjà appliquée)
-      const enriched = await classifyFixedCharges(syncResult.invoices)
+      const enriched = await classifyFixedCharges(filtre.aImporter)
 
       let supplierMemory = memoryByClient.get(integ.client_id)
       if (!supplierMemory) {
@@ -141,7 +144,9 @@ async function runSyncAll(req: NextRequest) {
         try {
           // Le bilan était calculé puis jeté : sur le cron, personne ne voyait
           // que des PDF manquaient à l'appel. Il est désormais consigné.
-          const bilan = await enrichInvoicesAfterSync(service, integ.client_id, enriched)
+          // TOUTES les factures du connecteur — les déjà-importées incluses,
+          // pour que leur statut de paiement continue de se rafraîchir.
+          const bilan = await enrichInvoicesAfterSync(service, integ.client_id, syncResult.invoices)
           if (bilan) {
             const manquants = (bilan.echecs ?? 0) + (bilan.sansUrl ?? 0)
             pdfInfo = `${bilan.pdfs} PDF archivé${bilan.pdfs > 1 ? 's' : ''}`
