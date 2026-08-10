@@ -29,10 +29,10 @@ import {
   JOURS_DB, CATEGORIES, CUSTOM_POSTE_COLORS, TYPE_CONFIG, CONTRACT_TYPES, EMP_PALETTES,
   abbrOf, isoWeeksInYear, getISOWeek, getWeekLabel, getWeekVacances, getWeeksInMonth,
   contractLabel, calcTotalH, calcWorkedH, calcCostCCN, calcMajoH, chargeMult,
-  getEmployeeAlerts, emptyEntry, initials, fmtH, calcHoursFromSd,
+  getEmployeeAlerts, emptyEntry, initials, fmtH, calcHoursFromSd, recapMensuel,
   type DayType, type JourDB, type ScheduleDetail, type ScheduleDetails, type PosteDef,
   type ContractKey, type Employee, type PlanningEntry, type EntriesMap, type MonthlyStat,
-  type StatLigne,
+  type StatLigne, type SemaineRecap,
 } from './donnees'
 
 // ─── Component ──────────────────────────────────────────────
@@ -535,7 +535,11 @@ export default function PlanningPage() {
     setMonthlyData(null)
     const monthYear = weekDates[0].getUTCFullYear()
     const month     = weekDates[0].getUTCMonth() + 1
-    const weeks     = getWeeksInMonth(monthYear, month)
+    // getWeeksInMonth ne perd plus la dernière semaine (lundi 30/31). La
+    // ventilation — jour par jour pour les heures, semaine entière rattachée au
+    // mois majoritaire pour les HS et le coût — vit dans recapMensuel (donnees.ts),
+    // fonction pure et testée, partagée d'esprit avec le rapport comptable.
+    const weeks = getWeeksInMonth(monthYear, month)
     try {
       const allResults = await Promise.all(
         weeks.map(({ week: w, year: y }) =>
@@ -545,40 +549,14 @@ export default function PlanningPage() {
         )
       )
       const holidayCache: Record<number, Map<string, string>> = {}
-      const stats: Record<string, { hours: number; cost: number; charged: number; ot: number; worked: number; cp: number; sick: number }> = {}
-      allResults.forEach((weekEntries, wi) => {
-        if (!Array.isArray(weekEntries)) return
-        const { week: w, year: y } = weeks[wi]
+      const semaines: SemaineRecap[] = weeks.map(({ week: w, year: y }, wi) => {
         if (!holidayCache[y]) holidayCache[y] = frenchHolidayNames(y)
-        const wDates = getWeekDates(w, y)
-        const wFlags = wDates.map(d => holidayCache[y].has(d.toISOString().slice(0, 10)))
-        for (const entry of weekEntries) {
-          if (!stats[entry.employee_id]) stats[entry.employee_id] = { hours: 0, cost: 0, charged: 0, ot: 0, worked: 0, cp: 0, sick: 0 }
-          const emp = employees.find(e => e.id === entry.employee_id)
-          if (!emp) continue
-          const ch = emp.contract_hours || 35
-          const weekH = calcTotalH(entry, ch)
-          const weekWorkedH = calcWorkedH(entry)
-          const weekCost = calcCostCCN(entry, emp, wFlags)
-          stats[entry.employee_id].hours   += weekH
-          stats[entry.employee_id].cost    += weekCost
-          stats[entry.employee_id].charged += weekCost * chargeMult(emp)
-          // Le gérant n'est pas salarié : AUCUNE heure supplémentaire, jamais —
-          // même règle que le moteur de coût et que la préparation des payes.
-          // Le récap lui comptait 18h36 de HS (à 0 € l'heure sup, donc sans
-          // effet sur le coût, mais en pleine contradiction avec le rapport
-          // transmis au comptable). Vu à l'écran le 10/08, signalé par Théo.
-          stats[entry.employee_id].ot      += emp.is_gerant ? 0 : Math.max(0, weekWorkedH - ch)
-          for (const jour of JOURS_DB) {
-            const t = (entry[`${jour}_type`] as DayType) || 'travail'
-            const h = (entry[jour] as number) || 0
-            if (t === 'conges') stats[entry.employee_id].cp++
-            else if (t === 'maladie') stats[entry.employee_id].sick++
-            else if (t === 'travail' && h > 0) stats[entry.employee_id].worked++
-          }
-        }
+        const dates = getWeekDates(w, y)
+        const feries = dates.map(d => holidayCache[y].has(d.toISOString().slice(0, 10)))
+        const entries = Array.isArray(allResults[wi]) ? (allResults[wi] as PlanningEntry[]) : []
+        return { dates, feries, entries }
       })
-      setMonthlyData(employees.map(emp => ({ emp, ...(stats[emp.id] || { hours: 0, cost: 0, charged: 0, ot: 0, worked: 0, cp: 0, sick: 0 }) })))
+      setMonthlyData(recapMensuel(monthYear, month, employees, semaines))
     } finally {
       setLoadingMonthly(false)
     }
