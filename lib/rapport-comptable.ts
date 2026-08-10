@@ -14,28 +14,27 @@
  * refuse de faire. Le comptable a le contrat et le logiciel de paie ; ce qui
  * lui manque, ce sont les heures. C'est ce qu'on lui donne.
  *
- * ─── LE MOIS ET LA SEMAINE NE SE SUPERPOSENT PAS ──────────────────────────
+ * ─── LA PÉRIODE EST CALÉE SUR LE DERNIER DIMANCHE DU MOIS ──────────────────
  *
- * La paie se fait au mois civil. Le planning se tient à la semaine ISO. Une
- * semaine sur quatre chevauche deux mois, et c'est là que les rapports se
- * mettent à mentir.
+ * La paie se prépare au mois, le planning se tient à la semaine ISO, et une
+ * semaine sur quatre chevauche deux mois civils. Plutôt que de couper ces
+ * semaines (ce qui fait disparaître des heures majorées : deux moitiés dont
+ * aucune ne dépasse le seuil hebdomadaire), la PÉRIODE de paie d'un mois est
+ * faite de semaines ENTIÈRES : toutes les semaines lundi→dimanche dont le
+ * DIMANCHE tombe dans le mois (choix de Théo, 10/08/2026).
  *
- * Deux grandeurs, deux règles — et les deux sont dites à l'écran :
+ *  · Fin de période = dernier dimanche du mois ; début = lundi de la première
+ *    de ces semaines. Le rapport affiche ces deux bornes (« Période du … au … »).
+ *  · Chaque semaine appartient à UN SEUL mois — celui de son dimanche. Aucune
+ *    n'est coupée : les heures comme le seuil hebdomadaire des heures
+ *    supplémentaires se lisent sur la semaine entière, sans prorata ni majorité
+ *    à départager. Une semaine à cheval sur deux mois civils compte tout entière
+ *    dans le mois de son dimanche.
  *
- *  1. LES HEURES sont ventilées JOUR PAR JOUR. Chaque colonne du planning
- *     (`lundi`… `dimanche`) correspond à une date précise : on sait donc à
- *     quel mois chaque heure appartient. Aucune approximation, aucun prorata.
- *
- *  2. LES HEURES SUPPLÉMENTAIRES ne se ventilent pas. Le seuil est
- *     hebdomadaire : « au-delà de 35 h dans la semaine ». Découper une semaine
- *     en deux morceaux de mois donnerait deux moitiés dont aucune ne dépasse
- *     le seuil — on ferait disparaître des heures majorées. Elles sont donc
- *     calculées sur la SEMAINE ENTIÈRE, puis rattachées au mois qui contient
- *     la MAJORITÉ de ses jours. Sept jours : la majorité existe toujours, il
- *     n'y a jamais d'égalité à départager.
- *
- * Les semaines à cheval sont listées telles quelles, avec le mois auquel elles
- * sont rattachées. Le comptable voit la règle s'appliquer, il ne la subit pas.
+ * Conséquence : les jours de fin juillet d'une semaine qui finit un dimanche
+ * d'août comptent dans la période d'août ; le lundi 31/08, dont la semaine finit
+ * un dimanche de septembre, compte en septembre. C'est la même règle pour tout
+ * le monde, écrite en tête du rapport.
  *
  * ─── LES HEURES MANQUANTES ────────────────────────────────────────────────
  *
@@ -56,7 +55,7 @@
  * pas après.
  */
 
-import { entryHours, getWeekDates, weekHolidayFlags, JOURS, type PayrollEmployee, type PayrollEntry } from '@/lib/payroll'
+import { entryHours, weekHolidayFlags, JOURS, type PayrollEmployee, type PayrollEntry } from '@/lib/payroll'
 import { estFigee, type VerrouSemaine } from '@/lib/planning-lock'
 import { libelleContrat } from '@/lib/contrat'
 
@@ -97,12 +96,21 @@ export type SemaineDuMois = {
 }
 
 /**
- * Toutes les semaines ISO qui touchent le mois, ne serait-ce que d'un jour.
+ * Les semaines de la PÉRIODE DE PAIE du mois — les semaines ENTIÈRES
+ * (lundi→dimanche) dont le DIMANCHE tombe dans le mois civil.
  *
- * On balaie de la semaine du 1er à celle du dernier jour. Le numéro de semaine
- * est relu sur le jeudi de chaque semaine — c'est la définition ISO, et c'est
- * elle qui donne le bon numéro ET la bonne année aux semaines de bascule
- * (le 31 décembre peut appartenir à la semaine 1 de l'année suivante).
+ * La paie est calée sur le DERNIER DIMANCHE du mois (choix de Théo, 10/08) :
+ * fin de période = dernier dimanche du mois, début = lundi de la première de ces
+ * semaines (le lundi qui suit le dernier dimanche du mois précédent). Aucune
+ * semaine n'est coupée : le seuil hebdomadaire des heures supplémentaires ne
+ * traverse jamais une frontière de période, et chaque semaine appartient à un
+ * SEUL mois. `joursDansLeMois` vaut donc toujours 7, `aCheval` toujours faux et
+ * `rattachee` toujours vrai — les trois champs sont conservés pour les lecteurs
+ * existants (écran, CSV), mais il n'y a plus de semaine à cheval à signaler.
+ *
+ * Le numéro de semaine est relu sur le jeudi de chaque semaine (définition ISO) :
+ * il donne le bon numéro ET la bonne année aux semaines de bascule (le 31
+ * décembre peut appartenir à la semaine 1 de l'année suivante).
  */
 export function semainesDuMois(mois: number, annee: number): SemaineDuMois[] {
   const m = Math.round(Number(mois))
@@ -112,30 +120,31 @@ export function semainesDuMois(mois: number, annee: number): SemaineDuMois[] {
   const premier = new Date(Date.UTC(y, m - 1, 1))
   const dernier = new Date(Date.UTC(y, m, 0))
 
-  // Le lundi de la semaine du 1er du mois.
-  const lundi = new Date(premier)
-  lundi.setUTCDate(premier.getUTCDate() - ((premier.getUTCDay() || 7) - 1))
+  // Premier et dernier DIMANCHE du mois (getUTCDay : 0 = dimanche).
+  const premierDimanche = new Date(premier)
+  premierDimanche.setUTCDate(premier.getUTCDate() + ((7 - premier.getUTCDay()) % 7))
+  const dernierDimanche = new Date(dernier)
+  dernierDimanche.setUTCDate(dernier.getUTCDate() - dernier.getUTCDay())
 
   const out: SemaineDuMois[] = []
-  for (let curseur = new Date(lundi); curseur <= dernier; curseur.setUTCDate(curseur.getUTCDate() + 7)) {
-    const debut = new Date(curseur)
+  // De dimanche en dimanche, du premier au dernier du mois : chaque semaine se
+  // termine sur son dimanche et commence six jours plus tôt (le lundi).
+  const dim = new Date(premierDimanche)
+  while (dim <= dernierDimanche) {
+    const lundi = new Date(dim)
+    lundi.setUTCDate(dim.getUTCDate() - 6)
     const dates: string[] = []
-    let joursDansLeMois = 0
     for (let i = 0; i < 7; i++) {
-      const d = new Date(debut)
-      d.setUTCDate(debut.getUTCDate() + i)
+      const d = new Date(lundi)
+      d.setUTCDate(lundi.getUTCDate() + i)
       dates.push(iso(d))
-      if (d.getUTCFullYear() === y && d.getUTCMonth() === m - 1) joursDansLeMois++
     }
     // Le jeudi porte le numéro ISO de la semaine.
-    const jeudi = new Date(debut)
-    jeudi.setUTCDate(debut.getUTCDate() + 3)
+    const jeudi = new Date(lundi)
+    jeudi.setUTCDate(lundi.getUTCDate() + 3)
     const { week, year } = numeroIso(jeudi)
-    out.push({
-      week, year, dates, joursDansLeMois,
-      aCheval: joursDansLeMois < 7,
-      rattachee: joursDansLeMois >= 4,
-    })
+    out.push({ week, year, dates, joursDansLeMois: 7, aCheval: false, rattachee: true })
+    dim.setUTCDate(dim.getUTCDate() + 7)
   }
   return out
 }
@@ -243,16 +252,15 @@ export function rapportDuMois(
   const m = Math.round(Number(mois))
   const y = Math.round(Number(annee))
   const semaines = semainesDuMois(m, y)
-  const debut = iso(new Date(Date.UTC(y, m - 1, 1)))
-  const fin = iso(new Date(Date.UTC(y, m, 0)))
+  // La période va du LUNDI de la première semaine au DIMANCHE de la dernière —
+  // les bornes que le comptable lit en tête du rapport (« Période du … au … »).
+  const debut = semaines[0]?.dates[0] ?? iso(new Date(Date.UTC(y, m - 1, 1)))
+  const fin = semaines[semaines.length - 1]?.dates[6] ?? iso(new Date(Date.UTC(y, m, 0)))
 
-  // Les drapeaux « férié » et les dates, une fois par semaine, pas une fois par employé.
+  // Les drapeaux « férié », une fois par semaine, pas une fois par employé.
   const contexte = semaines.map(s => ({
     s,
     feries: weekHolidayFlags(s.week, s.year),
-    dansLeMois: getWeekDates(s.week, s.year).map(
-      d => d.getUTCFullYear() === y && d.getUTCMonth() === m - 1,
-    ),
     figee: estFigee(verrous, s.week, s.year),
   }))
 
@@ -276,15 +284,16 @@ export function rapportDuMois(
       semaines_non_figees: 0, sans_planning: true,
     }
 
-    for (const { s, feries, dansLeMois, figee } of contexte) {
+    for (const { s, feries, figee } of contexte) {
       const entries = entriesParSemaine?.get(`${s.year}-${s.week}`) ?? []
       const entry = entries.find(e => String(e.employee_id) === l.employee_id)
       if (!entry) continue
       l.sans_planning = false
 
-      // ── 1. Ventilation jour par jour : seuls les jours DU MOIS comptent ──
+      // ── 1. Jour par jour — TOUTE la semaine compte : elle appartient en
+      // entier à la période (calée sur le dernier dimanche), aucun jour ne
+      // tombe dans le mois voisin. ──
       JOURS.forEach((j, idx) => {
-        if (!dansLeMois[idx]) return
         const type = String(entry[`${j}_type`] ?? 'travail') || 'travail'
         const h = nb(entry[j])
         if (type === 'travail' && h > 0) {
@@ -325,14 +334,13 @@ export function rapportDuMois(
         ecart, hs25, hs50,
       })
 
-      // Rattachées seulement : une semaine majoritairement dans le mois voisin
-      // portera ses heures supplémentaires là-bas, pas ici.
-      if (s.rattachee) {
-        l.hs25 += hs25
-        l.hs50 += hs50
-        if (!gerant && ecart < 0) l.heures_manquantes += -ecart
-        if (!figee) l.semaines_non_figees++
-      }
+      // Chaque semaine de la période compte entièrement ici (plus de semaine à
+      // cheval : elle appartient au mois de son dimanche). Ses heures sup et son
+      // éventuel manque s'ajoutent au mois, et si elle n'est pas figée on le dit.
+      l.hs25 += hs25
+      l.hs50 += hs50
+      if (!gerant && ecart < 0) l.heures_manquantes += -ecart
+      if (!figee) l.semaines_non_figees++
     }
 
     l.heures_travaillees = r2(l.heures_travaillees)
@@ -415,72 +423,6 @@ function avertissements(
 }
 
 // ─── L'export ─────────────────────────────────────────────────────────────
-
-/**
- * Le rapport en lignes de tableau, prêt pour un CSV.
- *
- * Construit ici, dans le module pur, pour que le contenu de l'export soit
- * testé — et pas seulement l'écran. Un export qui diverge de l'écran est un
- * troisième chiffre.
- */
-export function lignesTableau(r: RapportComptable): string[][] {
-  const n = (x: number) => String(r2(x)).replace('.', ',')
-  const rows: string[][] = []
-
-  rows.push([`Rapport comptable — ${r.libelle}`])
-  rows.push([`Période du ${r.debut} au ${r.fin}`])
-  rows.push([`Heures uniquement — ce document n'est pas un bulletin de paie.`])
-  rows.push([])
-
-  rows.push([
-    'Salarié', 'Contrat', 'Contractuel hebdo (h)',
-    'Heures travaillées', 'Jours travaillés',
-    'Jours CP', 'Heures CP', 'Jours maladie',
-    'Heures payées',
-    'HS +25 %', 'HS +50 %', 'Heures manquantes',
-    'Dimanches travaillés (j)', 'Heures dimanche',
-    'Fériés travaillés (j)', 'Heures férié',
-  ])
-
-  for (const l of r.employes) {
-    rows.push([
-      l.nom, l.contrat, n(l.contractuel_hebdo),
-      n(l.heures_travaillees), String(l.jours_travailles),
-      String(l.jours_cp), n(l.heures_cp), String(l.jours_maladie),
-      n(l.heures_payees),
-      n(l.hs25), n(l.hs50), n(l.heures_manquantes),
-      String(l.jours_dimanche), n(l.heures_dimanche),
-      String(l.jours_ferie), n(l.heures_ferie),
-    ])
-  }
-
-  rows.push([])
-  rows.push(['Détail par semaine (semaine entière — unité de calcul des heures supplémentaires)'])
-  rows.push([
-    'Salarié', 'Semaine', 'À cheval', 'Rattachée à ce mois', 'Figée',
-    'Heures travaillées', 'Heures CP', 'Contractuel', 'Écart', 'HS +25 %', 'HS +50 %',
-  ])
-  for (const l of r.employes) {
-    for (const s of l.semaines) {
-      rows.push([
-        l.nom, `S${s.week} ${s.year}`,
-        s.aCheval ? 'oui' : 'non',
-        s.rattachee ? 'oui' : 'non',
-        s.figee ? 'oui' : 'non',
-        n(s.heures_travaillees), n(s.heures_cp), n(s.contractuel),
-        n(s.ecart), n(s.hs25), n(s.hs50),
-      ])
-    }
-  }
-
-  if (r.avertissements.length > 0) {
-    rows.push([])
-    rows.push(['Réserves'])
-    for (const a of r.avertissements) rows.push([a])
-  }
-
-  return rows
-}
 
 /**
  * Le CSV, tel qu'Excel français l'ouvre sans rien demander.
