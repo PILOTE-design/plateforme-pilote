@@ -53,7 +53,7 @@
 /** Les espèces de la nomenclature. Le préfixe d'un `valorisation_cut_id` les
  *  désigne, sauf pour le bœuf dont les pièces n'en portent pas (`filet_b`,
  *  `b2_paleron`, `capa_hampe`, `gite_noix`…). */
-export const ESPECES = ['boeuf', 'veau', 'agneau', 'porc', 'volaille'] as const
+export const ESPECES = ['boeuf', 'veau', 'agneau', 'porc'] as const
 export type Espece = (typeof ESPECES)[number]
 
 /**
@@ -73,7 +73,6 @@ export function especeDuCut(cutId: string | null | undefined): Espece {
   if (id.startsWith('veau')) return 'veau'
   if (id.startsWith('agneau')) return 'agneau'
   if (id.startsWith('porc')) return 'porc'
-  if (id.startsWith('volaille')) return 'volaille'
   return 'boeuf'
 }
 
@@ -148,7 +147,7 @@ export const orphelinsRetirables = (o: Orphelin[]) => o.filter(x => !x.retenu)
 
 /** Le libellé français d'une espèce, pour la phrase. */
 const ESPECE_FR: Record<Espece, string> = {
-  boeuf: 'bœuf', veau: 'veau', agneau: 'agneau', porc: 'porc', volaille: 'volaille',
+  boeuf: 'bœuf', veau: 'veau', agneau: 'agneau', porc: 'porc',
 }
 
 /**
