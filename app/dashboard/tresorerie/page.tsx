@@ -102,11 +102,6 @@ const FENETRES = [
   { cle: '30-90', label: '4 mois', avant: 30, apres: 90 },
 ] as const
 
-/** Échéances montrées d'emblée. Au-delà, le nombre restant est écrit et un
- *  bouton déplie le reste : une troncature muette se lit comme une liste
- *  complète. */
-const PLAFOND_ECHEANCES = 12
-
 const MOTIFS: Record<string, string> = {
   sans_echeance: 'aucune échéance sur le document',
   hors_fenetre: 'échéance hors de la fenêtre',
@@ -181,14 +176,6 @@ export default function TresoreriePage() {
 
   const aujourdHui = useMemo(() => isoDuJour(0), [])
 
-  // Amplitude des mouvements, pour dessiner les barres du tableau. Une échelle
-  // commune aux entrées ET aux sorties : deux échelles séparées feraient
-  // paraître un petit encaissement aussi gros qu'un gros décaissement.
-  const maxMouvement = useMemo(() => {
-    if (!bilan) return 0
-    return bilan.jours.reduce((m, j) => Math.max(m, j.encaissements, j.decaissements), 0)
-  }, [bilan])
-
   // AUCUN relevé du tout : distinct de « zéro encaissé ». Tant que la boutique
   // n'a transféré aucun relevé, la trésorerie n'a pas d'entrées à montrer, et
   // le dire est plus utile que d'afficher un zéro.
@@ -197,18 +184,82 @@ export default function TresoreriePage() {
     [bilan],
   )
 
-  const prochainesSorties = useMemo(() => {
+  /**
+   * LE REGISTRE — une ligne par MOUVEMENT, comme un livre de caisse (10/08,
+   * demande de Théo : « un tableau, avec les entrées, les sorties »).
+   *
+   * Avant : un agrégat par jour (une ligne par jour, barres décoratives) et les
+   * échéances dans une carte à part. Le boucher lisait deux fois la même
+   * période sans jamais voir « QUELLE facture part QUEL jour » en face de ce
+   * qui rentre. Le registre remet tout dans l'ordre du temps : le relevé de
+   * caisse du jour, puis chaque facture à son échéance, et le solde en fin de
+   * journée. Les jours sans aucun mouvement n'occupent pas de ligne — un
+   * registre ne liste pas les pages blanches ; les journées SANS RELEVÉ restent
+   * annoncées par la tuile « Encaissé », comme avant.
+   *
+   * Rien n'est recalculé : les montants viennent des mêmes champs de l'API, et
+   * le solde posé en fin de jour est `jours[].solde`, celui du moteur.
+   */
+  type LigneRegistre = {
+    cle: string
+    jour: string
+    /** Première ligne de sa journée : elle porte la date et le trait fort */
+    ouvreLeJour: boolean
+    type: 'entree' | 'sortie'
+    libelle: string
+    sousLibelle: string | null
+    montant: number
+    factureId: string | null
+    enRetard: boolean
+    avoir: boolean
+    /** Posé sur la DERNIÈRE ligne du jour ; null ailleurs, et null aussi pour
+     *  une sortie dont le jour manque dans la courbe (aucun solde à inventer). */
+    soldeFinJour: number | null
+  }
+  const registre = useMemo<LigneRegistre[]>(() => {
     if (!bilan) return []
-    return [...bilan.sorties].sort((a, b) => a.jour.localeCompare(b.jour) || b.montant - a.montant)
-  }, [bilan])
+    const sortiesParJour = new Map<string, Sortie[]>()
+    for (const s of bilan.sorties) {
+      const l = sortiesParJour.get(s.jour) ?? []
+      l.push(s)
+      sortiesParJour.set(s.jour, l)
+    }
+    const soldeParJour = new Map(bilan.jours.map(j => [j.jour, j.solde]))
+    // L'union des jours : ceux de la courbe ET ceux des échéances — une sortie
+    // dont le jour serait hors courbe apparaît quand même, sans solde.
+    const jours = Array.from(new Set([
+      ...bilan.jours.map(j => j.jour),
+      ...bilan.sorties.map(s => s.jour),
+    ])).sort()
+    const parJourCourbe = new Map(bilan.jours.map(j => [j.jour, j]))
 
-  // PLAFOND D'AFFICHAGE. Quarante-neuf échéances déroulaient une colonne cinq
-  // fois plus haute que sa voisine : la carte « Hors de la courbe » se
-  // retrouvait perdue dans le vide, et personne ne lit la trente-huitième
-  // ligne. On en montre douze — et, règle de la maison, on écrit combien on
-  // n'affiche pas. Le total, lui, porte toujours sur la totalité.
-  const [toutesEcheances, setToutesEcheances] = useState(false)
-  const echeancesVisibles = toutesEcheances ? prochainesSorties : prochainesSorties.slice(0, PLAFOND_ECHEANCES)
+    const out: LigneRegistre[] = []
+    for (const jour of jours) {
+      const courbe = parJourCourbe.get(jour)
+      const lignes: LigneRegistre[] = []
+      if (courbe && !courbe.entreesInconnues && courbe.encaissements > 0) {
+        lignes.push({
+          cle: `e-${jour}`, jour, ouvreLeJour: false, type: 'entree',
+          libelle: 'Relevé de caisse', sousLibelle: 'encaissé du jour',
+          montant: courbe.encaissements, factureId: null, enRetard: false, avoir: false, soldeFinJour: null,
+        })
+      }
+      const sorties = (sortiesParJour.get(jour) ?? []).slice().sort((a, b) => b.montant - a.montant)
+      for (const s of sorties) {
+        lignes.push({
+          cle: `s-${s.factureId}`, jour, ouvreLeJour: false, type: 'sortie',
+          libelle: s.libelle, sousLibelle: s.chargeFixe ? 'charge de structure' : null,
+          montant: s.montant, factureId: s.factureId, enRetard: s.enRetard, avoir: s.montant < 0, soldeFinJour: null,
+        })
+      }
+      if (lignes.length > 0) {
+        lignes[0].ouvreLeJour = true
+        lignes[lignes.length - 1].soldeFinJour = soldeParJour.get(jour) ?? null
+        out.push(...lignes)
+      }
+    }
+    return out
+  }, [bilan])
 
   return (
     <div className="space-y-6 pb-24">
@@ -334,167 +385,138 @@ export default function TresoreriePage() {
             )}
           </div>
 
-          {/* ── Le fil des jours ─────────────────────────────────────────── */}
+          {/* ── LE REGISTRE — une ligne par mouvement, dans l'ordre du temps ── */}
           <div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-card">
             <TitreCarte
               action={
-                <span className="text-[11px] font-semibold text-encre-faible">
-                  {bilan.jours.length} jours
-                </span>
+                <Link
+                  href="/dashboard/facturation"
+                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-pilote hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-pilote-200"
+                >
+                  Facturation <ExternalLink className="h-3 w-3" aria-hidden />
+                </Link>
               }
             >
-              Jour par jour
+              Entrées et sorties
             </TitreCarte>
 
-            <div className="-mx-5 overflow-x-auto">
-              <table className="w-full min-w-[640px] border-collapse">
-                <thead>
-                  <tr className="bg-gray-50 text-[11px] font-semibold uppercase tracking-wider text-encre-faible">
-                    <th className="px-5 py-2 text-left font-semibold">Jour</th>
-                    <th className="px-3 py-2 text-right font-semibold">Encaissé</th>
-                    <th className="px-3 py-2 text-right font-semibold">Décaissé</th>
-                    <th className="px-3 py-2 text-left font-semibold">Mouvement</th>
-                    <th className="px-5 py-2 text-right font-semibold">Solde cumulé</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {bilan.jours.map(j => {
-                    const cejour = j.jour === aujourdHui
-                    const futur = j.jour > aujourdHui
-                    const largeurE = maxMouvement > 0 ? (j.encaissements / maxMouvement) * 100 : 0
-                    const largeurD = maxMouvement > 0 ? (j.decaissements / maxMouvement) * 100 : 0
-                    return (
-                      <tr
-                        key={j.jour}
-                        className={`border-t border-gray-100 transition-colors hover:bg-gray-50 ${
-                          cejour ? 'bg-pilote-50/60' : ''
-                        }`}
-                      >
-                        <td className="whitespace-nowrap px-5 py-2 text-sm">
-                          <span className={cejour ? 'font-bold text-pilote' : 'font-medium text-encre'}>
-                            {libelleJour(j.jour)}
-                          </span>
-                          {cejour && (
-                            <span className="ml-2 rounded-md bg-pilote px-1.5 py-0.5 text-[11px] font-bold text-white">
-                              aujourd’hui
-                            </span>
-                          )}
-                        </td>
+            {registre.length === 0 ? (
+              <p className="py-6 text-center text-sm text-encre-doux">
+                Aucun mouvement sur cette fenêtre — ni relevé de caisse, ni échéance de facture.
+              </p>
+            ) : (
+              <div className="-mx-5 overflow-x-auto">
+                <table className="w-full min-w-[760px] border-collapse">
+                  <thead>
+                    <tr className="bg-gray-50 text-[11px] font-semibold uppercase tracking-wider text-encre-faible">
+                      <th className="px-5 py-2 text-left font-semibold">Jour</th>
+                      <th className="px-3 py-2 text-left font-semibold">Mouvement</th>
+                      <th className="px-3 py-2 text-right font-semibold">Entrée</th>
+                      <th className="px-3 py-2 text-right font-semibold">Sortie</th>
+                      <th className="px-2 py-2" aria-label="Pointage" />
+                      <th className="px-5 py-2 text-right font-semibold">Solde en fin de jour</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {registre.map(l => {
+                      const cejour = l.jour === aujourdHui
+                      return (
+                        <tr
+                          key={l.cle}
+                          className={`${l.ouvreLeJour ? 'border-t border-gray-200' : 'border-t border-gray-100'} transition-colors hover:bg-gray-50 ${
+                            cejour ? 'bg-pilote-50/60' : ''
+                          }`}
+                        >
+                          <td className="whitespace-nowrap px-5 py-2 text-sm">
+                            {l.ouvreLeJour && (
+                              <>
+                                <span className={cejour ? 'font-bold text-pilote' : 'font-medium text-encre'}>
+                                  {libelleJour(l.jour)}
+                                </span>
+                                {cejour && (
+                                  <span className="ml-2 rounded-md bg-pilote px-1.5 py-0.5 text-[11px] font-bold text-white">
+                                    aujourd’hui
+                                  </span>
+                                )}
+                              </>
+                            )}
+                          </td>
 
-                        <td className="whitespace-nowrap px-3 py-2 text-right text-sm tabular">
-                          {j.entreesInconnues ? (
-                            <Absent
-                              raison="sans relevé"
-                              explication="Aucun relevé de caisse reçu pour cette journée : ce n’est pas une journée sans vente."
-                            />
-                          ) : j.encaissements > 0 ? (
-                            <span className="font-semibold text-etat-gain">{eur2(j.encaissements)}</span>
-                          ) : futur ? (
-                            <Absent raison="à venir" explication="Journée non commencée." />
-                          ) : (
-                            <span className="text-trait">—</span>
-                          )}
-                        </td>
+                          <td className="px-3 py-2 text-sm">
+                            {/* max-w sur le <p>, jamais sur le <td> : en table
+                                auto-layout, un max-w de cellule ne tronque rien
+                                (vu à l'écran au lot 118). */}
+                            <p className="max-w-[24rem] truncate font-medium text-encre">{l.libelle}</p>
+                            {(l.sousLibelle || l.avoir || l.enRetard) && (
+                              <p className="flex items-center gap-1.5 text-xs text-encre-faible">
+                                {l.sousLibelle}
+                                {l.avoir && (
+                                  <span className="rounded-md bg-etat-gain/10 px-1.5 py-0.5 text-[11px] font-bold text-etat-gain">
+                                    avoir
+                                  </span>
+                                )}
+                                {!l.avoir && l.enRetard && (
+                                  <span className="rounded-md bg-pilote-orange/[0.12] px-1.5 py-0.5 text-[11px] font-bold text-[#9A4A00]">
+                                    échue
+                                  </span>
+                                )}
+                              </p>
+                            )}
+                          </td>
 
-                        <td className="whitespace-nowrap px-3 py-2 text-right text-sm tabular">
-                          {j.decaissements > 0
-                            ? <span className="font-semibold text-etat-perte">{eur2(j.decaissements)}</span>
-                            : <span className="text-trait">—</span>}
-                        </td>
+                          <td className="whitespace-nowrap px-3 py-2 text-right text-sm tabular">
+                            {l.type === 'entree'
+                              ? <span className="font-semibold text-etat-gain">{eur2(l.montant)}</span>
+                              : <span className="text-trait">—</span>}
+                          </td>
 
-                        {/* La barre ne porte aucune information seule : les deux
-                            montants sont écrits dans les colonnes voisines. */}
-                        <td className="px-3 py-2" aria-hidden>
-                          <div className="flex h-2 items-center gap-px">
-                            <div className="flex h-2 w-1/2 justify-end">
-                              <div className="h-2 rounded-l-sm bg-rayon-boucherie/70" style={{ width: `${largeurD}%` }} />
-                            </div>
-                            <div className="flex h-2 w-1/2 justify-start">
-                              <div className="h-2 rounded-r-sm bg-pilote/70" style={{ width: `${largeurE}%` }} />
-                            </div>
-                          </div>
-                        </td>
+                          <td className="whitespace-nowrap px-3 py-2 text-right text-sm tabular">
+                            {l.type === 'sortie'
+                              ? <span className={`font-semibold ${l.avoir ? 'text-etat-gain' : 'text-etat-perte'}`}>{eur2(l.montant)}</span>
+                              : <span className="text-trait">—</span>}
+                          </td>
 
-                        <td className="whitespace-nowrap px-5 py-2 text-right text-sm font-bold tabular text-encre-fort">
-                          {eur2(j.solde)}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
+                          <td className="px-2 py-1 text-right">
+                            {l.factureId && (
+                              <button
+                                onClick={() => void pointer(l.factureId!, true)}
+                                disabled={enCours === l.factureId}
+                                aria-label={`Pointer réglée : ${l.libelle}`}
+                                title="Pointer cette facture comme réglée — elle sort des sorties à venir"
+                                className="inline-flex h-11 w-11 items-center justify-center rounded-xl border border-pilote-200 text-pilote transition-colors hover:bg-pilote-50 disabled:opacity-40 focus:outline-none focus-visible:ring-2 focus-visible:ring-pilote-200"
+                              >
+                                <Check className="h-4 w-4" strokeWidth={2.4} aria-hidden />
+                              </button>
+                            )}
+                          </td>
+
+                          <td className="whitespace-nowrap px-5 py-2 text-right text-sm font-bold tabular text-encre-fort">
+                            {l.soldeFinJour !== null ? eur2(l.soldeFinJour) : ''}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            {/* ── Les échéances ─────────────────────────────────────────── */}
+            {/* ── CE QUI A ÉTÉ POINTÉ RÉGLÉ ─────────────────────────────────
+                Une facture réglée sort du registre — mais elle ne doit pas
+                disparaître de l'écran, sinon on ne peut plus la dépointer
+                quand on s'est trompé de ligne, et le montant s'évapore sans
+                être nommé. */}
             <div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-card">
-              <TitreCarte
-                action={
-                  <Link
-                    href="/dashboard/facturation"
-                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-pilote hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-pilote-200"
-                  >
-                    Facturation <ExternalLink className="h-3 w-3" aria-hidden />
-                  </Link>
-                }
-              >
-                Échéances de la période
-              </TitreCarte>
-
-              {prochainesSorties.length === 0 ? (
+              <TitreCarte>Factures pointées réglées</TitreCarte>
+              {bilan.reserves.reglees.nombre === 0 ? (
                 <p className="py-6 text-center text-sm text-encre-doux">
-                  Aucune échéance de facture sur cette fenêtre.
+                  Aucune pour l’instant — la coche du registre pointe une facture réglée,
+                  elle vient se ranger ici.
                 </p>
               ) : (
-                <ul className="divide-y divide-gray-100">
-                  {echeancesVisibles.map(s => (
-                    <li key={s.factureId} className="flex items-center justify-between gap-3 py-2">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-medium text-encre">{s.libelle}</p>
-                        <p className="text-xs text-encre-faible">
-                          {libelleJour(s.jour)}
-                          {s.chargeFixe && ' · charge de structure'}
-                        </p>
-                      </div>
-                      <div className="flex shrink-0 items-center gap-2">
-                        {/* UN AVOIR N'EST PAS UNE SORTIE. Il porte un montant
-                            négatif : l'afficher « échue » en rouge comme une
-                            facture à payer inverse son sens. Vu à l'écran sur
-                            un avoir PLUXEE de −268,34 €. */}
-                        {s.montant < 0 ? (
-                          <span className="whitespace-nowrap rounded-md bg-etat-gain/10 px-1.5 py-0.5 text-[11px] font-bold text-etat-gain">
-                            avoir
-                          </span>
-                        ) : s.enRetard ? (
-                          <span className="whitespace-nowrap rounded-md bg-pilote-orange/[0.12] px-1.5 py-0.5 text-[11px] font-bold text-[#9A4A00]">
-                            échue
-                          </span>
-                        ) : null}
-                        <span className={`whitespace-nowrap text-sm font-bold tabular ${s.montant < 0 ? 'text-etat-gain' : 'text-encre-fort'}`}>
-                          {eur2(s.montant)}
-                        </span>
-                        <button
-                          onClick={() => void pointer(s.factureId, true)}
-                          disabled={enCours === s.factureId}
-                          aria-label={`Pointer réglée : ${s.libelle}`}
-                          title="Pointer cette facture comme réglée"
-                          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-pilote-200 text-pilote transition-colors hover:bg-pilote-50 disabled:opacity-40 focus:outline-none focus-visible:ring-2 focus-visible:ring-pilote-200"
-                        >
-                          <Check className="h-4 w-4" strokeWidth={2.4} aria-hidden />
-                        </button>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-
-              {/* CE QUI A ÉTÉ POINTÉ. Une facture réglée sort de la courbe des
-                  échéances — mais elle ne doit pas disparaître de l'écran,
-                  sinon on ne peut plus la dépointer quand on s'est trompé de
-                  ligne, et le montant s'évapore sans être nommé. */}
-              {bilan.reserves.reglees.nombre > 0 && (
-                <div className="mt-4 border-t border-gray-100 pt-3">
+                <>
                   <button
                     onClick={() => setVoirReglees(v => !v)}
                     aria-expanded={voirReglees}
@@ -534,18 +556,7 @@ export default function TresoreriePage() {
                       ))}
                     </ul>
                   )}
-                </div>
-              )}
-
-              {prochainesSorties.length > PLAFOND_ECHEANCES && (
-                <button
-                  onClick={() => setToutesEcheances(v => !v)}
-                  className="mt-3 min-h-[44px] w-full rounded-xl border border-pilote-200 bg-white px-4 text-sm font-semibold text-pilote transition-colors hover:bg-pilote-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-pilote-200"
-                >
-                  {toutesEcheances
-                    ? `Réduire — ${prochainesSorties.length} échéances au total`
-                    : `Afficher les ${prochainesSorties.length - PLAFOND_ECHEANCES} autres échéances`}
-                </button>
+                </>
               )}
             </div>
 
