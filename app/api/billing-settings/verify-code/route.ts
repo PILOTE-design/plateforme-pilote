@@ -15,7 +15,7 @@ export async function POST(request: NextRequest) {
   const serviceSupabase = createServiceClient()
   const { data: profile } = await serviceSupabase
     .from('profiles')
-    .select('billing_email_code, billing_email_code_expires, billing_forward_id, billing_email')
+    .select('billing_email_code, billing_email_code_expires, billing_email_code_attempts, billing_forward_id, billing_email')
     .eq('user_id', user.id)
     .maybeSingle()
 
@@ -28,10 +28,35 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Code expiré. Renvoyez un nouveau code.' }, { status: 400 })
   }
 
+  // LIMITE D'ESSAIS : un code à 6 chiffres sans compteur se force en quelques
+  // milliers de requêtes dans la fenêtre de 15 min. Au 5ᵉ essai raté, le code
+  // est INVALIDÉ (pas seulement refusé) — il faut en renvoyer un.
+  const MAX_ESSAIS = 5
+  const essais = Number(profile.billing_email_code_attempts) || 0
+  if (essais >= MAX_ESSAIS) {
+    await serviceSupabase.from('profiles').update({
+      billing_email_code: null,
+      billing_email_code_expires: null,
+      billing_email_code_attempts: 0,
+    }).eq('user_id', user.id)
+    return NextResponse.json({ error: 'Trop d\'essais — le code a été invalidé. Renvoyez un nouveau code.' }, { status: 429 })
+  }
+
   // Vérifier le hash
   const inputHash = crypto.createHash('sha256').update(code.trim()).digest('hex')
   if (inputHash !== profile.billing_email_code) {
-    return NextResponse.json({ error: 'Code incorrect' }, { status: 400 })
+    const rates = essais + 1
+    const invalide = rates >= MAX_ESSAIS
+    await serviceSupabase.from('profiles').update(
+      invalide
+        ? { billing_email_code: null, billing_email_code_expires: null, billing_email_code_attempts: 0 }
+        : { billing_email_code_attempts: rates },
+    ).eq('user_id', user.id)
+    return NextResponse.json({
+      error: invalide
+        ? 'Code incorrect — trop d\'essais, le code a été invalidé. Renvoyez un nouveau code.'
+        : 'Code incorrect',
+    }, { status: invalide ? 429 : 400 })
   }
 
   // Marquer comme vérifié, effacer le code
@@ -41,6 +66,7 @@ export async function POST(request: NextRequest) {
       billing_email_verified: true,
       billing_email_code: null,
       billing_email_code_expires: null,
+      billing_email_code_attempts: 0,
     })
     .eq('user_id', user.id)
 
