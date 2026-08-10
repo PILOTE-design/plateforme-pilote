@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createServiceClient } from '@/lib/supabase/server'
+import { createClient, createServiceClient } from '@/lib/supabase/server'
+import { isAdminEmail } from '@/lib/admins'
 import { sendPlanningEmails } from '@/lib/planning-email'
 
 export const dynamic = 'force-dynamic'
@@ -15,10 +16,17 @@ function isoWeekOf(date: Date): { week: number; year: number } {
 /** Cron du dimanche soir (vercel.json) : envoie à chaque employé de chaque client
  *  son planning individuel de la semaine qui COMMENCE le lendemain. */
 export async function GET(request: NextRequest) {
-  // Sécurité cron Vercel : si CRON_SECRET est défini, l'en-tête doit correspondre
-  const auth = request.headers.get('authorization')
-  if (process.env.CRON_SECRET && auth !== `Bearer ${process.env.CRON_SECRET}`) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  // ── Qui appelle ? Le cron (secret de plateforme) ou un administrateur.
+  // JAMAIS fail-open : CRON_SECRET absent ne rend pas la route publique — un
+  // GET anonyme enverrait leur planning aux employés de TOUTES les boucheries.
+  // Même patron que cron/lecture-quotidienne.
+  const cronSecret = process.env.CRON_SECRET
+  const estMachine = !!cronSecret && request.headers.get('authorization') === `Bearer ${cronSecret}`
+  if (!estMachine) {
+    const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
+    if (!isAdminEmail(user.email)) return NextResponse.json({ error: 'Réservé aux administrateurs' }, { status: 403 })
   }
   if (!process.env.RESEND_API_KEY) {
     return NextResponse.json({ error: 'RESEND_API_KEY manquant' }, { status: 500 })
