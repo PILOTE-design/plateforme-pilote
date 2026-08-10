@@ -53,7 +53,7 @@
  */
 
 export type CutCategory = 'premier' | 'deuxieme' | 'troisieme' | 'abat' | 'os'
-export type AnimalType = 'boeuf' | 'veau' | 'agneau' | 'porc' | 'volaille'
+export type AnimalType = 'boeuf' | 'veau' | 'agneau' | 'porc'
 
 /** Une pièce de découpe. `yieldPct` est resté à 0 partout : les poids sont
  *  SAISIS par le boucher, jamais déduits d'un rendement théorique.
@@ -230,16 +230,11 @@ export const PORC_CUTS: Cut[] = [
   { id: 'porc_divers_pieds',       name: 'Pieds',                          category: 'abat',      yieldPct: 0, marketPrice: 3,  group: ['Avant', 'Divers'] },
 ]
 
-export const VOLAILLE_CUTS: Cut[] = [
-  { id: 'blanc_volaille',   name: 'Blanc / Suprême',          category: 'premier',   yieldPct: 28,  marketPrice: 18 },
-  { id: 'cuisse_entiere',   name: 'Cuisse entière',           category: 'premier',   yieldPct: 22,  marketPrice: 10 },
-  { id: 'haut_cuisse',      name: 'Haut de cuisse',           category: 'premier',   yieldPct: 13,  marketPrice: 9  },
-  { id: 'pilon',            name: 'Pilon',                    category: 'premier',   yieldPct: 9,   marketPrice: 7  },
-  { id: 'aile_volaille',    name: 'Aile',                     category: 'deuxieme',  yieldPct: 10,  marketPrice: 7  },
-  { id: 'foie_volaille',    name: 'Foie (lot)',               category: 'abat',      yieldPct: 1.5, marketPrice: 6  },
-  { id: 'gesier_volaille',  name: 'Gésier',                   category: 'abat',      yieldPct: 1.5, marketPrice: 5  },
-  { id: 'carcasse_bouillon',name: 'Carcasse / Bouillon',      category: 'os',        yieldPct: 15,  marketPrice: 1.5},
-]
+// La volaille a été RETIRÉE de la valorisation le 10/08/2026, à la demande de
+// Théo : un boucher n'achète pas de volaille en carcasse à découper — elle
+// s'achète prête à vendre, et vit donc dans la mercuriale et les rayons de
+// vente, pas ici. Vérifié avant retrait : AUCUNE donnée volaille en base
+// (0 valorisation, 0 générique de découpe, 0 préférence de prix).
 /** L'arbre complet du bœuf : l'arrière (ART8) et l'avant (AVANTCAPA) sont deux
  *  entrées dépliables du détail par pièce — une seule et même bête. */
 export const BOEUF_ALL_CUTS: Cut[] = [...BOEUF_CUTS, ...BOEUF_B2_CUTS]
@@ -251,13 +246,12 @@ export const CUTS_BY_ANIMAL: Record<AnimalType, Cut[]> = {
   veau: VEAU_CUTS,
   agneau: AGNEAU_CUTS,
   porc: PORC_CUTS,
-  volaille: VOLAILLE_CUTS,
 }
 
-export const ANIMAL_TYPES: AnimalType[] = ['boeuf', 'veau', 'agneau', 'porc', 'volaille']
+export const ANIMAL_TYPES: AnimalType[] = ['boeuf', 'veau', 'agneau', 'porc']
 
 export const ANIMAL_LABELS: Record<AnimalType, string> = {
-  boeuf: 'Bœuf', veau: 'Veau', agneau: 'Agneau', porc: 'Porc', volaille: 'Volaille',
+  boeuf: 'Bœuf', veau: 'Veau', agneau: 'Agneau', porc: 'Porc',
 }
 
 /** Retrouve une pièce par son identifiant, toutes espèces confondues. */
