@@ -4,7 +4,7 @@ import { resolveClientId } from '@/lib/resolve-client-id'
 import { PROVIDERS } from '@/lib/billing-providers'
 import { classifyFixedCharges } from '@/lib/billing-providers/classify'
 import { loadSupplierCategories, rememberedCategory } from '@/lib/supplier-memory'
-import { enrichInvoicesAfterSync } from '@/lib/billing-providers/enrich'
+import { enrichInvoicesAfterSync, sansDejaImportees } from '@/lib/billing-providers/enrich'
 import { weekForInvoice } from '@/lib/invoice-week'
 
 export const maxDuration = 60 // Plafond réel : 300 s sur Hobby comme sur Pro (fluid compute). 60 s suffisent pour une semaine de factures.
@@ -76,8 +76,11 @@ export async function POST(req: NextRequest) {
     let imported = 0
 
     if (syncResult.success && syncResult.invoices.length > 0) {
+      // Un document Pennylane déjà importé ne repasse pas, même si son numéro
+      // a changé chez eux : l'external_id décide (lot 130).
+      const filtre = await sansDejaImportees(service, clientId, syncResult.invoices)
       // Classification IA des charges fixes (fallback : détection mots-clés déjà appliquée)
-      const enriched = await classifyFixedCharges(syncResult.invoices)
+      const enriched = await classifyFixedCharges(filtre.aImporter)
 
       const rows = enriched.map(inv => {
         // Semaine d'imputation PAR FACTURE, dérivée de sa propre date (et non de
@@ -121,7 +124,12 @@ export async function POST(req: NextRequest) {
           // Le bilan de l'enrichissement était calculé puis JETÉ : impossible de
           // savoir si les PDF de la semaine étaient bien arrivés. Il est désormais
           // remonté dans le diagnostic de synchro.
-          const bilan = await enrichInvoicesAfterSync(service, clientId, enriched)
+          //
+          // L'enrichissement passe sur TOUTES les factures rendues par le
+          // connecteur — les déjà-importées incluses : c'est lui qui rafraîchit
+          // leur statut de paiement à chaque sync, et le pré-filtre
+          // d'idempotence ne concerne que l'INSERTION.
+          const bilan = await enrichInvoicesAfterSync(service, clientId, syncResult.invoices)
           if (bilan) {
             const manquants = (bilan.echecs ?? 0) + (bilan.sansUrl ?? 0)
             pdfInfo = `${bilan.pdfs} PDF archivé${bilan.pdfs > 1 ? 's' : ''}`

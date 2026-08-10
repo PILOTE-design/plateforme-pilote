@@ -14,6 +14,43 @@ import type { createServiceClient } from '@/lib/supabase/server'
 
 type Service = ReturnType<typeof createServiceClient>
 
+/**
+ * LE PRÉ-FILTRE D'IDEMPOTENCE — un document Pennylane ne s'importe qu'UNE fois.
+ *
+ * L'upsert des trois voies (sync, sync de nuit, rattrapage) se fait sur
+ * (client, numéro, date). Si Pennylane corrige le numéro ou la date d'une
+ * facture déjà importée — relecture OCR de leur côté —, elle revient sous une
+ * autre clé et se réinsérait : le montant comptait DEUX fois dans les achats,
+ * la marge et le résultat de la semaine. L'`external_id`, lui, ne change
+ * jamais : c'est lui qui décide. (Lot 130 ; l'index unique
+ * `invoices_client_external_uq` verrouille la même règle côté base.)
+ *
+ * Une facture sans external_id passe — on ne peut rien recouper, et écarter à
+ * l'aveugle serait pire que le risque couvert.
+ */
+export async function sansDejaImportees(
+  service: Service,
+  clientId: string,
+  invoices: ProviderInvoice[],
+): Promise<{ aImporter: ProviderInvoice[]; dejaImportees: number }> {
+  const ids = invoices.map(i => i.external_id).filter((x): x is string => !!x)
+  if (ids.length === 0) return { aImporter: invoices, dejaImportees: 0 }
+  const { data, error } = await service.from('invoices')
+    .select('external_id')
+    .eq('client_id', clientId)
+    .in('external_id', ids)
+  if (error) {
+    // Le filtre est une protection, pas une condition : s'il ne peut pas lire,
+    // l'upsert (numéro, date) et l'index unique restent les remparts.
+    console.error('[sansDejaImportees] lecture impossible:', error.message)
+    return { aImporter: invoices, dejaImportees: 0 }
+  }
+  const connus = new Set((data ?? []).map(r => String(r.external_id)))
+  if (connus.size === 0) return { aImporter: invoices, dejaImportees: 0 }
+  const aImporter = invoices.filter(i => !i.external_id || !connus.has(i.external_id))
+  return { aImporter, dejaImportees: invoices.length - aImporter.length }
+}
+
 export async function enrichInvoicesAfterSync(
   service: Service,
   clientId: string,
@@ -71,6 +108,9 @@ export async function enrichInvoicesAfterSync(
       if (Object.keys(patch).length > 0) {
         const { error } = await service.from('invoices').update(patch).eq('id', row.id)
         if (!error) updated++
+        // L'échec était avalé : un external_id refusé par l'index unique (deux
+        // lignes pour le même document) ou un droit manquant restait invisible.
+        else console.error('[enrich] update refusé', inv.invoice_number, error.message)
       }
     }))
   }
