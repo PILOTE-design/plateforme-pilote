@@ -58,8 +58,10 @@ export type BaseVerdict =
   | 'quantite'           // … sur la quantité lue
   | 'quantite_reparee'   // … sur une quantité reconstruite depuis le prix
   | 'colonnes_inversees' // le « prix » lu était le conditionnement : on rend les deux à leur place
+  | 'poids_etait_montant' // la colonne poids portait le MONTANT ; la vraie assiette est le conditionnement du libellé
   | 'derive_poids'       // prix absent, déduit du poids (assiette sûre)
   | 'derive_quantite'    // prix absent, déduit de la quantité (unité sûre)
+  | 'derive_malgre_pu'   // PU lu incompatible (remise, prix catalogue) : le prix EFFECTIF est publié, le PU part au diagnostic
   | 'prix_seul'          // prix lu, rien pour le contredire
   | null
 
@@ -97,8 +99,17 @@ export function uniteDeMesure(unit: string | null | undefined): boolean {
   return UNITES_DE_MESURE.has(norm(unit))
 }
 
-/** Tolérance de recoupement d'une ligne : le centime, ou 1 % du montant. */
-export const tolerance = (montant: number) => Math.max(0.05, Math.abs(montant) * 0.01)
+/** Tolérance de recoupement d'une ligne : le centime, ou 1 % du montant —
+ *  plus, quand un prix unitaire est en jeu, l'arrondi de l'ASSIETTE imprimée.
+ *
+ *  Une facture imprime le poids à trois décimales : ±0,0005 kg. Multipliée par
+ *  le prix au kilo, cette demi-graine devient PU × 0,0005 € — négligeable à
+ *  12 €/kg (0,006 €), décisive à 179 €/kg. Mesuré le 10/08 : TAXE INTERBEV
+ *  OVIN, 0,018 kg à 179 €/kg, montant 3,29 € — recalcul 3,22 €, écart 0,07 €,
+ *  refusé pour 2 centimes au-delà de l'ancienne tolérance alors que le prix
+ *  imprimé était exact et que la ligne bouclait dans le total de sa facture. */
+export const tolerance = (montant: number, prixUnitaire = 0) =>
+  Math.max(0.05, Math.abs(montant) * 0.01, Math.abs(prixUnitaire) * 0.0005)
 
 /**
  * L'assiette sur laquelle `qté × PU = montant` tombe juste.
@@ -110,7 +121,7 @@ export const tolerance = (montant: number) => Math.max(0.05, Math.abs(montant) *
  */
 export function assietteQuiTombeJuste(l: LigneBrute): { base: 'poids' | 'quantite'; valeur: number } | null {
   if (l.unit_price_ht == null || !Number.isFinite(l.unit_price_ht)) return null
-  const tol = tolerance(l.amount_ht)
+  const tol = tolerance(l.amount_ht, l.unit_price_ht)
   const candidats: Array<{ base: 'poids' | 'quantite'; valeur: number | null }> = [
     { base: 'poids', valeur: l.weight_kg },
     { base: 'quantite', valeur: l.quantity },
@@ -152,6 +163,13 @@ export function assietteQuiTombeJuste(l: LigneBrute): { base: 'poids' | 'quantit
 const FAMILLE: Record<string, { famille: 'poids' | 'volume'; enBase: number }> = {
   kg: { famille: 'poids', enBase: 1 }, kgs: { famille: 'poids', enBase: 1 },
   kilo: { famille: 'poids', enBase: 1 }, kilos: { famille: 'poids', enBase: 1 },
+  // « K » seul : le jargon des criées et de METRO — « 3.5K », « 2.5K EXT ».
+  // Mesuré le 10/08 sur TOM COT JNE ANANAS 3.5K : sans lui, le conditionnement
+  // n'était pas lu et la ligne restait en quarantaine. Un « 2K5 » (2,5 kg
+  // écrit à l'ancienne) donnera 2 kg — contenance fausse, mais TOUJOURS
+  // vérifiée par le recoupement métrique avant d'agir : au pire rien ne se
+  // répare, jamais un faux prix ne se publie.
+  k: { famille: 'poids', enBase: 1 },
   g: { famille: 'poids', enBase: 0.001 }, gr: { famille: 'poids', enBase: 0.001 },
   gramme: { famille: 'poids', enBase: 0.001 }, grammes: { famille: 'poids', enBase: 0.001 },
   l: { famille: 'volume', enBase: 1 }, lt: { famille: 'volume', enBase: 1 },
@@ -160,7 +178,7 @@ const FAMILLE: Record<string, { famille: 'poids' | 'volume'; enBase: number }> =
   cl: { famille: 'volume', enBase: 0.01 }, ml: { famille: 'volume', enBase: 0.001 },
 }
 
-const UNITES_LIBELLE = 'kgs|kg|kilos|kilo|grammes|gramme|gr|g|litres|litre|ltr|lt|cl|ml|l'
+const UNITES_LIBELLE = 'kgs|kg|kilos|kilo|grammes|gramme|gr|g|litres|litre|ltr|lt|cl|ml|l|k'
 const RE_CONTENANCE = new RegExp(
   `(?<![A-Za-z0-9.,])(\\d+(?:[.,]\\d+)?)\\s*(${UNITES_LIBELLE})(?![A-Za-z])`,
   'gi',
@@ -340,19 +358,133 @@ export function quantiteReparee(l: LigneBrute): number | null {
   // recoupement aurait déjà réussi. Au plus 10 000 : au-delà, c'est le prix
   // qui a été mal lu, pas le colis qui est grand.
   if (entier < 2 || entier > 10000) return null
-  // ET LA QUANTITÉ RECONSTRUITE DOIT REDONNER LE MONTANT, au demi-centime.
+  // ET LA QUANTITÉ RECONSTRUITE DOIT REDONNER LE MONTANT.
   // Tester le rapport seul ne suffit pas : « 3,996 / 2 = 1,998 » frôle 2 par
   // coïncidence, et l'accepter publiait 5 €/L pour une huile à 1,998 €/L.
-  // Vérifier le montant, c'est vérifier la chose qu'on affirme — la tolérance
-  // reste au niveau de l'arrondi comptable, jamais à celui d'une erreur.
+  // Vérifier le montant, c'est vérifier la chose qu'on affirme.
+  //
+  // La tolérance compte l'ARRONDI DU PRIX IMPRIMÉ : un PU affiché à trois
+  // décimales porte ±0,0005 €, qui se multiplie par CHAQUE unité du
+  // conditionnement. Mesuré le 10/08 : TORTILLAS DURUM 30CMX18, PU 0,257 €,
+  // montant 4,62 € — 18 × 0,257 = 4,626, refusé pour 6 millièmes alors que le
+  // prix réel (4,62 ÷ 18 = 0,2567) s'arrondit exactement au PU imprimé.
   const reconstruit = lue * entier * Math.abs(pu)
-  const tol = Math.max(0.005, Math.abs(l.amount_ht) * 0.0005)
+  const tol = Math.max(0.005, Math.abs(l.amount_ht) * 0.0005, lue * entier * 0.0005)
   if (Math.abs(reconstruit - Math.abs(l.amount_ht)) > tol) return null
 
   const signe = (l.quantity as number) < 0 ? -1 : 1
   // On rend la quantité EXACTE du conditionnement (lue × entier), et non le
   // quotient brut : « 11,9937 sachets » n'existe pas, 12 oui.
   return round4(lue * entier * signe)
+}
+
+/**
+ * LA COLONNE POIDS PORTAIT LE MONTANT. Deuxième maladie des tableaux METRO,
+ * cousine de l'échange de colonnes — mesurée le 10/08 sur quatre lignes :
+ *
+ *   TOM COT JNE ANANAS 3.5K   qté 1 · « poids » 15,37 · PU 4,391 · montant 15,37
+ *   TOM RDE CER RUBIS 2.5K    qté 1 · « poids » 19,98 · PU 7,992 · montant 19,98
+ *
+ * Le « poids » lu VAUT le montant, au centime. Le vrai poids est sur
+ * l'étiquette (3,5 kg), et le prix imprimé est juste : 3,5 × 4,391 = 15,37.
+ * Aucune assiette ne tombait juste, la réparation de quantité échouait
+ * (15,37 ÷ 4,391 = 3,5 — pas un rapport entier), et un prix parfaitement lu
+ * partait en quarantaine.
+ *
+ * Quatre conditions, toutes nécessaires :
+ *  1. le « poids » lu vaut le MONTANT, au demi-centime — c'est le symptôme ;
+ *  2. le libellé annonce un conditionnement C sans ambiguïté ;
+ *  3. C × quantité × PU redonne le montant — la preuve métrique que C est la
+ *     vraie assiette (tolérance : arrondi comptable + arrondi du PU imprimé) ;
+ *  4. le « poids » lu n'est PAS un poids plausible pour ce conditionnement
+ *     (au moins 25 % d'écart avec C × qté) — sinon la coïncidence « 1 kg à
+ *     1 €/kg = 1 € » ferait « réparer » une ligne déjà juste.
+ *
+ * Rien n'est dérivé : le prix publié est celui qui était imprimé sur la ligne.
+ */
+export function poidsEtaitMontant(l: LigneBrute): { assiette: number } | null {
+  const pu = l.unit_price_ht
+  if (pu == null || !Number.isFinite(pu) || pu <= 0) return null
+  if (!Number.isFinite(l.amount_ht) || l.amount_ht <= 0) return null
+  const w = l.weight_kg
+  if (w == null || !Number.isFinite(w) || w <= 0) return null
+  // 1. Le symptôme : le « poids » est le montant.
+  if (Math.abs(w - l.amount_ht) > 0.005) return null
+
+  // 2. Le témoin extérieur.
+  const c = contenanceAnnoncee(l.designation, l.unit)
+  if (c == null) return null
+  const q = l.quantity != null && Number.isFinite(l.quantity) && l.quantity > 0 ? l.quantity : 1
+  const assiette = round4(c * q)
+  if (assiette <= 0) return null
+
+  // 3. La preuve métrique.
+  if (Math.abs(assiette * pu - l.amount_ht) > tolerance(l.amount_ht, pu)) return null
+
+  // 4. Et le « poids » lu contredit franchement ce conditionnement.
+  if (Math.abs(w - assiette) <= assiette * ECART_POIDS_MINIMAL) return null
+
+  return { assiette }
+}
+
+/**
+ * LE PRIX EFFECTIF, quand le PU imprimé ne colle pas mais que la ligne, elle,
+ * est saine. Mesuré le 10/08 :
+ *
+ *   FOIE POULET 1KG POT   qté 1 kg · PU 3,79 · montant 3,59  (remise ligne)
+ *   AVCAP BRUT            127,9 kg · PU 9,50 · montant 1 227,84 (9,60 réel)
+ *
+ * Le montant est la donnée la plus sûre de la ligne : c'est lui que la somme
+ * recoupe avec le total de la facture. Quand un PU lu ne s'y raccorde par
+ * aucune assiette ni réparation, l'ancien verdict jetait tout — alors que la
+ * division du montant par une assiette SÛRE donne le prix réellement payé,
+ * remise comprise. C'est celui-là que la mercuriale doit suivre.
+ *
+ * Deux garde-fous, appris sur les cas réels du même relevé :
+ *  · l'assiette suit EXACTEMENT les règles du prix absent : le poids toujours,
+ *    la quantité seulement en unité de MESURE — jamais un seau ni un colis ;
+ *  · si montant ÷ PU tombe sur un ENTIER ≥ 2, on s'abstient : c'est la
+ *    signature d'une quantité mal lue avec un prix juste (MARINADE SAVEUR
+ *    TRUFFE : qté lue 9, PU 17,353, montant 69,41 = 4 × PU exactement — le
+ *    vrai conditionnement fait 4 kg, pas 9). Publier 69,41 ÷ 9 = 7,71 €/kg
+ *    remplacerait un prix juste par un faux ; la ligne reste en quarantaine
+ *    et c'est le boucher qui tranche.
+ */
+export function prixEffectifMalgrePu(l: LigneBrute): { prix: number; base: 'derive_poids' | 'derive_quantite' } | null {
+  const pu = l.unit_price_ht
+  if (pu == null || !Number.isFinite(pu) || pu === 0) return null
+  if (!Number.isFinite(l.amount_ht) || l.amount_ht === 0) return null
+
+  // La signature « quantité fausse, prix juste » : on ne touche pas.
+  // (L'epsilon : 23,88 ÷ 1 donne |23,88 − 24| = 0,12000…01 en flottant — sans
+  //  lui, la comparaison « ≤ 0,12 » ratait l'abstention d'un dix-millardième
+  //  et la ligne filait vers une dérivation. Attrapé par le harnais.)
+  const rapport = Math.abs(l.amount_ht / pu)
+  const entier = Math.round(rapport)
+  if (entier >= 2 && entier <= 10000 && Math.abs(rapport - entier) <= entier * 0.005 + 1e-9) return null
+
+  // LE POIDS N'EST CRU QUE CORROBORÉ. Dans cette branche, quelque chose sur la
+  // ligne est faux — si le poids était bon ET le PU bon, l'assiette aurait déjà
+  // recoupé. Un poids qu'on s'apprête à diviser doit donc être confirmé par le
+  // témoin extérieur : le conditionnement du libellé. Mesuré le 10/08 sur
+  // MEL CJ : le « poids » 1,99 était le prix à la pièce logé dans la mauvaise
+  // colonne — montant ÷ poids aurait publié 12,00 € pour un melon à 1,99 €.
+  const w = l.weight_kg
+  if (w != null && w > 0 && Number.isFinite(w)) {
+    const c = contenanceAnnoncee(l.designation, l.unit)
+    const q = l.quantity != null && Number.isFinite(l.quantity) && l.quantity > 0 ? l.quantity : 1
+    const poidsAttendu = c != null ? c * q : null
+    if (poidsAttendu != null && poidsAttendu > 0 && Math.abs(w - poidsAttendu) <= poidsAttendu * ECART_POIDS_MINIMAL) {
+      return { prix: round4(l.amount_ht / w), base: 'derive_poids' }
+    }
+    // Poids présent mais non corroboré : il est suspect, on ne s'en sert pas —
+    // et on ne retombe PAS sur la quantité, qui peut porter la même confusion.
+    return null
+  }
+  if (l.quantity != null && l.quantity > 0 && Number.isFinite(l.quantity) && uniteDeMesure(l.unit)) {
+    return { prix: round4(l.amount_ht / l.quantity), base: 'derive_quantite' }
+  }
+  return null
 }
 
 /**
@@ -393,6 +525,15 @@ export function verdictLigne(l: LigneBrute, factureSuspecte = false): VerdictLig
         ? { ...vide, prix_ecarte: round4(pu) }
         : { ...vide, prix_retenu: round4(pu), base: assiette.base }
     }
+    // Le « poids » qui vaut le montant — deuxième maladie des tableaux METRO,
+    // AVANT la réparation de quantité : sur ces lignes le rapport montant ÷ PU
+    // vaut le vrai poids (souvent non entier), la réparation ne mord pas.
+    const poidsMontant = poidsEtaitMontant(l)
+    if (poidsMontant) {
+      return factureSuspecte
+        ? { ...vide, prix_ecarte: round4(pu) }
+        : { ...vide, prix_retenu: round4(pu), poids_repare: poidsMontant.assiette, base: 'poids_etait_montant' }
+    }
     // Aucune assiette ne tombe juste : le PRIX est-il sauvable en réparant la
     // quantité ? C'est le cas DAT-SCHAUB et METRO.
     const reparee = quantiteReparee(l)
@@ -408,8 +549,14 @@ export function verdictLigne(l: LigneBrute, factureSuspecte = false): VerdictLig
         ? { ...vide, prix_ecarte: round4(pu) }
         : { ...vide, prix_retenu: round4(pu), base: 'prix_seul' }
     }
-    // Une assiette existe et rien ne tombe juste : quarantaine, prix CONSERVÉ
-    // pour le diagnostic — c'est ce chiffre-là qu'on jetait jusqu'ici.
+    // Le PU ne se raccorde à rien — mais la ligne, elle, peut être saine : une
+    // remise sépare le prix payé du prix imprimé. Si une assiette SÛRE existe,
+    // le prix EFFECTIF (montant ÷ assiette) est publié et le PU part au
+    // diagnostic. Sinon : quarantaine, prix CONSERVÉ pour le diagnostic.
+    const effectif = prixEffectifMalgrePu(l)
+    if (effectif && !factureSuspecte) {
+      return { ...vide, prix_retenu: effectif.prix, prix_ecarte: round4(pu), base: 'derive_malgre_pu' }
+    }
     return { ...vide, prix_ecarte: round4(pu) }
   }
 
