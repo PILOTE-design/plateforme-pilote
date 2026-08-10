@@ -57,7 +57,7 @@ const JOUR_FR = (d: string) => {
 }
 
 const ESPECE_FR: Record<AnimalType, string> = {
-  boeuf: 'Bœuf', veau: 'Veau', agneau: 'Agneau', porc: 'Porc', volaille: 'Volaille',
+  boeuf: 'Bœuf', veau: 'Veau', agneau: 'Agneau', porc: 'Porc',
 }
 
 type Row = Record<string, unknown>
@@ -501,7 +501,7 @@ function nomLibre(cut: Cut, espece: AnimalType, prises: Set<string>): string {
  *  ils rangent la nomenclature, ils ne nomment pas la pièce. */
 function libelleDepuisId(id: string): string {
   const sansPrefixe = String(id)
-    .replace(/^(b2|capa|art8|boeuf|veau|agneau|porc|volaille)_/, '')
+    .replace(/^(b2|capa|art8|boeuf|veau|agneau|porc)_/, '')
     .replace(/_/g, ' ')
     .trim()
   if (!sansPrefixe) return String(id)
