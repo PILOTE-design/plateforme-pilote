@@ -19,6 +19,8 @@ export type StatLigne = {
   empId: string; name: string
   totalH: number; workedH: number
   cost: number; charged: number
+  /** Heures majorées de la semaine (0 pour le gérant, qui n'en a jamais) */
+  dimancheH: number; ferieH: number
   alerts: string[]
 }
 
@@ -223,6 +225,16 @@ export const calcWorkedH = (entry: PlanningEntry) => entryHours(asEntry(entry)).
 /** Coût BRUT complet CCN : base + heures sup + majorations dimanche/férié */
 export const calcCostCCN = (entry: PlanningEntry, emp: Employee, holidayFlags: boolean[]) =>
   entryBrutCost(asEntry(entry), asEmp(emp), holidayFlags)
+
+/** Heures MAJORÉES de la semaine (dimanche +20 %, férié +100 %) — pour que
+ *  l'écran explique un coût plus haut que « taux × heures ». Un 48 h dont 8 h
+ *  un férié coûte 96 € de plus : sans cette ligne, le total du planning
+ *  semblait contredire la masse salariale de la semaine d'avant (sans férié).
+ *  Le GÉRANT n'a aucune majoration : l'appelant n'affiche rien pour lui. */
+export const calcMajoH = (entry: PlanningEntry, contractH: number, holidayFlags: boolean[]) => {
+  const w = entryHours(asEntry(entry), contractH, holidayFlags)
+  return { dimancheH: w.sundayH, ferieH: w.holidayH }
+}
 
 /** Multiplicateur charges patronales (défaut 45 %) */
 export const chargeMult = (emp: Employee) => chargeMultiplier(asEmp(emp))
