@@ -119,7 +119,7 @@ export function OngletInfos({ p }: { p: PropsInfos }) {
               <div className="p-4 space-y-3 text-sm">
                 <p className="flex items-center gap-1.5 text-gray-600">
                   <Users className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
-                  Fabriqué par <span className="font-semibold text-gray-900">{p.employeeName ?? 'taux moyen de l&rsquo;équipe'}</span>
+                  Fabriqué par <span className="font-semibold text-gray-900">{p.employeeName ?? 'taux moyen de l’équipe'}</span>
                   {p.c?.labor_rate_ht != null && <span className="tabular text-gray-400">&middot; {fmtEuro(p.c.labor_rate_ht)}/h productif</span>}
                 </p>
                 <p className="text-[11px] text-gray-400">
