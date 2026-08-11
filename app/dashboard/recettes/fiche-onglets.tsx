@@ -477,6 +477,38 @@ export function OngletStats({ p }: { p: PropsStats }) {
           </div>
         )}
 
+        {/* ── Mouvement des prix des ingrédients ───────────────────────────────
+            « On veut voir le mouvement des prix dans la fiche recette. » Le
+            dernier changement de tarif constaté sur chaque ingrédient au prix
+            mercuriale, le plus récent d'abord. Recalculé à chaque facture lue —
+            aucun prix n'est figé sur la fiche. Un ingrédient au prix manuel ou
+            une sous-recette n'y figure pas : il ne bouge pas de lui-même quand
+            un fournisseur change son tarif. */}
+        {p.c && Array.isArray(p.c.price_moves) && p.c.price_moves.length > 0 && (
+          <div className="mb-4 rounded-2xl border border-gray-100 overflow-hidden">
+            <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-100">
+              <h3 className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Mouvement des prix des ingrédients</h3>
+              <p className="text-[11px] text-gray-400 mt-0.5">Dernier changement de tarif relevé sur chaque ingrédient au prix mercuriale — recalculé à chaque facture lue.</p>
+            </div>
+            <div className="divide-y divide-gray-50">
+              {p.c.price_moves.map(m => (
+                <div key={m.generic_id} className="flex items-center gap-3 px-4 py-2.5 flex-wrap">
+                  <span className="text-[11px] text-gray-400 tabular w-16 flex-shrink-0">{fmtDateFr(m.date.slice(0, 10))}</span>
+                  <span className="flex-1 min-w-[160px] text-sm font-bold text-gray-900">{m.label}</span>
+                  <span className="text-xs text-gray-500 tabular">
+                    {fmtEuro(m.ancien)} <span className="text-gray-300">→</span>{' '}
+                    <span className={`font-bold ${m.nouveau > m.ancien ? 'text-red-600' : 'text-green-600'}`}>{fmtEuro(m.nouveau)}</span>
+                    <span className="text-gray-400"> / {m.unite}</span>
+                  </span>
+                  <span className={`text-[11px] font-bold tabular rounded-full px-2 py-0.5 ${m.pct > 0 ? 'text-red-700 bg-red-50' : 'text-green-700 bg-green-50'}`}>
+                    {m.pct > 0 ? '▲' : '▼'} {Math.abs(m.pct).toLocaleString('fr-FR')} %
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Courbe impossible à tracer : DIRE POURQUOI. Un bloc simplement absent
             se lit « le coût matière n'a pas bougé » — c'est l'inverse du sens. */}
         {p.c && (!Array.isArray(p.c.matiere_series) || p.c.matiere_series.length < 2) && p.c.matiere_series_motif && (
