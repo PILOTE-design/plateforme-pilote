@@ -18,7 +18,7 @@ import {
   averageLoadedRate, employeeLoadedRate, buildGenericMap,
   buildGenericPriceSeries, costMatiereAtDate, motifSerieMatiere,
   buildRecipeCostGraph, computeFormatVerdict, costPourFormat, formatParDefaut, pertePlausible,
-  parseIngredients, parseRecipeFields,
+  parseIngredients, parseRecipeFields, mouvementsPrixFiche,
   type IngredientRow, type RecipeCost, type RecipeFormat, type RecipeRow,
 } from '@/lib/recipes'
 import { fetchAllPages } from '@/lib/fetch-all'
@@ -201,6 +201,10 @@ export async function GET() {
       : []
     // Une courbe absente se lit « le coût n'a pas bougé » si rien ne dit pourquoi.
     const matiere_series_motif = motifSerieMatiere(hasMercuriale, matiere_series.length)
+    // Mouvement des prix des ingrédients de la fiche — même série, dernier
+    // changement par générique, pour l'onglet Statistiques de la fiche ouverte
+    // en place sur la liste.
+    const price_moves = mouvementsPrixFiche(costed, seriesByGeneric, genericById)
     return {
       ...r,
       // Les colonnes de vente de la FICHE sont gelées (lot 46) : on renvoie
@@ -212,7 +216,7 @@ export async function GET() {
       tva_rate: defaut?.tva_rate ?? (Number(r.tva_rate) || 5.5),
       formats: formats.map(f => ({ ...f, ...computeFormatVerdict(brut.total_ht, r, f, brut.prix_manquants) })),
       ingredients: costed,
-      cost: { ...cost, matiere_series, matiere_series_motif },
+      cost: { ...cost, matiere_series, matiere_series_motif, price_moves },
     }
   })
 
