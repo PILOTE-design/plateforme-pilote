@@ -798,6 +798,70 @@ export function buildGenericPriceSeries(
   return out
 }
 
+/** Le DERNIER changement de prix d'une série datée (triée croissant) : les deux
+ *  derniers NIVEAUX distincts, avec la date où le nouveau est apparu et la
+ *  variation en %. `null` s'il n'y a jamais eu de changement (série vide, un
+ *  seul point, ou un seul niveau répété) — sans deux niveaux, aucun mouvement.
+ *  Deux factures au même prix ne comptent pas pour un mouvement : on effondre
+ *  les paliers consécutifs de prix identique avant de comparer. */
+export function dernierMouvementPrix(
+  series: GenericPriceSeries | undefined,
+): { ancien: number; nouveau: number; date: string; pct: number } | null {
+  if (!series || series.length < 2) return null
+  const nouveau = series[series.length - 1].p
+  // Remonter tant que le prix ne change pas : la date du niveau actuel est sa
+  // PREMIÈRE apparition, pas la dernière facture qui l'a répété.
+  let i = series.length - 1
+  let date = series[i].d
+  while (i > 0 && series[i - 1].p === nouveau) { i--; date = series[i].d }
+  if (i === 0) return null // un seul niveau de prix sur toute la série
+  const ancien = series[i - 1].p
+  if (!(ancien > 0)) return null
+  const pct = Math.round(((nouveau - ancien) / ancien) * 1000) / 10
+  return { ancien, nouveau, date, pct }
+}
+
+/** Un mouvement de prix d'ingrédient, prêt pour la fiche recette. */
+export type MouvementIngredient = {
+  generic_id: string
+  label: string
+  unite: 'kg' | 'pièce'
+  ancien: number
+  nouveau: number
+  date: string
+  pct: number
+}
+
+/** Les derniers mouvements de prix des ingrédients MERCURIALE d'une fiche — un
+ *  par générique, le plus récent d'abord. C'est « voir le mouvement des prix
+ *  dans la fiche recette » : la matière bouge là où on lit la marge, et se
+ *  recalcule à chaque facture lue (rien n'est stocké). Les prix manuels, les
+ *  réfs héritées et les sous-recettes n'y figurent pas : ils ne bougent pas
+ *  d'eux-mêmes quand un fournisseur change son tarif. */
+export function mouvementsPrixFiche(
+  costed: IngredientCost[],
+  seriesByGeneric: Map<string, GenericPriceSeries>,
+  genericById: Map<string, GenericInfo>,
+): MouvementIngredient[] {
+  const out: MouvementIngredient[] = []
+  const vus = new Set<string>()
+  for (const l of costed) {
+    if (!l.generic_id || l.price_source !== 'mercuriale' || vus.has(l.generic_id)) continue
+    vus.add(l.generic_id)
+    const mv = dernierMouvementPrix(seriesByGeneric.get(l.generic_id))
+    if (!mv) continue
+    const g = genericById.get(l.generic_id)
+    out.push({
+      generic_id: l.generic_id,
+      label: g?.name ?? 'ingrédient',
+      unite: g?.base_unit === 'piece' ? 'pièce' : 'kg',
+      ...mv,
+    })
+  }
+  out.sort((a, b) => b.date.localeCompare(a.date))
+  return out
+}
+
 /** Prix d'un générique à une date : le dernier point daté ≤ d, null si aucun. */
 export function priceAtDate(series: GenericPriceSeries | undefined, d: string): number | null {
   if (!series || series.length === 0) return null

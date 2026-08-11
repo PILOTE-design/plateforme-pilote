@@ -62,6 +62,22 @@ export type FicheCost = {
   matiere_series?: { d: string; v: number }[]
   /** Pourquoi la courbe n'est pas traçable — null quand elle l'est */
   matiere_series_motif?: string | null
+  /** Dernier changement de prix de chaque ingrédient mercuriale de la fiche —
+   *  le plus récent d'abord. « Voir le mouvement des prix dans la fiche » :
+   *  absent (ou vide) quand aucun ingrédient n'a bougé. */
+  price_moves?: FichePriceMove[]
+}
+
+/** Un mouvement de prix d'ingrédient affiché dans la fiche (miroir client du
+ *  MouvementIngredient serveur — lib/recipes). */
+export type FichePriceMove = {
+  generic_id: string
+  label: string
+  unite: string
+  ancien: number
+  nouveau: number
+  date: string
+  pct: number
 }
 
 /** Un FORMAT DE VENTE de la fiche — même fabrication, autre conditionnement.

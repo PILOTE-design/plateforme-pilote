@@ -24,8 +24,8 @@ import {
   averageLoadedRate, employeeLoadedRate, buildGenericMap,
   buildGenericPriceSeries, costMatiereAtDate, motifSerieMatiere, buildRecipeCostGraph,
   computeFormatVerdict, costPourFormat, formatParDefaut, pertePlausible,
-  parseIngredients, parseRecipeFields,
-  type IngredientRow, type RecipeCost, type RecipeFormat, type RecipeRow,
+  parseIngredients, parseRecipeFields, mouvementsPrixFiche,
+  type IngredientRow, type RecipeCost, type RecipeFormat, type RecipeRow, type MouvementIngredient,
 } from '@/lib/recipes'
 import { fetchAllPages } from '@/lib/fetch-all'
 import { appliquerCoutsDecoupe, coutsMorceauxDuClient } from '@/lib/valorisation-source'
@@ -179,6 +179,7 @@ export async function GET(_request: NextRequest, { params }: { params: { id: str
   const hasMercuriale = costed.some(l => l.generic_id && l.price_source === 'mercuriale')
 
   let matiere_series: { d: string; v: number }[] = []
+  let price_moves: MouvementIngredient[] = []
   let historique_incomplet = articlesPage.tronque
   if (hasMercuriale && idsArticles.length > 0) {
     const LOT_IDS = 150
@@ -222,6 +223,10 @@ export async function GET(_request: NextRequest, { params }: { params: { id: str
     matiere_series = jalons
       .map(d => ({ d, v: costMatiereAtDate(costed, seriesByGeneric, d, pertePlausible((row as any).loss_pct)) }))
       .filter((x): x is { d: string; v: number } => x.v !== null)
+    // Mouvement des prix de CETTE fiche : le dernier changement de chaque
+    // ingrédient mercuriale, lu des mêmes séries — affiché dans l'onglet
+    // Statistiques (« voir le mouvement des prix dans la fiche recette »).
+    price_moves = mouvementsPrixFiche(costed, seriesByGeneric, genericById)
   }
 
   // Cible de marge de la catégorie de la fiche — même normalisation que la liste
@@ -242,7 +247,7 @@ export async function GET(_request: NextRequest, { params }: { params: { id: str
       tva_rate: defaut?.tva_rate ?? (Number((row as any).tva_rate) || 5.5),
       formats: formats.map(f => ({ ...f, ...computeFormatVerdict(brut.total_ht, row, f, brut.prix_manquants) })),
       ingredients: costed,
-      cost: { ...cost, matiere_series, matiere_series_motif },
+      cost: { ...cost, matiere_series, matiere_series_motif, price_moves },
     },
     labor_rate_ht: averageRate,
     historique_incomplet,
