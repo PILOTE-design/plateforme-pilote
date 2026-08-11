@@ -115,6 +115,33 @@ export const unitFr = (u: string | null) => (u === 'piece' ? 'pièce' : u || 'u'
 export const num = (s: string) => parseFloat(s.replace(',', '.')) || 0
 export const round2 = (n: number) => Math.round(n * 100) / 100
 
+/** Verdict d'alerte marge d'un format : sa marge passe-t-elle SOUS la cible de
+ *  sa catégorie ? Le seuil est la CIBLE de la catégorie (recipe_targets) — la
+ *  même qui range la fiche dans « À retravailler » sur la liste : un seul seuil,
+ *  jamais deux verdicts contradictoires sur le même écran.
+ *
+ *  Renvoie `null` — donc pas d'alerte — dès qu'on ne peut pas juger :
+ *    · marge non calculable (un prix d'ingrédient manque → `margeActive` null) ;
+ *    · aucune cible posée pour la catégorie (`target` null) — sans cible on ne
+ *      juge pas, c'est la règle de toute la page ;
+ *    · marge AU-DESSUS ou ÉGALE à la cible (rien à signaler).
+ *  Sinon : le constat (écart en points, franc au-delà de 10 pts → rouge) ET le
+ *  geste (le coefficient qui tiendrait tout juste la cible). Rien n'est figé :
+ *  marge et cible se recalculent à l'affichage, un prix fournisseur qui bouge
+ *  fait bouger — ou disparaître — l'alerte. */
+export function verdictAlerteMarge(margeActive: number | null, target: number | null): {
+  franche: boolean          // marge à plus de 10 points sous la cible → rouge, sinon orange
+  ecart: number             // points sous la cible (toujours > 0)
+  coefCible: number | null  // coef qui atteint tout juste la cible (null si cible ≥ 100 %)
+} | null {
+  if (margeActive === null || target === null || margeActive >= target) return null
+  return {
+    franche: margeActive < target - 10,
+    ecart: round2(target - margeActive),
+    coefCible: target < 100 ? round2(1 / (1 - target / 100)) : null,
+  }
+}
+
 /** 45 → « 45 min » ; 90 → « 1 h 30 » */
 export function fmtMin(m: number): string {
   const r = Math.round(m)

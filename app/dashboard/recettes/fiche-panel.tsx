@@ -22,7 +22,7 @@ import { parseStoredSteps, parseStoredTiers } from '@/lib/recipes'
 import {
   TableauIngredients,
   ageJours, fmtDateFr, fmtEuro, fmtMin, fmtQty, ligneKg, num, round2, unitFr,
-  venteEnClair, uniteAuPluriel, UNITES_VENTE,
+  venteEnClair, uniteAuPluriel, verdictAlerteMarge, UNITES_VENTE,
   type FicheEmployee, type FicheFormat, type FicheGeneric, type FicheRecipe, type JalonCout, type SerieCout,
 } from './fiche-ui'
 import { OngletInfos, OngletStats, OngletVente } from './fiche-onglets'
@@ -261,6 +261,14 @@ export default function FichePanel({
     : target != null
       ? (margeActive >= target ? 'text-green-600' : margeActive >= target - 10 ? 'text-orange-500' : 'text-red-600')
       : (margeActive >= 50 ? 'text-green-600' : margeActive >= 30 ? 'text-orange-500' : 'text-red-600')
+  // Alerte marge : la fiche passe-t-elle SOUS la cible de sa catégorie ? Le
+  // verdict (cible posée, marge connue, marge < cible) est le même que celui de
+  // la liste, mais on le redit ICI : la fiche s'ouvre souvent par lien direct,
+  // sans passer par « À retravailler », et une pastille colorée se remarque
+  // moins qu'une phrase. Le PV qui tiendrait la cible se déduit du coût du jour.
+  const alerteMarge = verdictAlerteMarge(margeActive, target)
+  const pvPourCible = alerteMarge?.coefCible != null && coutUnite !== null
+    ? round2(coutUnite * alerteMarge.coefCible) : null
   // Coût du palier : matière ×ratio (linéaire), MO ×multiple (économie d'échelle)
   const moScaled = c?.labor_rate_ht != null ? round2(scaledMinutes / 60 * c.labor_rate_ht) : 0
   const coutScaled = round2(coutMatiere * ratio + moScaled)
@@ -724,6 +732,27 @@ export default function FichePanel({
               <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Temps de fabrication</p>
               <p className="text-xl font-extrabold tracking-tight text-gray-900 tabular mt-1">{fmtMin(baseMinutes)}</p>
               <p className="text-[11px] text-gray-400 mt-0.5 tabular">MO {fmtEuro(c.main_oeuvre_ht)}{c.labor_rate_ht != null ? ` · ${fmtEuro(c.labor_rate_ht)}/h` : ''}</p>
+            </div>
+          </div>
+        )}
+
+        {/* ── Alerte marge sous la cible de la catégorie ────────────────────
+            Demandée explicitement : voir, dans la fiche, quand le taux de marge
+            passe sous le seuil conseillé de sa famille. Le seuil est la CIBLE de
+            la catégorie ; l'alerte se recalcule à l'affichage, donc un prix
+            fournisseur qui remonte le coût la fait apparaître, un prix qui
+            redescend la fait disparaître — rien de figé. */}
+        {alerteMarge && margeActive !== null && target != null && (
+          <div className={`mb-4 rounded-2xl border px-4 py-3 flex items-start gap-3 ${alerteMarge.franche ? 'border-red-200 bg-red-50' : 'border-orange-200 bg-orange-50'}`}>
+            <AlertTriangle className={`w-4 h-4 mt-0.5 flex-shrink-0 ${alerteMarge.franche ? 'text-red-600' : 'text-orange-500'}`} />
+            <div className="min-w-0">
+              <p className={`text-sm font-bold ${alerteMarge.franche ? 'text-red-800' : 'text-orange-800'}`}>
+                Marge sous la cible de sa catégorie
+              </p>
+              <p className="text-[12px] text-gray-600 mt-0.5 tabular">
+                {margeActive.toLocaleString('fr-FR')} % pour une cible de {target.toLocaleString('fr-FR')} % — {alerteMarge.ecart.toLocaleString('fr-FR')} point{alerteMarge.ecart >= 2 ? 's' : ''} en dessous.
+                {alerteMarge.coefCible !== null ? ` La tenir demanderait un coef ×${alerteMarge.coefCible.toLocaleString('fr-FR')}${pvPourCible !== null ? ` (${fmtEuro(pvPourCible)} HT / ${uniteVente})` : ''}.` : ''}
+              </p>
             </div>
           </div>
         )}
