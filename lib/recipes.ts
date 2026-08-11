@@ -751,7 +751,7 @@ export function buildGenericMap(
   return map
 }
 
-// ── Coût matière dans le temps ──────────────────────────────────────────────
+// ── Coût matière dans le temps ────────────────────────────────────────────
 // La question d'Otami — « la rentabilité de ce produit se dégrade-t-elle ? » —
 // se répond en relisant la fiche AUX PRIX D'HIER : mêmes quantités brutes,
 // prix mercuriale à la date demandée. Tout est relu, rien n'est stocké.
