@@ -177,7 +177,7 @@ export function VueOrganiser({
                   </button>
                 )}
                 <button onClick={() => { setView('prix'); setOpenId(g.id); setEditId(null) }}
-                  className="text-[11px] font-semibold text-pilote hover:underline">Ouvrir dans Prix du jour</button>
+                  className="text-[11px] font-semibold text-pilote hover:underline">Ouvrir dans le catalogue</button>
               </div>
               {g.refs.length === 0 ? (
                 <p className="px-4 py-3 text-xs text-gray-400">Aucune réf fournisseur rattachée.</p>
@@ -317,7 +317,7 @@ export function VueFournisseurs({
                     <span className="text-sm font-semibold text-gray-900">{r.name}</span>
                     {g ? (
                       <button onClick={() => { setView('prix'); setSearch(''); setOpenId(g.id); setEditId(null) }}
-                        title="Ouvrir cet article dans « Prix du jour »"
+                        title="Ouvrir cet article dans le catalogue"
                         className="ml-1.5 text-[10px] font-semibold text-pilote bg-pilote-50 ring-1 ring-pilote-100 rounded-full px-2 py-0.5 hover:bg-pilote-100 transition-colors">
                         {g.name}
                       </button>

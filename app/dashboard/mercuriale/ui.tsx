@@ -445,7 +445,7 @@ export function VueRayons({ produits, familles, search, sel, onSel, onOuvrirProd
               const vieux = age !== null && age > 30
               return (
                 <div key={p.id} className="px-4 py-2.5 flex items-center gap-3 flex-wrap text-xs">
-                  <button onClick={() => onOuvrirProduit(p.id)} title="Ouvrir la fiche dans « Prix du jour »"
+                  <button onClick={() => onOuvrirProduit(p.id)} title="Ouvrir la fiche dans le catalogue"
                     className="text-sm font-semibold text-gray-900 hover:text-pilote hover:underline text-left flex-1 min-w-[200px]">
                     {p.name}
                   </button>

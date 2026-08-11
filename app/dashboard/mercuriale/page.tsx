@@ -228,34 +228,48 @@ export default function MercurialePage() {
         </div>
       )}
 
-      {/* Trois onglets, un par intention : consulter / agir / ranger. La
-          recherche vit à côté — elle filtre l'onglet affiché. */}
-      <div className="mb-5 flex items-center gap-3 flex-wrap">
-        <div className="inline-flex bg-pilote-50 ring-1 ring-pilote-100 rounded-full p-1 gap-1">
-          <button onClick={() => setView('prix')}
-            className={`text-xs font-semibold rounded-full px-3.5 py-1.5 transition-colors ${view === 'prix' ? 'bg-pilote text-white shadow-card' : 'text-pilote hover:bg-pilote-100'}`}>
-            Prix du jour
-          </button>
-          <button onClick={() => { setView('rayons'); setRayonSel(null) }}
-            className={`text-xs font-semibold rounded-full px-3.5 py-1.5 transition-colors ${view === 'rayons' ? 'bg-pilote text-white shadow-card' : 'text-pilote hover:bg-pilote-100'}`}>
-            Rayons
-          </button>
-          <button onClick={() => { setView('fournisseurs'); setFournisseurSel(null) }}
-            className={`text-xs font-semibold rounded-full px-3.5 py-1.5 transition-colors ${view === 'fournisseurs' ? 'bg-pilote text-white shadow-card' : 'text-pilote hover:bg-pilote-100'}`}>
-            Fournisseurs
-          </button>
-          <button onClick={() => setView('traiter')}
-            className={`flex items-center gap-1.5 text-xs font-semibold rounded-full px-3.5 py-1.5 transition-colors ${view === 'traiter' ? 'bg-pilote text-white shadow-card' : 'text-pilote hover:bg-pilote-100'}`}>
-            À traiter
-            {aTraiterTotal > 0 && (
-              <span className={`text-[10px] font-bold rounded-full px-1.5 py-0.5 tabular ${view === 'traiter' ? 'bg-white/20 text-white' : 'bg-amber-100 text-amber-700'}`}>{aTraiterTotal}</span>
-            )}
-          </button>
-          <button onClick={() => setView('organiser')}
-            className={`text-xs font-semibold rounded-full px-3.5 py-1.5 transition-colors ${view === 'organiser' ? 'bg-pilote text-white shadow-card' : 'text-pilote hover:bg-pilote-100'}`}>
-            Organiser
-          </button>
+      {/* Deux intentions, pas cinq onglets à plat : CONSULTER (trois façons de
+          voir le même catalogue) et GÉRER (les deux actions). La recherche
+          filtre la vue affichée. L'onglet « Catalogue » porte le nom de son
+          contenu — l'en-tête du tableau disait déjà « Catalogue ». */}
+      <div className="mb-5 flex items-end gap-x-5 gap-y-3 flex-wrap">
+        <div>
+          <p className="text-[11px] font-bold uppercase tracking-[0.13em] text-gray-500 mb-1.5 ml-1.5">Consulter</p>
+          <div className="inline-flex bg-pilote-50 ring-1 ring-pilote-100 rounded-full p-1 gap-1">
+            <button onClick={() => setView('prix')}
+              className={`text-xs font-semibold rounded-full px-3.5 py-1.5 transition-colors ${view === 'prix' ? 'bg-pilote text-white shadow-card' : 'text-pilote hover:bg-pilote-100'}`}>
+              Catalogue
+            </button>
+            <button onClick={() => { setView('rayons'); setRayonSel(null) }}
+              className={`text-xs font-semibold rounded-full px-3.5 py-1.5 transition-colors ${view === 'rayons' ? 'bg-pilote text-white shadow-card' : 'text-pilote hover:bg-pilote-100'}`}>
+              Rayons
+            </button>
+            <button onClick={() => { setView('fournisseurs'); setFournisseurSel(null) }}
+              className={`text-xs font-semibold rounded-full px-3.5 py-1.5 transition-colors ${view === 'fournisseurs' ? 'bg-pilote text-white shadow-card' : 'text-pilote hover:bg-pilote-100'}`}>
+              Fournisseurs
+            </button>
+          </div>
         </div>
+
+        <div className="hidden sm:block w-px h-8 bg-pilote-100 mb-1" aria-hidden="true" />
+
+        <div>
+          <p className="text-[11px] font-bold uppercase tracking-[0.13em] text-gray-500 mb-1.5 ml-1.5">Gérer</p>
+          <div className="inline-flex items-center gap-2">
+            <button onClick={() => setView('traiter')}
+              className={`inline-flex items-center gap-1.5 text-xs font-semibold rounded-full px-3.5 py-1.5 border transition-colors ${view === 'traiter' ? 'bg-pilote text-white border-pilote shadow-card' : 'text-pilote bg-white border-pilote-100 hover:bg-pilote-50'}`}>
+              À traiter
+              {aTraiterTotal > 0 && (
+                <span className={`text-[11px] font-bold rounded-full px-1.5 py-0.5 tabular ${view === 'traiter' ? 'bg-white/20 text-white' : 'bg-pilote-orange text-white'}`}>{aTraiterTotal}</span>
+              )}
+            </button>
+            <button onClick={() => setView('organiser')}
+              className={`text-xs font-semibold rounded-full px-3.5 py-1.5 border transition-colors ${view === 'organiser' ? 'bg-pilote text-white border-pilote shadow-card' : 'text-pilote bg-white border-pilote-100 hover:bg-pilote-50'}`}>
+              Organiser
+            </button>
+          </div>
+        </div>
+
         <div className="relative flex-1 min-w-[240px]">
           <Search className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Rechercher un produit, une réf, un fournisseur…"
